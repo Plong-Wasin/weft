@@ -77,6 +77,21 @@ try {
   await expectOrder(page, ["Alpha", "Beta", "Gamma"], `default order is not by name: ${await projectOrder(page)}`, false);
   check(await page.getByRole("list", { name: translate("sidebar.starred"), exact: true }).count() === 0, "Starred group shows while empty");
 
+  // Project order is a Workspace link: it sits above the Projects heading and still opens its page.
+  await page.goto(`${web}/${slug}/settings`);
+  const projectOrderLink = sidebar().getByRole("link", { name: translate("settings.projectOrder"), exact: true });
+  await projectOrderLink.waitFor();
+  check(await projectOrderLink.evaluate((link, projectsHeading) => {
+    const heading = [...link.closest("nav")!.querySelectorAll("p")].find((node) => node.textContent === projectsHeading);
+    return !!heading && (heading.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_PRECEDING) !== 0;
+  }, translate("projects.title")), "Project order is not in the Workspace group above the Projects heading");
+  await projectOrderLink.click();
+  await page.waitForURL(`${web}/${slug}/settings/project-order`);
+  await page.getByRole("heading", { name: translate("settings.projectOrder"), exact: true }).waitFor();
+  console.log("project order ok: Workspace link opens the page");
+  await page.goto(`${web}/${slug}`);
+  await sidebar().getByRole("button", { name: `${translate("sidebar.toggleProject")}: Gamma` }).waitFor();
+
   // Star Gamma from the sidebar: the Starred group appears on top, and the star has a label.
   const starGamma = sidebar().getByRole("button", { name: `${translate("sidebar.star")}: Gamma` });
   check(await starGamma.getAttribute("title") === translate("sidebar.star"), "star has no tooltip");

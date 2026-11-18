@@ -256,7 +256,8 @@ export const activities = pgTable("activities", {
   field: text("field").notNull(),
   oldValue: jsonb("old_value"),
   newValue: jsonb("new_value"),
-  actorId: text("actor_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  /** Null when the system made the change (source system): the hourly Runtime cleanup has no person as actor. */
+  actorId: text("actor_id").references(() => users.id, { onDelete: "cascade" }),
   source: text("source").notNull(),
   chatId: uuid("chat_id"),
   /** Set when an Agent made the change: the Run, and the person whose permissions it used. */
@@ -304,6 +305,8 @@ export const runtimes = pgTable("runtimes", {
   shared: boolean("shared").notNull().default(false),
   enforceSandbox: boolean("enforce_sandbox").notNull().default(false),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+  /** Set when the Daemon stopped (its credential was revoked) or no longer detects this CLI: the Runtime is offline whatever its last-seen time says. */
+  stopped: boolean("stopped").notNull().default(false),
 }, (table) => [uniqueIndex().on(table.workspaceId, table.daemonId, table.agentCli), index().on(table.workspaceId, table.shared)]);
 
 /** A Daemon-owned permission profile for one CLI Runtime. */

@@ -117,7 +117,7 @@ export function createAdminConsoleActions(
     return db.select({
       id: activities.id, at: activities.createdAt, actorId: activities.actorId, actorName: users.name, kind: activities.entityType,
       entityId: activities.entityId, field: activities.field, oldValue: activities.oldValue, newValue: activities.newValue,
-    }).from(activities).innerJoin(users, eq(users.id, activities.actorId)).where(and(...conditions))
+    }).from(activities).leftJoin(users, eq(users.id, activities.actorId)).where(and(...conditions))
       .orderBy(desc(activities.seq)).limit(limit).offset(offset);
   }
 
@@ -151,7 +151,8 @@ export function createAdminConsoleActions(
         const lastChange = ids.length ? await db.select({ userId: activities.actorId, at: sql<Date>`max(${activities.createdAt})` }).from(activities).where(and(eq(activities.workspaceId, input.workspaceId), inArray(activities.actorId, ids))).groupBy(activities.actorId) : [];
         const latest = new Map<string, Date>();
         for (const entry of [...lastSession, ...lastToken, ...lastChange]) {
-          if (!entry.at) continue;
+          // A system change has no actor and is not a person's last change.
+          if (!entry.at || entry.userId === null) continue;
           const at = new Date(entry.at);
           const previous = latest.get(entry.userId);
           if (!previous || at > previous) latest.set(entry.userId, at);
@@ -326,7 +327,7 @@ export function createAdminConsoleActions(
       input: Type.Object({ ...auditFilter, limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })), offset: Type.Optional(Type.Integer({ minimum: 0 })) }),
       output: Type.Object({
         rows: Type.Array(Type.Object({
-          id: Type.String(), at: Type.String(), actorId: Type.String(), actorName: Type.String(), kind: Type.String(), entityId: Type.String(),
+          id: Type.String(), at: Type.String(), actorId: Type.Union([Type.String(), Type.Null()]), actorName: Type.Union([Type.String(), Type.Null()]), kind: Type.String(), entityId: Type.String(),
           field: Type.String(), oldValue: Type.Unknown(), newValue: Type.Unknown(),
         })),
         hasMore: Type.Boolean(),
@@ -350,7 +351,7 @@ export function createAdminConsoleActions(
         const rows = await auditRows(db, input, maxAuditRows + 1, 0);
         const kept = rows.slice(0, maxAuditRows);
         const header = ["time", "person", "kind", "change", "target", "before", "after"];
-        const lines = kept.map((row) => [row.at.toISOString(), row.actorName, row.kind, row.field, row.entityId, cellText(row.oldValue), cellText(row.newValue)].map(csvCell).join(","));
+        const lines = kept.map((row) => [row.at.toISOString(), row.actorName ?? "System", row.kind, row.field, row.entityId, cellText(row.oldValue), cellText(row.newValue)].map(csvCell).join(","));
         return { csv: [header.join(","), ...lines].join("\r\n") + "\r\n", rows: kept.length, truncated: rows.length > maxAuditRows };
       },
     },

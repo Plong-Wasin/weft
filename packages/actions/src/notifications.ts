@@ -11,6 +11,7 @@ import { publishSignal, type Signal } from "./realtime";
 import { fireScheduleTrigger } from "./triggers";
 import { fireScheduleRecurrence } from "./recurrences";
 import { purgeIntegrationDeliveries } from "./integration-deliveries";
+import { purgeStaleRuntimes } from "./runtimes";
 import { applyAutoRules, autoRulesJobType } from "./auto-rules";
 import { purgeNotificationEmails, queueNotificationEmails, sendNotificationDigests } from "./email-digest";
 import type { MailLocale } from "./email-templates";
@@ -112,7 +113,7 @@ async function fanOut(database: Database, payload: NotifyPayload, job: { id: str
   })));
 }
 
-export const cleanupJobTypes = ["cleanup_invites", "cleanup_sessions", "cleanup_confirmations", "cleanup_ai_requests", "cleanup_exports", "cleanup_notification_emails", "cleanup_integration_deliveries"] as const;
+export const cleanupJobTypes = ["cleanup_invites", "cleanup_sessions", "cleanup_confirmations", "cleanup_ai_requests", "cleanup_exports", "cleanup_notification_emails", "cleanup_integration_deliveries", "cleanup_stale_runtimes"] as const;
 
 /** Every job type the worker handles. */
 /** Sends a signal through the job's transaction, so it goes out only if the notifications commit. */
@@ -160,6 +161,8 @@ export function createJobHandlers(publish: SignalPublisher = publishSignal, runt
     },
     cleanup_notification_emails: (database) => purgeNotificationEmails(database, runtime.now?.()),
     cleanup_integration_deliveries: (database) => purgeIntegrationDeliveries(database, runtime.now?.()),
+    // Hourly: removes Runtimes offline for more than seven days with no enabled Agent bound and no unfinished Run (see purgeStaleRuntimes).
+    cleanup_stale_runtimes: async (database) => { await purgeStaleRuntimes(database, runtime.now?.() ?? new Date()); },
     ...(outboundWebhooksEnabled() ? { cleanup_outbound_webhook_deliveries: async (database: Database) => { await purgeOutboundDeliveries(database, runtime.now?.()); } } : {}),
   };
 }

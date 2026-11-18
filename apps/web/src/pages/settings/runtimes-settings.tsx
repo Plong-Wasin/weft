@@ -88,22 +88,26 @@ function ProfileControls({ runtime, owner, reload }: { runtime: Runtime; owner: 
   </div>;
 }
 
-/** Delete for the Runtime owner and workspace Admins. A refusal shows what still uses the Runtime, from the list the page already holds. */
-function DeleteRuntime({ runtime, reload }: { runtime: Runtime; reload: () => void }) {
+/** Delete for the Runtime owner and workspace Admins. A refusal shows what still uses the Runtime, from the list the page already holds; an Admin also chooses what happens to the Agents. */
+function DeleteRuntime({ runtime, targets, isAdmin, reload }: { runtime: Runtime; targets: Runtime[]; isAdmin: boolean; reload: () => void }) {
   const [open, setOpen] = React.useState(false);
   const [refused, setRefused] = React.useState(false);
   const [failed, setFailed] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
-  const close = () => { setOpen(false); setRefused(false); setFailed(false); };
-  const confirm = async () => {
+  const [moveTo, setMoveTo] = React.useState("");
+  const close = () => { setOpen(false); setRefused(false); setFailed(false); setMoveTo(""); };
+  const run = async (options: Record<string, unknown>) => {
     setBusy(true);
-    const result = await actionResult("delete_runtime", { runtimeId: runtime.id });
+    const result = await actionResult("delete_runtime", { runtimeId: runtime.id, ...options });
     setBusy(false);
     if (!("error" in result)) { close(); reload(); return; }
     if (result.code === "runtime_in_use") { setRefused(true); reload(); return; }
     setFailed(true);
   };
   const enabledAgents = runtime.agents.filter((agent) => agent.enabled).map((agent) => agent.name);
+  const target = targets.find((candidate) => candidate.id === moveTo);
+  // Unfinished Runs refuse both choices too, so the Admin is offered them only when none is left.
+  const adminChoices = isAdmin && refused && runtime.unfinishedRuns === 0;
   return <>
     <button type="button" className="secondary" onClick={() => setOpen(true)}>{translate("runtimes.delete")}</button>
     {open && <Dialog title={translate(refused ? "runtimes.deleteRefusedTitle" : "runtimes.deleteTitle")} onClose={close}>
@@ -111,11 +115,26 @@ function DeleteRuntime({ runtime, reload }: { runtime: Runtime; reload: () => vo
         {enabledAgents.length > 0 && <p className="m-0 text-14">{translate("runtimes.deleteRefusedAgents").replace("{names}", enabledAgents.join(", "))}</p>}
         {runtime.unfinishedRuns > 0 && <p className="m-0 text-14">{translate("runtimes.deleteRefusedRuns").replace("{count}", String(runtime.unfinishedRuns))}</p>}
         {enabledAgents.length === 0 && runtime.unfinishedRuns === 0 && <p className="m-0 text-14">{translate("runtimes.deleteRefusedOther")}</p>}
+        {adminChoices && <div className="grid gap-2 rounded-md border border-subtle p-3">
+          <strong className="text-13">{translate("runtimes.adminChoiceTitle")}</strong>
+          <span className="text-13 text-secondary">{translate("runtimes.boundAgents").replace("{names}", runtime.agents.map((agent) => agent.name).join(", "))}</span>
+          <button type="button" className="secondary justify-self-start" disabled={busy} onClick={() => void run({ boundAgents: "unbind" })}>{translate("runtimes.unbindAndDelete")}</button>
+          <p className="m-0 text-12 text-secondary">{translate("runtimes.unbindHelp")}</p>
+          {targets.length === 0 ? <p className="m-0 text-12 text-secondary">{translate("runtimes.moveNoTargets")}</p> : <>
+            <label className="text-12">{translate("runtimes.moveTarget")}<select value={moveTo} onChange={(event) => setMoveTo(event.target.value)}>
+              <option value="">{translate("runtimes.moveTarget")}</option>
+              {targets.map((candidate) => <option key={candidate.id} value={candidate.id}>{`${candidate.ownerName} · ${candidate.agentCli} · ${candidate.hostname}`}</option>)}
+            </select></label>
+            {target && target.ownerId !== runtime.ownerId && <p role="note" className="m-0 text-12 text-danger-text">{translate("runtimes.moveOwnerWarning").replace("{owner}", target.ownerName)}</p>}
+            <p className="m-0 text-12 text-secondary">{translate("runtimes.moveHelp")}</p>
+            <button type="button" className="secondary justify-self-start" disabled={busy || !target} onClick={() => void run({ boundAgents: { moveTo: target!.id } })}>{translate("runtimes.moveAndDelete")}</button>
+          </>}
+        </div>}
         <div className="flex justify-end"><button type="button" className="secondary" onClick={close}>{translate("runtimes.deleteClose")}</button></div>
       </> : <>
         <p className="m-0 text-14">{translate("runtimes.deleteBody")}</p>
         {failed && <p role="alert" className="m-0 text-12 text-danger-text">{translate("runtimes.failed")}</p>}
-        <div className="flex justify-end gap-2"><button type="button" className="secondary" onClick={close}>{translate("comments.cancel")}</button><button type="button" disabled={busy} onClick={() => void confirm()}>{translate("runtimes.delete")}</button></div>
+        <div className="flex justify-end gap-2"><button type="button" className="secondary" onClick={close}>{translate("comments.cancel")}</button><button type="button" disabled={busy} onClick={() => void run({})}>{translate("runtimes.delete")}</button></div>
       </>}
     </Dialog>}
   </>;
@@ -147,7 +166,7 @@ export function WorkspaceRuntimes() {
         {runtimes.map((runtime) => <Row key={runtime.id}><div className="mr-auto grid min-w-0 gap-0.5"><span className="font-medium">{runtime.ownerName} · {runtime.agentCli}</span><span className="text-13 text-secondary">{runtime.hostname} · {runtime.online ? translate("runtimes.online") : offlineText(runtime)}</span></div>
           <span className="text-13 text-secondary">{runtime.shared ? translate("runtimes.shared") : translate("runtimes.private")}</span>
           {runtime.ownerId === selfId && <button type="button" className="secondary" onClick={() => void toggle(runtime)}>{translate(runtime.shared ? "runtimes.unshare" : "runtimes.share")}</button>}
-          {(runtime.ownerId === selfId || isAdmin) && <DeleteRuntime runtime={runtime} reload={() => void load()} />}
+          {(runtime.ownerId === selfId || isAdmin) && <DeleteRuntime runtime={runtime} targets={runtimes.filter((candidate) => candidate.shared && candidate.id !== runtime.id)} isAdmin={isAdmin} reload={() => void load()} />}
           <RuntimeUsage runtime={runtime} />
           <ProfileControls runtime={runtime} owner={runtime.ownerId === selfId} reload={() => void load()} />
         </Row>)}

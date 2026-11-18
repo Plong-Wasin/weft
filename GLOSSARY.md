@@ -173,8 +173,12 @@ _Avoid_: Timeline
 
 
 **View**:
-A saved set of filters (a PQL query), a layout, group-by, sub-group, and ordering, scoped to one project or to the workspace, and public or private to its owner. A view never changes the underlying work items.
+A saved set of filters (a Filter query), a layout, group-by, sub-group, and ordering, scoped to one project or to the workspace, and public or private to its owner. A view never changes the underlying work items.
 _Avoid_: Saved filter, perspective
+
+**Filter query**:
+The text a person or an Agent writes to pick work items by their fields, such as priority, state, label, or Cycle. A Filter query may also order and limit the result. Filter chips and a View are both read from one. It is not the free text of a search.
+_Avoid_: PQL, query language, search
 
 **Asset**:
 An uploaded file (attachment, inline image, avatar, cover, logo) tied to one owning entity.

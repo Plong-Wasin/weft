@@ -33,7 +33,7 @@ Every Action below is a tool, with the same permission checks as the web UI. MCP
 
 ### Querying work items
 
-`list_work_items` takes a PQL query in `query` (one project). `search_work_items` takes free text in `query`, and a PQL query in `pql` together with `projectId`. The two `query` fields are different: only the one on `list_work_items` is PQL.
+`list_work_items` takes a filter query in `query` (one project). `search_work_items` takes free text in `query`, and a filter query in `filter` together with `projectId`. The two `query` fields are different: only the one on `list_work_items` is filter query.
 
 Syntax: `Field Operator Value`, combined with `AND`, `OR`, `NOT`, and parentheses, then optional `ORDER BY field [ASC|DESC]` and `LIMIT n` (max 1000).
 

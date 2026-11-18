@@ -128,7 +128,7 @@ test.concurrent("permission failures, unknown workspaces and revoked tokens come
   });
 });
 
-test.concurrent("MCP lists every phase 2 Action with its PQL guidance", async () => {
+test.concurrent("MCP lists every phase 2 Action with its filter query guidance", async () => {
   await withRollback(db, async (transaction) => {
     const { client } = await setup(transaction);
     const tools = (await client.listTools()).tools;
@@ -139,7 +139,7 @@ test.concurrent("MCP lists every phase 2 Action with its PQL guidance", async ()
     const search = tools.find((tool) => tool.name === "search_work_items")!;
     expect(search.description).toContain("free text");
     expect(search.description).toContain("cycle = activeCycle()");
-    expect(tools.find((tool) => tool.name === "list_work_items")!.description).toContain("PQL");
+    expect(tools.find((tool) => tool.name === "list_work_items")!.description).toContain("filter query");
   });
 });
 

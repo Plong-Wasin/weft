@@ -71,18 +71,20 @@ function ProfileControls({ runtime, owner, reload }: { runtime: Runtime; owner: 
   const [network, setNetwork] = React.useState("");
   const [editingId, setEditingId] = React.useState<string | undefined>();
   const [error, setError] = React.useState(false);
-  const load = React.useCallback(async () => setProfiles(await action<RuntimeProfile[]>("list_runtime_profiles", { runtimeId: runtime.id }) ?? []), [runtime.id]);
+  const [loaded, setLoaded] = React.useState(false);
+  const [expanded, setExpanded] = React.useState(false);
+  const load = React.useCallback(async () => { setProfiles(await action<RuntimeProfile[]>("list_runtime_profiles", { runtimeId: runtime.id }) ?? []); setLoaded(true); }, [runtime.id]);
   React.useEffect(() => { void load(); }, [load]);
   const save = async (profileId?: string) => {
     const result = await action(profileId ? "update_runtime_profile" : "create_runtime_profile", { ...(profileId ? { profileId } : { runtimeId: runtime.id }), name, sandbox, filesystemAllowlist: filesystem.split("\n").map((v) => v.trim()).filter(Boolean), networkAllowlist: network.split(",").map((v) => v.trim()).filter(Boolean) });
     setError(result === null); if (result) { setName(""); setFilesystem(""); setNetwork(""); setEditingId(undefined); await load(); reload(); }
   };
-  // Collapsed by default: with several Runtimes an open form under each one buried the facts the page is for. A profile edit in progress keeps it open.
-  return <details className="w-full rounded-md border border-subtle p-3" open={editingId !== undefined || undefined}>
-    <summary className="cursor-pointer text-13 font-medium">{translate("runtimes.profiles")} · {profiles.length}</summary>
+  // Collapsed by default: with several Runtimes an open form under each one buried the facts the page is for. It stays where the owner left it: starting an edit opens it, saving or cancelling does not close it.
+  return <details className="w-full rounded-md border border-subtle p-3" open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
+    <summary className="cursor-pointer text-13 font-medium">{translate("runtimes.profiles")}{loaded ? ` · ${profiles.length}` : ""}</summary>
     <div className="mt-2 grid gap-2">
     <p className="m-0 text-12 text-secondary">{translate("runtimes.profileHelp")}</p>
-    {profiles.map((profile) => <div key={profile.id} className="flex flex-wrap items-center gap-2 text-12"><span className="mr-auto">{profile.name} · {translate(`runtimes.sandbox.${profile.sandbox}` as never)}{profile.sandbox === "full" ? ` · ${translate("runtimes.fullAccessWarning")}` : ""}</span>{owner && <><button className="secondary" onClick={() => { setEditingId(profile.id); setName(profile.name); setSandbox(profile.sandbox); setFilesystem(profile.filesystemAllowlist.join("\n")); setNetwork(profile.networkAllowlist.join(", ")); }}>{translate("runtimes.editProfile")}</button><button className="secondary" onClick={async () => { if (!window.confirm(translate("runtimes.deleteProfileConfirm").replace("{name}", profile.name))) return; const result = await actionResult("delete_runtime_profile", { profileId: profile.id }); setError("error" in result); await load(); reload(); }}>{translate("runtimes.deleteProfile")}</button></>}</div>)}
+    {profiles.map((profile) => <div key={profile.id} className="flex flex-wrap items-center gap-2 text-12"><span className="mr-auto">{profile.name} · {translate(`runtimes.sandbox.${profile.sandbox}` as never)}{profile.sandbox === "full" ? ` · ${translate("runtimes.fullAccessWarning")}` : ""}</span>{owner && <><button className="secondary" onClick={() => { setExpanded(true); setEditingId(profile.id); setName(profile.name); setSandbox(profile.sandbox); setFilesystem(profile.filesystemAllowlist.join("\n")); setNetwork(profile.networkAllowlist.join(", ")); }}>{translate("runtimes.editProfile")}</button><button className="secondary" onClick={async () => { if (!window.confirm(translate("runtimes.deleteProfileConfirm").replace("{name}", profile.name))) return; const result = await actionResult("delete_runtime_profile", { profileId: profile.id }); setError("error" in result); await load(); reload(); }}>{translate("runtimes.deleteProfile")}</button></>}</div>)}
     {owner && <><label className="text-12">{translate("runtimes.profileName")}<input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} /></label>
       <label className="text-12">{translate("runtimes.sandboxMode")}<select value={sandbox} onChange={(event) => setSandbox(event.target.value as RuntimeProfile["sandbox"])}><option value="run-folder">{translate("runtimes.sandbox.run-folder")}</option><option value="read-only">{translate("runtimes.sandbox.read-only")}</option><option value="full">{translate("runtimes.sandbox.full")}</option></select></label>
       {sandbox !== "full" && <><label className="text-12">{translate("runtimes.filesystemAllowlist")}<textarea value={filesystem} onChange={(event) => setFilesystem(event.target.value)} placeholder={translate("runtimes.filesystemPlaceholder")} /></label><label className="text-12">{translate("runtimes.networkAllowlist")}<input value={network} onChange={(event) => setNetwork(event.target.value)} placeholder={translate("runtimes.networkPlaceholder")} /></label></>}
@@ -101,6 +103,9 @@ function DeleteRuntime({ runtime, targets, isAdmin, reload }: { runtime: Runtime
   const [failed, setFailed] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [moveTo, setMoveTo] = React.useState("");
+  const closeButton = React.useRef<HTMLButtonElement>(null);
+  // The refusal replaces the content under the focus: land on Close, never on a button that deletes.
+  React.useEffect(() => { if (refused) closeButton.current?.focus(); }, [refused]);
   const close = () => { setOpen(false); setRefused(false); setFailed(false); setMoveTo(""); };
   const run = async (options: Record<string, unknown>) => {
     setBusy(true);
@@ -117,7 +122,7 @@ function DeleteRuntime({ runtime, targets, isAdmin, reload }: { runtime: Runtime
   return <>
     <button type="button" className={dangerOutline} onClick={() => setOpen(true)}>{translate("runtimes.delete")}</button>
     {open && <Dialog title={translate(refused ? "runtimes.deleteRefusedTitle" : "runtimes.deleteTitle")} onClose={close}>
-      <p className="m-0 text-14 font-medium" data-testid="delete-target">{runtime.ownerName} · {runtime.agentCli} · {runtime.hostname}</p>
+      <p className="m-0 text-14 font-medium">{runtime.ownerName} · {runtime.agentCli} · {runtime.hostname}</p>
       {refused ? <>
         {enabledAgents.length > 0 && <p className="m-0 text-14">{translate("runtimes.deleteRefusedAgents").replace("{names}", enabledAgents.join(", "))}</p>}
         {runtime.unfinishedRuns > 0 && <p className="m-0 text-14">{translate("runtimes.deleteRefusedRuns").replace("{count}", String(runtime.unfinishedRuns))}</p>}
@@ -138,7 +143,7 @@ function DeleteRuntime({ runtime, targets, isAdmin, reload }: { runtime: Runtime
             <button type="button" className="secondary justify-self-start" disabled={busy || !target} onClick={() => void run({ boundAgents: { moveTo: target!.id } })}>{translate("runtimes.moveAndDelete")}</button>
           </>}
         </div>}
-        <div className="flex justify-end"><button type="button" className="secondary" onClick={close}>{translate("runtimes.deleteClose")}</button></div>
+        <div className="flex justify-end"><button type="button" ref={closeButton} className="secondary" onClick={close}>{translate("runtimes.deleteClose")}</button></div>
       </> : <>
         <p className="m-0 text-14">{translate("runtimes.deleteBody")}</p>
         {runtime.online && <p className="m-0 text-14" data-testid="delete-online-note">{translate("runtimes.deleteOnlineNote")}</p>}

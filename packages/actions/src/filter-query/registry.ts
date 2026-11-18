@@ -1,8 +1,8 @@
 import { sql, type SQL } from "drizzle-orm";
 import { comments, commentMentions, workItemAssignees, workItemLabels, workItemStates, workItems } from "@weft/db";
-import { PqlError } from "./errors";
+import { FilterQueryError } from "./errors";
 import type { Operator } from "./parser";
-import type { Named, Operand, PqlContext, PqlField, PqlFunction, PqlRegistry } from "./types";
+import type { Named, Operand, FilterQueryContext, FilterQueryField, FilterQueryFunction, FilterQueryRegistry } from "./types";
 
 const stateGroupNames = ["backlog", "unstarted", "started", "completed", "cancelled"] as const;
 const priorityNames = ["urgent", "high", "medium", "low", "none"] as const;
@@ -26,19 +26,19 @@ export function resolveNamed(entries: Named[], operand: Operand, kind: string): 
   const wanted = operand.text.toLowerCase();
   const found = entries.filter((entry) => entry.id === operand.text || entry.name.toLowerCase() === wanted || entry.extra?.toLowerCase() === wanted);
   const unique = [...new Map(found.map((entry) => [entry.id, entry])).values()];
-  if (unique.length === 0) throw new PqlError(operand.pos, `${kind} ${JSON.stringify(operand.text)} was not found in this project`);
-  if (unique.length > 1) throw new PqlError(operand.pos, `${kind} ${JSON.stringify(operand.text)} is ambiguous: ${unique.length} ${kind}s have that name`);
+  if (unique.length === 0) throw new FilterQueryError(operand.pos, `${kind} ${JSON.stringify(operand.text)} was not found in this project`);
+  if (unique.length > 1) throw new FilterQueryError(operand.pos, `${kind} ${JSON.stringify(operand.text)} is ambiguous: ${unique.length} ${kind}s have that name`);
   return unique[0]!.id;
 }
 
 /** A field backed by a link table: the work item has (or lacks) a row for one of the resolved ids. */
 export function relationField(config: {
-  name: string; kind: string; operators?: readonly Operator[]; accepts?: PqlField["accepts"];
-  entries(context: PqlContext): Promise<Named[]>;
+  name: string; kind: string; operators?: readonly Operator[]; accepts?: FilterQueryField["accepts"];
+  entries(context: FilterQueryContext): Promise<Named[]>;
   /** SQL "the work item has a link to one of these ids", or to any when `ids` is null. */
   linked(ids: string[] | null): SQL;
-  order?: PqlField["order"];
-}): PqlField {
+  order?: FilterQueryField["order"];
+}): FilterQueryField {
   return {
     name: config.name, accepts: config.accepts, order: config.order,
     operators: config.operators ?? [...setOperators, "IS NULL", "IS NOT NULL"],
@@ -53,11 +53,11 @@ export function relationField(config: {
   };
 }
 
-const userField = (config: { name: string; linked: (ids: string[] | null) => SQL; operators?: readonly Operator[]; order?: PqlField["order"] }) =>
+const userField = (config: { name: string; linked: (ids: string[] | null) => SQL; operators?: readonly Operator[]; order?: FilterQueryField["order"] }) =>
   relationField({ ...config, kind: "member", accepts: ["user"], entries: (context) => context.members() });
 
 /** A single-valued column holding a name-resolved id, such as createdBy. */
-function columnField(config: { name: string; kind: string; column: SQL; entries(context: PqlContext): Promise<Named[]>; accepts?: PqlField["accepts"]; order?: PqlField["order"] }): PqlField {
+function columnField(config: { name: string; kind: string; column: SQL; entries(context: FilterQueryContext): Promise<Named[]>; accepts?: FilterQueryField["accepts"]; order?: FilterQueryField["order"] }): FilterQueryField {
   return {
     name: config.name, accepts: config.accepts, order: config.order, operators: setOperators,
     async compile(context, operator, operands) {
@@ -74,13 +74,13 @@ function columnField(config: { name: string; kind: string; column: SQL; entries(
 function parseDate(operand: Operand): string {
   const parsed = new Date(`${operand.text}T00:00:00Z`);
   const valid = /^\d{4}-\d{2}-\d{2}$/.test(operand.text) && !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === operand.text;
-  if (!valid) throw new PqlError(operand.pos, `${JSON.stringify(operand.text)} is not a date; write YYYY-MM-DD or use a function such as today()`);
+  if (!valid) throw new FilterQueryError(operand.pos, `${JSON.stringify(operand.text)} is not a date; write YYYY-MM-DD or use a function such as today()`);
   return operand.text;
 }
 
 const dateOperators = ["=", "!=", "<", "<=", ">", ">=", "BETWEEN", "IS NULL", "IS NOT NULL"] as const;
 
-function dateField(name: string, column: SQL, kind: "date" | "timestamp"): PqlField {
+function dateField(name: string, column: SQL, kind: "date" | "timestamp"): FilterQueryField {
   const day = kind === "date" ? column : sql`((${column} at time zone 'UTC')::date)`;
   return {
     name, operators: dateOperators, accepts: ["date"],
@@ -98,7 +98,7 @@ function dateField(name: string, column: SQL, kind: "date" | "timestamp"): PqlFi
 
 // ---- built-in fields ----
 
-const text = (name: string, columns: SQL[]): PqlField => ({
+const text = (name: string, columns: SQL[]): FilterQueryField => ({
   name, operators: ["=", "!=", "~"],
   compile(_context, operator, [operand]) {
     const value = operand!.text;
@@ -110,7 +110,7 @@ const text = (name: string, columns: SQL[]): PqlField => ({
   },
 });
 
-const idField: PqlField = {
+const idField: FilterQueryField = {
   name: "id",
   operators: ["=", "!=", "~", "<", "<=", ">", ">=", "BETWEEN", "IN", "NOT IN"],
   order: (_context, direction) => [direction === "asc" ? sql`${workItems.sequence} asc` : sql`${workItems.sequence} desc`],
@@ -123,7 +123,7 @@ const idField: PqlField = {
     const parsed = operands.map((operand) => {
       if (/^[0-9]{1,9}$/.test(operand.text)) return { sequence: Number(operand.text), inProject: true };
       const match = /^([A-Za-z][A-Za-z0-9]*)-([0-9]{1,9})$/.exec(operand.text);
-      if (!match) throw new PqlError(operand.pos, `${JSON.stringify(operand.text)} is not a work item id; write WEB-11 or a sequence number`);
+      if (!match) throw new FilterQueryError(operand.pos, `${JSON.stringify(operand.text)} is not a work item id; write WEB-11 or a sequence number`);
       return { sequence: Number(match[2]), inProject: keys.includes(match[1]!.toUpperCase()) };
     });
     const sequences = parsed.filter((entry) => entry.inProject).map((entry) => entry.sequence);
@@ -140,13 +140,13 @@ const idField: PqlField = {
   },
 };
 
-function enumField(name: string, column: SQL, allowed: readonly string[], order?: PqlField["order"], accepts?: PqlField["accepts"]): PqlField {
+function enumField(name: string, column: SQL, allowed: readonly string[], order?: FilterQueryField["order"], accepts?: FilterQueryField["accepts"]): FilterQueryField {
   return {
     name, operators: setOperators, order, accepts,
     compile(_context, operator, operands) {
       const values = [...new Set(operands.map((operand) => {
         const value = operand.text.toLowerCase();
-        if (!allowed.includes(value)) throw new PqlError(operand.pos, `${JSON.stringify(operand.text)} is not a valid ${name}; use one of ${allowed.join(", ")}`);
+        if (!allowed.includes(value)) throw new FilterQueryError(operand.pos, `${JSON.stringify(operand.text)} is not a valid ${name}; use one of ${allowed.join(", ")}`);
         return value;
       }))];
       if (values.length === 0) return isNegative(operator) ? yes : no;
@@ -158,7 +158,7 @@ function enumField(name: string, column: SQL, allowed: readonly string[], order?
 const stateOf = sql`(select s.state_group from ${workItemStates} s where s.id = ${workItems.stateId})`;
 const priorityRank = sql`case ${workItems.priority} when 'urgent' then 0 when 'high' then 1 when 'medium' then 2 when 'low' then 3 else 4 end`;
 
-const stateField: PqlField = {
+const stateField: FilterQueryField = {
   name: "state", operators: setOperators,
   order: (_context, direction) => [direction === "asc"
     ? sql`(select s.sort_order from ${workItemStates} s where s.id = ${workItems.stateId}) asc`
@@ -179,7 +179,7 @@ const mentionLinked = (ids: string[] | null) => sql`exists (
 
 const firstName = (table: SQL) => (direction: "asc" | "desc") => [direction === "asc" ? sql`${table} asc nulls last` : sql`${table} desc nulls last`];
 
-export const defaultFields: PqlField[] = [
+export const defaultFields: FilterQueryField[] = [
   text("title", [sql`${workItems.title}`]),
   text("text", [sql`${workItems.title}`, sql`${workItems.descriptionText}`]),
   idField,
@@ -213,7 +213,7 @@ export const defaultFields: PqlField[] = [
 ];
 
 // Fields that can be sorted on but have no condition of their own are added here.
-const orderOnly: Array<{ name: string; order: NonNullable<PqlField["order"]> }> = [
+const orderOnly: Array<{ name: string; order: NonNullable<FilterQueryField["order"]> }> = [
   { name: "sortOrder", order: (_context, direction) => [direction === "asc" ? sql`${workItems.sortOrder} asc` : sql`${workItems.sortOrder} desc`] },
   { name: "rank", order: (_context, direction) => [direction === "asc" ? sql`${workItems.sortOrder} asc` : sql`${workItems.sortOrder} desc`] },
 ];
@@ -225,7 +225,7 @@ const addDays = (day: string, days: number) => isoDay(new Date(new Date(`${day}T
 /** Weeks run Monday to Sunday. */
 const mondayOf = (day: string) => addDays(day, -((new Date(`${day}T00:00:00Z`).getUTCDay() + 6) % 7));
 
-export const defaultFunctions: PqlFunction[] = [
+export const defaultFunctions: FilterQueryFunction[] = [
   { name: "currentUser", kind: "value", returns: "user", list: false, evaluate: (context) => [context.userId] },
   { name: "today", kind: "value", returns: "date", list: false, evaluate: (context) => [context.today] },
   { name: "startOfWeek", kind: "value", returns: "date", list: false, evaluate: (context) => [mondayOf(context.today)] },
@@ -242,13 +242,13 @@ export const defaultFunctions: PqlFunction[] = [
 
 /**
  * The registry the compiler reads. Ticket 09 adds `cycle`, `module` and `activeCycle()` by passing extra
- * fields and functions to `createPqlRegistry`; the parser and compiler stay untouched.
+ * fields and functions to `createFilterQueryRegistry`; the parser and compiler stay untouched.
  */
-export function createPqlRegistry(extra: { fields?: PqlField[]; functions?: PqlFunction[]; dynamic?: PqlRegistry["dynamic"] } = {}): PqlRegistry {
-  const fields = new Map<string, PqlField>();
+export function createFilterQueryRegistry(extra: { fields?: FilterQueryField[]; functions?: FilterQueryFunction[]; dynamic?: FilterQueryRegistry["dynamic"] } = {}): FilterQueryRegistry {
+  const fields = new Map<string, FilterQueryField>();
   for (const field of [...defaultFields, ...(extra.fields ?? [])]) fields.set(field.name.toLowerCase(), field);
   for (const entry of orderOnly) if (!fields.has(entry.name.toLowerCase())) fields.set(entry.name.toLowerCase(), { name: entry.name, operators: [], compile: () => no, order: entry.order });
-  const functions = new Map<string, PqlFunction>();
+  const functions = new Map<string, FilterQueryFunction>();
   for (const fn of [...defaultFunctions, ...(extra.functions ?? [])]) functions.set(fn.name.toLowerCase(), fn);
   // title sorts case-insensitively like the list sort.
   const title = fields.get("title")!;
@@ -256,4 +256,4 @@ export function createPqlRegistry(extra: { fields?: PqlField[]; functions?: PqlF
   return { fields, functions, dynamic: extra.dynamic };
 }
 
-export const defaultPqlRegistry = createPqlRegistry();
+export const defaultFilterQueryRegistry = createFilterQueryRegistry();

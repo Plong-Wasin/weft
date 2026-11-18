@@ -80,6 +80,8 @@ try {
   await confirmDelete.click();
   await dialog.getByText(translate("runtimes.deleteRefusedAgents").replace("{names}", "Coder")).waitFor();
   check(await dialog.getByText(translate("runtimes.deleteRefusedTitle")).isVisible(), "refusal title missing");
+  // The refusal replaces the confirm view under the focus: it must land on Close, never on a button that deletes.
+  check(await page.evaluate(() => document.activeElement?.textContent) === translate("runtimes.deleteClose"), "focus must be on Close after a refusal");
   await page.keyboard.press("Escape");
   await busyCard.waitFor();
   console.log("runtime-delete: the busy Runtime refuses the delete and the dialog names the bound Coder Agent");

@@ -51,7 +51,7 @@ test.concurrent("categories match by equality or membership, case-insensitively"
   });
 });
 
-test.concurrent("an invalid value is a PQL error naming the allowed values", async () => {
+test.concurrent("an invalid value is a filter query error naming the allowed values", async () => {
   await withRollback(db, async (transaction) => {
     const points = await setup(transaction, { type: "points", values: ["1", "2", "3"] });
     expect((await points.error("estimate = 4"))?.message).toMatch(/"4".*use one of 1, 2, 3/);

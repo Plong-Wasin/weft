@@ -1,7 +1,7 @@
-import { PqlError } from "./errors";
+import { FilterQueryError } from "./errors";
 
 /** Hard limits that keep hostile input cheap to reject. */
-export const pqlLimits = { maxLength: 2000, maxTokens: 600, maxDepth: 24, maxListItems: 100, maxLimit: 1000 } as const;
+export const filterQueryLimits = { maxLength: 2000, maxTokens: 600, maxDepth: 24, maxListItems: 100, maxLimit: 1000 } as const;
 
 export type Token =
   | { type: "word"; text: string; pos: number; end: number }
@@ -13,18 +13,18 @@ const wordPart = /[\p{L}\p{N}_.\-@:/]/u;
 
 /** Splits the source into words, quoted strings and symbols. Anything else is an error at its offset. */
 export function tokenize(source: string): Token[] {
-  if (source.length > pqlLimits.maxLength) throw new PqlError(pqlLimits.maxLength, `query is longer than ${pqlLimits.maxLength} characters`);
+  if (source.length > filterQueryLimits.maxLength) throw new FilterQueryError(filterQueryLimits.maxLength, `query is longer than ${filterQueryLimits.maxLength} characters`);
   const tokens: Token[] = [];
   let i = 0;
   while (i < source.length) {
     const char = source[i]!;
     if (/\s/.test(char)) { i += 1; continue; }
-    if (tokens.length >= pqlLimits.maxTokens) throw new PqlError(i, `query has more than ${pqlLimits.maxTokens} tokens`);
+    if (tokens.length >= filterQueryLimits.maxTokens) throw new FilterQueryError(i, `query has more than ${filterQueryLimits.maxTokens} tokens`);
     if (char === '"' || char === "'") {
       let text = "";
       let j = i + 1;
       for (;;) {
-        if (j >= source.length) throw new PqlError(i, "unterminated string");
+        if (j >= source.length) throw new FilterQueryError(i, "unterminated string");
         const c = source[j]!;
         if (c === "\\" && j + 1 < source.length) {
           const next = source[j + 1]!;
@@ -39,7 +39,7 @@ export function tokenize(source: string): Token[] {
     }
     if (char === "!" || char === "<" || char === ">") {
       if (source[i + 1] === "=") { tokens.push({ type: "symbol", text: `${char}=`, pos: i, end: i + 2 }); i += 2; continue; }
-      if (char === "!") throw new PqlError(i, 'unexpected "!", did you mean "!="?');
+      if (char === "!") throw new FilterQueryError(i, 'unexpected "!", did you mean "!="?');
       tokens.push({ type: "symbol", text: char, pos: i, end: i + 1 });
       i += 1;
       continue;
@@ -52,7 +52,7 @@ export function tokenize(source: string): Token[] {
       i = j;
       continue;
     }
-    throw new PqlError(i, `unexpected character ${JSON.stringify(char)}`);
+    throw new FilterQueryError(i, `unexpected character ${JSON.stringify(char)}`);
   }
   return tokens;
 }
@@ -87,7 +87,7 @@ export function parse(source: string): Query {
   const here = () => peek()?.pos ?? endPos;
   const isWord = (token: Token | undefined, word: string) => token?.type === "word" && upper(token.text) === word;
   const isSymbol = (token: Token | undefined, symbol: string) => token?.type === "symbol" && token.text === symbol;
-  const fail = (reason: string, pos = here()): never => { throw new PqlError(pos, reason); };
+  const fail = (reason: string, pos = here()): never => { throw new FilterQueryError(pos, reason); };
 
   function expectSymbol(symbol: string, reason: string) {
     if (!isSymbol(peek(), symbol)) fail(reason);
@@ -148,7 +148,7 @@ export function parse(source: string): Query {
     if (operator === "IN" || operator === "NOT IN") {
       expectSymbol("(", `${operator} needs a parenthesised list`);
       for (;;) {
-        if (values.length >= pqlLimits.maxListItems) fail(`a list holds at most ${pqlLimits.maxListItems} values`);
+        if (values.length >= filterQueryLimits.maxListItems) fail(`a list holds at most ${filterQueryLimits.maxListItems} values`);
         values.push(parseValue());
         if (isSymbol(peek(), ",")) { at += 1; continue; }
         break;
@@ -167,7 +167,7 @@ export function parse(source: string): Query {
     const token = peek();
     if (!token) return fail("a condition is expected");
     if (isSymbol(token, "(")) {
-      if (depth >= pqlLimits.maxDepth) fail(`nesting is deeper than ${pqlLimits.maxDepth} levels`);
+      if (depth >= filterQueryLimits.maxDepth) fail(`nesting is deeper than ${filterQueryLimits.maxDepth} levels`);
       at += 1;
       const inner = parseOr(depth + 1);
       expectSymbol(")", 'expected ")"');
@@ -178,7 +178,7 @@ export function parse(source: string): Query {
 
   function parseNot(depth: number): Expr {
     if (isWord(peek(), "NOT")) {
-      if (depth >= pqlLimits.maxDepth) fail(`nesting is deeper than ${pqlLimits.maxDepth} levels`);
+      if (depth >= filterQueryLimits.maxDepth) fail(`nesting is deeper than ${filterQueryLimits.maxDepth} levels`);
       const pos = here();
       at += 1;
       return { kind: "not", expr: parseNot(depth + 1), pos };
@@ -223,7 +223,7 @@ export function parse(source: string): Query {
     at += 1;
     const value = Number(token.text);
     if (value < 1) fail("LIMIT must be at least 1", token.pos);
-    if (value > pqlLimits.maxLimit) fail(`LIMIT must be at most ${pqlLimits.maxLimit}`, token.pos);
+    if (value > filterQueryLimits.maxLimit) fail(`LIMIT must be at most ${filterQueryLimits.maxLimit}`, token.pos);
     query.limit = { value, pos: token.pos };
   }
   if (peek()) fail(`unexpected ${peek()!.type === "string" ? "string" : JSON.stringify(peek()!.text)}`);

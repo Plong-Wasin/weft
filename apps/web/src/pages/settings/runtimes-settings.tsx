@@ -2,14 +2,16 @@ import React from "react";
 import { Link } from "react-router";
 import { formatDate, translate } from "@weft/shared";
 import { action, actionResult } from "../../api";
+import { Dialog } from "../../dialog";
 import { useWorkspace } from "../../layouts/workspace-layout";
 import { paths } from "../../routes";
+import type { Member } from "../../types";
 import { Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 
 type RuntimeProfile = { id: string; runtimeId: string; name: string; sandbox: "full" | "read-only" | "run-folder"; filesystemAllowlist: string[]; networkAllowlist: string[] };
 type Runtime = {
   id: string; workspaceId: string; ownerId: string; ownerName: string; hostname: string; agentCli: "claude" | "codex"; shared: boolean; enforceSandbox: boolean; online: boolean; lastSeenAt: string;
-  offlineSeconds: number | null; agents: Array<{ id: string; name: string }>; waitingRuns: number;
+  offlineSeconds: number | null; agents: Array<{ id: string; name: string; enabled: boolean }>; waitingRuns: number; unfinishedRuns: number;
   sessionFolders: Array<{ folder: string; workItem: { id: string; displayId: string; title: string }; lastUsedAt: string }>;
 };
 
@@ -86,15 +88,50 @@ function ProfileControls({ runtime, owner, reload }: { runtime: Runtime; owner: 
   </div>;
 }
 
+/** Delete for the Runtime owner and workspace Admins. A refusal shows what still uses the Runtime, from the list the page already holds. */
+function DeleteRuntime({ runtime, reload }: { runtime: Runtime; reload: () => void }) {
+  const [open, setOpen] = React.useState(false);
+  const [refused, setRefused] = React.useState(false);
+  const [failed, setFailed] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const close = () => { setOpen(false); setRefused(false); setFailed(false); };
+  const confirm = async () => {
+    setBusy(true);
+    const result = await actionResult("delete_runtime", { runtimeId: runtime.id });
+    setBusy(false);
+    if (!("error" in result)) { close(); reload(); return; }
+    if (result.code === "runtime_in_use") { setRefused(true); reload(); return; }
+    setFailed(true);
+  };
+  const enabledAgents = runtime.agents.filter((agent) => agent.enabled).map((agent) => agent.name);
+  return <>
+    <button type="button" className="secondary" onClick={() => setOpen(true)}>{translate("runtimes.delete")}</button>
+    {open && <Dialog title={translate(refused ? "runtimes.deleteRefusedTitle" : "runtimes.deleteTitle")} onClose={close}>
+      {refused ? <>
+        {enabledAgents.length > 0 && <p className="m-0 text-14">{translate("runtimes.deleteRefusedAgents").replace("{names}", enabledAgents.join(", "))}</p>}
+        {runtime.unfinishedRuns > 0 && <p className="m-0 text-14">{translate("runtimes.deleteRefusedRuns").replace("{count}", String(runtime.unfinishedRuns))}</p>}
+        {enabledAgents.length === 0 && runtime.unfinishedRuns === 0 && <p className="m-0 text-14">{translate("runtimes.deleteRefusedOther")}</p>}
+        <div className="flex justify-end"><button type="button" className="secondary" onClick={close}>{translate("runtimes.deleteClose")}</button></div>
+      </> : <>
+        <p className="m-0 text-14">{translate("runtimes.deleteBody")}</p>
+        {failed && <p role="alert" className="m-0 text-12 text-danger-text">{translate("runtimes.failed")}</p>}
+        <div className="flex justify-end gap-2"><button type="button" className="secondary" onClick={close}>{translate("comments.cancel")}</button><button type="button" disabled={busy} onClick={() => void confirm()}>{translate("runtimes.delete")}</button></div>
+      </>}
+    </Dialog>}
+  </>;
+}
+
 export function WorkspaceRuntimes() {
   const { workspace, selfId } = useWorkspace();
   const [runtimes, setRuntimes] = React.useState<Runtime[]>([]);
   const [failed, setFailed] = React.useState(false);
+  const [isAdmin, setIsAdmin] = React.useState(false);
   const load = React.useCallback(async () => {
-    const result = await action<Runtime[]>("list_runtimes", { workspaceId: workspace.id });
+    const [result, members] = await Promise.all([action<Runtime[]>("list_runtimes", { workspaceId: workspace.id }), action<Member[]>("list_members", { workspaceId: workspace.id })]);
     setFailed(result === null);
     setRuntimes(orderRuntimes(result ?? []));
-  }, [workspace.id]);
+    setIsAdmin(members?.find((member) => member.userId === selfId)?.role === "Admin");
+  }, [workspace.id, selfId]);
   React.useEffect(() => { void load(); }, [load]);
   const toggle = async (runtime: Runtime) => {
     const result = await actionResult(runtime.shared ? "unshare_runtime" : "share_runtime", { runtimeId: runtime.id });
@@ -110,6 +147,7 @@ export function WorkspaceRuntimes() {
         {runtimes.map((runtime) => <Row key={runtime.id}><div className="mr-auto grid min-w-0 gap-0.5"><span className="font-medium">{runtime.ownerName} · {runtime.agentCli}</span><span className="text-13 text-secondary">{runtime.hostname} · {runtime.online ? translate("runtimes.online") : offlineText(runtime)}</span></div>
           <span className="text-13 text-secondary">{runtime.shared ? translate("runtimes.shared") : translate("runtimes.private")}</span>
           {runtime.ownerId === selfId && <button type="button" className="secondary" onClick={() => void toggle(runtime)}>{translate(runtime.shared ? "runtimes.unshare" : "runtimes.share")}</button>}
+          {(runtime.ownerId === selfId || isAdmin) && <DeleteRuntime runtime={runtime} reload={() => void load()} />}
           <RuntimeUsage runtime={runtime} />
           <ProfileControls runtime={runtime} owner={runtime.ownerId === selfId} reload={() => void load()} />
         </Row>)}

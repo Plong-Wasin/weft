@@ -13,6 +13,8 @@ const rotateBeforeMs = 7 * 24 * 60 * 60 * 1000;
 const cli = Type.Union([Type.Literal("claude"), Type.Literal("codex")]);
 /** How many Session folders the Runtime list shows per Runtime, newest first. */
 const sessionFolderLimit = 10;
+/** Run statuses that are not final: a Runtime with one of them on it cannot be deleted. */
+const unfinishedRunStatuses = ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input", "follow_up"] as const;
 type Context = { userId: string; apiTokenId?: string };
 
 /**
@@ -36,9 +38,11 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
     daemonId: Type.String({ format: "uuid" }), hostname: Type.String(), agentCli: cli, shared: Type.Boolean(), enforceSandbox: Type.Boolean(), online: Type.Boolean(), lastSeenAt: Type.String(),
     /** Seconds since the Runtime was last seen; null while it is online, and when the time is unknown (the Daemon reset it to the epoch). */
     offlineSeconds: Type.Union([Type.Integer(), Type.Null()]),
-    agents: Type.Array(Type.Object({ id: Type.String({ format: "uuid" }), name: Type.String() })),
+    agents: Type.Array(Type.Object({ id: Type.String({ format: "uuid" }), name: Type.String(), enabled: Type.Boolean() })),
     /** Queued Runs of the Agents bound to this Runtime: they wait for it. */
     waitingRuns: Type.Integer(),
+    /** Runs of this Runtime, or of the Agents bound to it, that are not finished: the Runtime cannot be deleted while any is. */
+    unfinishedRuns: Type.Integer(),
     /** The newest Session folders of this Runtime's Runs, that the viewer may see the work item of. */
     sessionFolders: Type.Array(Type.Object({
       folder: Type.String(), workItem: Type.Object({ id: Type.String({ format: "uuid" }), displayId: Type.String(), title: Type.String() }), lastUsedAt: Type.String(),
@@ -56,7 +60,7 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
     // Work item titles reach the viewer only from projects the viewer can read: all for an Admin, otherwise public ones and the private ones they belong to.
     const projectIds = workspaceRole === "Admin" ? undefined : await readableProjectIds(userId, workspaceId);
     return Promise.all(rows.map(async (row) => {
-      const bound = await db.select({ id: agents.id, name: users.name }).from(agents).innerJoin(users, eq(users.id, agents.userId))
+      const bound = await db.select({ id: agents.id, name: users.name, enabled: agents.enabled }).from(agents).innerJoin(users, eq(users.id, agents.userId))
         .where(eq(agents.runtimeId, row.id)).orderBy(users.name);
       const [waiting] = await db.select({ count: sql<number>`count(*)::int` }).from(runs).innerJoin(agents, eq(agents.id, runs.agentId))
         .where(and(eq(agents.runtimeId, row.id), eq(runs.status, "queued")));
@@ -71,7 +75,7 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
       const offlineSeconds = row.online || row.lastSeenAt.getTime() <= 1000 ? null : Math.max(0, Math.floor((now().getTime() - row.lastSeenAt.getTime()) / 1000));
       const { lastSeenAt, ...rest } = row;
       return {
-        ...rest, lastSeenAt: lastSeenAt.toISOString(), offlineSeconds, agents: bound, waitingRuns: waiting?.count ?? 0,
+        ...rest, lastSeenAt: lastSeenAt.toISOString(), offlineSeconds, agents: bound, waitingRuns: waiting?.count ?? 0, unfinishedRuns: await unfinishedRunsOf(db, row.id),
         sessionFolders: folderRows.map((folder) => ({ folder: folder.folder!, workItem: { id: folder.workItemId, displayId: `${folder.projectKey}-${folder.sequence}`, title: folder.title }, lastUsedAt: new Date(folder.lastUsedAt).toISOString() })),
       };
     }));
@@ -209,6 +213,34 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
         return { deleted: true };
       },
     },
+    deleteRuntime: {
+      name: "delete_runtime", kind: "write" as const,
+      input: Type.Object({ runtimeId: Type.String({ format: "uuid" }) }), output: Type.Object({ deleted: Type.Boolean() }),
+      handler: async (context: Context, input: { runtimeId: string }) => {
+        await db.transaction(async (transaction) => {
+          const database = transaction as unknown as Database;
+          // The row lock comes first: a binding or a Run that commits after this point waits, and the checks below see it.
+          const [runtime] = await database.select({ id: runtimes.id, workspaceId: runtimes.workspaceId, ownerId: runtimes.ownerId, agentCli: runtimes.agentCli, daemonId: runtimes.daemonId })
+            .from(runtimes).where(eq(runtimes.id, input.runtimeId)).for("update");
+          if (!runtime) throw new ActionError("Runtime not found", 404);
+          const role = await requireWorkspaceRole(database, context.userId, runtime.workspaceId, "read");
+          if (runtime.ownerId !== context.userId && role !== "Admin") throw new ActionError("Only the Runtime owner or a workspace Admin can delete a Runtime", 403);
+          const [daemon] = await database.select({ hostname: daemons.hostname }).from(daemons).where(eq(daemons.id, runtime.daemonId));
+          const bound = await database.select({ id: agents.id, enabled: agents.enabled }).from(agents).where(eq(agents.runtimeId, runtime.id));
+          const unfinished = await unfinishedRunsOf(database, runtime.id);
+          if (bound.some((agent) => agent.enabled) || unfinished > 0) throw new ActionError("This Runtime is still in use: an enabled Agent is bound to it, or a Run of it is not finished.", 409, "runtime_in_use");
+          // A disabled Agent does not block: its binding goes, and its Autopilot with it, so enabling it later never starts a server-side Autopilot Agent.
+          for (const agent of bound) {
+            await database.update(agents).set({ runtimeId: null, runtimeProfileId: null, autopilot: false }).where(eq(agents.id, agent.id));
+            await auditAgentChange(database, { workspaceId: runtime.workspaceId, entityType: "agent", entityId: agent.id, field: "runtime", oldValue: runtime.id, newValue: null, actorId: context.userId });
+          }
+          // Profiles cascade with the row, and sharing ends with it. Session folders on the computer are left to the Daemon's own sweep.
+          await database.delete(runtimes).where(eq(runtimes.id, runtime.id));
+          await auditAgentChange(database, { workspaceId: runtime.workspaceId, entityType: "runtime", entityId: runtime.id, field: "deleted", oldValue: { ownerId: runtime.ownerId, agentCli: runtime.agentCli, hostname: daemon?.hostname ?? null }, newValue: null, actorId: context.userId });
+        });
+        return { deleted: true };
+      },
+    },
     setRuntimeSandboxEnforcement: {
       name: "set_runtime_sandbox_enforcement", kind: "write" as const,
       input: Type.Object({ runtimeId: Type.String({ format: "uuid" }), enforceSandbox: Type.Boolean() }), output: Type.Object({ id: Type.String(), enforceSandbox: Type.Boolean() }),
@@ -239,6 +271,13 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
       if (daemon) await db.update(runtimes).set({ lastSeenAt: new Date(0) }).where(eq(runtimes.daemonId, daemon.id));
     },
   };
+
+  /** Runs that are not finished and belong to this Runtime: claimed by it, or of an Agent bound to it. */
+  async function unfinishedRunsOf(database: Database, runtimeId: string) {
+    const [row] = await database.select({ count: sql<number>`count(*)::int` }).from(runs)
+      .where(and(inArray(runs.status, [...unfinishedRunStatuses]), or(eq(runs.runtimeId, runtimeId), inArray(runs.agentId, database.select({ id: agents.id }).from(agents).where(eq(agents.runtimeId, runtimeId))))));
+    return row!.count;
+  }
 
   /** The projects a workspace member may read: the public ones and the private ones they belong to. */
   async function readableProjectIds(userId: string, workspaceId: string) {

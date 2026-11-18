@@ -1805,6 +1805,7 @@ export const en = {
   "sidebar.dragHandle": "Drag to reorder",
   "sidebar.reorderHint": "Drag, or press the Up and Down arrow keys, to reorder",
   "sidebar.projectSwitcher": "Project",
+  "sidebar.backToWorkspace": "Back to Workspace settings",
   "sidebar.projectOptions": "Project options",
   "sidebar.moveUp": "Move up",
   "sidebar.moveDown": "Move down",

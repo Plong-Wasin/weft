@@ -4,7 +4,7 @@ import { useOutboundWebhooksEnabled } from "../outbound-webhooks-flag";
 import React from "react";
 import { NavLink, useLocation, useNavigate, useParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, ChevronRight, FileText, Folder, GripVertical, MoreHorizontal, Plus, Settings, Star } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, ChevronRight, FileText, Folder, GripVertical, MoreHorizontal, Plus, Settings, Star } from "lucide-react";
 import { translate, type MessageKey } from "@weft/shared";
 import { action } from "../api";
 import { ProjectNav } from "../project-nav";
@@ -174,6 +174,8 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
     expand: (projectId, expanded) => void setPreference(projectId, { expanded }),
     reset: async () => { await resetOrder(); },
   };
+  // Project mode: one project's settings. While the list loads the sections show at once; once it is loaded, a key that is not in it gets the Workspace mode list.
+  const inProjectSettings = section === "settings" && Boolean(projectKey) && (data === undefined || projectList.some((project) => project.key === projectKey));
   const { data: favorites = [] } = useQuery({ queryKey: favoritesKey(workspace.id), queryFn: async () => await action<Array<{ id: string; title: string; projectId: string | null }>>("list_favorite_wiki_pages", { workspaceId: workspace.id }) ?? [], enabled: section === "work" || section === "wiki" });
   return <nav aria-label={translate("shell.sidebar")} className="flex w-64 shrink-0 max-md:w-auto max-md:flex-1 max-md:border-r-0 flex-col gap-0.5 overflow-y-auto border-r border-subtle bg-surface-1 p-2">
     {section === "work" && <>
@@ -195,7 +197,11 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       </>}
     </>}
     {section === "ai" && <AiSidebar workspace={workspace} activeId={aiChatId} />}
-    {section === "settings" && <>
+    {inProjectSettings && projectKey && <>
+      <NavLink to={paths.workspaceSettings(workspace.slug)} className={(state) => `${itemClass(state)} mb-2`}><ArrowLeft aria-hidden size={14} className="shrink-0" />{translate("sidebar.backToWorkspace")}</NavLink>
+      <SettingsProjectNav workspace={workspace} projects={[...projectSort.starred, ...projectSort.others]} projectKey={projectKey} />
+    </>}
+    {section === "settings" && !inProjectSettings && <>
       <p className={heading}>{translate("sidebar.workspace")}</p>
       <NavLink end to={paths.workspaceSettings(workspace.slug)} className={itemClass}>{translate("settings.general")}</NavLink>
       <NavLink to={paths.workspaceMembers(workspace.slug)} className={itemClass}>{translate("members.title")}</NavLink>
@@ -211,12 +217,9 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       <NavLink to={paths.workspaceAi(workspace.slug)} className={itemClass}>{translate("aiStatus.title")}</NavLink>
       {integrationsOn && <NavLink to={paths.workspaceIntegrations(workspace.slug)} className={itemClass}>{translate("integrations.title")}</NavLink>}
       {webhooksOn && <NavLink to={paths.workspaceWebhooks(workspace.slug)} className={itemClass}>{translate("outboundWebhooks.nav")}</NavLink>}
-      <p className={heading}>{translate("projects.title")}</p>
       <NavLink to={paths.workspaceProjectOrder(workspace.slug)} className={itemClass}>{translate("settings.projectOrder")}</NavLink>
-      {/* While the list loads the sections show at once; once it is loaded, a key that is not in it (a typo, an archived project) gets the list to pick from instead of sections that lead nowhere. */}
-      {projectKey && (data === undefined || projectList.some((project) => project.key === projectKey))
-        ? <SettingsProjectNav workspace={workspace} projects={[...projectSort.starred, ...projectSort.others]} projectKey={projectKey} />
-        : <SettingsProjectList workspace={workspace} projects={[...projectSort.starred, ...projectSort.others]} />}
+      <p className={heading}>{translate("projects.title")}</p>
+      <SettingsProjectList workspace={workspace} projects={[...projectSort.starred, ...projectSort.others]} />
     </>}
   </nav>;
 }

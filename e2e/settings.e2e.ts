@@ -1,6 +1,8 @@
 // Browser end-to-end flow: workspace settings (general, members, invites) and project settings (general, members, labels, states, features).
 // Run with `bun e2e/settings.e2e.ts` (needs the shared weft-postgres container; set DATABASE_URL to use your own database). Screenshots go to .local/visual/review/16-settings-screens.
 import { chromium, type Page } from "playwright";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -39,6 +41,14 @@ try {
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const call = async <T>(name: string, body: unknown) => await (await page.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
   const sidebar = page.getByRole("navigation", { name: translate("shell.sidebar") });
+  // Records whether the Workspace links ever showed in this page's sidebar, so a direct visit to a project can be checked for a flash.
+  await page.addInitScript((invitesLabel: string) => {
+    const flags = window as unknown as { sawWorkspaceLinks?: boolean };
+    flags.sawWorkspaceLinks = false;
+    new MutationObserver(() => {
+      for (const link of document.querySelectorAll("nav a")) if (link.textContent === invitesLabel) flags.sawWorkspaceLinks = true;
+    }).observe(document, { childList: true, subtree: true });
+  }, translate("settings.invites"));
 
   await page.goto(web);
   await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
@@ -117,10 +127,15 @@ try {
   const invited = (await members()).find((member) => member.name === "Invited Person")!;
   console.log("settings ok: workspace members role change");
 
-  // Project settings: outside a project the sidebar lists the projects as plain links; opening one shows only its own sections and a project switcher.
+  // Project settings: Workspace mode lists the projects as plain links, with Project order in the Workspace group. Opening one shows Project mode: a way back, the switcher and only that project's sections.
   check(await sidebar.getByRole("navigation", { name: new RegExp(`^${translate("settings.label")} [A-Z]+$`) }).count() === 0, "settings sidebar shows a project's sections before a project is chosen");
+  check(await sidebar.getByRole("link", { name: translate("settings.projectOrder"), exact: true }).count() === 1, "Project order is not a Workspace link");
+  check(await sidebar.getByText(translate("projects.title"), { exact: true }).count() === 1, "Workspace mode has no Projects heading");
   await sidebar.getByRole("list", { name: translate("projects.title") }).getByRole("link", { name: "Mobile" }).click();
   check(await sidebar.getByRole("combobox", { name: translate("sidebar.projectSwitcher"), exact: true }).inputValue() === "MOB", "project switcher shows another project than the open one (MOB)");
+  check(await sidebar.getByRole("link", { name: translate("settings.invites"), exact: true }).count() === 0, "Project mode still shows the Workspace links");
+  check(await sidebar.getByRole("link", { name: translate("settings.projectOrder"), exact: true }).count() === 0, "Project mode still shows Project order");
+  check(await sidebar.getByText(translate("projects.title"), { exact: true }).count() === 0, "Project mode still shows the Projects heading");
   const projectNav = sidebar.getByRole("navigation", { name: `${translate("settings.label")} MOB` });
   for (const label of [translate("settings.general"), translate("members.title"), translate("labels.title"), translate("states.title"), translate("settings.features"), translate("recurrences.title")]) await projectNav.getByRole("link", { name: label, exact: true }).waitFor();
 
@@ -139,9 +154,53 @@ try {
   await page.goto(`${web}/${slug}/settings/projects/NOPE`);
   await sidebar.getByRole("list", { name: translate("projects.title") }).getByRole("link", { name: "Mobile" }).waitFor();
   check(await sidebar.getByRole("navigation", { name: `${translate("settings.label")} NOPE` }).count() === 0, "an unknown project key shows sections in the settings sidebar");
+  check(await sidebar.getByRole("link", { name: translate("sidebar.backToWorkspace"), exact: true }).count() === 0, "an unknown project key shows the Project mode back link");
+  // An archived project leaves the list, so its key gets the list too, not its sections.
+  const archivedId = (await call<Array<{ id: string; key: string }>>("list_projects", { workspaceId, archived: false })).find((project) => project.key === "SWT")!.id;
+  await call("archive_project", { projectId: archivedId });
+  await page.goto(`${web}/${slug}/settings/projects/SWT`);
+  await sidebar.getByRole("list", { name: translate("projects.title") }).getByRole("link", { name: "Mobile" }).waitFor();
+  check(await sidebar.getByRole("navigation", { name: `${translate("settings.label")} SWT` }).count() === 0, "an archived project key shows its sections in the settings sidebar");
+  // A direct visit shows Project mode at once: the Workspace links never showed in that page.
+  await page.goto(`${web}/${slug}/settings/projects/MOB/labels`);
+  await projectNav.waitFor();
+  check(!(await page.evaluate(() => (window as unknown as { sawWorkspaceLinks?: boolean }).sawWorkspaceLinks)), "a direct visit showed the Workspace links before Project mode");
+  console.log("settings ok: project switcher keeps the section, unknown and archived keys, direct visit");
+
+  // The back link leaves Project mode for Workspace settings General.
+  await sidebar.getByRole("link", { name: translate("sidebar.backToWorkspace"), exact: true }).click();
+  await page.waitForURL(`${web}/${slug}/settings`);
+  await sidebar.getByRole("link", { name: translate("settings.projectOrder"), exact: true }).waitFor();
+  check(await sidebar.getByRole("link", { name: translate("settings.general"), exact: true }).and(page.locator('[aria-current="page"]')).count() === 1, "the back link did not land on Workspace settings General");
   await page.goto(`${web}/${slug}/settings/projects/MOB`);
   await projectNav.waitFor();
-  console.log("settings ok: project switcher keeps the section");
+  console.log("settings ok: back link to Workspace settings General");
+
+  // Captures of both modes at 1440 and 390 px: no sideways scroll; the images are opened and checked for clipped labels and overlap.
+  const captureDir = join(import.meta.dir, "..", ".local", "captures", "01-settings-sidebar-modes");
+  mkdirSync(captureDir, { recursive: true });
+  for (const width of [1440, 390]) {
+    // Below 768 px the sidebar lives in the drawer behind the top bar's Open menu button.
+    const openSidebar = async () => { if (width < 768) await page.getByRole("button", { name: translate("shell.openMenu"), exact: true }).click(); };
+    await page.setViewportSize({ width, height: width === 1440 ? 900 : 800 });
+    await page.goto(`${web}/${slug}/settings`);
+    await openSidebar();
+    await sidebar.getByRole("link", { name: translate("settings.projectOrder"), exact: true }).waitFor();
+    check(await noSideScroll(page), `Workspace mode scrolls sideways at ${width} px`);
+    await page.screenshot({ path: join(captureDir, `workspace-mode-${width}.png`) });
+    await page.goto(`${web}/${slug}/settings/projects/MOB/labels`);
+    await openSidebar();
+    await projectNav.waitFor();
+    // The switcher shows the project's name once the list is in; capture after that, not the key shown while it loads.
+    await sidebar.getByRole("combobox", { name: translate("sidebar.projectSwitcher"), exact: true }).locator("option", { hasText: "Mobile" }).waitFor({ state: "attached" });
+    check(await noSideScroll(page), `Project mode scrolls sideways at ${width} px`);
+    await page.screenshot({ path: join(captureDir, `project-mode-${width}.png`) });
+  }
+  // Back to desktop on a fresh load: the phone drawer stays open otherwise.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${web}/${slug}/settings/projects/MOB`);
+  await projectNav.waitFor();
+  console.log(`settings ok: sidebar modes captured in ${captureDir}`);
 
   // Recurrences: create from the settings tab, run once, and verify timeline provenance.
   await projectNav.getByRole("link", { name: translate("recurrences.title"), exact: true }).click();
@@ -292,7 +351,10 @@ try {
     await page.screenshot({ path: `${shots}/${name}-390.png` });
   }
   await page.getByRole("button", { name: translate("shell.openMenu") }).click();
-  await page.getByRole("dialog", { name: translate("shell.sidebar") }).getByRole("link", { name: translate("settings.invites"), exact: true }).waitFor();
+  // The last page is a project's: the drawer shows Project mode, so its way back is there and the Workspace links are not.
+  const drawer = page.getByRole("dialog", { name: translate("shell.sidebar") });
+  await drawer.getByRole("link", { name: translate("sidebar.backToWorkspace"), exact: true }).waitFor();
+  check(await drawer.getByRole("link", { name: translate("settings.invites"), exact: true }).count() === 0, "the phone drawer shows the Workspace links in Project mode");
   await page.screenshot({ path: `${shots}/settings-drawer-390.png` });
   console.log("settings ok: 390px");
 

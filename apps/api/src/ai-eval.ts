@@ -20,7 +20,7 @@ export interface EvalCase {
   expectAnyTool?: string[];
   /** A Write case fails if any of these tools was proposed (the wrong Intake Action, or a normal create for an Intake request). */
   forbidTools?: string[];
-  /** "query" cases: some list_work_items `query` or search_work_items `pql` the model wrote must run and return exactly these titles. */
+  /** "query" cases: some list_work_items `query` or search_work_items `filter` the model wrote must run and return exactly these titles. */
   expectTitles?: string[];
 }
 
@@ -106,7 +106,7 @@ async function queryTitles(db: Database, seeded: { workspaceId: string; userId: 
   const run = async (name: string, payload: Record<string, unknown>) => (actions.get(name)!.handler as (c: unknown, i: unknown) => Promise<Array<{ title: string }>>)({ userId: seeded.userId }, payload);
   try {
     if (call.toolName === "list_work_items" && typeof input.query === "string" && input.query.trim()) return (await run("list_work_items", input)).map((row) => row.title);
-    if (call.toolName === "search_work_items" && typeof input.pql === "string" && input.pql.trim()) return (await run("search_work_items", { ...input, workspaceId: seeded.workspaceId })).map((row) => row.title);
+    if (call.toolName === "search_work_items" && typeof input.filter === "string" && input.filter.trim()) return (await run("search_work_items", { ...input, workspaceId: seeded.workspaceId })).map((row) => row.title);
     return "not a query call";
   } catch (error) {
     // The model may pick a project id that is not valid: that is the model's mistake, so the case fails with the reason.

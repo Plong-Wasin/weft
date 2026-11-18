@@ -767,7 +767,7 @@ export const intakeItems = pgTable("intake_items", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index().on(table.projectId, table.outcome)]);
 
-/** A saved View: a PQL filter, a layout, grouping, ordering and visible properties of one project. It never stores work item data. */
+/** A saved View: a filter query, a layout, grouping, ordering and visible properties of one project. It never stores work item data. */
 export const views = pgTable("views", {
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
@@ -777,7 +777,7 @@ export const views = pgTable("views", {
   scope: text("scope").notNull().default("project"),
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
-  /** The PQL filter, the single stored form of the filters. */
+  /** The filter query, the single stored form of the filters. */
   query: text("query").notNull().default(""),
   layout: text("layout").notNull().default("list"),
   groupBy: text("group_by").notNull().default("state"),

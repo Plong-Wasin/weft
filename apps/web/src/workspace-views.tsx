@@ -8,7 +8,7 @@ import { paths } from "./routes";
 import { Popover, menuItemClass } from "./shell/popover";
 import { formatDay, PriorityIcon, StateIcon } from "./property-dropdowns";
 import { Avatar } from "./avatar";
-import { PqlEditor, PqlToggle } from "./filter-bar";
+import { FilterQueryEditor, FilterQueryToggle } from "./filter-bar";
 import { displayProperties, parseLayoutParams, serializeLayoutParams, sortFields, type DisplayProperty, type LayoutParams } from "./work-item-layout";
 import { differsFromView, paramsToSettings, viewToParams, type SavedView } from "./view-params";
 import { DeleteViewModal, ViewFormModal } from "./views";
@@ -85,7 +85,7 @@ export function WorkspaceViewPage({ workspace, selfId, viewId }: { workspace: Wo
   const [labels, setLabels] = React.useState<Label[]>([]);
   const [people, setPeople] = React.useState<Member[]>([]);
   const [queryError, setQueryError] = React.useState<string | null>(null);
-  const [pqlOpen, setPqlOpen] = React.useState(false);
+  const [filterQueryOpen, setFilterQueryOpen] = React.useState(false);
   const [status, setStatus] = React.useState<string | null>(null);
   const [form, setForm] = React.useState<null | "save" | "edit" | "delete">(null);
   const reloadList = React.useCallback(async () => setSaved((await action<{ views: SavedView[] }>("list_workspace_views", { workspaceId: workspace.id }))?.views ?? []), [workspace.id]);
@@ -152,7 +152,7 @@ export function WorkspaceViewPage({ workspace, selfId, viewId }: { workspace: Wo
         </Popover>
         {view && <span title={t(`views.access.${view.access}`)} className="text-12 text-tertiary">{t(`views.access.${view.access}`)}</span>}
       </nav>
-      <PqlToggle open={pqlOpen || queryError !== null} onToggle={() => setPqlOpen(!pqlOpen)} />
+      <FilterQueryToggle open={filterQueryOpen || queryError !== null} onToggle={() => setFilterQueryOpen(!filterQueryOpen)} />
       <Popover label={t("layout.display")} className={ghost} panelRole="dialog" panelClassName="grid w-72 max-w-[calc(100vw-2rem)] max-h-[70vh] gap-3 overflow-auto p-3" trigger={<><SlidersHorizontal aria-hidden size={14} /><span>{t("layout.display")}</span></>}>
         {() => <>
           <label>{t("layout.sort")}<select value={params.sort} onChange={(event) => update({ sort: event.target.value as LayoutParams["sort"] })}>
@@ -181,7 +181,7 @@ export function WorkspaceViewPage({ workspace, selfId, viewId }: { workspace: Wo
     </header>
     {view?.description && <p className="m-0 text-13 text-secondary">{view.description}</p>}
     {status && <p role="status" className="m-0 text-13 text-secondary">{status}</p>}
-    {(pqlOpen || queryError !== null) && <PqlEditor text={params.q} error={queryError} onApply={(text) => update({ q: text })} generate={{ workspaceId: workspace.id }} />}
+    {(filterQueryOpen || queryError !== null) && <FilterQueryEditor text={params.q} error={queryError} onApply={(text) => update({ q: text })} generate={{ workspaceId: workspace.id }} />}
     {items !== null && <WorkspaceSheet items={items} projects={projects} states={states} labels={labels} people={people} workspaceSlug={workspace.slug} props={params.props} empty={t(params.q.trim() ? "layout.noMatch" : "workspaceViews.empty")} />}
     {form === "save" && <ViewFormModal mode="save" target={{ workspaceId: workspace.id }} settings={paramsToSettings(params)} onClose={() => setForm(null)} onSaved={(next) => { setForm(null); void reloadList(); navigate(paths.workspaceView(workspace.slug, next.id)); }} />}
     {form === "edit" && view && <ViewFormModal mode="edit" view={view} target={{ workspaceId: workspace.id }} onClose={() => setForm(null)} onSaved={(next) => { setForm(null); setView(next); void reloadList(); }} />}

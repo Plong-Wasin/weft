@@ -111,7 +111,7 @@ All variables go in `.env`; defaults are in `.env.example`.
 - **Intake**: `submit_intake_item` puts a work item into the project's Intake, in the hidden `Triage` state. It stays out of lists, boards, search, Cycles, and Modules until a project Admin or Member accepts it; reject, snooze, and duplicate keep it hidden. The submitter is notified of the decision.
 - **Relations**: `blocks` / `blocked_by`, `duplicate`, and `relates_to` between two work items of one project; both items record the change in Activity.
 - **Replies**: a comment can have replies one level deep; the parent's author is notified. A comment has a copyable link, and the work item shows comments and Activity in one filterable timeline.
-- **Query language (PQL)**: `list_work_items` takes `query`; `search_work_items` takes `pql` plus `projectId` (its `query` is free text). The Cycle and Module pages take a query too. Syntax, fields, and examples are in `docs/mcp.md`.
+- **Filter query**: `list_work_items` takes `query`; `search_work_items` takes `filter` plus `projectId` (its `query` is free text). The Cycle and Module pages take a query too. Syntax, fields, and examples are in `docs/mcp.md`.
 - **Toggles**: Cycles, Modules, and Intake are per-project settings (`set_project_features`, project Admin), on by default. Turning one off hides its menu and refuses its Actions; the data is kept. There is no new environment variable.
 - **AI, CLI, MCP**: every phase 2 Action is in the registry, so the CLI (`weft --help` lists the commands) and MCP expose all of them. The AI chat sees all of them except `list_comment_versions`; its Write tools only propose a Confirmation card. See `docs/mcp.md` and `docs/ai-eval.md`.
 

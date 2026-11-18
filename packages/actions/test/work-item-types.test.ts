@@ -272,15 +272,15 @@ test.concurrent("list results carry property values and the type, and filter by 
     const bugs = await items.listWorkItems.handler({ userId: admin.id }, { projectId: project.id, typeIds: [bug.id] });
     expect(bugs.map((row) => row.title)).toEqual(["Crash"]);
     expect(bugs[0]!.properties).toEqual([{ propertyId: severity.id, value: severity.options[1]!.id }]);
-    const byPql = await items.listWorkItems.handler({ userId: admin.id }, { projectId: project.id, query: `type = Bug AND property.severity = high` });
-    expect(byPql.map((row) => row.title)).toEqual(["Crash"]);
+    const byFilterQuery = await items.listWorkItems.handler({ userId: admin.id }, { projectId: project.id, query: `type = Bug AND property.severity = high` });
+    expect(byFilterQuery.map((row) => row.title)).toEqual(["Crash"]);
     expect((await items.listWorkItems.handler({ userId: admin.id }, { projectId: project.id, query: `property.severity = low` })).length).toBe(0);
     expect((await items.listWorkItems.handler({ userId: admin.id }, { projectId: project.id, query: `type != Bug` })).map((row) => row.title)).toEqual(["Plan"]);
     expect((await types.listWorkItemTypes.handler({ userId: admin.id }, { projectId: project.id })).find((type) => type.id === bug.id)!.workItems).toBe(1);
   });
 });
 
-test.concurrent("custom property PQL handles negative equality, date lists, missing values, and existing text and dropdown rules", async () => {
+test.concurrent("custom property filter query handles negative equality, date lists, missing values, and existing text and dropdown rules", async () => {
   await withRollback(db, async (transaction) => {
     const { types, items, admin, project } = await setup(transaction);
     const [task] = await types.listWorkItemTypes.handler({ userId: admin.id }, { projectId: project.id });

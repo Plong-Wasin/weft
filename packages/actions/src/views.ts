@@ -4,7 +4,7 @@ import type { Database } from "@weft/db";
 import { projects, views } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { builtinViewId, builtinViewKinds, isBuiltinViewId } from "./builtin-views";
-import { compilePql, weftPqlRegistry } from "./pql";
+import { compileFilterQuery, weftFilterQueryRegistry } from "./filter-query";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { assertFeatureEnabled } from "./features";
 
@@ -58,7 +58,7 @@ export function createViewActions(db: Database) {
     return { view: found, ...access };
   }
 
-  /** Validates every given field; the PQL filter is compiled in the project so unknown names fail at save time. */
+  /** Validates every given field; the filter query is compiled in the project so unknown names fail at save time. */
   async function validate(userId: string, project: { id: string; key: string; workspaceId: string } | { workspaceId: string; id?: undefined }, fields: Fields) {
     if (fields.name !== undefined && fields.name.trim() === "") throw new ActionError("Name must not be empty", 400);
     assertOneOf(fields.layout, viewLayouts, "layout");
@@ -74,7 +74,7 @@ export function createViewActions(db: Database) {
       if (new Set(fields.properties).size !== fields.properties.length) throw new ActionError("Properties must not repeat", 400);
     }
     if (fields.query?.trim()) {
-      if (project.id) await compilePql(db, { workspaceId: project.workspaceId, projectId: project.id, projectKey: (project as { key: string }).key, userId }, fields.query, { registry: weftPqlRegistry });
+      if (project.id) await compileFilterQuery(db, { workspaceId: project.workspaceId, projectId: project.id, projectKey: (project as { key: string }).key, userId }, fields.query, { registry: weftFilterQueryRegistry });
       else await validateWorkspaceQuery(userId, project.workspaceId, fields.query);
     }
   }
@@ -84,7 +84,7 @@ export function createViewActions(db: Database) {
     const accessible = await accessibleProjects(db, userId, workspaceId);
     let firstError: unknown = null;
     for (const project of accessible) {
-      try { await compilePql(db, { workspaceId, projectId: project.id, projectKey: project.key, userId }, query, { registry: weftPqlRegistry }); return; } catch (error) { firstError ??= error; }
+      try { await compileFilterQuery(db, { workspaceId, projectId: project.id, projectKey: project.key, userId }, query, { registry: weftFilterQueryRegistry }); return; } catch (error) { firstError ??= error; }
     }
     if (firstError) throw firstError;
   }

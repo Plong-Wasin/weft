@@ -17,7 +17,7 @@ import { fireEventTriggers, fireSubItemsClosed } from "./triggers";
 import { emitOutboundEvent, workItemSnapshot } from "./outbound-webhooks";
 import { builtinViewKinds } from "./builtin-views";
 import { listableWorkItem } from "./listable";
-import { compilePql, pqlLimits, pqlSyntaxHelp, weftPqlRegistry } from "./pql";
+import { compileFilterQuery, filterQueryLimits, filterQuerySyntaxHelp, weftFilterQueryRegistry } from "./filter-query";
 import { richTextMarkdown } from "./rich-markdown";
 import { PAGE_MARKDOWN_BUDGET, prepareRichTextGuarded, readWrittenFormOf, storedDocumentOf, storedDocumentsWithWarnings } from "./written-form-pool";
 import { markdownToDoc, resolverFromReferences, storedMarkdownToDoc, type MarkdownOptions, type ResolvedReference, WRITTEN_FORM_MAX_INPUT_LENGTH } from "./markdown-doc";
@@ -102,8 +102,8 @@ const listInput = {
   /** Only the work items of this Module (it must belong to the project and not be deleted). */
   moduleId: Type.Optional(uuid()),
   sort: Type.Optional(Type.Union(sortFields.map((field) => Type.Literal(field)))), direction: Type.Optional(Type.Union([Type.Literal("asc"), Type.Literal("desc")])),
-  /** A Weft query (PQL); it ANDs with the other filters and its ORDER BY replaces sort. */
-  query: Type.Optional(Type.String({ maxLength: pqlLimits.maxLength, description: pqlSyntaxHelp })),
+  /** A Weft filter query; it ANDs with the other filters and its ORDER BY replaces sort. */
+  query: Type.Optional(Type.String({ maxLength: filterQueryLimits.maxLength, description: filterQuerySyntaxHelp })),
   /** true lists only archived work items; the default lists only work items that are not archived. */
   archived: Type.Optional(Type.Boolean({ description: "true lists only archived work items; the default lists only work items that are not archived" })),
 };
@@ -761,7 +761,7 @@ export function createWorkItemActions(db: Database) {
         }[input.sort ?? "manual"];
         const source = input.query;
         if (source?.trim()) {
-          const compiled = await compilePql(db, { workspaceId: project.workspaceId, projectId: project.id, projectKey: project.key, userId: context.userId }, source, { registry: weftPqlRegistry });
+          const compiled = await compileFilterQuery(db, { workspaceId: project.workspaceId, projectId: project.id, projectKey: project.key, userId: context.userId }, source, { registry: weftFilterQueryRegistry });
           if (compiled.where) conditions.push(compiled.where);
           const rows = await db.select().from(workItems).where(and(...conditions))
             .orderBy(...(compiled.orderBy.length ? compiled.orderBy : order), asc(workItems.sequence)).limit(compiled.limit);
@@ -779,8 +779,8 @@ export function createWorkItemActions(db: Database) {
         /** One of Plane's built-in views: all, assigned to me, created by me, subscribed (created by, assigned to, or commented on by me). */
         builtin: Type.Optional(Type.Union(builtinViewKinds.map((kind) => Type.Literal(kind)))),
         sort: Type.Optional(Type.Union(sortFields.map((field) => Type.Literal(field)))), direction: Type.Optional(Type.Union([Type.Literal("asc"), Type.Literal("desc")])),
-        /** A Weft query (PQL), compiled in each project (names such as states and labels are per project); a project where it does not apply contributes nothing. */
-        query: Type.Optional(Type.String({ maxLength: pqlLimits.maxLength, description: pqlSyntaxHelp })),
+        /** A Weft filter query, compiled in each project (names such as states and labels are per project); a project where it does not apply contributes nothing. */
+        query: Type.Optional(Type.String({ maxLength: filterQueryLimits.maxLength, description: filterQuerySyntaxHelp })),
       }),
       output: Type.Array(Type.Intersect([workItemOutput, Type.Object({ projectKey: Type.String(), projectName: Type.String() })])),
       handler: async (context: Context, input: { workspaceId: string; builtin?: (typeof builtinViewKinds)[number]; sort?: (typeof sortFields)[number]; direction?: "asc" | "desc"; query?: string }) => {
@@ -801,7 +801,7 @@ export function createWorkItemActions(db: Database) {
           let firstError: unknown = null;
           for (const project of accessible) {
             try {
-              const compiled = await compilePql(db, { workspaceId: input.workspaceId, projectId: project.id, projectKey: project.key, userId: me }, input.query, { registry: weftPqlRegistry });
+              const compiled = await compileFilterQuery(db, { workspaceId: input.workspaceId, projectId: project.id, projectKey: project.key, userId: me }, input.query, { registry: weftFilterQueryRegistry });
               parts.push(compiled.where ? and(eq(workItems.projectId, project.id), compiled.where) : eq(workItems.projectId, project.id));
             } catch (error) { firstError ??= error; }
           }

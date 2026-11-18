@@ -1,5 +1,6 @@
 import nodemailer from "nodemailer";
 import type { MailLocale } from "./email-templates";
+import { createGraphMailer } from "./mail-graph";
 
 const mailLocales: readonly MailLocale[] = ["en", "th"];
 
@@ -78,11 +79,37 @@ export function createSmtpMailer(settings: MailSettings): Mailer {
   };
 }
 
-/** The mailer the process uses, or null when email is off. */
-export function createMailerFromEnv(env: Env = Bun.env): Mailer | null {
-  const settings = mailSettingsFromEnv(env);
-  if (!settings) return null;
-  return createSmtpMailer(settings);
+const mailTransports = ["smtp", "graph"] as const;
+const graphSettingNames = ["GRAPH_MAIL_TENANT_ID", "GRAPH_MAIL_CLIENT_ID", "GRAPH_MAIL_CLIENT_SECRET", "GRAPH_MAIL_SENDER"] as const;
+
+/** Test seam: where the Graph mailer talks. Not read from the environment. */
+export interface GraphEndpoints {
+  authorityUrl?: string;
+  graphUrl?: string;
+}
+
+/**
+ * The mailer the process uses, or null when email is off. MAIL_TRANSPORT picks the Mail transport: unset or `smtp` uses SMTP;
+ * `graph` uses Microsoft Graph and never falls back to SMTP. Any other value throws.
+ */
+export function createMailerFromEnv(env: Env = Bun.env, endpoints: GraphEndpoints = {}): Mailer | null {
+  const transport = env.MAIL_TRANSPORT?.trim() || "smtp";
+  if (transport === "smtp") {
+    const settings = mailSettingsFromEnv(env);
+    if (!settings) return null;
+    return createSmtpMailer(settings);
+  }
+  if (transport === "graph") {
+    const values = graphSettingNames.map((name) => env[name]?.trim() ?? "");
+    const missing = graphSettingNames.filter((_, index) => !values[index]);
+    if (missing.length > 0) {
+      console.warn(`MAIL_TRANSPORT=graph but ${missing.join(", ")} not set; email stays off.`);
+      return null;
+    }
+    const [tenantId, clientId, clientSecret, sender] = values as [string, string, string, string];
+    return createGraphMailer({ tenantId, clientId, clientSecret, sender, ...endpoints });
+  }
+  throw new Error(`MAIL_TRANSPORT must be one of ${mailTransports.map((value) => `"${value}"`).join(", ")}; it is not set to a known value.`);
 }
 
 /** Where email links point for the web app. Mirrors the API's WEB_ORIGIN default. */

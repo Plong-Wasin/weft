@@ -1804,6 +1804,7 @@ export const en = {
   "sidebar.unstar": "Unstar project",
   "sidebar.dragHandle": "Drag to reorder",
   "sidebar.reorderHint": "Drag, or press the Up and Down arrow keys, to reorder",
+  "sidebar.projectSwitcher": "Project",
   "sidebar.projectOptions": "Project options",
   "sidebar.moveUp": "Move up",
   "sidebar.moveDown": "Move down",

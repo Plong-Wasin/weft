@@ -1805,6 +1805,7 @@ export const th: Record<keyof typeof en, string> = {
   "sidebar.unstar": "เลิกติดดาวโครงการ",
   "sidebar.dragHandle": "ลากเพื่อเรียงลำดับ",
   "sidebar.reorderHint": "ลากหรือกดปุ่มลูกศรขึ้นและลงเพื่อเรียงลำดับ",
+  "sidebar.projectSwitcher": "โปรเจกต์",
   "sidebar.projectOptions": "ตัวเลือกโครงการ",
   "sidebar.moveUp": "เลื่อนขึ้น",
   "sidebar.moveDown": "เลื่อนลง",

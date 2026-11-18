@@ -117,10 +117,31 @@ try {
   const invited = (await members()).find((member) => member.name === "Invited Person")!;
   console.log("settings ok: workspace members role change");
 
-  // Project settings: sidebar lists the project and its six sections.
-  await sidebar.getByRole("button", { name: new RegExp(`${translate("sidebar.toggleProject")}: Mobile`) }).click();
+  // Project settings: outside a project the sidebar lists the projects as plain links; opening one shows only its own sections and a project switcher.
+  check(await sidebar.getByRole("navigation", { name: new RegExp(`^${translate("settings.label")} [A-Z]+$`) }).count() === 0, "settings sidebar shows a project's sections before a project is chosen");
+  await sidebar.getByRole("list", { name: translate("projects.title") }).getByRole("link", { name: "Mobile" }).click();
+  check(await sidebar.getByRole("combobox", { name: translate("sidebar.projectSwitcher"), exact: true }).inputValue() === "MOB", "project switcher shows another project than the open one (MOB)");
   const projectNav = sidebar.getByRole("navigation", { name: `${translate("settings.label")} MOB` });
   for (const label of [translate("settings.general"), translate("members.title"), translate("labels.title"), translate("states.title"), translate("settings.features"), translate("recurrences.title")]) await projectNav.getByRole("link", { name: label, exact: true }).waitFor();
+
+  // Switching project keeps the section: from Labels of MOB to Labels of SWT, with the sections of SWT only.
+  await call("create_project", { workspaceId, name: "Switch target", key: "SWT", visibility: "public" });
+  await page.reload();
+  await projectNav.getByRole("link", { name: translate("labels.title"), exact: true }).click();
+  await page.waitForURL(`${web}/${slug}/settings/projects/MOB/labels`);
+  // The URL changes before React commits the new page; the switcher reads the section from that page, so wait until Labels shows as the current section.
+  await projectNav.getByRole("link", { name: translate("labels.title"), exact: true }).and(page.locator('[aria-current="page"]')).waitFor();
+  await sidebar.getByRole("combobox", { name: translate("sidebar.projectSwitcher"), exact: true }).selectOption("SWT");
+  await page.waitForURL(`${web}/${slug}/settings/projects/SWT/labels`);
+  await sidebar.getByRole("navigation", { name: `${translate("settings.label")} SWT` }).waitFor();
+  check(await sidebar.getByRole("navigation", { name: `${translate("settings.label")} MOB` }).count() === 0, "switching project left the old project's sections in the sidebar");
+  // A key that is not a project (a typo) gets the list of projects, not sections that lead nowhere.
+  await page.goto(`${web}/${slug}/settings/projects/NOPE`);
+  await sidebar.getByRole("list", { name: translate("projects.title") }).getByRole("link", { name: "Mobile" }).waitFor();
+  check(await sidebar.getByRole("navigation", { name: `${translate("settings.label")} NOPE` }).count() === 0, "an unknown project key shows sections in the settings sidebar");
+  await page.goto(`${web}/${slug}/settings/projects/MOB`);
+  await projectNav.waitFor();
+  console.log("settings ok: project switcher keeps the section");
 
   // Recurrences: create from the settings tab, run once, and verify timeline provenance.
   await projectNav.getByRole("link", { name: translate("recurrences.title"), exact: true }).click();

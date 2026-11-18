@@ -82,6 +82,8 @@ export function createApp(
   features: { integrations?: boolean; outboundWebhooks?: boolean } = {},
   /** Rate limits. settings default to the environment (see rate-limits.ts); now is the clock, injectable for tests. */
   limits: { settings?: Partial<RateLimitSettings>; now?: () => number } = {},
+  /** The clock of the Runtime actions (offline time, freshness, dispatch); injectable for tests. */
+  clock: () => Date = () => new Date(),
 ) {
   const integrations = features.integrations ?? integrationsEnabled();
   const outboundWebhooks = features.outboundWebhooks ?? outboundWebhooksEnabled();
@@ -115,10 +117,10 @@ export function createApp(
   const microsoft = authOptions.microsoft ?? microsoftAuthSettings();
   const passwordSignInEnabled = authOptions.passwordSignInEnabled ?? (Bun.env.PASSWORD_SIGN_IN_ENABLED ?? "true").toLowerCase() !== "false";
   const cookieSecure = (Bun.env.WEFT_PUBLIC_URL ?? Bun.env.BETTER_AUTH_URL ?? "http://localhost:3000").startsWith("https://");
-  const memberActions = createActionList(db, { integrations, passwordSignInEnabled, outboundWebhooks });
+  const memberActions = createActionList(db, { integrations, passwordSignInEnabled, outboundWebhooks, clock });
   const tokens = createApiTokenActions(db);
-  const runtimeActions = createRuntimeActions(db);
-  const runtimeDispatch = createRuntimeDispatchActions(db);
+  const runtimeActions = createRuntimeActions(db, clock);
+  const runtimeDispatch = createRuntimeDispatchActions(db, clock);
   const registrationLimiter = createRegistrationLimiter({ trustedProxyHops });
   /** Cookie session first (unchanged), then a personal API token in `Authorization: Bearer`. */
   async function resolveCaller(request: Request): Promise<ActionContext | null> {

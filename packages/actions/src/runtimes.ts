@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
-import { and, desc, eq, isNull, lte, ne, notInArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lte, ne, notInArray, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { agents, apiTokens, daemons, runtimes, runtimeProfiles, users, workspaceMembers } from "@weft/db";
+import { agents, apiTokens, daemons, projectMembers, projects, runs, runtimes, runtimeProfiles, users, workItems, workspaceMembers } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { revokeAgentRuns } from "./runs";
 import { auditAgentChange } from "./agent-audit";
@@ -11,6 +11,8 @@ const freshForMs = 150_000;
 /** A Daemon credential is re-issued once less than this much of its lifetime is left. */
 const rotateBeforeMs = 7 * 24 * 60 * 60 * 1000;
 const cli = Type.Union([Type.Literal("claude"), Type.Literal("codex")]);
+/** How many Session folders the Runtime list shows per Runtime, newest first. */
+const sessionFolderLimit = 10;
 type Context = { userId: string; apiTokenId?: string };
 
 /**
@@ -32,16 +34,47 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
   const output = Type.Object({
     id: Type.String({ format: "uuid" }), workspaceId: Type.String({ format: "uuid" }), ownerId: Type.String(), ownerName: Type.String(),
     daemonId: Type.String({ format: "uuid" }), hostname: Type.String(), agentCli: cli, shared: Type.Boolean(), enforceSandbox: Type.Boolean(), online: Type.Boolean(), lastSeenAt: Type.String(),
+    /** Seconds since the Runtime was last seen; null while it is online, and when the time is unknown (the Daemon reset it to the epoch). */
+    offlineSeconds: Type.Union([Type.Integer(), Type.Null()]),
+    agents: Type.Array(Type.Object({ id: Type.String({ format: "uuid" }), name: Type.String() })),
+    /** Queued Runs of the Agents bound to this Runtime: they wait for it. */
+    waitingRuns: Type.Integer(),
+    /** The newest Session folders of this Runtime's Runs, that the viewer may see the work item of. */
+    sessionFolders: Type.Array(Type.Object({
+      folder: Type.String(), workItem: Type.Object({ id: Type.String({ format: "uuid" }), displayId: Type.String(), title: Type.String() }), lastUsedAt: Type.String(),
+    })),
   });
   async function visibleRuntimes(userId: string, workspaceId: string) {
-    await requireWorkspaceRole(db, userId, workspaceId, "read");
+    const workspaceRole = await requireWorkspaceRole(db, userId, workspaceId, "read");
     const freshAfter = new Date(now().getTime() - freshForMs);
-    return db.select({ id: runtimes.id, workspaceId: runtimes.workspaceId, ownerId: runtimes.ownerId, ownerName: users.name,
+    const rows = await db.select({ id: runtimes.id, workspaceId: runtimes.workspaceId, ownerId: runtimes.ownerId, ownerName: users.name,
       daemonId: daemons.id, hostname: daemons.hostname, agentCli: runtimes.agentCli, shared: runtimes.shared, enforceSandbox: runtimes.enforceSandbox,
       online: sql<boolean>`${runtimes.lastSeenAt} > ${freshAfter.toISOString()}::timestamptz`, lastSeenAt: runtimes.lastSeenAt,
     }).from(runtimes).innerJoin(daemons, eq(daemons.id, runtimes.daemonId)).innerJoin(users, eq(users.id, runtimes.ownerId))
       .where(and(eq(runtimes.workspaceId, workspaceId), or(eq(runtimes.ownerId, userId), eq(runtimes.shared, true))))
       .orderBy(users.name, runtimes.agentCli);
+    // Work item titles reach the viewer only from projects the viewer can read: all for an Admin, otherwise public ones and the private ones they belong to.
+    const projectIds = workspaceRole === "Admin" ? undefined : await readableProjectIds(userId, workspaceId);
+    return Promise.all(rows.map(async (row) => {
+      const bound = await db.select({ id: agents.id, name: users.name }).from(agents).innerJoin(users, eq(users.id, agents.userId))
+        .where(eq(agents.runtimeId, row.id)).orderBy(users.name);
+      const [waiting] = await db.select({ count: sql<number>`count(*)::int` }).from(runs).innerJoin(agents, eq(agents.id, runs.agentId))
+        .where(and(eq(agents.runtimeId, row.id), eq(runs.status, "queued")));
+      const folderRows = projectIds && projectIds.length === 0 ? [] : await db.select({
+        folder: runs.sessionFolder, workItemId: workItems.id, title: workItems.title, sequence: workItems.sequence, projectKey: projects.key,
+        lastUsedAt: sql<Date>`max(coalesce(${runs.dispatchedAt}, ${runs.createdAt}))`,
+      }).from(runs).innerJoin(workItems, eq(workItems.id, runs.workItemId)).innerJoin(projects, eq(projects.id, workItems.projectId))
+        .where(and(eq(runs.runtimeId, row.id), isNotNull(runs.sessionFolder), ...(projectIds ? [inArray(workItems.projectId, projectIds)] : [])))
+        .groupBy(runs.sessionFolder, workItems.id, workItems.title, workItems.sequence, projects.key)
+        .orderBy(desc(sql`max(coalesce(${runs.dispatchedAt}, ${runs.createdAt}))`), desc(workItems.id)).limit(sessionFolderLimit);
+      // The Daemon resets a stopped Runtime's last-seen time to the epoch: then the time it went offline is unknown.
+      const offlineSeconds = row.online || row.lastSeenAt.getTime() <= 1000 ? null : Math.max(0, Math.floor((now().getTime() - row.lastSeenAt.getTime()) / 1000));
+      const { lastSeenAt, ...rest } = row;
+      return {
+        ...rest, lastSeenAt: lastSeenAt.toISOString(), offlineSeconds, agents: bound, waitingRuns: waiting?.count ?? 0,
+        sessionFolders: folderRows.map((folder) => ({ folder: folder.folder!, workItem: { id: folder.workItemId, displayId: `${folder.projectKey}-${folder.sequence}`, title: folder.title }, lastUsedAt: new Date(folder.lastUsedAt).toISOString() })),
+      };
+    }));
   }
   return {
     registerDaemon: {
@@ -206,6 +239,14 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
       if (daemon) await db.update(runtimes).set({ lastSeenAt: new Date(0) }).where(eq(runtimes.daemonId, daemon.id));
     },
   };
+
+  /** The projects a workspace member may read: the public ones and the private ones they belong to. */
+  async function readableProjectIds(userId: string, workspaceId: string) {
+    const member = await db.select({ projectId: projectMembers.projectId }).from(projectMembers).where(eq(projectMembers.userId, userId));
+    const mine = new Set(member.map((row) => row.projectId));
+    const rows = await db.select({ id: projects.id, visibility: projects.visibility }).from(projects).where(eq(projects.workspaceId, workspaceId));
+    return rows.filter((project) => project.visibility === "public" || mine.has(project.id)).map((project) => project.id);
+  }
 
   async function setShared(userId: string, runtimeId: string, shared: boolean) {
     const [runtime] = await db.select({ id: runtimes.id, workspaceId: runtimes.workspaceId, ownerId: runtimes.ownerId, shared: runtimes.shared }).from(runtimes).where(eq(runtimes.id, runtimeId));

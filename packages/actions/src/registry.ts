@@ -40,7 +40,7 @@ import { createOutlinkActions } from "./outlinks";
 import { outboundWebhooksEnabled } from "./outbound-webhooks-flag";
 
 /** Every Action reachable over REST and the CLI (create_workspace is a plain route with its own gates). */
-export function createActionList(db: Database, options: { integrations?: boolean; passwordSignInEnabled?: boolean; outboundWebhooks?: boolean } = {}) {
+export function createActionList(db: Database, options: { integrations?: boolean; passwordSignInEnabled?: boolean; outboundWebhooks?: boolean; clock?: () => Date } = {}) {
   const members = createMemberActions(db);
   const projects = createProjectActions(db);
   const projectPreferences = createProjectPreferenceActions(db);
@@ -69,7 +69,7 @@ export function createActionList(db: Database, options: { integrations?: boolean
   const runs = createRunActions(db);
   const usage = createUsageActions(db);
   const skills = createSkillActions(db);
-  const runtimes = createRuntimeActions(db);
+  const runtimes = createRuntimeActions(db, options.clock);
   const triggers = createTriggerActions(db);
   const recurrences = createRecurrenceActions(db);
   const integrations = createWorkItemIntegrationActions(db);

@@ -1,13 +1,62 @@
 import React from "react";
 import { Link } from "react-router";
-import { translate } from "@weft/shared";
+import { formatDate, translate } from "@weft/shared";
 import { action, actionResult } from "../../api";
 import { useWorkspace } from "../../layouts/workspace-layout";
 import { paths } from "../../routes";
 import { Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 
 type RuntimeProfile = { id: string; runtimeId: string; name: string; sandbox: "full" | "read-only" | "run-folder"; filesystemAllowlist: string[]; networkAllowlist: string[] };
-type Runtime = { id: string; workspaceId: string; ownerId: string; ownerName: string; hostname: string; agentCli: "claude" | "codex"; shared: boolean; enforceSandbox: boolean; online: boolean; lastSeenAt: string };
+type Runtime = {
+  id: string; workspaceId: string; ownerId: string; ownerName: string; hostname: string; agentCli: "claude" | "codex"; shared: boolean; enforceSandbox: boolean; online: boolean; lastSeenAt: string;
+  offlineSeconds: number | null; agents: Array<{ id: string; name: string }>; waitingRuns: number;
+  sessionFolders: Array<{ folder: string; workItem: { id: string; displayId: string; title: string }; lastUsedAt: string }>;
+};
+
+/** Offline Runtimes first, the one offline longest at the top; an unknown offline time counts as the longest. Online ones keep the server's order. */
+function orderRuntimes(list: Runtime[]): Runtime[] {
+  const offline = list.filter((runtime) => !runtime.online).sort((a, b) => Date.parse(a.lastSeenAt) - Date.parse(b.lastSeenAt));
+  return [...offline, ...list.filter((runtime) => runtime.online)];
+}
+
+/** A duration in at most two units, such as "2 d 4 h", "3 h 12 min" or "12 min". */
+function offlineDuration(seconds: number): string {
+  if (seconds < 60) return translate("runtimes.duration.underMinute");
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const count = (key: "runtimes.duration.days" | "runtimes.duration.hours" | "runtimes.duration.minutes", value: number) => translate(key).replace("{count}", String(value));
+  if (days) return [count("runtimes.duration.days", days), hours ? count("runtimes.duration.hours", hours) : ""].filter(Boolean).join(" ");
+  if (hours) return [count("runtimes.duration.hours", hours), minutes ? count("runtimes.duration.minutes", minutes) : ""].filter(Boolean).join(" ");
+  return count("runtimes.duration.minutes", minutes);
+}
+
+function offlineText(runtime: Runtime): string {
+  // The Daemon resets a stopped Runtime's last-seen time to the epoch, so no count is shown for it.
+  return runtime.offlineSeconds === null ? translate("runtimes.offlineUnknown") : translate("runtimes.offlineFor").replace("{duration}", offlineDuration(runtime.offlineSeconds));
+}
+
+function RuntimeUsage({ runtime }: { runtime: Runtime }) {
+  const folders = runtime.sessionFolders;
+  return <div className="grid w-full gap-1 text-13">
+    <span className="text-secondary">{runtime.agents.length ? translate("runtimes.boundAgents").replace("{names}", runtime.agents.map((agent) => agent.name).join(", ")) : translate("runtimes.noBoundAgents")}</span>
+    <span className="text-secondary">{translate("runtimes.waitingRuns").replace("{count}", String(runtime.waitingRuns))}</span>
+    {runtime.waitingRuns > 0 && !runtime.online && <p className="m-0 text-12 text-secondary">{translate("runtimes.waitingRunsHelp")}</p>}
+    <details>
+      <summary className="cursor-pointer text-secondary">{translate("runtimes.sessionFolders").replace("{count}", String(folders.length))}</summary>
+      {folders.length === 0 ? <p className="m-0 mt-1 text-12 text-secondary">{translate("runtimes.noSessionFolders")}</p> : <>
+        <p className="m-0 mt-1 text-12 text-secondary">{translate("runtimes.sessionFoldersHelp")}</p>
+        <ul className="m-0 mt-2 grid list-none gap-2 p-0">
+          {folders.map((folder) => <li key={folder.folder} className="grid min-w-0 gap-0.5">
+            <span className="break-words">{folder.workItem.displayId} · {folder.workItem.title}</span>
+            <span className="text-12 text-secondary">{translate("runtimes.folderLastUsed").replace("{time}", formatDate(folder.lastUsedAt))}</span>
+            <code className="break-all text-12">{folder.folder}</code>
+          </li>)}
+        </ul>
+      </>}
+    </details>
+  </div>;
+}
 
 function ProfileControls({ runtime, owner, reload }: { runtime: Runtime; owner: boolean; reload: () => void }) {
   const [profiles, setProfiles] = React.useState<RuntimeProfile[]>([]);
@@ -44,7 +93,7 @@ export function WorkspaceRuntimes() {
   const load = React.useCallback(async () => {
     const result = await action<Runtime[]>("list_runtimes", { workspaceId: workspace.id });
     setFailed(result === null);
-    setRuntimes(result ?? []);
+    setRuntimes(orderRuntimes(result ?? []));
   }, [workspace.id]);
   React.useEffect(() => { void load(); }, [load]);
   const toggle = async (runtime: Runtime) => {
@@ -58,9 +107,10 @@ export function WorkspaceRuntimes() {
       <Note note={translate("runtimes.isolationWarning")} />
       <Note note={failed ? translate("runtimes.failed") : null} error={failed} />
       {runtimes.length === 0 ? <Link to={paths.workspaceConnectAi(workspace.slug)} className="text-14 text-accent-text underline">{translate("runtimes.connectLink")}</Link> : <RowList>
-        {runtimes.map((runtime) => <Row key={runtime.id}><div className="mr-auto grid gap-0.5"><span className="font-medium">{runtime.ownerName} · {runtime.agentCli}</span><span className="text-13 text-secondary">{runtime.hostname} · {translate(runtime.online ? "runtimes.online" : "runtimes.offline")}</span></div>
+        {runtimes.map((runtime) => <Row key={runtime.id}><div className="mr-auto grid min-w-0 gap-0.5"><span className="font-medium">{runtime.ownerName} · {runtime.agentCli}</span><span className="text-13 text-secondary">{runtime.hostname} · {runtime.online ? translate("runtimes.online") : offlineText(runtime)}</span></div>
           <span className="text-13 text-secondary">{runtime.shared ? translate("runtimes.shared") : translate("runtimes.private")}</span>
           {runtime.ownerId === selfId && <button type="button" className="secondary" onClick={() => void toggle(runtime)}>{translate(runtime.shared ? "runtimes.unshare" : "runtimes.share")}</button>}
+          <RuntimeUsage runtime={runtime} />
           <ProfileControls runtime={runtime} owner={runtime.ownerId === selfId} reload={() => void load()} />
         </Row>)}
       </RowList>}

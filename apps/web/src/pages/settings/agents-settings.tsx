@@ -95,7 +95,6 @@ function AgentRuntimeProfile({ agent, onSaved, onFailed }: { agent: Pick<AgentRe
   </fieldset>;
 }
 
-/** Workspace Admins create, configure, enable, disable and delete Agents, and open them to projects. */
 /** Why an Agent cannot be deleted: what it wrote, with the biggest kinds first, and Disable as the way out. Focus moves here on open and back to Delete on close. */
 function RetirePanel({ agent, counts, onClose, onDisable }: { agent: { id: string; name: string; enabled: boolean }; counts: Record<string, number>; onClose: () => void; onDisable: () => void }) {
   const panel = React.useRef<HTMLDivElement>(null);
@@ -112,12 +111,13 @@ function RetirePanel({ agent, counts, onClose, onDisable }: { agent: { id: strin
     </ul>
     <p className="m-0 text-13 text-secondary">{translate("agents.retire.help")}</p>
     <div className="flex flex-wrap gap-2">
-      {agent.enabled && <button type="button" onClick={onDisable}>{translate("agents.disable")}</button>}
+      {agent.enabled && <button type="button" onClick={() => { onDisable(); document.querySelector<HTMLElement>(`[data-retire-trigger="${agent.id}"]`)?.focus(); }}>{translate("agents.disable")}</button>}
       <button type="button" className="secondary" onClick={close}>{translate("agents.retire.close")}</button>
     </div>
   </div>;
 }
 
+/** Workspace Admins create, configure, enable, disable and delete Agents, and open them to projects. */
 export function WorkspaceAgents() {
   const { workspace, selfId } = useWorkspace();
   const [isAdmin, setIsAdmin] = React.useState<boolean | null>(null);

@@ -15,7 +15,7 @@ export * from "./timeline";
 export * from "./relations";
 export * from "./web-links";
 export * from "./search";
-export * from "./pql";
+export * from "./filter-query";
 export * from "./listable";
 export * from "./assets";
 export * from "./storage";

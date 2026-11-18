@@ -2,9 +2,9 @@ import React from "react";
 import { Bot, Code2, Filter, Search, Sparkles, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { translate, type MessageKey } from "@weft/shared";
-import { dateFilters, hasFilters, type DateFilter, type Filters, type NamedFilter } from "./filter-pql";
+import { dateFilters, hasFilters, type DateFilter, type Filters, type NamedFilter } from "./filter-query";
 import { Popover } from "./shell/popover";
-import { requestPql, type PqlScope } from "./ai-pql";
+import { requestFilterQuery, type FilterQueryScope } from "./ai-filter-query";
 import { aiStatusKey, requestAiStatus } from "./ai-status";
 import type { Option } from "./property-dropdowns";
 
@@ -16,7 +16,7 @@ export type FilterSection = { key: NamedFilter; options: Option[] };
 
 const rangeText = (range: { from: string; to: string }) => range.from && range.to ? `${range.from} – ${range.to}` : range.from ? `≥ ${range.from}` : `≤ ${range.to}`;
 
-/** The Filters button with its picker; the chips and the PQL editor are separate pieces so the page can lay them out. */
+/** The Filters button with its picker; the chips and the filter query editor are separate pieces so the page can lay them out. */
 export function FilterPicker({ sections, filters, count, onChange, onClear }: { sections: FilterSection[]; filters: Filters; count: number; onChange: (next: Filters) => void; onClear: () => void }) {
   const [search, setSearch] = React.useState("");
   const [open, setOpen] = React.useState<string | null>(null);
@@ -83,22 +83,22 @@ export function FilterChips({ filters, sections, custom, onChange, onClear }: { 
   </ul>;
 }
 
-/** The PQL text of the current filter, editable. Apply sends it to the page, which keeps the last good result when the text is invalid. With `generate`, a plain-language request fills the text with a query the server already compiled; the user reviews it and applies it. */
-export function PqlEditor({ text, error, onApply, generate }: { text: string; error: string | null; onApply: (text: string) => void; generate?: PqlScope }) {
+/** The filter query text of the current filter, editable. Apply sends it to the page, which keeps the last good result when the text is invalid. With `generate`, a plain-language request fills the text with a query the server already compiled; the user reviews it and applies it. */
+export function FilterQueryEditor({ text, error, onApply, generate }: { text: string; error: string | null; onApply: (text: string) => void; generate?: FilterQueryScope }) {
   const [draft, setDraft] = React.useState(text);
   React.useEffect(() => setDraft(text), [text]);
   return <form className="my-0 grid gap-1.5 rounded-lg border border-subtle bg-layer-1 p-2" onSubmit={(event) => { event.preventDefault(); onApply(draft); }}>
-    {generate && <PqlGenerate scope={generate} onQuery={setDraft} />}
-    <label className="my-0 grid gap-1 text-12 font-medium text-tertiary">{t("layout.pql.label")}
-      <textarea value={draft} rows={2} maxLength={2000} spellCheck={false} aria-invalid={error !== null} placeholder={t("layout.pql.placeholder")} className="font-mono text-13"
+    {generate && <FilterQueryGenerate scope={generate} onQuery={setDraft} />}
+    <label className="my-0 grid gap-1 text-12 font-medium text-tertiary">{t("layout.filterQuery.label")}
+      <textarea value={draft} rows={2} maxLength={2000} spellCheck={false} aria-invalid={error !== null} placeholder={t("layout.filterQuery.placeholder")} className="font-mono text-13"
         onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); onApply(draft); } }} /></label>
-    <div className="flex items-center gap-2"><button type="submit">{t("layout.pql.apply")}</button>
-      {error && <p role="alert" data-testid="pql-error" className="my-0 text-13 text-danger-text">{error}</p>}</div>
+    <div className="flex items-center gap-2"><button type="submit">{t("layout.filterQuery.apply")}</button>
+      {error && <p role="alert" data-testid="filter-query-error" className="my-0 text-13 text-danger-text">{error}</p>}</div>
   </form>;
 }
 
 /** The "describe it" row. It never applies anything: the query lands in the editor below. */
-function PqlGenerate({ scope, onQuery }: { scope: PqlScope; onQuery: (query: string) => void }) {
+function FilterQueryGenerate({ scope, onQuery }: { scope: FilterQueryScope; onQuery: (query: string) => void }) {
   const [request, setRequest] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [failure, setFailure] = React.useState<string | null>(null);
@@ -108,21 +108,21 @@ function PqlGenerate({ scope, onQuery }: { scope: PqlScope; onQuery: (query: str
   async function run() {
     if (!request.trim() || busy) return;
     setBusy(true); setFailure(null);
-    const result = await requestPql(scope, request.trim());
+    const result = await requestFilterQuery(scope, request.trim());
     setBusy(false);
-    if ("query" in result) onQuery(result.query); else setFailure(result.error || t("layout.pql.generate.failed"));
+    if ("query" in result) onQuery(result.query); else setFailure(result.error || t("layout.filterQuery.generate.failed"));
   }
   return <div className="my-0 grid gap-1">
-    <label className="my-0 grid gap-1 text-12 font-medium text-tertiary">{t("layout.pql.generate.label")}
+    <label className="my-0 grid gap-1 text-12 font-medium text-tertiary">{t("layout.filterQuery.generate.label")}
       <span className="flex items-center gap-2">
-        <input type="text" value={request} maxLength={1000} placeholder={t("layout.pql.generate.placeholder")} className="min-w-0 flex-1 text-13" onChange={(event) => setRequest(event.target.value)}
+        <input type="text" value={request} maxLength={1000} placeholder={t("layout.filterQuery.generate.placeholder")} className="min-w-0 flex-1 text-13" onChange={(event) => setRequest(event.target.value)}
           onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); void run(); } }} />
-        <button type="button" disabled={busy || request.trim() === ""} className={ghost} onClick={() => void run()}><Sparkles aria-hidden size={14} /><span>{busy ? t("layout.pql.generate.busy") : t("layout.pql.generate.button")}</span></button>
+        <button type="button" disabled={busy || request.trim() === ""} className={ghost} onClick={() => void run()}><Sparkles aria-hidden size={14} /><span>{busy ? t("layout.filterQuery.generate.busy") : t("layout.filterQuery.generate.button")}</span></button>
       </span></label>
-    {failure && <p role="alert" data-testid="pql-generate-error" className="my-0 text-13 text-danger-text">{failure}</p>}
+    {failure && <p role="alert" data-testid="filter-query-generate-error" className="my-0 text-13 text-danger-text">{failure}</p>}
   </div>;
 }
 
-export function PqlToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
-  return <button type="button" aria-pressed={open} aria-label={t("layout.pql.toggle")} title={t("layout.pql.toggle")} className={`${ghost} ${open ? "bg-layer-1" : ""}`} onClick={onToggle}><Code2 aria-hidden size={14} /><span>{t("layout.pql.button")}</span></button>;
+export function FilterQueryToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  return <button type="button" aria-pressed={open} aria-label={t("layout.filterQuery.toggle")} title={t("layout.filterQuery.toggle")} className={`${ghost} ${open ? "bg-layer-1" : ""}`} onClick={onToggle}><Code2 aria-hidden size={14} /><span>{t("layout.filterQuery.button")}</span></button>;
 }

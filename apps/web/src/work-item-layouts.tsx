@@ -9,8 +9,8 @@ import { Popover } from "./shell/popover";
 import { WorkItemDetail } from "./work-item-detail";
 import { Board, type BoardColumn } from "./work-item-board";
 import { BulkBar } from "./work-item-bulk-bar";
-import { FilterChips, FilterPicker, PqlEditor, PqlToggle, type FilterSection } from "./filter-bar";
-import { countFilters, emptyFilters, filtersToPql, pqlToFilters, type Filters, type Lookup } from "./filter-pql";
+import { FilterChips, FilterPicker, FilterQueryEditor, FilterQueryToggle, type FilterSection } from "./filter-bar";
+import { countFilters, emptyFilters, filtersToFilterQuery, filterQueryToFilters, type Filters, type Lookup } from "./filter-query";
 import { DatesMenu, EstimateSelect, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
 import { Avatar } from "./avatar";
 import { EmptyState } from "./empty-state";
@@ -30,7 +30,7 @@ const checkRow = "flex items-center gap-2 text-13";
 
 /** Work items of one project in a layout (list or board) with display options and filters; every setting lives in the URL query string. */
 export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp, refreshKey, cycleId, moduleId, cyclesEnabled, modulesEnabled, typesEnabled = false, canWrite = true, canCreate = false, onAddItem, rowAction, toolbarExtra }: { projectId: string; workspaceSlug: string; action: Call; run?: Run; refreshKey: number; cycleId?: string; moduleId?: string; cyclesEnabled?: boolean; typesEnabled?: boolean; modulesEnabled?: boolean; canWrite?: boolean; canCreate?: boolean; /** Opens the Create work item dialog. Passed by the project Work items page only: it turns on the empty-project state, whose button needs it. */ onAddItem?: () => void; rowAction?: (item: Item) => React.ReactNode; /** Extra toolbar controls after Display (Save as view, Update view); gets the settings now applied. */ toolbarExtra?: (params: LayoutParams) => React.ReactNode }) {
-  // Every page passes an error-aware `run` so a PQL error shows; the fallback over `action` drops the server message and is only for callers that have no runner.
+  // Every page passes an error-aware `run` so a filter query error shows; the fallback over `action` drops the server message and is only for callers that have no runner.
   const run: Run = React.useMemo(() => runProp ?? (async <T,>(name: string, body: unknown) => { const data = await action<T>(name, body); return data === null ? { error: "" } : { data }; }), [runProp, action]);
   const [params, setParams] = React.useState<LayoutParams>(() => parseLayoutParams(window.location.search));
   const [calendarMonth, setCalendarMonth] = React.useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
@@ -64,7 +64,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   /** Ids picked for a Bulk edit, in the order they were picked; `anchor` is the last one clicked, where a shift-click range starts. */
   const [selected, setSelected] = React.useState<string[]>([]);
   const anchor = React.useRef<string | null>(null);
-  const [pqlOpen, setPqlOpen] = React.useState(false);
+  const [filterQueryOpen, setFilterQueryOpen] = React.useState(false);
   const [lookupsLoaded, setLookupsLoaded] = React.useState({ base: false, cycles: false, modules: false, types: false });
   const [typeOptions, setTypeOptions] = React.useState<WorkItemType[]>([]);
   const [queryError, setQueryError] = React.useState<string | null>(null);
@@ -158,7 +158,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const grouping = sheet ? "none" : board ? boardGroup : params.group;
   /** The Sub-group in effect: never the same property as the Group-by the layout really uses, and only where the layout supports one. */
   const subGroup = supportsSubGroup ? effectiveSubGroup(grouping, params.subGroup) : "none";
-  // The filter is always sent as PQL; an invalid query leaves the last result on screen and shows the server's message.
+  // The filter is always sent as a filter query; an invalid query leaves the last result on screen and shows the server's message.
   const fetchItems = React.useCallback((query: string) => run<Item[]>("list_work_items", {
     projectId, ...(cycleId ? { cycleId } : {}), ...(moduleId ? { moduleId } : {}), ...(query.trim() ? { query } : {}),
     sort: board ? "manual" : params.sort, direction: board ? "asc" : params.dir,
@@ -369,8 +369,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     type: typesEnabled ? typeOptions.map((type) => ({ id: type.id, name: type.name })) : [],
   };
   const lookupsReady = lookupsLoaded.base && lookupsLoaded.cycles && lookupsLoaded.modules && lookupsLoaded.types;
-  // Chips are read from the applied PQL; null means it says something the chips cannot show.
-  const chips: Filters | null = !params.q.trim() ? emptyFilters() : lookupsReady ? pqlToFilters(params.q, lookup) : emptyFilters();
+  // Chips are read from the applied filter query; null means it says something the chips cannot show.
+  const chips: Filters | null = !params.q.trim() ? emptyFilters() : lookupsReady ? filterQueryToFilters(params.q, lookup) : emptyFilters();
   const filterCount = chips ? countFilters(chips) : 1;
   const filtered = params.q.trim() !== "";
   const sections: FilterSection[] = [
@@ -384,8 +384,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     ...(modulesEnabled && !moduleId ? [{ key: "module" as const, options: moduleOptions.map((module) => ({ id: module.id, name: module.name })) }] : []),
     { key: "createdBy", options: people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} /> })) },
   ];
-  const setFilters = (next: Filters) => update({ q: filtersToPql(next, lookup) });
-  const applyPql = async (text: string) => {
+  const setFilters = (next: Filters) => update({ q: filtersToFilterQuery(next, lookup) });
+  const applyFilterQuery = async (text: string) => {
     const result = await fetchItems(text);
     if ("error" in result) return setQueryError(result.error || t("workItems.failed"));
     setQueryError(null);
@@ -589,7 +589,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     </div>
     {selectable && <label className={`${ghost} cursor-pointer max-sm:gap-1`} title={t("bulk.selectAll")}><input type="checkbox" className="size-4" checked={allPicked} onChange={() => setSelected(allPicked ? [] : orderedIds.slice(0, 500))} /><span className="sr-only">{t("bulk.selectAll")}</span><span aria-hidden className="text-12">{t("bulk.selectShown")}</span></label>}
     <FilterPicker sections={sections} filters={chips ?? emptyFilters()} count={filterCount} onChange={setFilters} onClear={() => update({ q: "" })} />
-    <PqlToggle open={pqlOpen || (queryError !== null)} onToggle={() => setPqlOpen(!pqlOpen)} />
+    <FilterQueryToggle open={filterQueryOpen || (queryError !== null)} onToggle={() => setFilterQueryOpen(!filterQueryOpen)} />
     <Popover label={t("layout.display")} className={ghost} panelRole="dialog" panelClassName="grid w-72 max-w-[calc(100vw-2rem)] max-h-[70vh] gap-3 overflow-auto p-3" trigger={<><SlidersHorizontal aria-hidden size={14} /><span>{t("layout.display")}</span></>}>
       {() => <>
         {!sheet && <label>{t("layout.group")}<select value={board ? boardGroup : params.group} onChange={(event) => { const group = event.target.value as LayoutParams["group"]; update({ group, subGroup: params.subGroup === group ? "none" : params.subGroup }); }}>
@@ -644,7 +644,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     {peekPanel}
     {toolbar}
     <FilterChips filters={chips ?? emptyFilters()} sections={sections} custom={chips === null} onChange={setFilters} onClear={() => update({ q: "" })} />
-    {(pqlOpen || queryError !== null) && <PqlEditor text={params.q} error={queryError} onApply={(text) => void applyPql(text)} generate={{ projectId }} />}
+    {(filterQueryOpen || queryError !== null) && <FilterQueryEditor text={params.q} error={queryError} onApply={(text) => void applyFilterQuery(text)} generate={{ projectId }} />}
     {note && <p role="alert" className="text-danger-text">{note}</p>}
     {selectable && selected.length > 0 && <BulkBar projectId={projectId} selected={items.filter((item) => selected.includes(item.id))} states={states} people={people} labels={labels} estimate={estimate} run={run}
       cycleOptions={cyclesEnabled && !cycleId ? cycleOptions : null} moduleOptions={modulesEnabled && !moduleId ? moduleOptions : null} onClear={() => { setSelected([]); anchor.current = null; }} onApplied={() => void load()} />}

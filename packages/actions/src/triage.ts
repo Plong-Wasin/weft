@@ -21,7 +21,7 @@ export const notInTriage = notInTriageFor(sql`${workItems.stateId}`);
 /** Work items a normal read may return: not soft-deleted and not in Triage. Intake Actions use their own queries. */
 export const liveWorkItems = and(isNull(workItems.deletedAt), notInTriage)!;
 
-/** Work items that are live and not archived: what lists, search, PQL, Cycle and Module contents and counts return by default. */
+/** Work items that are live and not archived: what lists, search, filter query, Cycle and Module contents and counts return by default. */
 export const unarchivedWorkItems = and(liveWorkItems, isNull(workItems.archivedAt))!;
 
 /** Every write on a work item (fields, state, comments, links, relations, sub-items) goes through this; restore is the only write that skips it. */

@@ -4,7 +4,7 @@ import { liveWorkItems, unarchivedWorkItems } from "./triage";
 
 /**
  * The one condition every work item read shares: not soft-deleted, not in the Triage state and not archived
- * (see `liveWorkItems` and `unarchivedWorkItems` in triage.ts). List, search and PQL all go through it.
+ * (see `liveWorkItems` and `unarchivedWorkItems` in triage.ts). List, search and filter query all go through it.
  * `archived` flips the archive half: only archived work items.
  */
 export function listableWorkItem(options: { archived?: boolean } = {}): SQL {

@@ -1,20 +1,20 @@
 import { eq, inArray, sql, type SQL } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { customPropertyOptions, customProperties, labels, projectKeyAliases, projectMembers, projects, users, workItemStates, workItemTypes } from "@weft/db";
-import { PqlError } from "./errors";
-import { parse, pqlLimits, type Expr, type Operator, type ValueNode } from "./parser";
-import { defaultPqlRegistry } from "./registry";
-import type { Named, Operand, PqlContext, PqlRegistry } from "./types";
+import { FilterQueryError } from "./errors";
+import { parse, filterQueryLimits, type Expr, type Operator, type ValueNode } from "./parser";
+import { defaultFilterQueryRegistry } from "./registry";
+import type { Named, Operand, FilterQueryContext, FilterQueryRegistry } from "./types";
 
-export interface PqlScope { workspaceId: string; projectId: string; projectKey: string; userId: string }
-export interface CompiledPql { where: SQL | undefined; orderBy: SQL[]; limit: number; hasLimit: boolean }
+export interface FilterQueryScope { workspaceId: string; projectId: string; projectKey: string; userId: string }
+export interface CompiledFilterQuery { where: SQL | undefined; orderBy: SQL[]; limit: number; hasLimit: boolean }
 
 const noValueOperators = new Set<Operator>(["IS NULL", "IS NOT NULL"]);
 
 /** Day as YYYY-MM-DD in UTC. */
 const utcDay = (date: Date) => date.toISOString().slice(0, 10);
 
-function createContext(db: Database, scope: PqlScope, now: Date): PqlContext {
+function createContext(db: Database, scope: FilterQueryScope, now: Date): FilterQueryContext {
   const cache = new Map<string, Promise<unknown>>();
   const once = <T>(key: string, load: () => Promise<T>) => {
     if (!cache.has(key)) cache.set(key, load());
@@ -48,8 +48,8 @@ function createContext(db: Database, scope: PqlScope, now: Date): PqlContext {
  * reaches the database as a bound parameter; field, operator and function names come from the registry.
  * The caller supplies project access and the shared listing conditions, then ANDs `where` with them.
  */
-export async function compilePql(db: Database, scope: PqlScope, source: string, options: { registry?: PqlRegistry; now?: Date } = {}): Promise<CompiledPql> {
-  const registry = options.registry ?? defaultPqlRegistry;
+export async function compileFilterQuery(db: Database, scope: FilterQueryScope, source: string, options: { registry?: FilterQueryRegistry; now?: Date } = {}): Promise<CompiledFilterQuery> {
+  const registry = options.registry ?? defaultFilterQueryRegistry;
   const context = createContext(db, scope, options.now ?? new Date());
   const query = parse(source);
 
@@ -58,11 +58,11 @@ export async function compilePql(db: Database, scope: PqlScope, source: string, 
     for (const node of nodes) {
       if (node.kind === "literal") { operands.push({ text: node.text, pos: node.pos, quoted: node.quoted, fromFunction: null }); continue; }
       const fn = registry.functions.get(node.name.toLowerCase());
-      if (!fn) throw new PqlError(node.pos, `unknown function ${node.name}()`);
-      if (fn.kind !== "value") throw new PqlError(node.pos, `${fn.name}() is a condition; use it on its own, not as a value`);
-      if (!accepts.includes(fn.returns)) throw new PqlError(node.pos, `${fn.name}() returns ${fn.returns} values, which ${fieldName} does not accept`);
+      if (!fn) throw new FilterQueryError(node.pos, `unknown function ${node.name}()`);
+      if (fn.kind !== "value") throw new FilterQueryError(node.pos, `${fn.name}() is a condition; use it on its own, not as a value`);
+      if (!accepts.includes(fn.returns)) throw new FilterQueryError(node.pos, `${fn.name}() returns ${fn.returns} values, which ${fieldName} does not accept`);
       const isList = operator === "IN" || operator === "NOT IN";
-      if (fn.list && !isList) throw new PqlError(node.pos, `${fn.name}() returns a list; use it with IN`);
+      if (fn.list && !isList) throw new FilterQueryError(node.pos, `${fn.name}() returns a list; use it with IN`);
       for (const text of await fn.evaluate(context)) operands.push({ text, pos: node.pos, quoted: false, fromFunction: fn.returns });
     }
     return operands;
@@ -75,14 +75,14 @@ export async function compilePql(db: Database, scope: PqlScope, source: string, 
       case "not": return sql`not (${await compileExpr(expr.expr)})`;
       case "call": {
         const fn = registry.functions.get(expr.name.toLowerCase());
-        if (!fn) throw new PqlError(expr.pos, `unknown function ${expr.name}()`);
-        if (fn.kind !== "condition") throw new PqlError(expr.pos, `${fn.name}() is a value; compare a field with it, for example dueDate < ${fn.name}()`);
+        if (!fn) throw new FilterQueryError(expr.pos, `unknown function ${expr.name}()`);
+        if (fn.kind !== "condition") throw new FilterQueryError(expr.pos, `${fn.name}() is a value; compare a field with it, for example dueDate < ${fn.name}()`);
         return fn.compile(context);
       }
       case "condition": {
         const field = registry.fields.get(expr.field.toLowerCase()) ?? (registry.dynamic ? await registry.dynamic(context, expr.field) : undefined);
-        if (!field || field.operators.length === 0) throw new PqlError(expr.pos, `unknown field ${expr.field}`);
-        if (!field.operators.includes(expr.operator)) throw new PqlError(expr.operatorPos, `${field.name} does not support ${expr.operator}; use ${field.operators.join(", ")}`);
+        if (!field || field.operators.length === 0) throw new FilterQueryError(expr.pos, `unknown field ${expr.field}`);
+        if (!field.operators.includes(expr.operator)) throw new FilterQueryError(expr.operatorPos, `${field.name} does not support ${expr.operator}; use ${field.operators.join(", ")}`);
         const operands = noValueOperators.has(expr.operator) ? [] : await operandsOf(field.name, field.accepts ?? [], expr.operator, expr.values);
         return field.compile(context, expr.operator, operands, expr.operatorPos);
       }
@@ -93,10 +93,10 @@ export async function compilePql(db: Database, scope: PqlScope, source: string, 
   const orderBy: SQL[] = [];
   for (const item of query.orderBy) {
     const field = registry.fields.get(item.field.toLowerCase());
-    if (!field) throw new PqlError(item.pos, `unknown field ${item.field}`);
-    if (!field.order) throw new PqlError(item.pos, `cannot sort by ${field.name}`);
+    if (!field) throw new FilterQueryError(item.pos, `unknown field ${item.field}`);
+    if (!field.order) throw new FilterQueryError(item.pos, `cannot sort by ${field.name}`);
     orderBy.push(...field.order(context, item.direction));
   }
-  return { where, orderBy, limit: query.limit?.value ?? pqlLimits.maxLimit, hasLimit: query.limit !== null };
+  return { where, orderBy, limit: query.limit?.value ?? filterQueryLimits.maxLimit, hasLimit: query.limit !== null };
 }
 

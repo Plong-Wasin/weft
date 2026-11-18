@@ -308,7 +308,7 @@ test.concurrent("a query never returns a work item that is still in Intake", asy
     const pending = await submit(admin.id, "Waiting in intake");
     const rows = await work.listWorkItems.handler({ userId: admin.id }, { projectId: project.id, query: 'title ~ "intake"' });
     expect(rows.map((row) => row.id)).not.toContain(pending.workItemId);
-    const found = await createSearchActions(transaction).searchWorkItems.handler({ userId: admin.id }, { workspaceId: workspace.id, projectId: project.id, pql: 'title ~ "intake"' });
+    const found = await createSearchActions(transaction).searchWorkItems.handler({ userId: admin.id }, { workspaceId: workspace.id, projectId: project.id, filter: 'title ~ "intake"' });
     expect(JSON.stringify(found)).not.toContain(pending.workItemId);
   });
 });

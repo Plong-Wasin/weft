@@ -1,12 +1,12 @@
 import { sql, type SQL } from "drizzle-orm";
 import { workItemPropertyValues, workItems } from "@weft/db";
-import { PqlError } from "./errors";
+import { FilterQueryError } from "./errors";
 import type { Operator } from "./parser";
 import { isNegative, list, resolveNamed } from "./registry";
-import type { Named, Operand, PqlContext, PqlField, PqlProperty } from "./types";
+import type { Named, Operand, FilterQueryContext, FilterQueryField, FilterQueryProperty } from "./types";
 
 /** `type = Bug`: the work item's Work item type, named inside the project. */
-export const typeField: PqlField = {
+export const typeField: FilterQueryField = {
   name: "type", operators: ["=", "!=", "IN", "NOT IN"], accepts: [],
   async compile(context, operator, operands) {
     const entries = await context.types();
@@ -26,7 +26,7 @@ const dateText = /^\d{4}-\d{2}-\d{2}$/;
  * A custom property field. The value lives in work_item_property_values, so each condition is an EXISTS over that table for this
  * property. An item without a value matches "!=", "NOT IN" and "IS NULL". Option and person names resolve inside the project.
  */
-function propertyField(property: PqlProperty): PqlField {
+function propertyField(property: FilterQueryProperty): FilterQueryField {
   const kind = property.kind;
   const operators = kind === "text" || kind === "url" ? textOperators
     : kind === "boolean" ? ["=", "!=", "IS NULL", "IS NOT NULL"] as const
@@ -39,7 +39,7 @@ function propertyField(property: PqlProperty): PqlField {
 
   return {
     name: `property.${property.name}`, operators, accepts,
-    async compile(context: PqlContext, operator: Operator, operands: Operand[], operatorPos: number): Promise<SQL> {
+    async compile(context: FilterQueryContext, operator: Operator, operands: Operand[], operatorPos: number): Promise<SQL> {
       if (operator === "IS NULL") return none;
       if (operator === "IS NOT NULL") return has(sql`true`);
       const negate = isNegative(operator);
@@ -52,7 +52,7 @@ function propertyField(property: PqlProperty): PqlField {
         }
         case "number": {
           const numbers = operands.map((operand) => {
-            if (!numberText.test(operand.text)) throw new PqlError(operand.pos, `${JSON.stringify(operand.text)} is not a number; ${property.name} holds numbers`);
+            if (!numberText.test(operand.text)) throw new FilterQueryError(operand.pos, `${JSON.stringify(operand.text)} is not a number; ${property.name} holds numbers`);
             return Number(operand.text);
           });
           const value = sql`(${scalar})::numeric`;
@@ -64,7 +64,7 @@ function propertyField(property: PqlProperty): PqlField {
         }
         case "date": {
           const dates = operands.map((operand) => {
-            if (!dateText.test(operand.text)) throw new PqlError(operand.pos, `${JSON.stringify(operand.text)} is not a date; write YYYY-MM-DD or use a function such as today()`);
+            if (!dateText.test(operand.text)) throw new FilterQueryError(operand.pos, `${JSON.stringify(operand.text)} is not a date; write YYYY-MM-DD or use a function such as today()`);
             return operand.text;
           });
           const value = sql`(${scalar})::date`;
@@ -76,7 +76,7 @@ function propertyField(property: PqlProperty): PqlField {
         }
         case "boolean": {
           const wanted = texts[0]!.toLowerCase();
-          if (wanted !== "true" && wanted !== "false" && wanted !== "yes" && wanted !== "no") throw new PqlError(operands[0]!.pos, `${JSON.stringify(texts[0])} is not yes or no`);
+          if (wanted !== "true" && wanted !== "false" && wanted !== "yes" && wanted !== "no") throw new FilterQueryError(operands[0]!.pos, `${JSON.stringify(texts[0])} is not yes or no`);
           return wrap(sql`v.value = to_jsonb(${wanted === "true" || wanted === "yes"}::boolean)`);
         }
         case "dropdown": {
@@ -93,19 +93,19 @@ function propertyField(property: PqlProperty): PqlField {
           return wrap(sql`${scalar} in (${list(ids)})`);
         }
         default:
-          throw new PqlError(operatorPos, `${property.name} cannot be compared`);
+          throw new FilterQueryError(operatorPos, `${property.name} cannot be compared`);
       }
     },
   };
 }
 
 /** Resolves `property.<name>` against the project's custom properties; any other unknown name is left to the caller's error. */
-export async function resolvePropertyField(context: PqlContext, name: string): Promise<PqlField | undefined> {
+export async function resolvePropertyField(context: FilterQueryContext, name: string): Promise<FilterQueryField | undefined> {
   const match = /^property\.(.+)$/i.exec(name);
   if (!match) return undefined;
   const wanted = match[1]!.toLowerCase();
   const found = (await context.properties()).filter((property) => property.name.toLowerCase() === wanted);
-  if (found.length === 0) throw new PqlError(0, `unknown property ${match[1]}; the project has no custom property with that name`);
-  if (found.length > 1) throw new PqlError(0, `property ${match[1]} is ambiguous`);
+  if (found.length === 0) throw new FilterQueryError(0, `unknown property ${match[1]}; the project has no custom property with that name`);
+  if (found.length > 1) throw new FilterQueryError(0, `property ${match[1]} is ambiguous`);
   return propertyField(found[0]!);
 }

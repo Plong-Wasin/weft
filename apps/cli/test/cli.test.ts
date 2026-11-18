@@ -93,17 +93,17 @@ const phase2Commands = [
   "get-estimate", "create-estimate", "update-estimate", "delete-estimate-point", "get-estimate-usage", "switch-estimate-type", "delete-estimate",
 ];
 
-test("CLI help lists every phase 2 Action, and the query options explain query versus pql", async () => {
+test("CLI help lists every phase 2 Action, and the query options explain query versus filter", async () => {
   const app = createApp(undefined, db);
   const top = await run(app, ["--help"]);
   for (const command of phase2Commands) expect(top.out).toContain(command);
   expect(top.out).toContain("Cycles, Modules, Intake, Relations");
   const list = (await run(app, ["list-work-items", "--help"])).out;
-  expect(list).toContain("PQL");
+  expect(list).toContain("filter query");
   expect(list).toContain("activeCycle()");
   const search = (await run(app, ["search-work-items", "--help"])).out;
   expect(search).toContain("free text");
-  expect(search).toContain("not PQL");
+  expect(search).toContain("not a filter query");
 });
 
 test.concurrent("CLI: a Simple project refuses a Cycle command with the feature name and where an admin turns it on", async () => {

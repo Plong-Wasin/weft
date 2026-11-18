@@ -85,12 +85,12 @@ try {
   const refused = await context.request.post(`${api}/actions/delete_view`, { data: { viewId: "builtin:assigned" } });
   check(refused.status() === 400, `deleting a built-in view answered ${refused.status()}`);
 
-  // Filter by PQL, save as a workspace View, reopen it from its URL.
+  // Filter by filter query, save as a workspace View, reopen it from its URL.
   await page.goto(`${web}/${slug}/workspace-views/all-issues`);
   await page.getByTestId("row-WEB-2").waitFor();
-  await page.getByRole("button", { name: translate("layout.pql.toggle") }).click();
-  await page.getByRole("textbox", { name: translate("layout.pql.label") }).fill("priority = urgent OR priority = high");
-  await page.getByRole("button", { name: translate("layout.pql.apply") }).click();
+  await page.getByRole("button", { name: translate("layout.filterQuery.toggle") }).click();
+  await page.getByRole("textbox", { name: translate("layout.filterQuery.label") }).fill("priority = urgent OR priority = high");
+  await page.getByRole("button", { name: translate("layout.filterQuery.apply") }).click();
   await page.getByTestId("row-WEB-2").waitFor({ state: "detached" });
   await page.getByTestId("row-MOB-1").waitFor();
   await page.getByRole("button", { name: translate("views.saveAs") }).click();

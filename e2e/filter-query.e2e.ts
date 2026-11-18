@@ -1,4 +1,4 @@
-// Browser end-to-end flow for the filter bar: click-to-pick filters compile to PQL, PQL edits update the chips, invalid PQL keeps the last result, filters survive reload.
+// Browser end-to-end flow for the filter bar: click-to-pick filters compile to filter query, filter query edits update the chips, invalid filter query keeps the last result, filters survive reload.
 // Run with `bun e2e/work-items-list.e2e.ts` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
 import { chromium } from "playwright";
 import { like } from "drizzle-orm";
@@ -61,7 +61,7 @@ try {
   const waitTitles = async (expected: string) => { for (let i = 0; i < 50; i += 1) { if (await titles() === expected) return; await page.waitForTimeout(100); } check(false, `list shows ${await titles()}, expected ${expected}`); };
   await waitTitles("Alpha,Bravo,Charlie");
 
-  // 1. Picking a filter updates the list, the chip and the PQL text.
+  // 1. Picking a filter updates the list, the chip and the filter query text.
   await page.getByRole("button", { name: translate("layout.filters") }).click();
   const dialog = page.getByRole("dialog", { name: translate("layout.filters") });
   await dialog.getByRole("button", { name: translate("layout.filter.priority") }).click();
@@ -70,32 +70,32 @@ try {
   await page.getByTestId("chip-priority").waitFor();
   await page.screenshot({ path: `${shots}/filter-picker-1440.png` });
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: translate("layout.pql.toggle") }).click();
-  const pql = page.getByRole("textbox", { name: translate("layout.pql.label") });
-  check(await pql.inputValue() === "priority = high", `PQL text was ${await pql.inputValue()}`);
+  await page.getByRole("button", { name: translate("layout.filterQuery.toggle") }).click();
+  const filter = page.getByRole("textbox", { name: translate("layout.filterQuery.label") });
+  check(await filter.inputValue() === "priority = high", `filter query text was ${await filter.inputValue()}`);
   check(new URL(page.url()).searchParams.get("q") === "priority = high", "the query is not in the URL");
 
-  // 2. Editing the PQL updates the chips when it can be represented.
-  await pql.fill("priority IN (high, low)");
-  await page.getByRole("button", { name: translate("layout.pql.apply") }).click();
+  // 2. Editing the filter query updates the chips when it can be represented.
+  await filter.fill("priority IN (high, low)");
+  await page.getByRole("button", { name: translate("layout.filterQuery.apply") }).click();
   await waitTitles("Alpha,Bravo");
-  check((await page.getByTestId("chip-priority").textContent())?.includes(translate("workItems.priority.low")) === true, "chip did not follow the PQL");
+  check((await page.getByTestId("chip-priority").textContent())?.includes(translate("workItems.priority.low")) === true, "chip did not follow the filter query");
 
-  // 3. Invalid PQL shows the parser error and keeps the last result and the last good query.
-  await pql.fill("priority = banana AND");
-  await page.getByRole("button", { name: translate("layout.pql.apply") }).click();
-  await page.getByTestId("pql-error").waitFor();
-  check((await page.getByTestId("pql-error").textContent())?.startsWith("Invalid query at position") === true, "the parser error is not shown as is");
-  check(await titles() === "Alpha,Bravo", "invalid PQL lost the last result");
-  check(new URL(page.url()).searchParams.get("q") === "priority IN (high, low)", "invalid PQL replaced the applied query");
-  await page.screenshot({ path: `${shots}/pql-error-1440.png` });
+  // 3. Invalid filter query shows the parser error and keeps the last result and the last good query.
+  await filter.fill("priority = banana AND");
+  await page.getByRole("button", { name: translate("layout.filterQuery.apply") }).click();
+  await page.getByTestId("filter-query-error").waitFor();
+  check((await page.getByTestId("filter-query-error").textContent())?.startsWith("Invalid query at position") === true, "the parser error is not shown as is");
+  check(await titles() === "Alpha,Bravo", "invalid filter query lost the last result");
+  check(new URL(page.url()).searchParams.get("q") === "priority IN (high, low)", "invalid filter query replaced the applied query");
+  await page.screenshot({ path: `${shots}/filter-query-error-1440.png` });
 
-  // 4. PQL the chips cannot show is kept as a custom query and still filters.
-  await pql.fill("priority = high OR priority = urgent");
-  await page.getByRole("button", { name: translate("layout.pql.apply") }).click();
+  // 4. A filter query the chips cannot show is kept as a custom query and still filters.
+  await filter.fill("priority = high OR priority = urgent");
+  await page.getByRole("button", { name: translate("layout.filterQuery.apply") }).click();
   await waitTitles("Alpha,Charlie");
   await page.getByTestId("chip-custom").waitFor();
-  await page.getByTestId("pql-error").waitFor({ state: "detached" });
+  await page.getByTestId("filter-query-error").waitFor({ state: "detached" });
 
   // 5. Date filter plus a second filter, then a reload keeps both.
   await page.getByRole("button", { name: translate("layout.clearAll") }).click();
@@ -122,7 +122,7 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: `${shots}/chips-390.png` });
 
-  console.log("e2e filters-pql: ok");
+  console.log("e2e filter-query: ok");
   await browser.close();
 } catch (error) {
   failed = true;

@@ -22,7 +22,7 @@ async function setup(transaction: Database) {
 }
 const status = (call: Promise<unknown>) => call.then(() => 200, (error: { status: number }) => error.status);
 
-test.concurrent("a View stores PQL, layout, group by, order by and visible properties and returns them exactly", async () => {
+test.concurrent("a View stores filter query, layout, group by, order by and visible properties and returns them exactly", async () => {
   await withRollback(db, async (transaction) => {
     const { views, member, project } = await setup(transaction);
     const input = { projectId: project.id, name: "Urgent", description: "Hot items", query: "priority = urgent", layout: "spreadsheet" as const, groupBy: "priority" as const, subGroupBy: "assignee" as const, orderBy: "dueDate" as const, orderDirection: "desc" as const, properties: ["state", "id", "assignee"], access: "private" as const };
@@ -52,7 +52,7 @@ test.concurrent("a View accepts and stores the Calendar and Gantt layouts", asyn
   });
 });
 
-test.concurrent("create validates PQL, layout, properties and name", async () => {
+test.concurrent("create validates filter query, layout, properties and name", async () => {
   await withRollback(db, async (transaction) => {
     const { views, member, project } = await setup(transaction);
     const bad = (extra: Record<string, unknown>) => status(views.createView.handler({ userId: member.id }, { projectId: project.id, name: "X", ...extra } as never));

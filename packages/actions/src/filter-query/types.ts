@@ -8,7 +8,7 @@ export type ValueType = "date" | "user" | "stateGroup" | "cycle" | "module";
 export interface Named { id: string; name: string; extra?: string }
 
 /** Everything a field or function may need while a query is compiled. Lookups are cached per query. */
-export interface PqlContext {
+export interface FilterQueryContext {
   db: Database;
   userId: string;
   workspaceId: string;
@@ -24,33 +24,33 @@ export interface PqlContext {
   /** The Work item types of the project, by name. */
   types(): Promise<Named[]>;
   /** The custom properties of the project with their kinds and options (option names resolve through `options`). */
-  properties(): Promise<PqlProperty[]>;
+  properties(): Promise<FilterQueryProperty[]>;
 }
 
 /** A custom property as a query sees it: `property.<name>` compares its values. */
-export interface PqlProperty { id: string; name: string; kind: string; options: Named[] }
+export interface FilterQueryProperty { id: string; name: string; kind: string; options: Named[] }
 
 /** One resolved value: typed text from a literal, or one item of a function result. */
 export interface Operand { text: string; pos: number; quoted: boolean; fromFunction: ValueType | null }
 
-export interface PqlField {
+export interface FilterQueryField {
   name: string;
   operators: readonly Operator[];
   /** Function value types this field accepts on its right side. */
   accepts?: readonly ValueType[];
-  /** Builds the SQL condition. `operands` is empty for IS NULL and IS NOT NULL. Throw PqlError for a bad value. */
-  compile(context: PqlContext, operator: Operator, operands: Operand[], operatorPos: number): Promise<SQL> | SQL;
+  /** Builds the SQL condition. `operands` is empty for IS NULL and IS NOT NULL. Throw FilterQueryError for a bad value. */
+  compile(context: FilterQueryContext, operator: Operator, operands: Operand[], operatorPos: number): Promise<SQL> | SQL;
   /** SQL ORDER BY terms; a field without it cannot be sorted on. */
-  order?(context: PqlContext, direction: "asc" | "desc"): SQL[];
+  order?(context: FilterQueryContext, direction: "asc" | "desc"): SQL[];
 }
 
-export type PqlFunction =
-  | { name: string; kind: "value"; returns: ValueType; list: boolean; evaluate(context: PqlContext): Promise<string[]> | string[] }
-  | { name: string; kind: "condition"; compile(context: PqlContext): Promise<SQL> | SQL };
+export type FilterQueryFunction =
+  | { name: string; kind: "value"; returns: ValueType; list: boolean; evaluate(context: FilterQueryContext): Promise<string[]> | string[] }
+  | { name: string; kind: "condition"; compile(context: FilterQueryContext): Promise<SQL> | SQL };
 
-export interface PqlRegistry {
-  fields: Map<string, PqlField>;
-  functions: Map<string, PqlFunction>;
+export interface FilterQueryRegistry {
+  fields: Map<string, FilterQueryField>;
+  functions: Map<string, FilterQueryFunction>;
   /** Resolves names that are not fixed fields, such as `property.severity`; undefined means unknown. */
-  dynamic?(context: PqlContext, name: string): Promise<PqlField | undefined>;
+  dynamic?(context: FilterQueryContext, name: string): Promise<FilterQueryField | undefined>;
 }

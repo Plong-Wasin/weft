@@ -185,8 +185,12 @@ An email about one notification (assignment, mention, comment reply, or the resu
 _Avoid_: Alert, push
 
 **Email digest**:
-The batch that sends a person's waiting notification emails together, about every few minutes (EMAIL_DIGEST_MINUTES). One digest is one email per person. Email is off unless SMTP is configured; then nothing is queued for a person who chose no email kinds.
+The batch that sends a person's waiting notification emails together, about every few minutes (EMAIL_DIGEST_MINUTES). One digest is one email per person. Email is off unless a **Mail transport** is configured; then nothing is queued for a person who chose no email kinds.
 _Avoid_: Summary email, newsletter
+
+**Mail transport**:
+The way Weft sends the system's own email (account verification, password reset, **Notification emails**). One per instance: SMTP or Microsoft Graph. Email is off when the chosen transport is not fully configured.
+_Avoid_: Mailer, mail provider, integration
 
 **Sidecar**:
 The AI chat opened as a side panel from a work item or wiki page, which passes that entity to the AI as its starting context. It is the same chat and history as the AI chat page.

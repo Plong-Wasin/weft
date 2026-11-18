@@ -1,6 +1,6 @@
 import { afterAll, expect, spyOn, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
-import { activities, agents, createDatabase, runtimes, workspaces, type Database } from "@weft/db";
+import { activities, agents, createDatabase, runs, runtimes, workspaces, type Database } from "@weft/db";
 import { createAgentActions, createApiTokenActions, createJobHandlers, createProjectActions, createRuntimeActions, createWorkItemActions, purgeStaleRuntimes } from "@weft/actions";
 import { withRollback } from "../../../packages/db/src/test-helpers";
 import { createApp } from "../src/app";
@@ -137,6 +137,24 @@ test.concurrent("a candidate that gained an enabled Agent before its locked re-c
     const round = await purgeStaleRuntimes(transaction, eightDaysAhead, {
       // The Agent is bound to the stale Runtime after it was picked and before its row lock: the re-check must see it.
       beforeRecheck: async (runtimeId) => { if (runtimeId === claude.id) await transaction.update(agents).set({ runtimeId }).where(eq(agents.id, coder.id)); },
+    });
+    expect(round).toEqual({ deleted: 0, skipped: 1, failed: 0 });
+    expect(await present(transaction, claude.id)).toBe(true);
+  });
+});
+
+test.concurrent("a candidate that gained an unfinished Run before its locked re-check is skipped and counted, and kept", async () => {
+  await withRollback(db, async (transaction) => {
+    const { post, signUp } = harness(transaction);
+    const { owner, workspace, claude, codex } = await setUp(transaction, post, signUp);
+    const coder = await bindCoder(transaction, owner, workspace.id, codex.id);
+    const project = await createProjectActions(transaction).createProject.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Alpha", key: "ALP", visibility: "public" });
+    await createWorkItemActions(transaction).createWorkItem.handler({ userId: owner.id }, { projectId: project.id, title: "Waiting task", assigneeIds: [coder.userId] });
+    await seenAt(transaction, claude.id, base);
+    await seenAt(transaction, codex.id, new Date(base.getTime() + 2 * day));
+    const round = await purgeStaleRuntimes(transaction, eightDaysAhead, {
+      // A queued Run is claimed by the stale Runtime after it was picked and before its row lock: the re-check must see it.
+      beforeRecheck: async (runtimeId) => { if (runtimeId === claude.id) await transaction.update(runs).set({ runtimeId }).where(eq(runs.status, "queued")); },
     });
     expect(round).toEqual({ deleted: 0, skipped: 1, failed: 0 });
     expect(await present(transaction, claude.id)).toBe(true);

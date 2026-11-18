@@ -2,13 +2,14 @@ import { useIntegrationsEnabled } from "../integrations-flag";
 import { adminState } from "../admin-state";
 import { useOutboundWebhooksEnabled } from "../outbound-webhooks-flag";
 import React from "react";
-import { NavLink, useLocation, useParams } from "react-router";
+import { NavLink, useLocation, useNavigate, useParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, FileText, Folder, GripVertical, MoreHorizontal, Plus, Star } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronRight, FileText, Folder, GripVertical, MoreHorizontal, Plus, Settings, Star } from "lucide-react";
 import { translate, type MessageKey } from "@weft/shared";
 import { action } from "../api";
 import { ProjectNav } from "../project-nav";
 import { paths } from "../routes";
+import { MenuItem, Popover } from "./popover";
 import type { Member, Project, Workspace } from "../types";
 import { useWorkspace } from "../layouts/workspace-layout";
 import { AiSidebar } from "../ai-chat";
@@ -46,7 +47,7 @@ function useOpenWhenCurrent(current: boolean, expanded: boolean, projectId: stri
 function ProjectEntry({ workspace, project, current, starred, expanded, canMoveUp, canMoveDown, reorder, drag }: {
   workspace: Workspace; project: Project; current: boolean; starred: boolean; expanded: boolean; canMoveUp: boolean; canMoveDown: boolean; reorder: Reorder; drag: Drag;
 }) {
-  const [menuOpen, setMenuOpen] = React.useState(false);
+  const navigate = useNavigate();
   useOpenWhenCurrent(current, expanded, project.id, reorder.expand);
   const starLabel = translate(starred ? "sidebar.unstar" : "sidebar.star");
   const onKeyDown = (event: React.KeyboardEvent) => {
@@ -54,7 +55,7 @@ function ProjectEntry({ workspace, project, current, starred, expanded, canMoveU
     event.preventDefault();
     reorder.move(project.id, event.key === "ArrowUp" ? -1 : 1);
   };
-  return <li draggable
+  return <li draggable className="min-w-0"
     onDragStart={(event) => { drag.current = { id: project.id, starred }; event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", project.id); }}
     onDragOver={(event) => { if (drag.current && drag.current.starred === starred && drag.current.id !== project.id) event.preventDefault(); }}
     onDrop={(event) => { event.preventDefault(); const from = drag.current; drag.current = null; if (from && from.starred === starred) reorder.drop(from.id, project.id); }}
@@ -69,15 +70,14 @@ function ProjectEntry({ workspace, project, current, starred, expanded, canMoveU
         <Folder aria-hidden size={14} className="shrink-0 text-secondary" /><span className="flex-1 truncate">{project.name}</span>
         <ChevronRight aria-hidden size={14} className={`shrink-0 text-tertiary transition-transform ${expanded ? "rotate-90" : ""}`} />
       </button>
-      <button type="button" aria-expanded={menuOpen} aria-label={`${translate("sidebar.projectOptions")}: ${project.name}`} title={translate("sidebar.projectOptions")} onClick={() => setMenuOpen((value) => !value)} className="shrink-0 bg-transparent p-1 text-tertiary hover:bg-transparent hover:text-primary">
-        <MoreHorizontal aria-hidden size={14} />
-      </button>
+      <Popover label={`${translate("sidebar.projectOptions")}: ${project.name}`} align="right" panelClassName="!min-w-44" trigger={<MoreHorizontal aria-hidden size={14} />} className="!p-1 text-tertiary">
+        {(close) => <>
+          <MenuItem icon={Settings} onClick={() => { close(); navigate(paths.projectSettings(workspace.slug, project.key)); }}>{translate("projects.settingsTitle")}</MenuItem>
+          <MenuItem icon={ArrowUp} disabled={!canMoveUp} onClick={() => { close(); reorder.move(project.id, -1); }}>{translate("sidebar.moveUp")}</MenuItem>
+          <MenuItem icon={ArrowDown} disabled={!canMoveDown} onClick={() => { close(); reorder.move(project.id, 1); }}>{translate("sidebar.moveDown")}</MenuItem>
+        </>}
+      </Popover>
     </div>
-    {menuOpen && <div role="group" aria-label={`${translate("sidebar.projectOptions")}: ${project.name}`} className="ml-6 mt-0.5 grid gap-0.5 rounded-md border border-subtle bg-surface-1 p-1">
-      <button type="button" disabled={!canMoveUp} onClick={() => reorder.move(project.id, -1)} className="justify-start bg-transparent px-2 py-1 text-left text-13 text-primary hover:bg-layer-transparent-hover disabled:text-tertiary">{translate("sidebar.moveUp")}</button>
-      <button type="button" disabled={!canMoveDown} onClick={() => reorder.move(project.id, 1)} className="justify-start bg-transparent px-2 py-1 text-left text-13 text-primary hover:bg-layer-transparent-hover disabled:text-tertiary">{translate("sidebar.moveDown")}</button>
-      <button type="button" aria-pressed={starred} onClick={() => reorder.star(project.id, !starred)} className="justify-start bg-transparent px-2 py-1 text-left text-13 text-primary hover:bg-layer-transparent-hover">{starLabel}</button>
-    </div>}
     {expanded && <ProjectNav workspace={workspace.slug} projectKey={project.key} features={project.features} />}
   </li>;
 }

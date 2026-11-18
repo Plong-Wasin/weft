@@ -75,7 +75,7 @@ export function createApp(
   aiOptions: { aiRequestsPerMinute?: number; aiAssistRequestsPerMinute?: number; aiAssistNow?: () => number; aiEnv?: Record<string, string | undefined>; trustedProxyHops?: number; defaultLanguage?: string } = {},
   passwordOptions: { rangeChecker?: import("./password-policy").RangeChecker; online?: boolean; minimum?: number } = {},
   operations: { health?: HealthProbes; log?: (line: string) => void } = {},
-  /** Sends account and notification email. Defaults to SMTP_HOST / SMTP_FROM from the environment; null means email is off. */
+  /** Sends account and notification email. Defaults to the Mail transport chosen by MAIL_TRANSPORT (SMTP or Graph); null means email is off. */
   mail: Mailer | null = createMailerFromEnv(),
   authOptions: AuthOptions = {},
   /** Feature switches. integrations defaults to WEFT_INTEGRATIONS_ENABLED and outboundWebhooks to WEFT_OUTBOUND_WEBHOOKS_ENABLED (only "true" turns each on). */

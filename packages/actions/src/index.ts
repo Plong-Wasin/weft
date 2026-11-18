@@ -24,6 +24,7 @@ export * from "./jobs";
 export * from "./auto-rules";
 export * from "./notifications";
 export * from "./mail";
+export * from "./mail-graph";
 export * from "./email-templates";
 export * from "./email-digest";
 export * from "./email-preferences";

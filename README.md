@@ -86,7 +86,9 @@ All variables go in `.env`; defaults are in `.env.example`.
 | Sign in | `MICROSOFT_ALLOWED_EMAIL_DOMAINS` | unset | Optional comma-separated email-domain allow list, for example `company.example,subsidiary.example`. |
 | Sign in | `PASSWORD_SIGN_IN_ENABLED` | `true` | `false` hides password sign-in and signup and refuses password authentication. Set it back to `true` to restore password access. |
 | Workspaces | `ALLOW_WORKSPACE_CREATION` | `true` | `false` stops users creating workspaces. The first user can always create one. |
-| Email | `SMTP_HOST`, `SMTP_FROM` | unset | Both set turns email on: verification at sign-up, password reset links, and notification emails. Unset, the product behaves as without email. |
+| Email | `MAIL_TRANSPORT` | `smtp` | Mail transport: `smtp` uses the `SMTP_*` settings; `graph` sends through Microsoft Graph with the `GRAPH_MAIL_*` settings and never falls back to SMTP. Any other value stops startup. See the [Microsoft Graph mail guide](docs/microsoft-graph-mail.md). |
+| Email | `GRAPH_MAIL_TENANT_ID`, `GRAPH_MAIL_CLIENT_ID`, `GRAPH_MAIL_CLIENT_SECRET`, `GRAPH_MAIL_SENDER` | unset | Used only with `MAIL_TRANSPORT=graph`; all four are required. The sender is one mailbox, and the app should be a separate registration with the `Mail.Send` application permission. See the [Microsoft Graph mail guide](docs/microsoft-graph-mail.md). |
+| Email | `SMTP_HOST`, `SMTP_FROM` | unset | With `MAIL_TRANSPORT` unset or `smtp`, both set turns email on: verification at sign-up, password reset links, and notification emails. Unset, the product behaves as without email. |
 | Email | `SMTP_PORT`, `SMTP_SECURE` | `587`, `false` | `SMTP_SECURE=true` uses TLS from the start (usually port 465); `false` uses STARTTLS when offered. |
 | Email | `SMTP_USERNAME`, `SMTP_PASSWORD` | empty | Login for the SMTP server, if it needs one. |
 | Email | `EMAIL_DIGEST_MINUTES` | `5` | Minutes between notification email digests. Each person gets one email per run, with every notification waiting for them. |

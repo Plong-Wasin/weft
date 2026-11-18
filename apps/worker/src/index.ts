@@ -8,12 +8,12 @@ const cleanupEveryMs = Number(Bun.env.WORKER_CLEANUP_INTERVAL_MS ?? 60 * 60 * 10
 const { client, db } = createDatabase();
 const model = resolveWorkerModel();
 if (!model) console.warn("No AI provider key set: Agent Runs will fail as model_not_configured");
-// Email is on only when SMTP_HOST and SMTP_FROM are set; then queued notification emails go out as one digest per person every few minutes.
+// Email is on only when the chosen Mail transport (MAIL_TRANSPORT: SMTP or Graph) is fully configured; then queued notification emails go out as one digest per person every few minutes.
 const mailer = createMailerFromEnv();
 const handlers = createJobHandlers(undefined, { runModel: model ? createRunModel(model) : undefined, mailer, webOrigin: webOriginFromEnv(), defaultLocale: instanceLocaleFromEnv() });
 const digestMinutes = Number(Bun.env.EMAIL_DIGEST_MINUTES ?? 5);
 const digestEveryMs = (Number.isFinite(digestMinutes) && digestMinutes > 0 ? digestMinutes : 5) * 60 * 1000;
-console.log(mailer ? `Email on: notification digests every ${digestEveryMs / 60_000} minutes` : "Email off: SMTP_HOST is not set");
+console.log(mailer ? `Email on: notification digests every ${digestEveryMs / 60_000} minutes` : "Email off: the Mail transport is not configured (MAIL_TRANSPORT, SMTP_* or GRAPH_MAIL_*)");
 let stopping = false;
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => { stopping = true; });
 

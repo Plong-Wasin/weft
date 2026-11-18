@@ -6,7 +6,10 @@ import { Dialog } from "../../dialog";
 import { useWorkspace } from "../../layouts/workspace-layout";
 import { paths } from "../../routes";
 import type { Member } from "../../types";
-import { Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
+import { dangerButton, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
+
+/** The destructive entry point: outlined, so the filled danger button is kept for the confirmation inside the dialog. */
+const dangerOutline = "rounded-md border border-danger-strong px-3 py-1.5 text-14 font-medium text-danger-text hover:bg-danger-subtle";
 
 type RuntimeProfile = { id: string; runtimeId: string; name: string; sandbox: "full" | "read-only" | "run-folder"; filesystemAllowlist: string[]; networkAllowlist: string[] };
 type Runtime = {
@@ -74,8 +77,10 @@ function ProfileControls({ runtime, owner, reload }: { runtime: Runtime; owner: 
     const result = await action(profileId ? "update_runtime_profile" : "create_runtime_profile", { ...(profileId ? { profileId } : { runtimeId: runtime.id }), name, sandbox, filesystemAllowlist: filesystem.split("\n").map((v) => v.trim()).filter(Boolean), networkAllowlist: network.split(",").map((v) => v.trim()).filter(Boolean) });
     setError(result === null); if (result) { setName(""); setFilesystem(""); setNetwork(""); setEditingId(undefined); await load(); reload(); }
   };
-  return <div className="mt-2 grid gap-2 rounded-md border border-subtle p-3">
-    <strong className="text-13">{translate("runtimes.profiles")}</strong>
+  // Collapsed by default: with several Runtimes an open form under each one buried the facts the page is for. A profile edit in progress keeps it open.
+  return <details className="w-full rounded-md border border-subtle p-3" open={editingId !== undefined || undefined}>
+    <summary className="cursor-pointer text-13 font-medium">{translate("runtimes.profiles")} · {profiles.length}</summary>
+    <div className="mt-2 grid gap-2">
     <p className="m-0 text-12 text-secondary">{translate("runtimes.profileHelp")}</p>
     {profiles.map((profile) => <div key={profile.id} className="flex flex-wrap items-center gap-2 text-12"><span className="mr-auto">{profile.name} · {translate(`runtimes.sandbox.${profile.sandbox}` as never)}{profile.sandbox === "full" ? ` · ${translate("runtimes.fullAccessWarning")}` : ""}</span>{owner && <><button className="secondary" onClick={() => { setEditingId(profile.id); setName(profile.name); setSandbox(profile.sandbox); setFilesystem(profile.filesystemAllowlist.join("\n")); setNetwork(profile.networkAllowlist.join(", ")); }}>{translate("runtimes.editProfile")}</button><button className="secondary" onClick={async () => { if (!window.confirm(translate("runtimes.deleteProfileConfirm").replace("{name}", profile.name))) return; const result = await actionResult("delete_runtime_profile", { profileId: profile.id }); setError("error" in result); await load(); reload(); }}>{translate("runtimes.deleteProfile")}</button></>}</div>)}
     {owner && <><label className="text-12">{translate("runtimes.profileName")}<input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} /></label>
@@ -85,7 +90,8 @@ function ProfileControls({ runtime, owner, reload }: { runtime: Runtime; owner: 
       {editingId && <button type="button" className="secondary justify-self-start" onClick={() => { setEditingId(undefined); setName(""); setFilesystem(""); setNetwork(""); setSandbox("run-folder"); setError(false); }}>{translate("comments.cancel")}</button>}
       <label className="flex items-center gap-2 text-12"><input type="checkbox" checked={runtime.enforceSandbox} onChange={async (event) => { const result = await action("set_runtime_sandbox_enforcement", { runtimeId: runtime.id, enforceSandbox: event.target.checked }); setError(result === null); reload(); }} />{translate("runtimes.enforceSandbox")}</label>
       {error && <p role="alert" className="m-0 text-12 text-danger-text">{translate("runtimes.failed")}</p>}</>}
-  </div>;
+    </div>
+  </details>;
 }
 
 /** Delete for the Runtime owner and workspace Admins. A refusal shows what still uses the Runtime, from the list the page already holds; an Admin also chooses what happens to the Agents. */
@@ -109,8 +115,9 @@ function DeleteRuntime({ runtime, targets, isAdmin, reload }: { runtime: Runtime
   // Unfinished Runs refuse both choices too, so the Admin is offered them only when none is left.
   const adminChoices = isAdmin && refused && runtime.unfinishedRuns === 0;
   return <>
-    <button type="button" className="secondary" onClick={() => setOpen(true)}>{translate("runtimes.delete")}</button>
+    <button type="button" className={dangerOutline} onClick={() => setOpen(true)}>{translate("runtimes.delete")}</button>
     {open && <Dialog title={translate(refused ? "runtimes.deleteRefusedTitle" : "runtimes.deleteTitle")} onClose={close}>
+      <p className="m-0 text-14 font-medium" data-testid="delete-target">{runtime.ownerName} · {runtime.agentCli} · {runtime.hostname}</p>
       {refused ? <>
         {enabledAgents.length > 0 && <p className="m-0 text-14">{translate("runtimes.deleteRefusedAgents").replace("{names}", enabledAgents.join(", "))}</p>}
         {runtime.unfinishedRuns > 0 && <p className="m-0 text-14">{translate("runtimes.deleteRefusedRuns").replace("{count}", String(runtime.unfinishedRuns))}</p>}
@@ -118,15 +125,16 @@ function DeleteRuntime({ runtime, targets, isAdmin, reload }: { runtime: Runtime
         {adminChoices && <div className="grid gap-2 rounded-md border border-subtle p-3">
           <strong className="text-13">{translate("runtimes.adminChoiceTitle")}</strong>
           <span className="text-13 text-secondary">{translate("runtimes.boundAgents").replace("{names}", runtime.agents.map((agent) => agent.name).join(", "))}</span>
-          <button type="button" className="secondary justify-self-start" disabled={busy} onClick={() => void run({ boundAgents: "unbind" })}>{translate("runtimes.unbindAndDelete")}</button>
           <p className="m-0 text-12 text-secondary">{translate("runtimes.unbindHelp")}</p>
+          <button type="button" className="secondary justify-self-start" disabled={busy} onClick={() => void run({ boundAgents: "unbind" })}>{translate("runtimes.unbindAndDelete")}</button>
+          <hr className="m-0 border-subtle" />
           {targets.length === 0 ? <p className="m-0 text-12 text-secondary">{translate("runtimes.moveNoTargets")}</p> : <>
+            <p className="m-0 text-12 text-secondary">{translate("runtimes.moveHelp")}</p>
             <label className="text-12">{translate("runtimes.moveTarget")}<select value={moveTo} onChange={(event) => setMoveTo(event.target.value)}>
               <option value="">{translate("runtimes.moveTarget")}</option>
               {targets.map((candidate) => <option key={candidate.id} value={candidate.id}>{`${candidate.ownerName} · ${candidate.agentCli} · ${candidate.hostname}`}</option>)}
             </select></label>
             {target && target.ownerId !== runtime.ownerId && <p role="note" className="m-0 text-12 text-danger-text">{translate("runtimes.moveOwnerWarning").replace("{owner}", target.ownerName)}</p>}
-            <p className="m-0 text-12 text-secondary">{translate("runtimes.moveHelp")}</p>
             <button type="button" className="secondary justify-self-start" disabled={busy || !target} onClick={() => void run({ boundAgents: { moveTo: target!.id } })}>{translate("runtimes.moveAndDelete")}</button>
           </>}
         </div>}
@@ -135,7 +143,7 @@ function DeleteRuntime({ runtime, targets, isAdmin, reload }: { runtime: Runtime
         <p className="m-0 text-14">{translate("runtimes.deleteBody")}</p>
         {runtime.online && <p className="m-0 text-14" data-testid="delete-online-note">{translate("runtimes.deleteOnlineNote")}</p>}
         {failed && <p role="alert" className="m-0 text-12 text-danger-text">{translate("runtimes.failed")}</p>}
-        <div className="flex justify-end gap-2"><button type="button" className="secondary" onClick={close}>{translate("comments.cancel")}</button><button type="button" disabled={busy} onClick={() => void run({})}>{translate("runtimes.delete")}</button></div>
+        <div className="flex justify-end gap-2"><button type="button" className="secondary" onClick={close}>{translate("comments.cancel")}</button><button type="button" className={dangerButton} disabled={busy} onClick={() => void run({})}>{translate("runtimes.deleteConfirm")}</button></div>
       </>}
     </Dialog>}
   </>;
@@ -164,12 +172,22 @@ export function WorkspaceRuntimes() {
       <Note note={translate("runtimes.isolationWarning")} />
       <Note note={failed ? translate("runtimes.failed") : null} error={failed} />
       {runtimes.length === 0 ? <Link to={paths.workspaceConnectAi(workspace.slug)} className="text-14 text-accent-text underline">{translate("runtimes.connectLink")}</Link> : <RowList>
-        {runtimes.map((runtime) => <Row key={runtime.id}><div className="mr-auto grid min-w-0 gap-0.5"><span className="font-medium">{runtime.ownerName} · {runtime.agentCli}</span><span className="text-13 text-secondary">{runtime.hostname} · {runtime.online ? translate("runtimes.online") : offlineText(runtime)}</span></div>
-          <span className="text-13 text-secondary">{runtime.shared ? translate("runtimes.shared") : translate("runtimes.private")}</span>
-          {runtime.ownerId === selfId && <button type="button" className="secondary" onClick={() => void toggle(runtime)}>{translate(runtime.shared ? "runtimes.unshare" : "runtimes.share")}</button>}
-          {(runtime.ownerId === selfId || isAdmin) && <DeleteRuntime runtime={runtime} targets={runtimes.filter((candidate) => candidate.shared && candidate.id !== runtime.id)} isAdmin={isAdmin} reload={() => void load()} />}
+        {runtimes.map((runtime) => <Row key={runtime.id}><div className="grid w-full gap-3">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <div className="mr-auto grid min-w-0 gap-0.5">
+              <span className="flex min-w-0 items-center gap-2 font-medium">
+                <span aria-hidden className={`size-2 shrink-0 rounded-full ${runtime.online ? "bg-success-primary" : "bg-warning-primary"}`} />
+                <span className="truncate">{runtime.ownerName} · {runtime.agentCli}</span>
+              </span>
+              <span className="break-words text-13 text-secondary">{runtime.hostname} · {runtime.online ? translate("runtimes.online") : offlineText(runtime)}</span>
+            </div>
+            <span className="text-13 text-secondary">{runtime.shared ? translate("runtimes.shared") : translate("runtimes.private")}</span>
+            {runtime.ownerId === selfId && <button type="button" className="secondary" onClick={() => void toggle(runtime)}>{translate(runtime.shared ? "runtimes.unshare" : "runtimes.share")}</button>}
+            {(runtime.ownerId === selfId || isAdmin) && <DeleteRuntime runtime={runtime} targets={runtimes.filter((candidate) => candidate.shared && candidate.id !== runtime.id)} isAdmin={isAdmin} reload={() => void load()} />}
+          </div>
           <RuntimeUsage runtime={runtime} />
           <ProfileControls runtime={runtime} owner={runtime.ownerId === selfId} reload={() => void load()} />
+        </div>
         </Row>)}
       </RowList>}
     </SettingsBlock>

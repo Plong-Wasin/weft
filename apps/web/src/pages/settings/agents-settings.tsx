@@ -96,6 +96,28 @@ function AgentRuntimeProfile({ agent, onSaved, onFailed }: { agent: Pick<AgentRe
 }
 
 /** Workspace Admins create, configure, enable, disable and delete Agents, and open them to projects. */
+/** Why an Agent cannot be deleted: what it wrote, with the biggest kinds first, and Disable as the way out. Focus moves here on open and back to Delete on close. */
+function RetirePanel({ agent, counts, onClose, onDisable }: { agent: { id: string; name: string; enabled: boolean }; counts: Record<string, number>; onClose: () => void; onDisable: () => void }) {
+  const panel = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => { panel.current?.focus(); }, []);
+  const close = () => { onClose(); document.querySelector<HTMLElement>(`[data-retire-trigger="${agent.id}"]`)?.focus(); };
+  const kinds = Object.entries(counts).filter(([, value]) => value > 0).sort((a, b) => b[1] - a[1]);
+  const shown = kinds.slice(0, 5);
+  const hidden = kinds.slice(5);
+  return <div ref={panel} tabIndex={-1} role="alertdialog" aria-labelledby={`retire-${agent.id}`} onKeyDown={(event) => { if (event.key === "Escape") close(); }} className="grid gap-2 rounded-md border border-danger-strong bg-danger-subtle p-3 outline-none">
+    <strong id={`retire-${agent.id}`} className="text-14 text-danger-text">{translate("agents.retire.title").replace("{name}", () => agent.name)}</strong>
+    <ul className="m-0 grid list-none gap-0.5 p-0 text-13" data-testid="retire-counts">
+      {shown.map(([kind, value]) => <li key={kind}>{translate(`agents.retire.kind.${kind}` as Parameters<typeof translate>[0])}: {value}</li>)}
+      {hidden.length > 0 && <li className="text-secondary">{translate("agents.retire.more").replace("{count}", String(hidden.reduce((sum, [, value]) => sum + value, 0))).replace("{kinds}", String(hidden.length))}</li>}
+    </ul>
+    <p className="m-0 text-13 text-secondary">{translate("agents.retire.help")}</p>
+    <div className="flex flex-wrap gap-2">
+      {agent.enabled && <button type="button" onClick={onDisable}>{translate("agents.disable")}</button>}
+      <button type="button" className="secondary" onClick={close}>{translate("agents.retire.close")}</button>
+    </div>
+  </div>;
+}
+
 export function WorkspaceAgents() {
   const { workspace, selfId } = useWorkspace();
   const [isAdmin, setIsAdmin] = React.useState<boolean | null>(null);
@@ -189,7 +211,7 @@ export function WorkspaceAgents() {
           <div className="flex flex-wrap gap-2">
             {editing?.id !== agent.id && <button type="button" className="secondary" onClick={() => setEditing({ id: agent.id, draft: toDraft(agent) })}>{translate("agents.edit")}</button>}
             <button type="button" className="secondary" onClick={async () => { setRetiring(null); await guard(await action(agent.enabled ? "disable_agent" : "enable_agent", { agentId: agent.id })); }}>{translate(agent.enabled ? "agents.disable" : "agents.enable")}</button>
-            <button type="button" className={dangerButton} onClick={async () => {
+            <button type="button" className={dangerButton} data-retire-trigger={agent.id} onClick={async () => {
               // The same counts the server refuses with: a refused Agent gets the dialog instead of a failed request.
               const check = await action<{ blocked: boolean; counts: Record<string, number> }>("get_agent_content_counts", { agentId: agent.id });
               if (check === null) { setNote(translate("agents.failed")); return; }
@@ -198,15 +220,7 @@ export function WorkspaceAgents() {
               if (window.confirm(translate("agents.deleteConfirm"))) await guard(await action("delete_agent", { agentId: agent.id }));
             }}>{translate("agents.delete")}</button>
           </div>
-          {retiring?.id === agent.id && <div role="alertdialog" aria-labelledby={`retire-${agent.id}`} className="grid gap-2 rounded-md border border-subtle p-3">
-            <strong id={`retire-${agent.id}`}>{translate("agents.retire.title").replace("{name}", () => agent.name)}</strong>
-            <ul className="grid gap-0.5 text-13" data-testid="retire-counts">{Object.entries(retiring.counts).filter(([, value]) => value > 0).map(([kind, value]) => <li key={kind}>{translate(`agents.retire.kind.${kind}` as Parameters<typeof translate>[0])}: {value}</li>)}</ul>
-            <p className="text-13 text-secondary">{translate("agents.retire.help")}</p>
-            <div className="flex flex-wrap gap-2">
-              {agent.enabled && <button type="button" onClick={async () => { setRetiring(null); await guard(await action("disable_agent", { agentId: agent.id })); }}>{translate("agents.disable")}</button>}
-              <button type="button" className="secondary" onClick={() => setRetiring(null)}>{translate("agents.retire.close")}</button>
-            </div>
-          </div>}
+          {retiring?.id === agent.id && <RetirePanel agent={agent} counts={retiring.counts} onClose={() => setRetiring(null)} onDisable={async () => { setRetiring(null); await guard(await action("disable_agent", { agentId: agent.id })); }} />}
         </div>
       </Row>; })}</RowList>}
     </SettingsBlock>

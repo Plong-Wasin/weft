@@ -61,12 +61,12 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
   }
 
   /** Project owners follow project access; wiki pages follow the wiki rule: public to every member, private to the page owner (others see it missing). */
-  async function requireOwnerAccess(owner: Owner, userId: string, level: "read" | "write" | "admin") {
-    if (owner.wikiPageId) return requireWikiPageAccess(db, userId, owner.wikiPageId, level === "read" ? "read" : "write");
+  async function requireOwnerAccess(owner: Owner, userId: string, level: "read" | "write" | "admin", database: Database = db) {
+    if (owner.wikiPageId) return requireWikiPageAccess(database, userId, owner.wikiPageId, level === "read" ? "read" : "write");
     if (owner.projectId) {
-      const intake = owner.workItemId ? (await db.select().from(intakeItems).where(eq(intakeItems.workItemId, owner.workItemId)))[0] : undefined;
+      const intake = owner.workItemId ? (await database.select().from(intakeItems).where(eq(intakeItems.workItemId, owner.workItemId)))[0] : undefined;
       if (intake && intake.outcome !== "accepted") {
-        const { project, workspaceRole, projectRole } = await requireProjectAccess(db, userId, owner.projectId, "read");
+        const { project, workspaceRole, projectRole } = await requireProjectAccess(database, userId, owner.projectId, "read");
         assertFeatureEnabled(project, "intake");
         const admin = workspaceRole === "Admin" || projectRole === "Admin";
         if (level === "read") {
@@ -82,10 +82,10 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
         if (!admin && intake.createdBy !== userId) throw new ActionError("Forbidden", 403);
         return;
       }
-      return requireProjectAccess(db, userId, owner.projectId, level);
+      return requireProjectAccess(database, userId, owner.projectId, level);
     }
-    await requireWorkspaceRole(db, userId, owner.workspaceId, "read");
-    if (level !== "read") await requireWorkspaceRole(db, userId, owner.workspaceId, level);
+    await requireWorkspaceRole(database, userId, owner.workspaceId, "read");
+    if (level !== "read") await requireWorkspaceRole(database, userId, owner.workspaceId, level);
   }
 
   /** An archived work item is read-only, and so are the files on it and on its comments. */
@@ -150,6 +150,12 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
         const owner = await resolveOwner(row.ownerType as OwnerType, row.ownerId);
         const result = await db.transaction(async (transaction) => {
           const database = transaction as unknown as Database;
+          // Intake decisions take this lock first. Recheck access after it, so
+          // a rejection or acceptance cannot race a previously authorized upload.
+          if (owner.workItemId) {
+            await database.select({ id: intakeItems.id }).from(intakeItems).where(eq(intakeItems.workItemId, owner.workItemId)).for("update");
+            await requireOwnerAccess(owner, context.userId, "write", database);
+          }
           // Completion and cancellation must serialize before touching storage;
           // otherwise cancellation can remove bytes belonging to an uploaded row.
           const [locked] = await database.select().from(assets).where(eq(assets.id, row.id)).for("update");

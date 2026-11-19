@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { activities, assets as assetTable, createDatabase, workspaces, type Database } from "@weft/db";
+import { activities, assets as assetTable, createDatabase, intakeItems, workspaces, type Database } from "@weft/db";
 import { createAssetActions, createCommentActions, createIntakeActions, createProjectActions, createWikiActions, createWorkItemActions, signPostPolicy, type AssetStorage } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -155,6 +155,37 @@ test("cancellation and completion serialize before changing stored bytes", async
     expect(await cancelling).toMatchObject({ status: 404 });
     expect(env.mem.objects.has(ticket.fields.key!)).toBe(true);
     expect((await db.select().from(assetTable).where(eq(assetTable.id, ticket.assetId)))[0]?.status).toBe("uploaded");
+  } finally {
+    await db.delete(workspaces).where(eq(workspaces.id, env.workspace.id));
+  }
+});
+
+test("upload completion observes a concurrent Intake decision before changing assets", async () => {
+  const env = await setup(db);
+  try {
+    const item = await createIntakeActions(db).submitIntakeItem.handler({ userId: env.guest.id }, { projectId: env.project.id, title: "Request" });
+    const ticket = await env.assets.requestAssetUpload.handler({ userId: env.guest.id }, { ownerType: "work_item", ownerId: item.workItemId, filename: "race.png", contentType: "image/png", size: 10 });
+    env.mem.put(ticket.fields.key!, 10);
+    let releaseDecision!: () => void;
+    let decisionLocked!: () => void;
+    const locked = new Promise<void>((resolve) => { decisionLocked = resolve; });
+    const gate = new Promise<void>((resolve) => { releaseDecision = resolve; });
+    const decision = db.transaction(async (transaction) => {
+      await transaction.update(intakeItems).set({ outcome: "rejected" }).where(eq(intakeItems.id, item.id));
+      decisionLocked();
+      await gate;
+    });
+    await locked;
+    let settled = false;
+    const completing = env.assets.completeAssetUpload.handler({ userId: env.guest.id }, { assetId: ticket.assetId }).then(() => null, (error) => error).finally(() => { settled = true; });
+    await Bun.sleep(100);
+    expect(settled).toBe(false);
+    releaseDecision();
+    await decision;
+    expect(await completing).toMatchObject({ status: 400 });
+    expect((await db.select().from(assetTable).where(eq(assetTable.id, ticket.assetId)))[0]?.status).toBe("pending");
+    expect((await db.select().from(activities).where(eq(activities.entityId, item.workItemId))).some((row) => row.field === "attachment_added")).toBe(false);
+    await env.assets.cancelAssetUpload.handler({ userId: env.guest.id }, { assetId: ticket.assetId });
   } finally {
     await db.delete(workspaces).where(eq(workspaces.id, env.workspace.id));
   }

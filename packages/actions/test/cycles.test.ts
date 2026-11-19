@@ -48,6 +48,16 @@ test.concurrent("a Member creates, updates, lists and gets a Cycle with computed
   });
 });
 
+test.concurrent("Cycle descriptions are optional Written form Markdown and can be edited and cleared", async () => {
+  await withRollback(db, async (transaction) => {
+    const { cycles, member, project } = await setup(transaction);
+    const created = await cycles.createCycle.handler({ userId: member.id }, { projectId: project.id, name: "Docs", startDate: day(0), endDate: day(3), descriptionMarkdown: "## Purpose\n\nUse **rich text**." });
+    expect(created.descriptionMarkdown).toBe("## Purpose\n\nUse **rich text**.");
+    expect((await cycles.getCycle.handler({ userId: member.id }, { cycleId: created.id })).descriptionMarkdown).toBe(created.descriptionMarkdown);
+    expect((await cycles.updateCycle.handler({ userId: member.id }, { cycleId: created.id, descriptionMarkdown: "" })).descriptionMarkdown).toBe("");
+  });
+});
+
 test.concurrent("invalid dates are refused", async () => {
   await withRollback(db, async (transaction) => {
     const { cycles, member, project } = await setup(transaction);

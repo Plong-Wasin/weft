@@ -35,6 +35,16 @@ test.concurrent("a Member creates, updates, lists and gets a Module; status is s
   });
 });
 
+test.concurrent("Module descriptions are optional Written form Markdown and can be edited and cleared", async () => {
+  await withRollback(db, async (transaction) => {
+    const { modules, member, project } = await setup(transaction);
+    const created = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Scope", descriptionMarkdown: "## Goal\n\nA **clear** goal." });
+    expect(created.descriptionMarkdown).toBe("## Goal\n\nA **clear** goal.");
+    expect((await modules.getModule.handler({ userId: member.id }, { moduleId: created.id })).descriptionMarkdown).toBe(created.descriptionMarkdown);
+    expect((await modules.updateModule.handler({ userId: member.id }, { moduleId: created.id, descriptionMarkdown: "" })).descriptionMarkdown).toBe("");
+  });
+});
+
 test.concurrent("validation: dates, status, lead outside the project", async () => {
   await withRollback(db, async (transaction) => {
     const { modules, member, outsider, project } = await setup(transaction);

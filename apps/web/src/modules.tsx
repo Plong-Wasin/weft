@@ -16,7 +16,7 @@ const statuses = ["backlog", "planned", "in-progress", "paused", "completed", "c
 type Status = (typeof statuses)[number];
 type Module = {
   id: string; name: string; status: Status; leadId: string | null; memberIds: string[]; startDate: string | null; endDate: string | null; archived: boolean;
-  itemCount: number; progress: { total: number; completed: number; cancelled: number; percent: number };
+  itemCount: number; progress: { total: number; completed: number; cancelled: number; percent: number }; descriptionMarkdown?: string;
 };
 type ModuleDetail = Module & { projectId: string; workItemIds: string[] };
 type Item = { id: string; displayId: string; title: string };
@@ -303,6 +303,7 @@ export function ModuleDetailPage({ workspaceSlug, projectKey, projectId, moduleI
           rowAction={editable ? (item) => <button className="whitespace-nowrap rounded-md border border-subtle bg-surface-1 px-2 py-1 text-12 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={() => void run("remove_module_items", { moduleId, workItemIds: [item.id] })}>{t("modules.remove")}</button> : undefined} />
       </div>
       <aside aria-label={t("modules.properties")} className="grid content-start gap-3 border-t border-subtle p-4 sm:p-6 lg:w-80 lg:shrink-0 lg:border-l lg:border-t-0">
+        <section className="grid gap-2" aria-label="Description"><h3 className="m-0 text-14 font-semibold">Description</h3>{editable && <textarea aria-label="Description" rows={4} value={module.descriptionMarkdown ?? ""} onChange={(event) => setModule({ ...module, descriptionMarkdown: event.target.value })} onBlur={() => { if (module.descriptionMarkdown !== undefined) void action("update_module", { moduleId, descriptionMarkdown: module.descriptionMarkdown }).then(() => void load()); }} />}{!editable && <p className="m-0 whitespace-pre-wrap text-13 text-secondary">{module.descriptionMarkdown || ""}</p>}</section>
         <div className="flex items-center gap-2"><StatusBadge status={module.status} /></div>
         <BurndownChart action={action} name="get_module_burndown" body={{ moduleId }} projectId={projectId} refreshKey={refreshKey} testId="module-burndown" />
         {insights && <section aria-label={t("modules.risks")} className="grid gap-2 border-t border-subtle pt-3">

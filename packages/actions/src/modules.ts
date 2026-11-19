@@ -10,6 +10,8 @@ import { agentUserIds } from "./agent-access";
 import { activityActor, type ActivityContext } from "./work-items";
 import { burndownSeries, burndownUnitSchema, todayIso, type BurndownUnit } from "./cycles";
 import { pointWeight, requirePointsEstimate } from "./estimates";
+import { workItemMarkdownOptions, writtenDescription } from "./work-items";
+import { WRITTEN_FORM_MAX_INPUT_LENGTH } from "./markdown-doc";
 
 /** Set by hand, never computed from dates or work items. */
 export const moduleStatuses = ["backlog", "planned", "in-progress", "paused", "completed", "cancelled"] as const;
@@ -25,6 +27,7 @@ const progressSchema = Type.Object({ total: Type.Integer(), completed: Type.Inte
 const moduleOutput = Type.Object({
   id: Type.String(), projectId: Type.String(), name: Type.String(), status: statusSchema, leadId: Type.Union([Type.String(), Type.Null()]),
   memberIds: Type.Array(Type.String()), startDate: Type.Union([Type.String(), Type.Null()]), endDate: Type.Union([Type.String(), Type.Null()]),
+  descriptionMarkdown: Type.String(), description: Type.Optional(Type.Any()),
   archived: Type.Boolean(), createdBy: Type.String(), createdAt: Type.String(), itemCount: Type.Integer(), progress: progressSchema,
 });
 const moduleDetailOutput = Type.Intersect([moduleOutput, Type.Object({ workItemIds: Type.Array(Type.String()) })]);
@@ -76,6 +79,7 @@ export function createModuleActions(db: Database) {
       const found = items.get(row.id)!;
       return {
         id: row.id, projectId: row.projectId, name: row.name, status: row.status as ModuleStatus, leadId: row.leadId, memberIds: members.get(row.id)!.sort(),
+        descriptionMarkdown: row.descriptionMarkdown ?? "", description: row.descriptionDoc ?? undefined,
         startDate: row.startDate, endDate: row.endDate, archived: row.archivedAt !== null, createdBy: row.createdBy, createdAt: row.createdAt.toISOString(),
         itemCount: found.length, progress: progressOf(found), workItemIds: found.map((item) => item.id),
       };
@@ -120,7 +124,7 @@ export function createModuleActions(db: Database) {
 
   const nullableDate = Type.Union([dateSchema, Type.Null()]);
   const people = Type.Array(Type.String({ minLength: 1 }), { maxItems: 200 });
-  type CreateInput = { projectId: string; name: string; status?: ModuleStatus; leadId?: string | null; memberIds?: string[]; startDate?: string | null; endDate?: string | null };
+  type CreateInput = { projectId: string; name: string; status?: ModuleStatus; leadId?: string | null; memberIds?: string[]; startDate?: string | null; endDate?: string | null; descriptionMarkdown?: string };
   type UpdateInput = Partial<Omit<CreateInput, "projectId">> & { moduleId: string };
 
   return {
@@ -128,19 +132,21 @@ export function createModuleActions(db: Database) {
       name: "create_module", kind: "write" as const,
       input: Type.Object({
         projectId: uuid(), name: nameSchema, status: Type.Optional(statusSchema), leadId: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Null()])),
-        memberIds: Type.Optional(people), startDate: Type.Optional(nullableDate), endDate: Type.Optional(nullableDate),
+        memberIds: Type.Optional(people), startDate: Type.Optional(nullableDate), endDate: Type.Optional(nullableDate), descriptionMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH })),
       }), output: moduleOutput,
       handler: async (context: Context, input: CreateInput) => {
         const { project } = await requireProjectAccess(db, context.userId, input.projectId, "write");
         assertFeatureEnabled(project, "modules");
         assertDates(input.startDate ?? null, input.endDate ?? null);
+        const options = await workItemMarkdownOptions(db, context.userId, project.workspaceId, project.id, input.descriptionMarkdown);
+        const description = await writtenDescription(undefined, input.descriptionMarkdown, options);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
           await assertPeople(database, project, [...(input.leadId ? [input.leadId] : []), ...(input.memberIds ?? [])]);
           await assertLeadIsPerson(database, input.leadId);
           const [row] = await database.insert(modules).values({
             workspaceId: project.workspaceId, projectId: project.id, name: input.name, status: input.status ?? "backlog", leadId: input.leadId ?? null,
-            startDate: input.startDate ?? null, endDate: input.endDate ?? null, createdBy: context.userId,
+            startDate: input.startDate ?? null, endDate: input.endDate ?? null, createdBy: context.userId, descriptionMarkdown: description.markdown, descriptionDoc: description.document,
           }).returning();
           const memberIds = [...new Set(input.memberIds ?? [])];
           if (memberIds.length) await database.insert(moduleMembers).values(memberIds.map((userId) => ({ moduleId: row!.id, userId })));
@@ -152,19 +158,25 @@ export function createModuleActions(db: Database) {
       name: "update_module", kind: "write" as const,
       input: Type.Object({
         moduleId: uuid(), name: Type.Optional(nameSchema), status: Type.Optional(statusSchema), leadId: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Null()])),
-        memberIds: Type.Optional(people), startDate: Type.Optional(nullableDate), endDate: Type.Optional(nullableDate),
+        memberIds: Type.Optional(people), startDate: Type.Optional(nullableDate), endDate: Type.Optional(nullableDate), descriptionMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH })),
       }), output: moduleOutput,
       handler: async (context: Context, input: UpdateInput) => {
         const { module: current, project } = await moduleAccess(context, input.moduleId, "write");
         assertOpen(current);
         const startDate = input.startDate === undefined ? current.startDate : input.startDate, endDate = input.endDate === undefined ? current.endDate : input.endDate;
         assertDates(startDate, endDate);
+        const descriptionPatch: Partial<typeof modules.$inferInsert> = {};
+        if (input.descriptionMarkdown !== undefined) {
+          const options = await workItemMarkdownOptions(db, context.userId, project.workspaceId, project.id, input.descriptionMarkdown);
+          const description = await writtenDescription(undefined, input.descriptionMarkdown, options);
+          descriptionPatch.descriptionMarkdown = description.markdown; descriptionPatch.descriptionDoc = description.document;
+        }
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
           const leadId = input.leadId === undefined ? current.leadId : input.leadId;
           await assertPeople(database, project, [...(input.leadId ? [input.leadId] : []), ...(input.memberIds ?? [])]);
           await assertLeadIsPerson(database, input.leadId);
-          const [row] = await database.update(modules).set({ name: input.name ?? current.name, status: input.status ?? current.status, leadId, startDate, endDate }).where(eq(modules.id, current.id)).returning();
+          const [row] = await database.update(modules).set({ name: input.name ?? current.name, status: input.status ?? current.status, leadId, startDate, endDate, ...descriptionPatch }).where(eq(modules.id, current.id)).returning();
           if (input.memberIds) {
             const memberIds = [...new Set(input.memberIds)];
             await database.delete(moduleMembers).where(eq(moduleMembers.moduleId, current.id));

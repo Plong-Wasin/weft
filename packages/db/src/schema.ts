@@ -702,6 +702,8 @@ export const cycles = pgTable("cycles", {
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
   projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
+  descriptionMarkdown: text("description_markdown").notNull().default(""),
+  descriptionDoc: jsonb("description_doc"),
   startDate: date("start_date").notNull(),
   endDate: date("end_date").notNull(),
   createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
@@ -726,6 +728,8 @@ export const modules = pgTable("modules", {
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
   projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
+  descriptionMarkdown: text("description_markdown").notNull().default(""),
+  descriptionDoc: jsonb("description_doc"),
   /** Set by hand, never computed: backlog, planned, in-progress, paused, completed, cancelled. */
   status: text("status").notNull().default("backlog"),
   leadId: text("lead_id").references(() => users.id, { onDelete: "set null" }),

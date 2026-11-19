@@ -12,7 +12,7 @@ import { stateGroups, type StateGroup } from "./types";
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
 type Status = "upcoming" | "active" | "completed";
-export type Cycle = { id: string; projectId?: string; name: string; startDate: string; endDate: string; status: Status; itemCount: number; progress: { completed: number; total: number }; archived: boolean };
+export type Cycle = { id: string; projectId?: string; name: string; startDate: string; endDate: string; status: Status; itemCount: number; progress: { completed: number; total: number }; archived: boolean; descriptionMarkdown?: string };
 type CycleDetail = Cycle & { workItemIds: string[] };
 type Item = { id: string; displayId: string; title: string; stateId?: string };
 type State = { id: string; name: string; group: StateGroup };
@@ -63,17 +63,19 @@ function CycleModal({ action, projectId, cycle, onClose, onSaved }: { action: Ca
   const [name, setName] = React.useState(cycle?.name ?? "");
   const [startDate, setStartDate] = React.useState(cycle?.startDate ?? "");
   const [endDate, setEndDate] = React.useState(cycle?.endDate ?? "");
+  const [descriptionMarkdown, setDescriptionMarkdown] = React.useState(cycle?.descriptionMarkdown ?? "");
   const [note, setNote] = React.useState<string | null>(null);
   const overlap = useOverlap(action, projectId, startDate, endDate, cycle?.id);
   return <Modal title={t(cycle ? "cycles.editTitle" : "cycles.newTitle")} onClose={onClose}>
     <form className="grid gap-3" onSubmit={async (event) => {
       event.preventDefault();
-      const saved = cycle ? await action("update_cycle", { cycleId: cycle.id, name, startDate, endDate }) : await action("create_cycle", { projectId, name, startDate, endDate });
+      const saved = cycle ? await action("update_cycle", { cycleId: cycle.id, name, startDate, endDate, descriptionMarkdown }) : await action("create_cycle", { projectId, name, startDate, endDate, descriptionMarkdown });
       if (!saved) return setNote(t("cycles.failed"));
       onSaved();
       onClose();
     }}>
       <label>{t("cycles.name")}<input autoFocus required value={name} onChange={(event) => setName(event.target.value)} /></label>
+      <label>Description<textarea aria-label="Description" rows={4} value={descriptionMarkdown} onChange={(event) => setDescriptionMarkdown(event.target.value)} /></label>
       <div className="grid gap-3 sm:grid-cols-2">
         <label>{t("cycles.start")}<input required type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label>
         <label>{t("cycles.end")}<input required type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label>
@@ -293,6 +295,7 @@ export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId,
           rowAction={canWrite && !cycle.archived ? (item) => <button className="secondary" onClick={() => void remove(item.id)}>{t("cycles.remove")}</button> : undefined} />
       </div>
       <aside aria-label={t("cycles.details")} className="grid h-fit gap-4 rounded-lg border border-subtle p-4 lg:w-80 lg:shrink-0">
+        <section className="grid gap-2" aria-label="Description"><h3 className="m-0 text-14 font-semibold">Description</h3>{canWrite && !cycle.archived && <textarea aria-label="Description" rows={4} value={cycle.descriptionMarkdown ?? ""} onChange={(event) => setCycle({ ...cycle, descriptionMarkdown: event.target.value })} onBlur={() => { if (cycle.descriptionMarkdown !== undefined) void action("update_cycle", { cycleId, descriptionMarkdown: cycle.descriptionMarkdown }).then(() => void load()); }} />}{(!canWrite || cycle.archived) && <p className="m-0 whitespace-pre-wrap text-13 text-secondary">{cycle.descriptionMarkdown || ""}</p>}</section>
         <div className="flex items-center gap-2">{statusPill(cycle.status)}{cycle.archived && <span role="status" className="text-12 text-secondary">{t("cycles.archived")}</span>}</div>
         <p className="m-0 flex items-center gap-1.5 text-13 text-secondary"><CalendarDays aria-hidden size={14} />{range(cycle)}</p>
         <p className="m-0 text-13 text-secondary">{t("cycles.itemCount").replace("{count}", count(cycle.itemCount))}</p>

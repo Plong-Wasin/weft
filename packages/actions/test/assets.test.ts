@@ -88,6 +88,13 @@ test.concurrent("Intake assets allow the Guest submitter and Admin, preserve Gue
     await expect(env.assets.deleteAsset.handler({ userId: env.guest.id }, { assetId: second.id })).rejects.toMatchObject({ status: 400 });
     await expect(env.assets.deleteAsset.handler({ userId: env.admin.id }, { assetId: second.id })).rejects.toMatchObject({ status: 400 });
 
+    const duplicateItem = await intake.submitIntakeItem.handler({ userId: env.guest.id }, { projectId: env.project.id, title: "Duplicate guest request" });
+    const duplicateAsset = await upload(env, env.guest.id, file, { ownerType: "work_item", ownerId: duplicateItem.workItemId });
+    await intake.duplicateIntakeItem.handler({ userId: env.member.id }, { intakeItemId: duplicateItem.id, duplicateTo: env.item.id });
+    expect(await env.assets.listAssets.handler({ userId: env.guest.id }, { ownerType: "work_item", ownerId: duplicateItem.workItemId })).toHaveLength(1);
+    await expect(env.assets.requestAssetUpload.handler({ userId: env.admin.id }, { ownerType: "work_item", ownerId: duplicateItem.workItemId, ...file })).rejects.toMatchObject({ status: 400 });
+    await expect(env.assets.deleteAsset.handler({ userId: env.admin.id }, { assetId: duplicateAsset.id })).rejects.toMatchObject({ status: 400 });
+
     const acceptedItem = await intake.submitIntakeItem.handler({ userId: env.guest.id }, { projectId: env.project.id, title: "Accepted guest request" });
     const acceptedAsset = await upload(env, env.guest.id, file, { ownerType: "work_item", ownerId: acceptedItem.workItemId });
     const document = { type: "doc", content: [{ type: "assetImage", attrs: { assetId: acceptedAsset.id, alt: "Proof" } }] };

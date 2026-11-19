@@ -1171,6 +1171,7 @@ export const en = {
     "intake.submitFailed": "Could not submit. Try again.",
     "intake.by": "by {name}",
     "intake.accept": "Accept",
+    "intake.acceptIntoState": "Accept into State",
     "intake.reject": "Reject",
     "intake.snooze": "Snooze",
     "intake.unsnooze": "Unsnooze",

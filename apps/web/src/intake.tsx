@@ -24,6 +24,7 @@ type IntakeItem = {
 type IntakeDraft = { title: string; description: unknown; priority: string; assigneeIds: string[]; labelIds: string[]; dueDate: string | null };
 type IntakePerson = { userId: string; name: string; isAgent?: boolean; hasAccess?: boolean };
 type IntakeLabel = { id: string; name: string };
+type IntakeState = { id: string; name: string; group: string };
 const titleDraftKey = (id: string) => `intake-title-draft:${id}`;
 const draftKey = (id: string) => `intake-draft:${id}`;
 function readDraft(id: string): IntakeDraft | undefined {
@@ -116,6 +117,34 @@ function SnoozeModal({ onClose, onSnooze }: { onClose: () => void; onSnooze: (ti
   </Modal>;
 }
 
+function AcceptModal({ action, projectId, onClose, onAccept }: { action: Call; projectId: string; onClose: () => void; onAccept: (stateId: string) => void }) {
+  const [states, setStates] = React.useState<IntakeState[]>([]);
+  const [stateId, setStateId] = React.useState("");
+  React.useEffect(() => {
+    let active = true;
+    void action<IntakeState[]>("list_states", { projectId }).then((rows) => {
+      if (!active) return;
+      const normal = (rows ?? []).filter((state) => state.group !== "triage");
+      setStates(normal);
+      setStateId((current) => current || normal.find((state) => state.group === "backlog")?.id || "");
+    });
+    return () => { active = false; };
+  }, [action, projectId]);
+  return <Modal title={t("intake.acceptIntoState")} onClose={onClose}>
+    <form className="my-0 grid gap-3" onSubmit={(event) => { event.preventDefault(); if (stateId) onAccept(stateId); }}>
+      <label className="grid gap-1 text-13 text-secondary">{t("workItems.state")}
+        <select autoFocus required aria-label={t("workItems.state")} value={stateId} className={field} onChange={(event) => setStateId(event.target.value)}>
+          {states.map((state) => <option key={state.id} value={state.id}>{state.name}</option>)}
+        </select>
+      </label>
+      <div className="flex justify-end gap-2">
+        <button type="button" className={quietButton} onClick={onClose}>{t("intake.cancel")}</button>
+        <button className={primaryButton} disabled={!stateId}>{t("intake.accept")}</button>
+      </div>
+    </form>
+  </Modal>;
+}
+
 /** Picks the original by display id (for example MOB-1) and resolves it through search. */
 function DuplicateModal({ action, workspaceId, item, onClose, onPick }: { action: Call; workspaceId: string; item: IntakeItem; onClose: () => void; onPick: (workItemId: string) => void }) {
   const [value, setValue] = React.useState("");
@@ -158,7 +187,7 @@ function ListRow({ item, selected, onSelect }: { item: IntakeItem; selected: boo
   </li>;
 }
 
-type Dialog = "snooze" | "duplicate" | null;
+type Dialog = "accept" | "snooze" | "duplicate" | null;
 
 function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, selfId, item, index, count, canDecide, canEdit, draft, onDraftChange, onMove, onDecided, onChanged, onUpdated }: {
   action: Call; workspaceId: string; workspaceSlug: string; projectKey: string; projectId: string; selfId: string; item: IntakeItem; index: number; count: number; canDecide: boolean; canEdit: boolean; draft?: IntakeDraft; onDraftChange: (patch: Partial<IntakeDraft>) => void; onMove: (delta: number) => void; onDecided: () => void; onChanged: () => void; onUpdated: () => void;
@@ -211,7 +240,7 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
       <button type="button" className={iconButton} aria-label={t("intake.previous")} disabled={index <= 0} onClick={() => onMove(-1)}><ChevronUp aria-hidden size={16} /></button>
       <button type="button" className={iconButton} aria-label={t("intake.next")} disabled={index >= count - 1} onClick={() => onMove(1)}><ChevronDown aria-hidden size={16} /></button>
       {canDecide && undecided && <>
-        <button type="button" className={quietButton} onClick={() => void run("accept_intake_item", {})}>{t("intake.accept")}</button>
+        <button type="button" className={quietButton} onClick={() => setDialog("accept")}>{t("intake.accept")}</button>
         <button type="button" className={quietButton} onClick={() => void run("reject_intake_item", {})}>{t("intake.reject")}</button>
       </>}
       {canDecide && unsnoozed && <button type="button" className={quietButton} onClick={() => void run("unsnooze_intake_item", {})}>{t("intake.unsnooze")}</button>}
@@ -257,6 +286,7 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
     </div>
     {dialog === "snooze" && <SnoozeModal onClose={() => setDialog(null)} onSnooze={(till) => void run("snooze_intake_item", { snoozedTill: till })} />}
     {dialog === "duplicate" && <DuplicateModal action={action} workspaceId={workspaceId} item={item} onClose={() => setDialog(null)} onPick={(workItemId) => void run("duplicate_intake_item", { duplicateTo: workItemId })} />}
+    {dialog === "accept" && <AcceptModal action={action} projectId={projectId} onClose={() => setDialog(null)} onAccept={(stateId) => void run("accept_intake_item", { stateId })} />}
   </section>;
 }
 

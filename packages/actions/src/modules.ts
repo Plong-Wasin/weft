@@ -1,8 +1,8 @@
 import { Type } from "@sinclair/typebox";
-import { and, asc, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { assertNoneArchived, assertNotArchived, liveWorkItems, unarchivedWorkItems } from "./triage";
-import { activities, estimatePoints, moduleItems, moduleMembers, modules, projectMembers, workItemStates, workItems, workspaceMembers } from "@weft/db";
+import { activities, estimatePoints, moduleItems, moduleMembers, modules, projectMembers, workItemAssignees, workItemLabels, workItemRelations, labels, users, workItemStates, workItems, workspaceMembers } from "@weft/db";
 import { assertFeatureEnabled } from "./features";
 import { ActionError } from "./members";
 import { requireProjectAccess } from "./projects";
@@ -193,6 +193,44 @@ export function createModuleActions(db: Database) {
       handler: async (context: Context, input: { moduleId: string }) => {
         const { module: found } = await moduleAccess(context, input.moduleId, "read");
         return (await present(db, [found]))[0]!;
+      },
+    },
+    getModuleInsights: {
+      name: "get_module_insights", kind: "read" as const,
+      input: Type.Object({ moduleId: uuid() }),
+      output: Type.Object({ blocked: Type.Array(Type.Object({ id: Type.String(), displayId: Type.String(), title: Type.String() })), overdue: Type.Array(Type.Object({ id: Type.String(), displayId: Type.String(), title: Type.String() })), breakdowns: Type.Record(Type.String(), Type.Array(Type.Object({ key: Type.String(), label: Type.String(), items: Type.Array(Type.Object({ id: Type.String(), displayId: Type.String(), title: Type.String() })) }))) }),
+      handler: async (context: Context, input: { moduleId: string }) => {
+        const { module: found, project } = await moduleAccess(context, input.moduleId, "read");
+        const base = await db.select({ id: workItems.id, sequence: workItems.sequence, title: workItems.title, dueDate: workItems.dueDate, priority: workItems.priority, stateId: workItems.stateId, state: workItemStates.name, group: workItemStates.group })
+          .from(moduleItems).innerJoin(workItems, and(eq(workItems.id, moduleItems.workItemId), unarchivedWorkItems)).innerJoin(workItemStates, eq(workItemStates.id, workItems.stateId))
+          .where(and(eq(moduleItems.moduleId, found.id), sql`${workItemStates.group} <> 'triage'`)).orderBy(asc(workItems.sequence));
+        const liveIds = base.filter((item) => item.group !== "completed" && item.group !== "cancelled").map((item) => item.id);
+        const blockers = liveIds.length ? await db.select({ id: workItemRelations.workItemId }).from(workItemRelations)
+          .innerJoin(workItems, and(eq(workItems.id, workItemRelations.relatedWorkItemId), unarchivedWorkItems))
+          .innerJoin(workItemStates, and(eq(workItemStates.id, workItems.stateId), ne(workItemStates.group, "completed"), ne(workItemStates.group, "cancelled")))
+          .where(and(eq(workItemRelations.projectId, project.id), eq(workItemRelations.type, "blocked_by"), inArray(workItemRelations.workItemId, liveIds))) : [];
+        const blockedSet = new Set(blockers.map((row) => row.id));
+        const today = todayIso();
+        const items = base.map((item) => ({ id: item.id, displayId: `${project.key}-${item.sequence}`, title: item.title }));
+        const byId = new Map(items.map((item) => [item.id, item]));
+        const assigneeRows = await db.select({ itemId: workItemAssignees.workItemId, id: users.id, name: users.name }).from(workItemAssignees).innerJoin(users, eq(users.id, workItemAssignees.userId)).where(inArray(workItemAssignees.workItemId, base.map((item) => item.id)));
+        const labelRows = await db.select({ itemId: workItemLabels.workItemId, id: labels.id, name: labels.name }).from(workItemLabels).innerJoin(labels, eq(labels.id, workItemLabels.labelId)).where(inArray(workItemLabels.workItemId, base.map((item) => item.id)));
+        const groupBy = (entries: Array<{ key: string; label: string; itemId: string }>) => {
+          const map = new Map<string, { key: string; label: string; items: Array<{ id: string; displayId: string; title: string }> }>();
+          for (const entry of entries) { const group = map.get(entry.key) ?? { key: entry.key, label: entry.label, items: [] }; const item = byId.get(entry.itemId); if (item) group.items.push(item); map.set(entry.key, group); }
+          return [...map.values()].sort((a, b) => a.label.localeCompare(b.label));
+        };
+        const assigned = new Set(assigneeRows.map((row) => row.itemId)), labelled = new Set(labelRows.map((row) => row.itemId));
+        return {
+          blocked: items.filter((item) => blockedSet.has(item.id)),
+          overdue: items.filter((item) => { const source = base.find((row) => row.id === item.id)!; return source.dueDate !== null && source.dueDate < today && source.group !== "completed" && source.group !== "cancelled"; }),
+          breakdowns: {
+            state: groupBy(base.map((row) => ({ key: row.stateId, label: row.state, itemId: row.id }))),
+            assignee: groupBy([...assigneeRows.map((row) => ({ key: row.id, label: row.name, itemId: row.itemId })), ...base.filter((row) => !assigned.has(row.id)).map((row) => ({ key: "none", label: "Unassigned", itemId: row.id }))]),
+            label: groupBy([...labelRows.map((row) => ({ key: row.id, label: row.name, itemId: row.itemId })), ...base.filter((row) => !labelled.has(row.id)).map((row) => ({ key: "none", label: "Unlabelled", itemId: row.id }))]),
+            priority: groupBy(base.map((row) => ({ key: row.priority, label: row.priority, itemId: row.id }))),
+          },
+        };
       },
     },
     /** Same series as a Cycle's (burndownSeries); a Module without start date, target date or work items returns a reason and no days. */

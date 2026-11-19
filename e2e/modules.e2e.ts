@@ -125,9 +125,9 @@ try {
   // Detail: add work items from the module page.
   await page.getByRole("link", { name: "Authentication" }).click();
   await page.getByRole("heading", { name: "Authentication" }).waitFor();
-  await page.getByLabel("Description").fill("Module scope and goal");
+  await page.getByRole("textbox", { name: "Description" }).fill("Module scope and goal");
   await page.getByRole("heading", { name: "Authentication" }).click();
-  check((await page.getByLabel("Description").inputValue()) === "Module scope and goal", "Module description did not save through Actions");
+  check((await page.getByRole("textbox", { name: "Description" }).inputValue()) === "Module scope and goal", "Module description did not save through Actions");
   await page.getByRole("button", { name: t("modules.addWorkItems") }).click();
   const add = page.getByRole("dialog", { name: t("modules.addItemsTitle") });
   await add.getByLabel(/Alpha/).check();

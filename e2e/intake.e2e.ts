@@ -1,8 +1,8 @@
 // Browser end-to-end flow: submit a work item to Intake, accept it, check it leaves Triage and shows in the project list.
 // Run with `bun run e2e` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
 import { chromium, type Locator, type Page } from "playwright";
-import { like } from "drizzle-orm";
-import { createDatabase, users, workspaces } from "../packages/db/src";
+import { eq, like } from "drizzle-orm";
+import { createDatabase, projects as dbProjects, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
 
@@ -31,6 +31,7 @@ async function waitFor(url: string) {
 }
 
 let failed = false;
+let e2eDatabase: ReturnType<typeof createDatabase> | null = null;
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
   const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
@@ -53,10 +54,19 @@ try {
   await page.getByText(translate("projects.shapeFull"), { exact: true }).click(); // a new project starts Simple; this flow needs Cycles, Modules and Intake
   await page.getByRole("button", { name: translate("projects.create") }).click();
   await page.getByRole("link", { name: /MOB · Mobile/ }).click();
+  e2eDatabase = createDatabase();
+  const [workspaceRow] = await e2eDatabase.db.select({ id: workspaces.id }).from(workspaces).where(eq(workspaces.slug, slug));
+  const [projectRow] = await e2eDatabase.db.select({ id: dbProjects.id }).from(dbProjects).where(eq(dbProjects.workspaceId, workspaceRow!.id));
+  const [userRow] = await e2eDatabase.db.select({ id: users.id }).from(users).where(eq(users.email, `${slug}@example.test`));
+  const createdLabel = await page.evaluate(async ({ apiUrl, projectId }) => {
+    const response = await fetch(`${apiUrl}/actions/create_label`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId, name: "E2E label" }) });
+    if (!response.ok) throw new Error(`create_label failed: ${response.status}`);
+    return response.json() as Promise<{ id: string }>;
+  }, { apiUrl: api, projectId: projectRow!.id });
 
   const shots = reviewShots("14-intake-ui");
   const add = page.getByRole("button", { name: translate("intake.add"), exact: true });
-  const submit = async (title: string, description = "") => {
+  const submit = async (title: string, description = "", properties = false) => {
     await add.click();
     const dialog = page.getByRole("dialog");
     await dialog.getByLabel(translate("intake.titleField")).fill(title);
@@ -65,6 +75,11 @@ try {
       await editor.fill(description);
       await editor.press("Control+A");
       await dialog.getByRole("toolbar").getByRole("button", { name: translate("wiki.tool.bold") }).click();
+    }
+    if (properties) {
+      await dialog.getByLabel(translate("workItems.assignees")).selectOption(userRow!.id);
+      await dialog.getByLabel(translate("workItems.labels")).selectOption(createdLabel.id);
+      await dialog.getByLabel(translate("workItems.dueDate")).fill("2030-05-06");
     }
     await dialog.getByRole("button", { name: translate("intake.submit"), exact: true }).click();
     await dialog.waitFor({ state: "detached" });
@@ -78,7 +93,7 @@ try {
   await page.getByRole("link", { name: translate("intake.title") }).click();
   await add.waitFor();
   check(await page.getByRole("tab", { name: translate("intake.tab.open") }).getAttribute("aria-selected") === "true", "Open tab is not the default");
-  await submit("Dark mode please", "Users want a dark theme");
+  await submit("Dark mode please", "Users want a dark theme", true);
   await page.getByTestId("intake-MOB-1").waitFor();
   await detail.getByLabel(translate("intake.titleField")).waitFor();
   check(await detail.getByLabel(translate("intake.titleField")).inputValue() === "Dark mode please", "created title was not available for inline editing");
@@ -92,6 +107,9 @@ try {
   await detail.locator("header").getByText("MOB-1", { exact: true }).waitFor();
   await detail.getByLabel(translate("intake.titleField")).fill("Dark theme please");
   await detail.getByLabel(translate("intake.priority")).selectOption("high");
+  await detail.getByLabel(translate("workItems.assignees")).selectOption(userRow!.id);
+  await detail.getByLabel(translate("workItems.labels")).selectOption(createdLabel.id);
+  await detail.getByLabel(translate("workItems.dueDate")).fill("2030-05-07");
   const editing = detail.getByTestId("description-editor").locator('[contenteditable="true"]');
   await editing.fill("Updated request");
   check(await page.evaluate(() => Object.values(sessionStorage).some((value) => value.includes("Updated request"))), "rich-text changes were not retained as a draft");
@@ -120,6 +138,7 @@ try {
   await detail.getByRole("button", { name: translate("intake.save"), exact: true }).click();
   await detail.getByLabel(translate("intake.titleField")).waitFor();
   await expectValue(detail.getByLabel(translate("intake.titleField")), "Dark theme please", "saved title");
+  await expectValue(detail.getByLabel(translate("workItems.dueDate")), "2030-05-07", "saved due date");
   await page.reload();
   await page.getByRole("link", { name: translate("intake.title") }).click();
   const reopened = page.getByRole("region", { name: translate("intake.detail") });
@@ -127,6 +146,9 @@ try {
   await reopened.locator("header").getByText("MOB-1", { exact: true }).waitFor();
   await expectValue(reopened.getByLabel(translate("intake.titleField")), "Dark theme please", "reopened title");
   await expectValue(reopened.getByLabel(translate("intake.priority")), "high", "reopened priority");
+  await expectValue(reopened.getByLabel(translate("workItems.dueDate")), "2030-05-07", "reopened due date");
+  check(JSON.stringify(await reopened.getByLabel(translate("workItems.assignees")).evaluate((node: HTMLSelectElement) => [...node.selectedOptions].map((option) => option.value))) === JSON.stringify([userRow!.id]), "assignee did not survive reload");
+  check(JSON.stringify(await reopened.getByLabel(translate("workItems.labels")).evaluate((node: HTMLSelectElement) => [...node.selectedOptions].map((option) => option.value))) === JSON.stringify([createdLabel.id]), "label did not survive reload");
   await reopened.getByTestId("description-editor").locator("strong").getByText("Updated request").waitFor();
   await submit("Export to CSV");
   await submit("Slow search");
@@ -203,9 +225,9 @@ try {
 } finally {
   for (const server of servers) server.kill();
   // The flow commits real rows (the servers use their own connections), so remove them: other tests expect an empty instance.
-  const { client, db } = createDatabase();
-  await db.delete(workspaces).where(like(workspaces.slug, "e2e-%"));
-  await db.delete(users).where(like(users.email, "e2e-%@example.test"));
-  await client.end();
+  e2eDatabase ??= createDatabase();
+  await e2eDatabase.db.delete(workspaces).where(like(workspaces.slug, "e2e-%"));
+  await e2eDatabase.db.delete(users).where(like(users.email, "e2e-%@example.test"));
+  await e2eDatabase.client.end();
 }
 process.exit(failed ? 1 : 0);

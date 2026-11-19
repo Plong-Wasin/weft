@@ -5,7 +5,7 @@ import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { activities, agentAccess, agents, collections, collectionMembers, commentMentions, commentVersions, comments, intakeItems, outlinks, projectKeyAliases, projectMembers, projects, runtimes, users, wikiPageShares, wikiPages, workItems, workItemAssignees, workspaceMembers } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
-import { assertNotArchived } from "./triage";
+import { assertNotArchived, liveWorkItems } from "./triage";
 import { enqueueNotification } from "./notifications";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { requireWikiPageAccess } from "./wiki";
@@ -139,9 +139,13 @@ export function createCommentActions(db: Database) {
   const tx = (transaction: unknown) => transaction as Database;
 
   async function loadItem(workItemId: string) {
-    // Intake conversations live on Triage items, which normal work item reads deliberately hide.
+    const [normalItem] = await db.select().from(workItems).where(and(eq(workItems.id, workItemId), liveWorkItems));
+    if (normalItem) return normalItem;
+    // Only Intake conversations may bypass the normal Triage exclusion.
     const [item] = await db.select().from(workItems).where(and(eq(workItems.id, workItemId), isNull(workItems.deletedAt)));
     if (!item) throw new ActionError("Work item not found", 404);
+    const [intake] = await db.select({ id: intakeItems.id }).from(intakeItems).where(eq(intakeItems.workItemId, item.id));
+    if (!intake) throw new ActionError("Work item not found", 404);
     return item;
   }
 

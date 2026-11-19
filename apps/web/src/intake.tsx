@@ -19,9 +19,11 @@ type Outcome = (typeof outcomes)[number];
 type Tab = "open" | "closed";
 type IntakeItem = {
   id: string; workItemId: string; displayId: string; title: string; descriptionText: string; descriptionMarkdown: string; priority: string; outcome: Outcome; snoozedTill: string | null;
-  duplicateToDisplayId: string | null; createdBy: string; createdByName: string; createdAt: string;
+  duplicateToDisplayId: string | null; createdBy: string; createdByName: string; createdAt: string; assigneeIds: string[]; labelIds: string[]; dueDate: string | null;
 };
-type IntakeDraft = { title: string; description: unknown; priority: string };
+type IntakeDraft = { title: string; description: unknown; priority: string; assigneeIds: string[]; labelIds: string[]; dueDate: string | null };
+type IntakePerson = { userId: string; name: string; isAgent?: boolean; hasAccess?: boolean };
+type IntakeLabel = { id: string; name: string };
 const titleDraftKey = (id: string) => `intake-title-draft:${id}`;
 const draftKey = (id: string) => `intake-draft:${id}`;
 function readDraft(id: string): IntakeDraft | undefined {
@@ -66,11 +68,17 @@ function SubmitModal({ action, workspaceId, projectId, onClose, onSubmitted }: {
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState<unknown>(markdownToDoc(""));
   const [priority, setPriority] = React.useState("none");
+  const [people, setPeople] = React.useState<IntakePerson[]>([]);
+  const [labels, setLabels] = React.useState<IntakeLabel[]>([]);
+  const [assigneeIds, setAssigneeIds] = React.useState<string[]>([]);
+  const [labelIds, setLabelIds] = React.useState<string[]>([]);
+  const [dueDate, setDueDate] = React.useState("");
   const [note, setNote] = React.useState<string | null>(null);
+  React.useEffect(() => { void Promise.all([action<IntakePerson[]>("list_project_members", { projectId }), action<IntakeLabel[]>("list_labels", { projectId })]).then(([members, projectLabels]) => { if (members) setPeople(members); if (projectLabels) setLabels(projectLabels); }); }, [action, projectId]);
   return <Modal title={t("intake.modalTitle")} onClose={onClose}>
     <form className="my-0 grid gap-3" onSubmit={async (event) => {
       event.preventDefault();
-      const saved = await action<IntakeItem>("submit_intake_item", { projectId, title, priority, description });
+      const saved = await action<IntakeItem>("submit_intake_item", { projectId, title, priority, description, assigneeIds, labelIds, dueDate: dueDate || null });
       setNote(saved ? null : t("intake.submitFailed"));
       if (saved) onSubmitted(saved);
     }}>
@@ -81,6 +89,9 @@ function SubmitModal({ action, workspaceId, projectId, onClose, onSubmitted }: {
           {["none", "urgent", "high", "medium", "low"].map((value) => <option key={value} value={value}>{t(`workItems.priority.${value}`)}</option>)}
         </select>
       </label>
+      <label className="grid gap-1 text-13 text-secondary">{t("workItems.assignees")}<select multiple value={assigneeIds} className={`${field} min-h-20`} onChange={(event) => setAssigneeIds([...event.currentTarget.selectedOptions].map((option) => option.value))}>{people.map((person) => <option key={person.userId} value={person.userId} disabled={person.isAgent && person.hasAccess === false}>{person.name}{person.isAgent && person.hasAccess === false ? " (no access)" : ""}</option>)}</select></label>
+      <label className="grid gap-1 text-13 text-secondary">{t("workItems.labels")}<select multiple value={labelIds} className={`${field} min-h-20`} onChange={(event) => setLabelIds([...event.currentTarget.selectedOptions].map((option) => option.value))}>{labels.map((label) => <option key={label.id} value={label.id}>{label.name}</option>)}</select></label>
+      <label className="grid gap-1 text-13 text-secondary">{t("workItems.dueDate")}<input type="date" value={dueDate} className={field} onChange={(event) => setDueDate(event.target.value)} /></label>
       {note && <p role="alert" className="m-0 text-13 text-danger-text">{note}</p>}
       <div className="flex justify-end gap-2">
         <button type="button" className={quietButton} onClick={onClose}>{t("intake.cancel")}</button>
@@ -165,6 +176,12 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
     if (cached !== null && cached !== titleValueRef.current) { titleValueRef.current = cached; setTitle(cached); }
   }, [description, item.id]);
   const priority = activeDraft?.priority ?? item.priority;
+  const [people, setPeople] = React.useState<IntakePerson[]>([]);
+  const [labels, setLabels] = React.useState<IntakeLabel[]>([]);
+  React.useEffect(() => { void Promise.all([action<IntakePerson[]>("list_project_members", { projectId }), action<IntakeLabel[]>("list_labels", { projectId })]).then(([members, projectLabels]) => { if (members) setPeople(members); if (projectLabels) setLabels(projectLabels); }); }, [action, projectId]);
+  const assigneeIds = activeDraft?.assigneeIds ?? item.assigneeIds;
+  const labelIds = activeDraft?.labelIds ?? item.labelIds;
+  const dueDate = activeDraft && "dueDate" in activeDraft ? activeDraft.dueDate ?? "" : item.dueDate ?? "";
   const editable = canEdit && (item.outcome === "pending" || item.outcome === "snoozed");
   const changeDraft = (patch: Partial<IntakeDraft>) => onDraftChange(patch);
   const [saving, setSaving] = React.useState(false);
@@ -178,7 +195,7 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
   const save = async () => {
     setSaving(true);
     const savedDraft = readDraft(item.id);
-    const attempted = { title: titleInputRef.current?.value ?? sessionStorage.getItem(titleDraftKey(item.id)) ?? titleValueRef.current, description: savedDraft?.description ?? description, priority: savedDraft?.priority ?? priority };
+    const attempted = { title: titleInputRef.current?.value ?? sessionStorage.getItem(titleDraftKey(item.id)) ?? titleValueRef.current, description: savedDraft?.description ?? description, priority: savedDraft?.priority ?? priority, assigneeIds: savedDraft?.assigneeIds ?? assigneeIds, labelIds: savedDraft?.labelIds ?? labelIds, dueDate: savedDraft ? savedDraft.dueDate : (dueDate || null) };
     try {
       const saved = await action<IntakeItem>("update_intake_item", { intakeItemId: item.id, ...attempted });
       if (!saved) { onDraftChange(attempted); setNote(t("intake.failed")); return; }
@@ -216,12 +233,18 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
         <label className="grid gap-1 text-13 text-secondary">{t("intake.titleField")}<input ref={titleInputRef} name="title" aria-label={t("intake.titleField")} required maxLength={500} value={title} className={`${field} text-24 font-semibold`} onInput={(event) => { titleValueRef.current = event.currentTarget.value; setTitle(event.currentTarget.value); sessionStorage.setItem(titleDraftKey(item.id), event.currentTarget.value); changeDraft({ title: event.currentTarget.value }); }} /></label>
         <div><p className="mb-1 text-13 text-secondary">{t("intake.descriptionField")}</p><DescriptionEditor workspaceId={workspaceId} workItemId={item.workItemId} initial={description} editable onChange={(doc) => changeDraft({ description: doc })} /></div>
         <label className="grid gap-1 text-13 text-secondary">{t("intake.priority")}<select name="priority" aria-label={t("intake.priority")} value={priority} className={field} onChange={(event) => changeDraft({ priority: event.target.value })}>{["none", "urgent", "high", "medium", "low"].map((value) => <option key={value} value={value}>{t(`workItems.priority.${value}`)}</option>)}</select></label>
+        <label className="grid gap-1 text-13 text-secondary">{t("workItems.assignees")}<select multiple aria-label={t("workItems.assignees")} value={assigneeIds} className={`${field} min-h-20`} onChange={(event) => changeDraft({ assigneeIds: [...event.currentTarget.selectedOptions].map((option) => option.value) })}>{people.map((person) => <option key={person.userId} value={person.userId} disabled={person.isAgent && person.hasAccess === false}>{person.name}{person.isAgent && person.hasAccess === false ? " (no access)" : ""}</option>)}</select></label>
+        <label className="grid gap-1 text-13 text-secondary">{t("workItems.labels")}<select multiple aria-label={t("workItems.labels")} value={labelIds} className={`${field} min-h-20`} onChange={(event) => changeDraft({ labelIds: [...event.currentTarget.selectedOptions].map((option) => option.value) })}>{labels.map((label) => <option key={label.id} value={label.id}>{label.name}</option>)}</select></label>
+        <label className="grid gap-1 text-13 text-secondary">{t("workItems.dueDate")}<input type="date" aria-label={t("workItems.dueDate")} value={dueDate} className={field} onChange={(event) => changeDraft({ dueDate: event.target.value || null })} /></label>
         <div className="flex gap-2"><button type="button" className={primaryButton} disabled={saving || !title.trim()} onClick={() => void save()}>{saving ? t("intake.saving") : t("intake.save")}</button></div>
       </div> : <><h2 className="m-0 text-24 font-semibold text-primary">{item.title}</h2>
       {item.descriptionText ? <DescriptionEditor workspaceId={workspaceId} workItemId={item.workItemId} initial={markdownToDoc(item.descriptionMarkdown)} editable={false} onChange={() => undefined} /> : <p className="m-0 text-14 text-tertiary">{t("intake.noDescription")}</p>}</>}
       <dl className="m-0 grid max-w-md grid-cols-[8rem_1fr] items-center gap-x-3 gap-y-3 text-13">
         <dt className="text-secondary">{t("intake.priority")}</dt>
         <dd className="m-0 flex items-center gap-1.5 text-primary"><PriorityIcon priority={item.priority} />{t(`workItems.priority.${item.priority}`)}</dd>
+        <dt className="text-secondary">{t("workItems.assignees")}</dt><dd className="m-0 text-primary">{item.assigneeIds.map((id) => people.find((person) => person.userId === id)?.name ?? id).join(", ") || t("workItems.noAssignee")}</dd>
+        <dt className="text-secondary">{t("workItems.labels")}</dt><dd className="m-0 text-primary">{item.labelIds.map((id) => labels.find((label) => label.id === id)?.name ?? id).join(", ") || "—"}</dd>
+        <dt className="text-secondary">{t("workItems.dueDate")}</dt><dd className="m-0 text-primary">{item.dueDate ?? "—"}</dd>
         <dt className="text-secondary">{t("intake.submittedBy")}</dt>
         <dd className="m-0 flex items-center gap-1.5 text-primary"><Avatar name={item.createdByName} id={item.createdBy} />{item.createdByName}</dd>
         <dt className="text-secondary">{t("intake.submittedOn")}</dt>
@@ -291,7 +314,7 @@ export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, 
   };
   const updateDraft = (item: IntakeItem, patch: Partial<IntakeDraft>) => {
     const previous = draftsRef.current[item.id];
-    const next = { title: previous?.title ?? item.title, description: previous?.description ?? markdownToDoc(item.descriptionMarkdown), priority: previous?.priority ?? item.priority, ...patch };
+    const next: IntakeDraft = { title: previous?.title ?? item.title, description: previous?.description ?? markdownToDoc(item.descriptionMarkdown), priority: previous?.priority ?? item.priority, assigneeIds: previous?.assigneeIds ?? item.assigneeIds, labelIds: previous?.labelIds ?? item.labelIds, dueDate: previous?.dueDate ?? item.dueDate, ...patch };
     sessionStorage.setItem(draftKey(item.id), JSON.stringify(next));
     draftsRef.current = { ...draftsRef.current, [item.id]: next };
     setDrafts(draftsRef.current);

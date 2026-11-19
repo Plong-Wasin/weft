@@ -76,7 +76,7 @@ async function agentOpenTo(db: Database, agent: { allProjects: boolean; userId: 
   return Boolean(member);
 }
 
-export async function fireEventTriggers(db: Database, input: { eventType: typeof eventTypes[number]; projectId: string; workItemId: string; actorId: string; source?: string; wakingRunId?: string | null }) {
+export async function fireEventTriggers(db: Database, input: { eventType: typeof eventTypes[number]; projectId: string; workItemId: string; actorId: string; source?: string; wakingRunId?: string | null; excludeAgentUserIds?: string[] }) {
   const matching = await db.select({ trigger: triggers, agent: agents, agentName: users.name }).from(triggers).innerJoin(agents, eq(agents.id, triggers.agentId)).innerJoin(users, eq(users.id, agents.userId))
     .where(and(eq(triggers.projectId, input.projectId), eq(triggers.eventType, input.eventType), eq(triggers.paused, false), eq(agents.enabled, true))).orderBy(triggers.creatorId, triggers.id);
   if (matching.length === 0) return;
@@ -89,7 +89,10 @@ export async function fireEventTriggers(db: Database, input: { eventType: typeof
   const parentAssignees = input.eventType === "sub_items_closed"
     ? new Set((await db.select({ userId: workItemAssignees.userId }).from(workItemAssignees).where(eq(workItemAssignees.workItemId, input.workItemId))).map((row) => row.userId))
     : null;
+  const excluded = new Set(input.excludeAgentUserIds ?? []);
   for (const { trigger, agent, agentName } of matching) {
+    // Acceptance wakes assigned Agents through the assignment path; their event Trigger is the same wake request, not a second request.
+    if (excluded.has(agent.userId)) continue;
     if (parentAssignees && !parentAssignees.has(agent.userId)) continue;
     if (!(await agentOpenTo(db, agent, input.projectId))) continue;
     if (waker === "person") {

@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { activities, createDatabase, type Database } from "@weft/db";
-import { createAssetActions, createCommentActions, createProjectActions, createWikiActions, createWorkItemActions, signPostPolicy, type AssetStorage } from "../src";
+import { activities, assets as assetTable, createDatabase, type Database } from "@weft/db";
+import { createAssetActions, createCommentActions, createIntakeActions, createProjectActions, createWikiActions, createWorkItemActions, signPostPolicy, type AssetStorage } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -55,6 +55,58 @@ test.concurrent("upload round trip: presigned POST, complete, list, activity wri
     expect(list.map((row) => row.id)).toEqual([done.id]);
     const log = await transaction.select().from(activities).where(eq(activities.entityId, env.item.id));
     expect(log.some((row) => row.field === "attachment_added")).toBe(true);
+  });
+});
+
+test.concurrent("Intake assets allow the Guest submitter and Admin, preserve Guest isolation, and freeze on rejection", async () => {
+  await withRollback(db, async (transaction) => {
+    const env = await setup(transaction);
+    const otherGuest = await createMemberFactory(transaction, env.workspace.id, "Guest");
+    await createProjectActions(transaction).addProjectMember.handler({ userId: env.admin.id }, { projectId: env.project.id, userId: otherGuest.id, role: "Guest" });
+    const intake = createIntakeActions(transaction);
+    const item = await intake.submitIntakeItem.handler({ userId: env.guest.id }, { projectId: env.project.id, title: "Guest request" });
+    const file = { filename: "evidence.png", contentType: "image/png", size: 10 };
+    const asset = await upload(env, env.guest.id, file, { ownerType: "work_item", ownerId: item.workItemId });
+    const timeline = await createWorkItemActions(transaction).listWorkItemActivities.handler({ userId: env.guest.id }, { workItemId: item.workItemId });
+    expect(timeline.some((row) => row.field === "attachment_added" && (row.newValue as { filename?: string }).filename === file.filename)).toBe(true);
+    await expect(createWorkItemActions(transaction).listWorkItemActivities.handler({ userId: otherGuest.id }, { workItemId: item.workItemId })).rejects.toMatchObject({ status: 404 });
+    expect((await env.assets.listAssets.handler({ userId: env.member.id }, { ownerType: "work_item", ownerId: item.workItemId })).map((row) => row.id)).toEqual([asset.id]);
+    await expect(env.assets.listAssets.handler({ userId: otherGuest.id }, { ownerType: "work_item", ownerId: item.workItemId })).rejects.toMatchObject({ status: 404 });
+    await expect(env.assets.getAssetDownloadUrl.handler({ userId: otherGuest.id }, { assetId: asset.id })).rejects.toMatchObject({ status: 404 });
+    await expect(env.assets.requestAssetUpload.handler({ userId: otherGuest.id }, { ownerType: "work_item", ownerId: item.workItemId, ...file })).rejects.toMatchObject({ status: 403 });
+    await expect(env.assets.deleteAsset.handler({ userId: otherGuest.id }, { assetId: asset.id })).rejects.toMatchObject({ status: 403 });
+    const adminManaged = await upload(env, env.guest.id, file, { ownerType: "work_item", ownerId: item.workItemId });
+    await env.assets.deleteAsset.handler({ userId: env.admin.id }, { assetId: adminManaged.id });
+    await env.assets.deleteAsset.handler({ userId: env.guest.id }, { assetId: asset.id });
+    const abandoned = await env.assets.requestAssetUpload.handler({ userId: env.guest.id }, { ownerType: "work_item", ownerId: item.workItemId, ...file });
+    env.mem.put(abandoned.fields.key!, 3);
+    expect(await env.assets.cancelAssetUpload.handler({ userId: env.guest.id }, { assetId: abandoned.assetId })).toEqual({ ok: true });
+    const second = await upload(env, env.guest.id, file, { ownerType: "work_item", ownerId: item.workItemId });
+    await intake.rejectIntakeItem.handler({ userId: env.member.id }, { intakeItemId: item.id });
+    expect(await env.assets.listAssets.handler({ userId: env.guest.id }, { ownerType: "work_item", ownerId: item.workItemId })).toHaveLength(1);
+    await expect(env.assets.requestAssetUpload.handler({ userId: env.guest.id }, { ownerType: "work_item", ownerId: item.workItemId, ...file })).rejects.toMatchObject({ status: 400 });
+    await expect(env.assets.deleteAsset.handler({ userId: env.guest.id }, { assetId: second.id })).rejects.toMatchObject({ status: 400 });
+    await expect(env.assets.deleteAsset.handler({ userId: env.admin.id }, { assetId: second.id })).rejects.toMatchObject({ status: 400 });
+
+    const acceptedItem = await intake.submitIntakeItem.handler({ userId: env.guest.id }, { projectId: env.project.id, title: "Accepted guest request" });
+    const acceptedAsset = await upload(env, env.guest.id, file, { ownerType: "work_item", ownerId: acceptedItem.workItemId });
+    const document = { type: "doc", content: [{ type: "assetImage", attrs: { assetId: acceptedAsset.id, alt: "Proof" } }] };
+    await intake.updateIntakeItem.handler({ userId: env.guest.id }, { intakeItemId: acceptedItem.id, description: document });
+    expect((await intake.listIntakeItems.handler({ userId: env.member.id }, { projectId: env.project.id, outcome: "pending" })).find((row) => row.id === acceptedItem.id)?.descriptionMarkdown).toContain(`asset:${acceptedAsset.id}`);
+    await intake.acceptIntakeItem.handler({ userId: env.member.id }, { intakeItemId: acceptedItem.id });
+    expect((await env.assets.listAssets.handler({ userId: env.guest.id }, { ownerType: "work_item", ownerId: acceptedItem.workItemId })).map((row) => row.id)).toEqual([acceptedAsset.id]);
+    expect((await env.assets.getAssetDownloadUrl.handler({ userId: env.guest.id }, { assetId: acceptedAsset.id })).filename).toBe(file.filename);
+  });
+});
+
+test.concurrent("failed upload cancellation removes the pending row and stored object", async () => {
+  await withRollback(db, async (transaction) => {
+    const env = await setup(transaction);
+    const ticket = await env.assets.requestAssetUpload.handler({ userId: env.member.id }, { ownerType: "work_item", ownerId: env.item.id, filename: "partial.bin", contentType: "application/octet-stream", size: 10 });
+    env.mem.put(ticket.fields.key!, 4);
+    expect(await env.assets.cancelAssetUpload.handler({ userId: env.member.id }, { assetId: ticket.assetId })).toEqual({ ok: true });
+    expect(env.mem.objects.has(ticket.fields.key!)).toBe(false);
+    expect(await transaction.select().from(assetTable).where(eq(assetTable.id, ticket.assetId))).toHaveLength(0);
   });
 });
 

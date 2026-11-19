@@ -96,7 +96,7 @@ export function createActionList(db: Database, options: { integrations?: boolean
     outbound.listOutboundWebhooks, outbound.createOutboundWebhook, outbound.updateOutboundWebhook, outbound.rotateOutboundWebhookSecret, outbound.deleteOutboundWebhook,
     outbound.testOutboundWebhook, outbound.listOutboundWebhookDeliveries, outbound.redeliverOutboundWebhookDelivery,
     search.searchWorkItems,
-    assets.requestAssetUpload, assets.completeAssetUpload, assets.listAssets, assets.getAssetDownloadUrl, assets.deleteAsset,
+    assets.requestAssetUpload, assets.completeAssetUpload, assets.cancelAssetUpload, assets.listAssets, assets.getAssetDownloadUrl, assets.deleteAsset,
     wiki.createWikiPageTemplate, wiki.listWikiPageTemplates, wiki.deleteWikiPageTemplate,
     wiki.createCollection, wiki.listCollections, wiki.renameCollection, wiki.setCollectionVisibility, wiki.shareCollection, wiki.listCollectionMembers, wiki.revokeCollectionShare, wiki.deleteCollection,
     wiki.createWikiPage, wiki.listWikiPages, wiki.listSharedWikiPages, wiki.listWikiPageShares, wiki.shareWikiPage, wiki.revokeWikiPageShare, wiki.listFavoriteWikiPages, wiki.favoriteWikiPage, wiki.getWikiPage, wiki.getWikiPageAccess, wiki.lockWikiPage, wiki.unlockWikiPage, wiki.updateWikiPage, wiki.archiveWikiPage, wiki.unarchiveWikiPage, wiki.listWikiPageMentionableMembers, wiki.moveWikiPage, wiki.getPageMoveImpact, wiki.movePageScope, wiki.setWikiPageAccess, wiki.publishWikiPage, wiki.revokeWikiPagePublishedLink,

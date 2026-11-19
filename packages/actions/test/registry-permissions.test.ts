@@ -144,7 +144,7 @@ test.concurrent("sanity: with these inputs a workspace Admin reaches past the pe
     // join_project is refused to everyone for a private project, Admin included: a business rule, not a gate.
     // Runtime profiles are changed only by the Runtime owner (ticket 22): an Admin on someone else's computer is refused by design, a business rule, not a gate.
     // undo_auto_rule_change needs a real automatic change: the probe's id is not found, so the Action answers 404 (a business rule, not a gate).
-    expect(refused).toEqual(["undo_auto_rule_change", "join_project", "set_agent_runtime_profile", "update_runtime_profile", "delete_runtime_profile"]);
+    expect(refused).toEqual(["undo_auto_rule_change", "join_project", "cancel_asset_upload", "set_agent_runtime_profile", "update_runtime_profile", "delete_runtime_profile"]);
   });
 });
 

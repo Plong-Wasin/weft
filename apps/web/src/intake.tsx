@@ -9,6 +9,9 @@ import { Avatar } from "./avatar";
 import { useWorkspace } from "./layouts/workspace-layout";
 import { markdownToDoc } from "../../../packages/actions/src/markdown-doc";
 import { DescriptionEditor } from "./description-editor";
+import { AttachmentsPanel } from "./asset-images";
+import { uploadAsset } from "./asset-upload";
+import { api } from "./api";
 
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 const outcomes = ["pending", "snoozed", "accepted", "rejected", "duplicate"] as const;
@@ -19,6 +22,7 @@ type IntakeItem = {
   duplicateToDisplayId: string | null; createdBy: string; createdByName: string; createdAt: string;
 };
 type IntakeDraft = { title: string; description: unknown; priority: string };
+type ActivityRow = { id: string; field: string; oldValue: unknown; newValue: unknown; actorName: string; createdAt: string };
 const titleDraftKey = (id: string) => `intake-title-draft:${id}`;
 const draftKey = (id: string) => `intake-draft:${id}`;
 function readDraft(id: string): IntakeDraft | undefined {
@@ -59,17 +63,39 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
 }
 
 /** The submission form: any project member, Guests included, can send a work item into Intake. */
-function SubmitModal({ action, workspaceId, projectId, onClose, onSubmitted }: { action: Call; workspaceId: string; projectId: string; onClose: () => void; onSubmitted: (item: IntakeItem) => void }) {
+function SubmitModal({ action, workspaceId, projectId, onClose, onSubmitted }: { action: Call; workspaceId: string; projectId: string; onClose: () => void; onSubmitted: (item: IntakeItem, failedFiles: File[]) => void }) {
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState<unknown>(markdownToDoc(""));
   const [priority, setPriority] = React.useState("none");
   const [note, setNote] = React.useState<string | null>(null);
+  const [files, setFiles] = React.useState<File[]>([]);
+  const [inlineImages, setInlineImages] = React.useState<File[]>([]);
+  const picker = React.useRef<HTMLInputElement>(null);
+  const imagePicker = React.useRef<HTMLInputElement>(null);
   return <Modal title={t("intake.modalTitle")} onClose={onClose}>
     <form className="my-0 grid gap-3" onSubmit={async (event) => {
       event.preventDefault();
       const saved = await action<IntakeItem>("submit_intake_item", { projectId, title, priority, description });
       setNote(saved ? null : t("intake.submitFailed"));
-      if (saved) onSubmitted(saved);
+      if (saved) {
+        const failed: File[] = [];
+        for (const file of files) {
+          try { await uploadAsset({ api }, { ownerType: "work_item", ownerId: saved.workItemId }, file); }
+          catch { failed.push(file); }
+        }
+        const imageIds: string[] = [];
+        for (const file of inlineImages) {
+          try { imageIds.push((await uploadAsset({ api }, { ownerType: "work_item", ownerId: saved.workItemId }, file)).id); }
+          catch { failed.push(file); }
+        }
+        if (imageIds.length) {
+          const base = description && typeof description === "object" ? description as { type?: string; content?: unknown[] } : { type: "doc", content: [] };
+          const content = Array.isArray(base.content) ? base.content : [];
+          const withImages = { ...base, type: "doc", content: [...content, ...imageIds.map((assetId) => ({ type: "assetImage", attrs: { assetId } }))] };
+          if (!await action("update_intake_item", { intakeItemId: saved.id, description: withImages })) setNote(t("intake.failed"));
+        }
+        onSubmitted(saved, failed);
+      }
     }}>
       <input autoFocus required maxLength={500} aria-label={t("intake.titleField")} placeholder={t("intake.titleField")} value={title} className={`${field} text-16`} onChange={(event) => setTitle(event.target.value)} />
       <div aria-label={t("intake.descriptionField")}><DescriptionEditor workspaceId={workspaceId} workItemId={null} initial={description} editable imageUploads={false} onChange={setDescription} /></div>
@@ -78,6 +104,10 @@ function SubmitModal({ action, workspaceId, projectId, onClose, onSubmitted }: {
           {["none", "urgent", "high", "medium", "low"].map((value) => <option key={value} value={value}>{t(`workItems.priority.${value}`)}</option>)}
         </select>
       </label>
+      <input ref={picker} hidden type="file" multiple data-testid="intake-attach-input" onChange={(event) => { setFiles((current) => [...current, ...Array.from(event.target.files ?? [])]); event.target.value = ""; }} />
+      <div className="grid gap-1"><button type="button" className={quietButton} onClick={() => picker.current?.click()}>{t("assets.attach")}</button>{files.map((file, index) => <span key={`${file.name}-${index}`} className="text-13 text-secondary">{file.name}</span>)}</div>
+      <input ref={imagePicker} hidden type="file" multiple accept="image/png,image/jpeg,image/gif,image/webp" data-testid="intake-inline-image-input" onChange={(event) => { setInlineImages((current) => [...current, ...Array.from(event.target.files ?? [])]); event.target.value = ""; }} />
+      <div className="grid gap-1"><button type="button" className={quietButton} onClick={() => imagePicker.current?.click()}>{t("assets.inlineImage")}</button>{inlineImages.map((file, index) => <span key={`${file.name}-${index}`} className="text-13 text-secondary">{file.name}</span>)}</div>
       {note && <p role="alert" className="m-0 text-13 text-danger-text">{note}</p>}
       <div className="flex justify-end gap-2">
         <button type="button" className={quietButton} onClick={onClose}>{t("intake.cancel")}</button>
@@ -146,12 +176,13 @@ function ListRow({ item, selected, onSelect }: { item: IntakeItem; selected: boo
 
 type Dialog = "snooze" | "duplicate" | null;
 
-function Detail({ action, workspaceId, item, index, count, canDecide, canEdit, draft, onDraftChange, onMove, onDecided, onChanged, onUpdated }: {
-  action: Call; workspaceId: string; item: IntakeItem; index: number; count: number; canDecide: boolean; canEdit: boolean; draft?: IntakeDraft; onDraftChange: (patch: Partial<IntakeDraft>) => void; onMove: (delta: number) => void; onDecided: () => void; onChanged: () => void; onUpdated: () => void;
+function Detail({ action, workspaceId, item, index, count, canDecide, canEdit, draft, failedFiles, onFailedFilesChange, onDraftChange, onMove, onDecided, onChanged, onUpdated }: {
+  action: Call; workspaceId: string; item: IntakeItem; index: number; count: number; canDecide: boolean; canEdit: boolean; draft?: IntakeDraft; failedFiles: File[]; onFailedFilesChange: (files: File[]) => void; onDraftChange: (patch: Partial<IntakeDraft>) => void; onMove: (delta: number) => void; onDecided: () => void; onChanged: () => void; onUpdated: () => void;
 }) {
   const [dialog, setDialog] = React.useState<Dialog>(null);
   const [note, setNote] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
+  const [activity, setActivity] = React.useState<ActivityRow[]>([]);
   const activeDraft = readDraft(item.id) ?? draft;
   const [title, setTitle] = React.useState(sessionStorage.getItem(titleDraftKey(item.id)) ?? activeDraft?.title ?? item.title);
   const titleValueRef = React.useRef(title);
@@ -167,6 +198,8 @@ function Detail({ action, workspaceId, item, index, count, canDecide, canEdit, d
   const [saving, setSaving] = React.useState(false);
   const undecided = item.outcome === "pending" || item.outcome === "snoozed";
   const unsnoozed = item.outcome === "snoozed";
+  const loadActivity = React.useCallback(async () => setActivity(await action<ActivityRow[]>("list_work_item_activities", { workItemId: item.workItemId }) ?? []), [action, item.workItemId]);
+  React.useEffect(() => { void loadActivity(); }, [loadActivity]);
   const run = async (name: string, body: Record<string, unknown>) => {
     const done = await action(name, { intakeItemId: item.id, ...body });
     setNote(done ? null : t("intake.failed"));
@@ -227,6 +260,16 @@ function Detail({ action, workspaceId, item, index, count, canDecide, canEdit, d
         {item.outcome === "duplicate" && item.duplicateToDisplayId && <><dt className="text-secondary">{t("intake.status.duplicate")}</dt><dd className="m-0 text-primary">{t("intake.duplicateOf").replace("{id}", item.duplicateToDisplayId)}</dd></>}
       </dl>
       {note && <p role="alert" className="m-0 text-13 text-danger-text">{note}</p>}
+      <AttachmentsPanel workItemId={item.workItemId} canWrite={editable || (item.outcome === "accepted" && canDecide)} action={action} onChange={() => { void loadActivity(); onChanged(); }} showForm={editable} onCount={() => undefined} failedFiles={failedFiles} onFailedFilesChange={onFailedFilesChange} />
+      <section aria-label={t("intake.activity")} className="grid gap-2 border-t border-subtle pt-3">
+        <h3 className="m-0 text-14 font-medium text-primary">{t("intake.activity")}</h3>
+        <ul className="m-0 grid list-none gap-2 !pl-0 text-13 text-secondary">{activity.filter((row) => row.field === "attachment_added" || row.field === "attachment_removed").map((row) => {
+          const values = row.field === "attachment_added" ? row.newValue : row.field === "attachment_removed" ? row.oldValue : null;
+          const filename = values && typeof values === "object" ? String((values as { filename?: unknown }).filename ?? "") : "";
+          const message = row.field === "attachment_added" ? t("intake.attachmentAdded") : row.field === "attachment_removed" ? t("intake.attachmentRemoved") : row.field;
+          return <li key={row.id}>{row.actorName} {message}{filename ? `: ${filename}` : ""}</li>;
+        })}</ul>
+      </section>
     </div>
     {dialog === "snooze" && <SnoozeModal onClose={() => setDialog(null)} onSnooze={(till) => void run("snooze_intake_item", { snoozedTill: till })} />}
     {dialog === "duplicate" && <DuplicateModal action={action} workspaceId={workspaceId} item={item} onClose={() => setDialog(null)} onPick={(workItemId) => void run("duplicate_intake_item", { duplicateTo: workItemId })} />}
@@ -242,6 +285,7 @@ export function IntakePage({ workspaceId, projectId, canDecide, canAdmin, enable
   const [items, setItems] = React.useState<IntakeItem[] | null>(null);
   const [adding, setAdding] = React.useState(false);
   const [drafts, setDrafts] = React.useState<Record<string, IntakeDraft>>({});
+  const [failedUploads, setFailedUploads] = React.useState<Record<string, File[]>>({});
   const draftsRef = React.useRef<Record<string, IntakeDraft>>({});
   // A freshly submitted item is selected before the list has reloaded to include it.
   const justAdded = React.useRef<string | null>(null);
@@ -312,7 +356,7 @@ export function IntakePage({ workspaceId, projectId, canDecide, canAdmin, enable
           {(items ?? []).map((item) => <ListRow key={item.id} item={item} selected={item.id === selectedId} onSelect={() => select(item.id)} />)}
         </ul>
       </div>
-      {current ? <Detail key={current.id} action={action} workspaceId={workspaceId} item={current} index={index} count={items!.length} canDecide={canDecide} canEdit={canAdmin || workspaceAdmin || current.createdBy === selfId} draft={draftsRef.current[current.id] ?? drafts[current.id]} onDraftChange={(patch) => updateDraft(current, patch)}
+      {current ? <Detail key={current.id} action={action} workspaceId={workspaceId} item={current} index={index} count={items!.length} canDecide={canDecide} canEdit={canAdmin || workspaceAdmin || current.createdBy === selfId} draft={draftsRef.current[current.id] ?? drafts[current.id]} failedFiles={failedUploads[current.id] ?? []} onFailedFilesChange={(files) => setFailedUploads((previous) => ({ ...previous, [current.id]: files }))} onDraftChange={(patch) => updateDraft(current, patch)}
         onMove={(delta) => select(items![index + delta]!.id)} onDecided={afterDecision} onChanged={afterChange} onUpdated={() => { const { [current.id]: _removed, ...rest } = draftsRef.current; draftsRef.current = rest; setDrafts(rest); void load(); }} />
         : items?.length === 0
           ? <div className="grid min-w-0 flex-1 place-items-center">{tab === "open"
@@ -320,6 +364,6 @@ export function IntakePage({ workspaceId, projectId, canDecide, canAdmin, enable
             : <EmptyState title={t("intake.emptyClosed")} description={t("intake.emptyClosedHint")} />}</div>
           : <div className="grid min-w-0 flex-1 place-items-center p-6 text-14 text-secondary">{t("intake.pick")}</div>}
     </div>
-    {adding && <SubmitModal action={action} workspaceId={workspaceId} projectId={projectId} onClose={() => setAdding(false)} onSubmitted={(item) => { setAdding(false); justAdded.current = item.id; select(item.id, "open"); void load(); }} />}
+    {adding && <SubmitModal action={action} workspaceId={workspaceId} projectId={projectId} onClose={() => setAdding(false)} onSubmitted={(item, failedFiles) => { if (failedFiles.length) setFailedUploads((previous) => ({ ...previous, [item.id]: failedFiles })); setAdding(false); justAdded.current = item.id; select(item.id, "open"); void load(); }} />}
   </section>;
 }

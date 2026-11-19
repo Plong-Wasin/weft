@@ -56,7 +56,7 @@ try {
 
   const shots = reviewShots("14-intake-ui");
   const add = page.getByRole("button", { name: translate("intake.add"), exact: true });
-  const submit = async (title: string, description = "") => {
+  const submit = async (title: string, description = "", attach?: Array<{ name: string; mimeType: string; buffer: Buffer }>) => {
     await add.click();
     const dialog = page.getByRole("dialog");
     await dialog.getByLabel(translate("intake.titleField")).fill(title);
@@ -66,6 +66,7 @@ try {
       await editor.press("Control+A");
       await dialog.getByRole("toolbar").getByRole("button", { name: translate("wiki.tool.bold") }).click();
     }
+    if (attach) await dialog.getByTestId("intake-attach-input").setInputFiles(attach);
     await dialog.getByRole("button", { name: translate("intake.submit"), exact: true }).click();
     await dialog.waitFor({ state: "detached" });
   };
@@ -78,11 +79,44 @@ try {
   await page.getByRole("link", { name: translate("intake.title") }).click();
   await add.waitFor();
   check(await page.getByRole("tab", { name: translate("intake.tab.open") }).getAttribute("aria-selected") === "true", "Open tab is not the default");
-  await submit("Dark mode please", "Users want a dark theme");
+  // Exercise the submit-then-retry flow without depending on the local object store.
+  let uploadAttempts = 0;
+  let evidenceFailures = 0;
+  let assetListed = false;
+  const uploadedAssets: Array<{ id: string; ownerType: string; ownerId: string; uploaderId: string; filename: string; contentType: string; size: number; inline: boolean; createdAt: string }> = [];
+  const assetNames = new Map<string, string>();
+  await page.route("**/actions/request_asset_upload", (route) => {
+    const input = route.request().postDataJSON() as { filename: string; ownerId: string };
+    uploadAttempts += 1;
+    if (input.filename === "evidence.txt" && evidenceFailures++ === 0) return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "simulated failure" }) });
+    const assetId = crypto.randomUUID();
+    assetNames.set(assetId, input.filename);
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ assetId, url: "http://storage.test/upload", fields: {}, maxBytes: 5 * 1024 * 1024 }) });
+  });
+  await page.route("http://storage.test/upload", (route) => route.fulfill({ status: 204 }));
+  await page.route("**/actions/complete_asset_upload", (route) => {
+    const request = route.request().postDataJSON() as { assetId: string };
+    uploadedAssets.push({ id: request.assetId, ownerType: "work_item", ownerId: "", uploaderId: "", filename: assetNames.get(request.assetId) ?? "file", contentType: "text/plain", size: 8, inline: false, createdAt: new Date().toISOString() });
+    assetListed = true;
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(uploadedAssets.at(-1)) });
+  });
+  await page.route("**/actions/list_assets", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(assetListed ? uploadedAssets : []) }));
+  await page.route("**/actions/list_work_item_activities", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(uploadedAssets.map((asset) => ({ id: asset.id, field: "attachment_added", oldValue: null, newValue: { filename: asset.filename }, actorName: "Intake Tester", createdAt: asset.createdAt }))) }));
+  await submit("Dark mode please", "Users want a dark theme", [
+    { name: "evidence.txt", mimeType: "text/plain", buffer: Buffer.from("evidence") },
+    { name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("saved") },
+  ]);
   await page.getByTestId("intake-MOB-1").waitFor();
   await detail.getByLabel(translate("intake.titleField")).waitFor();
   check(await detail.getByLabel(translate("intake.titleField")).inputValue() === "Dark mode please", "created title was not available for inline editing");
   await detail.getByTestId("description-editor").locator("strong").getByText("Users want a dark theme").waitFor();
+  await detail.getByRole("alert").getByText("evidence.txt").waitFor();
+  await detail.getByTestId("attachments").getByText("notes.txt").waitFor();
+  await detail.getByRole("button", { name: translate("assets.retryFailed") }).click();
+  await detail.getByTestId("attachments").getByText("evidence.txt").waitFor();
+  await detail.getByText(new RegExp(`${translate("intake.attachmentAdded")}: evidence.txt`)).waitFor();
+  await detail.getByTestId("attachments").getByText("notes.txt").waitFor();
+  check(uploadAttempts === 3, `expected one successful upload, one failed upload and one retry; saw ${uploadAttempts} requests`);
   await submit("Secondary draft");
   await detail.locator("header").getByText("MOB-2", { exact: true }).waitFor();
   await page.getByTestId("intake-MOB-1").click();

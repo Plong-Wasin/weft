@@ -298,7 +298,7 @@ test.concurrent("the Triage state cannot be added, renamed, reordered, removed, 
   });
 });
 
-test.concurrent("leak: a Triage work item is absent from every read, for every role", async () => {
+test.concurrent("leak: a Triage work item is absent from normal work reads while authorized Intake Activity remains visible", async () => {
   await withRollback(db, async (transaction) => {
     const { admin, member, guest, submit, work, project, workspace } = await setup(transaction);
     const normal = await work.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Needle normal" });
@@ -316,6 +316,9 @@ test.concurrent("leak: a Triage work item is absent from every read, for every r
     const comments = createCommentActions(transaction);
     const search = createSearchActions(transaction);
     for (const user of [admin, member, guest]) {
+      await expect(work.listWorkItemActivities.handler({ userId: user.id }, { workItemId: hidden.workItemId })).resolves.toHaveLength(1);
+    }
+    for (const user of [admin, member, guest]) {
       const as = { userId: user.id };
       const listed = await work.listWorkItems.handler(as, { projectId: project.id });
       expect(listed.map((row) => row.id).sort()).toEqual([normal.id, parent.id].sort());
@@ -328,7 +331,6 @@ test.concurrent("leak: a Triage work item is absent from every read, for every r
       expect((await work.listSubWorkItems.handler(as, { workItemId: parent.id }))).toHaveLength(0);
       for (const read of [
         () => work.getWorkItem.handler(as, { workspaceId: workspace.id, displayId: "MOB-2" }),
-        () => work.listWorkItemActivities.handler(as, { workItemId: hidden.workItemId }),
         () => relations.listWorkItemRelations.handler(as, { workItemId: hidden.workItemId }),
         () => comments.listComments.handler(as, { workItemId: hidden.workItemId }),
       ]) await expect(read()).rejects.toMatchObject({ status: 404 });

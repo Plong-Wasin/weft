@@ -154,6 +154,9 @@ try {
   await page.getByRole("dialog").getByRole("button", { name: translate("intake.snooze"), exact: true }).click();
   await page.getByRole("dialog").waitFor({ state: "detached" });
   await page.getByTestId("intake-MOB-3").getByTestId("intake-status").getByText(translate("intake.status.snoozed")).waitFor();
+  await page.getByTestId("intake-MOB-3").click();
+  await detail.getByRole("button", { name: translate("intake.unsnooze"), exact: true }).click();
+  await page.getByTestId("intake-MOB-3").getByTestId("intake-status").getByText(translate("intake.status.pending")).waitFor();
   // Mark MOB-4 as duplicate of the accepted MOB-1.
   await page.getByTestId("intake-MOB-4").click();
   await detail.getByRole("button", { name: translate("intake.more") }).click();
@@ -165,7 +168,7 @@ try {
   await page.getByRole("dialog").getByRole("button", { name: translate("intake.markDuplicate"), exact: true }).click();
   await page.getByTestId("intake-MOB-4").waitFor({ state: "detached" });
 
-  // Open now holds only the snoozed MOB-3; Closed holds the three decided items.
+  // Open holds the unsnoozed MOB-3; Closed holds the three decided items.
   await page.getByTestId("intake-open-count").getByText("1", { exact: true }).waitFor();
   await page.getByRole("tab", { name: translate("intake.tab.closed") }).click();
   for (const [key, status] of [["MOB-1", "accepted"], ["MOB-2", "rejected"], ["MOB-4", "duplicate"]] as const) {

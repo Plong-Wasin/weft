@@ -146,8 +146,8 @@ function ListRow({ item, selected, onSelect }: { item: IntakeItem; selected: boo
 
 type Dialog = "snooze" | "duplicate" | null;
 
-function Detail({ action, workspaceId, item, index, count, canDecide, canEdit, draft, onDraftChange, onMove, onDecided, onUpdated }: {
-  action: Call; workspaceId: string; item: IntakeItem; index: number; count: number; canDecide: boolean; canEdit: boolean; draft?: IntakeDraft; onDraftChange: (patch: Partial<IntakeDraft>) => void; onMove: (delta: number) => void; onDecided: () => void; onUpdated: () => void;
+function Detail({ action, workspaceId, item, index, count, canDecide, canEdit, draft, onDraftChange, onMove, onDecided, onChanged, onUpdated }: {
+  action: Call; workspaceId: string; item: IntakeItem; index: number; count: number; canDecide: boolean; canEdit: boolean; draft?: IntakeDraft; onDraftChange: (patch: Partial<IntakeDraft>) => void; onMove: (delta: number) => void; onDecided: () => void; onChanged: () => void; onUpdated: () => void;
 }) {
   const [dialog, setDialog] = React.useState<Dialog>(null);
   const [note, setNote] = React.useState<string | null>(null);
@@ -166,10 +166,11 @@ function Detail({ action, workspaceId, item, index, count, canDecide, canEdit, d
   const changeDraft = (patch: Partial<IntakeDraft>) => onDraftChange(patch);
   const [saving, setSaving] = React.useState(false);
   const undecided = item.outcome === "pending" || item.outcome === "snoozed";
+  const unsnoozed = item.outcome === "snoozed";
   const run = async (name: string, body: Record<string, unknown>) => {
     const done = await action(name, { intakeItemId: item.id, ...body });
     setNote(done ? null : t("intake.failed"));
-    if (done) { setDialog(null); onDecided(); }
+    if (done) { setDialog(null); if (name === "unsnooze_intake_item") onChanged(); else onDecided(); }
   };
   const save = async () => {
     setSaving(true);
@@ -193,6 +194,7 @@ function Detail({ action, workspaceId, item, index, count, canDecide, canEdit, d
         <button type="button" className={quietButton} onClick={() => void run("accept_intake_item", {})}>{t("intake.accept")}</button>
         <button type="button" className={quietButton} onClick={() => void run("reject_intake_item", {})}>{t("intake.reject")}</button>
       </>}
+      {canDecide && unsnoozed && <button type="button" className={quietButton} onClick={() => void run("unsnooze_intake_item", {})}>{t("intake.unsnooze")}</button>}
       <Popover label={t("intake.more")} align="right" className="size-8 justify-center border border-subtle bg-surface-1" trigger={<MoreHorizontal aria-hidden size={16} />}>
         {(close) => <>
           {canDecide && undecided && <>
@@ -290,6 +292,7 @@ export function IntakePage({ workspaceId, projectId, canDecide, canAdmin, enable
     draftsRef.current = { ...draftsRef.current, [item.id]: next };
     setDrafts(draftsRef.current);
   };
+  const afterChange = () => { void load(); };
   return <section className="flex flex-col gap-3" aria-label={t("intake.title")}>
     <div className="flex items-center gap-2">
       <Inbox aria-hidden size={18} className="text-secondary" />
@@ -310,7 +313,7 @@ export function IntakePage({ workspaceId, projectId, canDecide, canAdmin, enable
         </ul>
       </div>
       {current ? <Detail key={current.id} action={action} workspaceId={workspaceId} item={current} index={index} count={items!.length} canDecide={canDecide} canEdit={canAdmin || workspaceAdmin || current.createdBy === selfId} draft={draftsRef.current[current.id] ?? drafts[current.id]} onDraftChange={(patch) => updateDraft(current, patch)}
-        onMove={(delta) => select(items![index + delta]!.id)} onDecided={afterDecision} onUpdated={() => { const { [current.id]: _removed, ...rest } = draftsRef.current; draftsRef.current = rest; setDrafts(rest); void load(); }} />
+        onMove={(delta) => select(items![index + delta]!.id)} onDecided={afterDecision} onChanged={afterChange} onUpdated={() => { const { [current.id]: _removed, ...rest } = draftsRef.current; draftsRef.current = rest; setDrafts(rest); void load(); }} />
         : items?.length === 0
           ? <div className="grid min-w-0 flex-1 place-items-center">{tab === "open"
             ? <EmptyState title={t("intake.empty")} description={t("intake.emptyHint")} action={<button type="button" className={`${primaryButton} flex items-center gap-1.5`} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("intake.add")}</button>} />

@@ -187,6 +187,43 @@ test.concurrent("a snoozed item leaves the pending list until snoozed_till, then
   });
 });
 
+test.concurrent("a project writer can unsnooze an item early and return it to pending", async () => {
+  await withRollback(db, async (transaction) => {
+    const { admin, member, guest, submit, intake, project, projects, workspace } = await setup(transaction);
+    const created = await submit(guest.id);
+    const till = new Date(Date.now() + 3_600_000).toISOString();
+    await intake.snoozeIntakeItem.handler({ userId: member.id }, { intakeItemId: created.id, snoozedTill: till });
+
+    const restored = await intake.unsnoozeIntakeItem.handler({ userId: member.id }, { intakeItemId: created.id });
+    expect(restored).toMatchObject({ id: created.id, outcome: "pending", snoozedTill: null });
+    expect(await intake.listIntakeItems.handler({ userId: member.id }, { projectId: project.id, outcome: "pending" })).toHaveLength(1);
+    expect(await intake.listIntakeItems.handler({ userId: member.id }, { projectId: project.id, outcome: "snoozed" })).toHaveLength(0);
+    expect(await transaction.select().from(activities).where(and(eq(activities.entityId, created.workItemId), eq(activities.field, "intake_unsnoozed")))).toHaveLength(1);
+
+    const adminItem = await submit(member.id, "Admin unsnoozes");
+    await intake.snoozeIntakeItem.handler({ userId: member.id }, { intakeItemId: adminItem.id, snoozedTill: till });
+    expect((await intake.unsnoozeIntakeItem.handler({ userId: admin.id }, { intakeItemId: adminItem.id })).outcome).toBe("pending");
+
+    await expect(intake.unsnoozeIntakeItem.handler({ userId: member.id }, { intakeItemId: created.id })).rejects.toMatchObject({ status: 400 });
+    await intake.snoozeIntakeItem.handler({ userId: member.id }, { intakeItemId: created.id, snoozedTill: till });
+    await expect(intake.unsnoozeIntakeItem.handler({ userId: guest.id }, { intakeItemId: created.id })).rejects.toMatchObject({ status: 403 });
+    await transaction.update(intakeItems).set({ snoozedTill: new Date(Date.now() - 1000) }).where(eq(intakeItems.id, created.id));
+    await expect(intake.unsnoozeIntakeItem.handler({ userId: member.id }, { intakeItemId: created.id })).rejects.toMatchObject({ status: 400 });
+    await transaction.update(intakeItems).set({ snoozedTill: new Date(Date.now() + 3_600_000) }).where(eq(intakeItems.id, created.id));
+    await projects.archiveProject.handler({ userId: admin.id }, { projectId: project.id });
+    await expect(intake.unsnoozeIntakeItem.handler({ userId: admin.id }, { intakeItemId: created.id })).rejects.toMatchObject({ status: 400, message: "Project is archived" });
+    await projects.unarchiveProject.handler({ userId: admin.id }, { projectId: project.id });
+
+    const otherProject = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Other", key: "OTH", visibility: "public" });
+    const elsewhere = await intake.submitIntakeItem.handler({ userId: admin.id }, { projectId: otherProject.id, title: "Other project item" });
+    await intake.snoozeIntakeItem.handler({ userId: admin.id }, { intakeItemId: elsewhere.id, snoozedTill: till });
+    await expect(intake.unsnoozeIntakeItem.handler({ userId: member.id }, { intakeItemId: elsewhere.id })).rejects.toMatchObject({ status: 403 });
+
+    await projects.setProjectFeatures.handler({ userId: admin.id }, { projectId: project.id, features: { intake: false } });
+    await expect(intake.unsnoozeIntakeItem.handler({ userId: admin.id }, { intakeItemId: created.id })).rejects.toMatchObject({ status: 400 });
+  });
+});
+
 test.concurrent("snooze needs a future date", async () => {
   await withRollback(db, async (transaction) => {
     const { member, submit, intake } = await setup(transaction);

@@ -98,6 +98,7 @@ export function createIntakeActions(db: Database) {
     const { row, item } = await one(db, intakeItemId);
     const { project } = await requireProjectAccess(db, context.userId, row.projectId, "write");
     assertFeatureEnabled(project, "intake");
+    if (project.archivedAt) throw new ActionError("Project is archived", 400);
     if (!["pending", "snoozed"].includes(row.outcome)) throw new ActionError("Intake item is already decided", 400);
     return { row, item, project };
   }
@@ -248,6 +249,22 @@ export function createIntakeActions(db: Database) {
         const till = new Date(input.snoozedTill);
         if (Number.isNaN(till.getTime()) || till <= new Date()) throw new ActionError("snoozedTill must be a future date", 400);
         return decide(context, input.intakeItemId, "snoozed", { snoozedTill: till });
+      },
+    },
+    unsnoozeIntakeItem: {
+      name: "unsnooze_intake_item", kind: "write" as const,
+      input: Type.Object(idInput), output: intakeOutput,
+      handler: async (context: Context, input: { intakeItemId: string }) => {
+        const { row, project, item } = await forDecision(context, input.intakeItemId);
+        if (effectiveOutcome(row) !== "snoozed") throw new ActionError("Intake item is not snoozed", 400);
+        return db.transaction(async (transaction) => {
+          const database = tx(transaction);
+          const [locked] = await database.select().from(intakeItems).where(eq(intakeItems.id, row.id)).for("update");
+          if (!locked || effectiveOutcome(locked) !== "snoozed") throw new ActionError("Intake item is not snoozed", 400);
+          await database.update(intakeItems).set({ outcome: "pending", snoozedTill: null, decidedBy: null, decidedAt: null }).where(eq(intakeItems.id, row.id));
+          await log(database, context, project, item.id, "intake_unsnoozed", locked.snoozedTill?.toISOString() ?? null, null);
+          return (await load(database, project.id, eq(intakeItems.id, row.id), { document: true }))[0]!;
+        });
       },
     },
     duplicateIntakeItem: {

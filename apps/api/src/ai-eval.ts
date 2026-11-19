@@ -48,6 +48,7 @@ export const evalCases: EvalCase[] = [
   { id: "cycle-status-no-write", kind: "no-write", prompt: "How is the active cycle in project MOB going?", expectAnyTool: ["list_cycles", "get_cycle"] },
   { id: "intake-accept", kind: "write", prompt: "Accept the Intake item 'Add SSO login' in project MOB.", expectAnyTool: ["accept_intake_item"], forbidTools: ["reject_intake_item", "snooze_intake_item", "duplicate_intake_item", "create_work_item"] },
   { id: "intake-reject", kind: "write", prompt: "Reject the Intake item 'Add SSO login' in project MOB.", expectAnyTool: ["reject_intake_item"], forbidTools: ["accept_intake_item", "snooze_intake_item", "duplicate_intake_item", "delete_work_item"] },
+  { id: "intake-unsnooze", kind: "write", prompt: "Unsnooze the Intake item 'Add SSO login' in project MOB.", expectAnyTool: ["unsnooze_intake_item"], forbidTools: ["snooze_intake_item", "accept_intake_item", "duplicate_intake_item"] },
   { id: "intake-submit", kind: "write", prompt: "Submit a request titled 'Export to PDF' to the Intake of project MOB.", expectAnyTool: ["submit_intake_item"], forbidTools: ["create_work_item"] },
   { id: "relation-create", kind: "write", prompt: "Mark MOB-2 as blocked by MOB-1.", expectAnyTool: ["create_work_item_relation"] },
   { id: "reply-to-comment", kind: "write", prompt: "Reply to the first comment on MOB-1 with 'Thanks, I will take a look'.", expectAnyTool: ["create_comment"] },

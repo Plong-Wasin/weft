@@ -54,6 +54,7 @@ export const actionNotes: Record<string, string> = {
   accept_intake_item: "Decision: accept an Intake item. It becomes a normal backlog work item.",
   reject_intake_item: "Decision: reject an Intake item. It stays out of normal lists.",
   snooze_intake_item: "Decision: hide an Intake item from the pending list until a date.",
+  unsnooze_intake_item: "Return a snoozed Intake item to the pending list immediately.",
   duplicate_intake_item: "Decision: mark an Intake item as a duplicate of an existing work item.",
   list_work_item_relations: "Lists a work item's Relations (blocks, blocked_by, duplicate, relates_to).",
   create_work_item_relation: "Links two work items of the same project. `blocks` and `blocked_by` are two views of one link; `duplicate` and `relates_to` are symmetric.",

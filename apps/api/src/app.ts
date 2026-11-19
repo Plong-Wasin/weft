@@ -506,7 +506,7 @@ export function createApp(
           }
           set.status = error.status; return { error: error.message };
         }
-        if (error instanceof ActionError) { set.status = error.status; if (error.retryAfter) set.headers["retry-after"] = String(error.retryAfter); return { error: error.message, ...(error.code ? { code: error.code } : {}) }; }
+        if (error instanceof ActionError) { set.status = error.status; if (error.retryAfter) set.headers["retry-after"] = String(error.retryAfter); return { error: error.message, ...(error.code ? { code: error.code } : {}), ...(error.details ? { details: error.details } : {}) }; }
         throw error;
       }
     }, { body: action.input });

@@ -49,6 +49,7 @@ export * from "./builtin-views";
 export * from "./triage";
 export * from "./tool-notes";
 export * from "./agents";
+export * from "./agent-retirement";
 export * from "./agent-action-policy";
 export * from "./agent-access";
 export * from "./runs";

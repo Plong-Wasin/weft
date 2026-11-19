@@ -7,6 +7,7 @@ import { agentLimitCeilings, agentLimitDefaults, canManageAgentAccess, initializ
 import { enqueueJob } from "./jobs";
 import { cancelAgentRuns, revokeAgentRuns } from "./runs";
 import { auditAgentChange } from "./agent-audit";
+import { agentContentCounts, agentContentKinds, totalAgentContent } from "./agent-retirement";
 import { ActionError, requireWorkspaceRole } from "./members";
 
 
@@ -293,6 +294,8 @@ export function createAgentActions(db: Database) {
           if (agent.runtimeId && runtimeId === null) {
             // Runs queued for the Runtime would otherwise wait forever: hand them to the server worker.
             const stranded = await database.select({ id: runs.id }).from(runs).where(and(eq(runs.agentId, agent.id), eq(runs.status, "queued")));
+            // The server worker runs them, so they must stop naming the Runtime they were created for.
+            await database.update(runs).set({ runtimeLabel: null }).where(and(eq(runs.agentId, agent.id), inArray(runs.status, ["queued", "follow_up"])));
             for (const run of stranded) await enqueueJob(database, { type: "agent_run", payload: { runId: run.id }, dedupeKey: `agent_run:${run.id}:unbound` });
           }
           if (input.name !== undefined) await database.update(users).set({ name: input.name, updatedAt: new Date() }).where(eq(users.id, agent.userId));
@@ -316,12 +319,27 @@ export function createAgentActions(db: Database) {
       handler: async (context: Context, input: { agentId: string }) => db.transaction(async (transaction) => {
         const database = tx(transaction);
         const agent = await loadAdminAgent(database, context, input.agentId, true);
+        // Lock the bot user row first: a write that references it (an in-flight Run posting a comment) takes a shared lock on that row, so it either commits before the count below or waits and then fails once the user is gone. Without the lock a comment written between the count and the delete would be destroyed by the cascade.
+        await database.select({ id: users.id }).from(users).where(eq(users.id, agent.userId)).for("update");
+        const counts = await agentContentCounts(database, agent.userId);
+        if (totalAgentContent(counts) > 0) throw new ActionError("This Agent wrote or created content, so it cannot be deleted. Disable it instead: its comments, work items and history stay, and it can be enabled again.", 409, "agent_has_content", undefined, { counts, advice: "disable" });
         await cancelAgentRuns(database, agent.id, context.userId, "Agent was deleted");
         // Deleting the bot user cascades to its workspace and project memberships, assignments and the Agent row.
         await database.delete(users).where(eq(users.id, agent.userId));
         await auditAgentChange(database, { workspaceId: agent.workspaceId, entityType: "agent", entityId: agent.id, field: "deleted", oldValue: { userId: agent.userId }, newValue: null, actorId: context.userId });
         return { deleted: true };
       }),
+    },
+    getAgentContentCounts: {
+      name: "get_agent_content_counts", kind: "read" as const,
+      input: Type.Object({ agentId: uuid() }),
+      output: Type.Object({ blocked: Type.Boolean(), counts: Type.Object(Object.fromEntries(agentContentKinds.map((kind) => [kind, Type.Integer({ minimum: 0 })]))) }),
+      // The same counts the delete refusal carries; the settings page shows them before an admin confirms a delete.
+      handler: async (context: Context, input: { agentId: string }) => {
+        const agent = await loadAdminAgent(db, context, input.agentId);
+        const counts = await agentContentCounts(db, agent.userId);
+        return { blocked: totalAgentContent(counts) > 0, counts };
+      },
     },
     setAgentProjectAccess: {
       name: "set_agent_project_access", kind: "write" as const,

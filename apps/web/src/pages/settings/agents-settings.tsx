@@ -7,7 +7,7 @@ import { capitalize, profileSummary, runtimeParts } from "../../agent-labels";
 import { useWorkspace } from "../../layouts/workspace-layout";
 import { paths } from "../../routes";
 import type { Member, Project } from "../../types";
-import { dangerButton, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
+import { dangerOutline, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 
 export type AgentRecord = {
   id: string; userId: string; name: string; instructions: string; model: string; enabled: boolean; allProjects: boolean; projectIds: string[]; accessUserIds: string[];
@@ -95,6 +95,28 @@ function AgentRuntimeProfile({ agent, onSaved, onFailed }: { agent: Pick<AgentRe
   </fieldset>;
 }
 
+/** Why an Agent cannot be deleted: what it wrote, with the biggest kinds first, and Disable as the way out. Focus moves here on open and back to Delete on close. */
+function RetirePanel({ agent, counts, onClose, onDisable }: { agent: { id: string; name: string; enabled: boolean }; counts: Record<string, number>; onClose: () => void; onDisable: () => void }) {
+  const panel = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => { panel.current?.focus(); }, []);
+  const close = () => { onClose(); document.querySelector<HTMLElement>(`[data-retire-trigger="${agent.id}"]`)?.focus(); };
+  const kinds = Object.entries(counts).filter(([, value]) => value > 0).sort((a, b) => b[1] - a[1]);
+  const shown = kinds.slice(0, 5);
+  const hidden = kinds.slice(5);
+  return <div ref={panel} tabIndex={-1} role="alertdialog" aria-labelledby={`retire-${agent.id}`} onKeyDown={(event) => { if (event.key === "Escape") close(); }} className="grid gap-2 rounded-md border border-danger-strong bg-danger-subtle p-3 outline-none">
+    <strong id={`retire-${agent.id}`} className="text-14 text-danger-text">{translate("agents.retire.title").replace("{name}", () => agent.name)}</strong>
+    <ul className="m-0 grid list-none gap-0.5 p-0 text-13" data-testid="retire-counts">
+      {shown.map(([kind, value]) => <li key={kind}>{translate(`agents.retire.kind.${kind}` as Parameters<typeof translate>[0])}: {value}</li>)}
+      {hidden.length > 0 && <li className="text-secondary">{translate("agents.retire.more").replace("{count}", String(hidden.reduce((sum, [, value]) => sum + value, 0)))}</li>}
+    </ul>
+    <p className="m-0 text-13 text-secondary">{translate(agent.enabled ? "agents.retire.help" : "agents.retire.helpDisabled")}</p>
+    <div className="flex flex-wrap gap-2">
+      {agent.enabled && <button type="button" onClick={() => { onDisable(); document.querySelector<HTMLElement>(`[data-retire-trigger="${agent.id}"]`)?.focus(); }}>{translate("agents.disable")}</button>}
+      <button type="button" className="secondary" onClick={close}>{translate("agents.retire.close")}</button>
+    </div>
+  </div>;
+}
+
 /** Workspace Admins create, configure, enable, disable and delete Agents, and open them to projects. */
 export function WorkspaceAgents() {
   const { workspace, selfId } = useWorkspace();
@@ -111,6 +133,8 @@ export function WorkspaceAgents() {
   const [creatingOpen, setCreatingOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<{ id: string; draft: Draft } | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
+  // The Agent whose delete the content check refused, with what it wrote or created.
+  const [retiring, setRetiring] = React.useState<{ id: string; counts: Record<string, number> } | null>(null);
   const [allowAutopilot, setAllowAutopilot] = React.useState(false);
   const load = React.useCallback(async () => {
     const members = await action<Member[]>("list_members", { workspaceId: workspace.id }) ?? [];
@@ -183,11 +207,20 @@ export function WorkspaceAgents() {
           </fieldset>
           <TriggerSection agent={agent} projects={projects} />
           <AgentRuns agent={agent} />
+          <p className="text-13 text-secondary">{translate("agents.retire.hint")}</p>
           <div className="flex flex-wrap gap-2">
             {editing?.id !== agent.id && <button type="button" className="secondary" onClick={() => setEditing({ id: agent.id, draft: toDraft(agent) })}>{translate("agents.edit")}</button>}
-            <button type="button" className="secondary" onClick={async () => guard(await action(agent.enabled ? "disable_agent" : "enable_agent", { agentId: agent.id }))}>{translate(agent.enabled ? "agents.disable" : "agents.enable")}</button>
-            <button type="button" className={dangerButton} onClick={async () => { if (window.confirm(translate("agents.deleteConfirm"))) await guard(await action("delete_agent", { agentId: agent.id })); }}>{translate("agents.delete")}</button>
+            <button type="button" className="secondary" onClick={async () => { setRetiring(null); await guard(await action(agent.enabled ? "disable_agent" : "enable_agent", { agentId: agent.id })); }}>{translate(agent.enabled ? "agents.disable" : "agents.enable")}</button>
+            <button type="button" className={dangerOutline} data-retire-trigger={agent.id} onClick={async () => {
+              // The same counts the server refuses with: a refused Agent gets the dialog instead of a failed request.
+              const check = await action<{ blocked: boolean; counts: Record<string, number> }>("get_agent_content_counts", { agentId: agent.id });
+              if (check === null) { setNote(translate("agents.failed")); return; }
+              if (check.blocked) { setRetiring({ id: agent.id, counts: check.counts }); return; }
+              setRetiring(null);
+              if (window.confirm(translate("agents.deleteConfirm"))) await guard(await action("delete_agent", { agentId: agent.id }));
+            }}>{translate("agents.delete")}</button>
           </div>
+          {retiring?.id === agent.id && <RetirePanel agent={agent} counts={retiring.counts} onClose={() => setRetiring(null)} onDisable={async () => { setRetiring(null); await guard(await action("disable_agent", { agentId: agent.id })); }} />}
         </div>
       </Row>; })}</RowList>}
     </SettingsBlock>

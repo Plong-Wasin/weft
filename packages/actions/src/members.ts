@@ -11,7 +11,7 @@ export type WorkspaceRole = (typeof workspaceRoles)[number];
 export const roleLevel: Record<WorkspaceRole, number> = { Admin: 20, Member: 15, Guest: 5 };
 
 export class ActionError extends Error {
-  constructor(message: string, readonly status: 400 | 403 | 404 | 409 | 410 | 413 | 429 | 500 | 503, readonly code?: string, readonly retryAfter?: number) {
+  constructor(message: string, readonly status: 400 | 403 | 404 | 409 | 410 | 413 | 429 | 500 | 503, readonly code?: string, readonly retryAfter?: number, readonly details?: Record<string, unknown>) {
     super(message);
   }
 }

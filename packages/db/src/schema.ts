@@ -1014,6 +1014,10 @@ export const runs = pgTable("runs", {
   triggerId: uuid("trigger_id").references(() => triggers.id, { onDelete: "set null" }),
   status: text("status").notNull().default("queued"),
   runtimeId: uuid("runtime_id").references(() => runtimes.id, { onDelete: "set null" }),
+  /** The Agent's name when the Run was created. Shown only when the Agent is gone or the Run has no live Agent; never updated afterwards. Null for Runs created before this column. */
+  agentName: text("agent_name"),
+  /** The Runtime's label ("host · agent CLI") when the Run was created; null on the Weft server and for Runs created before this column. Shown only when the Runtime is gone. */
+  runtimeLabel: text("runtime_label"),
   dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
   finalOutput: text("final_output"),
   /** Why a failed Run failed: a short machine code such as `tool_call_limit`, `token_limit`, `timeout`, `model_error`. */

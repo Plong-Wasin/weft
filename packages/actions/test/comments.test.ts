@@ -100,6 +100,13 @@ test.concurrent("a Guest can discuss their own Triage item through Activity, but
     await intake.duplicateIntakeItem.handler({ userId: env.member.id }, { intakeItemId: duplicate.id, duplicateTo: target.id });
     await env.comments.createComment.handler({ userId: env.member.id }, { workItemId: duplicate.workItemId, body: doc("Duplicate follow-up") });
     expect((await env.comments.listComments.handler({ userId: env.guest.id }, { workItemId: duplicate.workItemId })).map((row) => row.bodyText)).toEqual(["Duplicate follow-up"]);
+    const accepted = await intake.submitIntakeItem.handler({ userId: env.guest.id }, { projectId: env.project.id, title: "Accepted request" });
+    await env.comments.createComment.handler({ userId: env.guest.id }, { workItemId: accepted.workItemId, body: doc("Before acceptance") });
+    await intake.acceptIntakeItem.handler({ userId: env.member.id }, { intakeItemId: accepted.id });
+    expect((await env.comments.listComments.handler({ userId: env.guest.id }, { workItemId: accepted.workItemId })).map((row) => row.bodyText)).toEqual(["Before acceptance"]);
+    await expect(env.comments.createComment.handler({ userId: env.guest.id }, { workItemId: accepted.workItemId, body: doc("Normal permission check") })).rejects.toMatchObject({ status: 403 });
+    await env.comments.createComment.handler({ userId: env.member.id }, { workItemId: accepted.workItemId, body: doc("After acceptance") });
+    expect((await env.comments.listComments.handler({ userId: env.guest.id }, { workItemId: accepted.workItemId })).map((row) => row.bodyText)).toEqual(["Before acceptance", "After acceptance"]);
   });
 });
 

@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
-import { activities, createDatabase, workItems, type Database } from "@weft/db";
+import { activities, createDatabase, workItemStates, workItems, type Database } from "@weft/db";
 import { createCycleActions, createProjectActions, createWorkItemActions, cycleStatus, todayIso, aiWriteActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -279,6 +279,26 @@ test.concurrent("transfer moves only unfinished items, writes Activity, and noth
   });
 });
 
+test.concurrent("selective transfer moves only selected current unfinished items and reports stale selections", async () => {
+  await withRollback(db, async (transaction) => {
+    const { cycles, member, cycle, next, made } = await endedCycle(transaction);
+    const completedState = (await transaction.select().from(workItemStates).where(and(eq(workItemStates.projectId, cycle.projectId), eq(workItemStates.group, "completed"))))[0]!;
+    // The preview saw Todo as eligible, then another writer completes it before the transfer Action runs.
+    await transaction.update(workItems).set({ stateId: completedState.id }).where(eq(workItems.id, made["Todo"]!));
+    const result = await cycles.selectiveTransferCycleItems.handler({ userId: member.id, source: "ui" }, {
+      cycleId: cycle.id, targetCycleId: next.id, workItemIds: [made["Todo"]!, made["In Progress"]!, made["Cancelled"]!, "00000000-0000-4000-8000-000000000001"],
+    });
+    expect(result.transferred).toEqual([made["In Progress"]!]);
+    expect(result.conflicts).toEqual([
+      { workItemId: made["Todo"]!, reason: "ineligible" },
+      { workItemId: made["Cancelled"]!, reason: "ineligible" },
+      { workItemId: "00000000-0000-4000-8000-000000000001", reason: "not_in_source" },
+    ]);
+    expect((await cycles.getCycle.handler({ userId: member.id }, { cycleId: cycle.id })).workItemIds.sort()).toEqual([made["Done"]!, made["Cancelled"]!, made["Todo"]!].sort());
+    expect((await cycles.getCycle.handler({ userId: member.id }, { cycleId: next.id })).workItemIds).toEqual([made["In Progress"]!]);
+  });
+});
+
 test.concurrent("transfer is refused from a running Cycle, to an ended or other-project Cycle, and to a Guest", async () => {
   await withRollback(db, async (transaction) => {
     const { cycles, member, guest, admin, cycle, next, projects, workspace } = await endedCycle(transaction);
@@ -309,6 +329,7 @@ test.concurrent("archive is Admin only and only for a completed Cycle; archived 
     await expect(cycles.addCycleItems.handler({ userId: member.id }, { cycleId: cycle.id, workItemIds: [itemId] })).rejects.toMatchObject({ status: 400 });
     await expect(cycles.removeCycleItems.handler({ userId: member.id }, { cycleId: cycle.id, workItemIds: [itemId] })).rejects.toMatchObject({ status: 400 });
     await expect(cycles.transferCycleItems.handler({ userId: member.id }, { cycleId: cycle.id, targetCycleId: next.id })).rejects.toMatchObject({ status: 400 });
+    await expect(cycles.selectiveTransferCycleItems.handler({ userId: member.id }, { cycleId: cycle.id, targetCycleId: next.id, workItemIds: [itemId] })).rejects.toMatchObject({ status: 400 });
     await cycles.unarchiveCycle.handler({ userId: admin.id }, { cycleId: cycle.id });
     expect((await cycles.updateCycle.handler({ userId: member.id }, { cycleId: cycle.id, name: "Restored" })).name).toBe("Restored");
   });

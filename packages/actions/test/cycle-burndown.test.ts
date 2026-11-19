@@ -108,7 +108,7 @@ test.concurrent("Action burndown replays completion, reopening and cancellation 
     expect(result.scopeChanges).toEqual([{ date: day(-2), added: 3, removed: 0 }, { date: day(-1), added: 0, removed: 1 }]);
     expect(JSON.stringify(result)).not.toContain("PRIVATE-CYCLE-SECRET");
     const target = await cycles.createCycle.handler(as, { projectId: project.id, name: "Next", startDate: day(1), endDate: day(4) });
-    await cycles.transferCycleItems.handler(as, { cycleId: cycle.id, targetCycleId: target.id });
+    await cycles.selectiveTransferCycleItems.handler(as, { cycleId: cycle.id, targetCycleId: target.id, workItemIds: [reopened.id] });
     await tx.update(workItems).set({ archivedAt: new Date() }).where(eq(workItems.id, cancelled.id));
     await cycles.archiveCycle.handler(as, { cycleId: cycle.id });
     expect((await cycles.getCycleBurndown.handler(as, { cycleId: cycle.id })).finalOutcome).toEqual(result.finalOutcome);

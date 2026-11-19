@@ -89,6 +89,11 @@ test.concurrent("a Guest can discuss their own Triage item through Activity, but
     await intake.rejectIntakeItem.handler({ userId: env.member.id }, { intakeItemId: own.id });
     await env.comments.createComment.handler({ userId: env.member.id }, { workItemId: own.workItemId, body: doc("Decision follow-up") });
     expect((await env.comments.listComments.handler({ userId: env.guest.id }, { workItemId: own.workItemId })).map((row) => row.bodyText)).toEqual(["More detail", "Decision follow-up"]);
+    const duplicate = await intake.submitIntakeItem.handler({ userId: env.guest.id }, { projectId: env.project.id, title: "Duplicate request" });
+    const target = await env.items.createWorkItem.handler({ userId: env.member.id }, { projectId: env.project.id, title: "Existing work" });
+    await intake.duplicateIntakeItem.handler({ userId: env.member.id }, { intakeItemId: duplicate.id, duplicateTo: target.id });
+    await env.comments.createComment.handler({ userId: env.member.id }, { workItemId: duplicate.workItemId, body: doc("Duplicate follow-up") });
+    expect((await env.comments.listComments.handler({ userId: env.guest.id }, { workItemId: duplicate.workItemId })).map((row) => row.bodyText)).toEqual(["Duplicate follow-up"]);
   });
 });
 

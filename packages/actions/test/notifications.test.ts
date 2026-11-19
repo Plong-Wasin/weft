@@ -63,6 +63,20 @@ test.concurrent("an Intake comment notifies its Guest creator and mentioned memb
   });
 });
 
+test.concurrent("an Intake mention queued before access revocation is dropped at notification fan-out", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, admin, author, other, project, comments, inbox } = await setup(transaction, "private");
+    const guest = await createMemberFactory(transaction, workspace.id, "Guest");
+    await createProjectActions(transaction).addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: guest.id, role: "Guest" });
+    const submitted = await createIntakeActions(transaction).submitIntakeItem.handler({ userId: guest.id }, { projectId: project.id, title: "Private request" });
+    await comments.createComment.handler({ userId: author.id }, { workItemId: submitted.workItemId, body: doc("Review ", { mention: other.id }) });
+    await createProjectActions(transaction).removeProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: other.id });
+    await drain(transaction);
+    expect((await inbox.listNotifications.handler({ userId: guest.id }, { workspaceId: workspace.id })).notifications).toMatchObject([{ kind: "mention", workItemId: submitted.workItemId }]);
+    expect((await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).notifications).toHaveLength(0);
+  });
+});
+
 test.concurrent("mentioning an Agent on Intake does not start a Run", async () => {
   await withRollback(db, async (transaction) => {
     const { workspace, admin, author, project, comments } = await setup(transaction);

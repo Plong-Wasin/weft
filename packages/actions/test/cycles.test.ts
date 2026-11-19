@@ -93,6 +93,30 @@ test.concurrent("adding items: at most one Cycle, skipped items are reported, Ac
   });
 });
 
+test.concurrent("adding Cycle candidates moves only when the selected source membership still matches", async () => {
+  await withRollback(db, async (transaction) => {
+    const { cycles, member, project, item } = await setup(transaction);
+    const source = await cycles.createCycle.handler({ userId: member.id }, { projectId: project.id, name: "Source", startDate: day(0), endDate: day(2) });
+    const target = await cycles.createCycle.handler({ userId: member.id }, { projectId: project.id, name: "Target", startDate: day(3), endDate: day(5) });
+    const first = await item("First");
+    const second = await item("Second");
+    await cycles.addCycleItems.handler({ userId: member.id }, { cycleId: source.id, workItemIds: [first.id, second.id] });
+
+    const moved = await cycles.addCycleItems.handler({ userId: member.id }, {
+      cycleId: target.id, workItemIds: [first.id, second.id], move: true,
+      expectedCycleIds: { [first.id]: source.id, [second.id]: source.id },
+    });
+    expect(moved).toEqual({ added: [first.id, second.id], skipped: [] });
+    expect((await cycles.getCycle.handler({ userId: member.id }, { cycleId: source.id })).workItemIds).toEqual([]);
+    expect((await cycles.getCycle.handler({ userId: member.id }, { cycleId: target.id })).workItemIds.sort()).toEqual([first.id, second.id].sort());
+
+    const stale = await cycles.addCycleItems.handler({ userId: member.id }, {
+      cycleId: source.id, workItemIds: [first.id], move: true, expectedCycleIds: { [first.id]: source.id },
+    });
+    expect(stale).toEqual({ added: [], skipped: [{ workItemId: first.id, cycleId: target.id }] });
+  });
+});
+
 test.concurrent("removing items frees them for another Cycle and writes Activity", async () => {
   await withRollback(db, async (transaction) => {
     const { cycles, member, project, item } = await setup(transaction);

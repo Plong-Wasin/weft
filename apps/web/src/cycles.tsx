@@ -247,6 +247,10 @@ export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId,
   const [target, setTarget] = React.useState("");
   const [editing, setEditing] = React.useState(false);
   const [adding, setAdding] = React.useState(false);
+  const [candidateQuery, setCandidateQuery] = React.useState("");
+  const [selectedCandidates, setSelectedCandidates] = React.useState<string[]>([]);
+  const [moveCandidates, setMoveCandidates] = React.useState(false);
+  const [cycleOf, setCycleOf] = React.useState<Record<string, { id: string; name: string; archived: boolean }>>({});
   const load = React.useCallback(async () => {
     if (!enabled) return setCycle(null);
     const loaded = await action<CycleDetail>("get_cycle", { cycleId });
@@ -256,8 +260,12 @@ export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId,
     if (!found) return;
     setEveryone(await action<Item[]>("list_work_items", { projectId }) ?? []);
     setStates(await action<State[]>("list_states", { projectId }) ?? []);
-    const all = await action<Cycle[]>("list_cycles", { projectId }) ?? [];
-    setOthers(all.filter((other) => other.id !== found.id && other.status !== "completed"));
+    const activeCycles = await action<Cycle[]>("list_cycles", { projectId }) ?? [];
+    const archivedCycles = await action<Cycle[]>("list_cycles", { projectId, archived: true }) ?? [];
+    const all = [...activeCycles, ...archivedCycles];
+    setOthers(activeCycles.filter((other) => other.id !== found.id && other.status !== "completed"));
+    const membership = await Promise.all(all.map(async (other) => ({ other, items: await action<Item[]>("list_work_items", { projectId, cycleId: other.id }) ?? [] })));
+    setCycleOf(Object.fromEntries(membership.flatMap(({ other, items }) => items.map((item) => [item.id, { id: other.id, name: other.name, archived: other.archived }]))));
     setRefreshKey((key) => key + 1);
   }, [action, cycleId, projectId, enabled]);
   React.useEffect(() => { void load(); }, [load]);
@@ -266,12 +274,7 @@ export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId,
   if (cycle === undefined) return null;
   if (cycle === null) return <section><p role="alert">{t("cycles.failed")}</p><Link to={paths.cycles(workspaceSlug, projectKey)}>{t("cycles.back")}</Link></section>;
   const ended = cycle.status === "completed";
-  const candidates = everyone.filter((item) => !cycle.workItemIds.includes(item.id));
-  const add = async (workItemId: string) => {
-    const result = await action<{ added: string[]; skipped: unknown[] }>("add_cycle_items", { cycleId, workItemIds: [workItemId] });
-    setNote(result === null ? t("cycles.failed") : result.skipped.length ? t("cycles.skipped").replace("{count}", count(result.skipped.length)) : null);
-    await load();
-  };
+  const candidates = everyone.filter((item) => !cycle.workItemIds.includes(item.id) && `${item.displayId} ${item.title}`.toLowerCase().includes(candidateQuery.trim().toLowerCase()));
   const remove = async (workItemId: string) => { setNote((await action("remove_cycle_items", { cycleId, workItemIds: [workItemId] })) === null ? t("cycles.failed") : null); await load(); };
   const transfer = async () => {
     const result = await action<{ transferred: string[] }>("transfer_cycle_items", { cycleId, targetCycleId: target });
@@ -310,8 +313,22 @@ export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId,
     </div>
     {editing && <CycleModal action={action} projectId={projectId} cycle={cycle} onClose={() => setEditing(false)} onSaved={() => void load()} />}
     {adding && <Modal title={t("cycles.addTitle")} onClose={() => setAdding(false)}>
+      <div className="grid gap-3">
+      <label>{t("cycles.searchCandidates")}<input autoFocus type="search" value={candidateQuery} onChange={(event) => setCandidateQuery(event.target.value)} /></label>
+      {Object.keys(cycleOf).some((id) => !cycle.workItemIds.includes(id)) && <label className="flex items-center gap-2 text-13"><input type="checkbox" checked={moveCandidates} onChange={(event) => setMoveCandidates(event.target.checked)} />{t("cycles.allowMove")}</label>}
       {candidates.length === 0 && <p className="m-0 text-secondary">{t("cycles.noCandidates")}</p>}
-      <ul className="m-0 grid list-none gap-1 p-0">{candidates.map((item) => <li key={item.id} className="flex items-center gap-2 text-13"><span className="flex-1 truncate">{item.displayId} · {item.title}</span><button onClick={() => void add(item.id)}>{t("cycles.add")}</button></li>)}</ul>
+      <ul className="m-0 grid max-h-72 list-none gap-1 overflow-auto p-0">{candidates.map((item) => {
+        const currentCycle = cycleOf[item.id];
+        const disabled = !!currentCycle && (!moveCandidates || currentCycle.archived);
+        return <li key={item.id} className="flex items-center gap-2 text-13"><input type="checkbox" aria-label={`${t("cycles.selectCandidate")} ${item.displayId}`} disabled={disabled} checked={selectedCandidates.includes(item.id)} onChange={(event) => setSelectedCandidates((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))} /><span className="min-w-0 flex-1 truncate">{item.displayId} · {item.title}</span><span className="shrink-0 text-secondary">{currentCycle ? t("cycles.currentCycle").replace("{name}", currentCycle.name) : t("cycles.noCurrentCycle")}</span></li>;
+      })}</ul>
+      <div className="flex justify-end"><button disabled={selectedCandidates.length === 0} onClick={async () => {
+        const expectedCycleIds = Object.fromEntries(selectedCandidates.map((id) => [id, cycleOf[id]?.id ?? null]));
+        const result = await action<{ added: string[]; skipped: Array<{ workItemId: string; cycleId: string }> }>("add_cycle_items", { cycleId, workItemIds: selectedCandidates, move: moveCandidates, expectedCycleIds });
+        setNote(result === null ? t("cycles.failed") : result.skipped.length ? t("cycles.selectionConflict").replace("{count}", count(result.skipped.length)) : null);
+        setSelectedCandidates([]); setAdding(false); await load();
+      }}>{t("cycles.addSelected").replace("{count}", count(selectedCandidates.length))}</button></div>
+      </div>
     </Modal>}
   </section>;
 }

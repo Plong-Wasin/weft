@@ -753,6 +753,8 @@ export const modules = pgTable("modules", {
   leadId: text("lead_id").references(() => users.id, { onDelete: "set null" }),
   startDate: date("start_date"),
   endDate: date("end_date"),
+  /** Earliest instant from which Module membership, State and Estimate are captured. */
+  historyStartedAt: timestamp("history_started_at", { withTimezone: true }).notNull().defaultNow(),
   archivedAt: timestamp("archived_at", { withTimezone: true }),
   /** Soft delete: the Module disappears, its work items stay. */
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -886,6 +888,19 @@ export const oauthResource = pgTable("oauth_resource", {
   policyVersion: integer("policy_version").default(1),
   metadata: jsonb("metadata"),
 });
+
+/** Durable snapshots used to reconstruct Module history; workItemId intentionally has no FK so aggregate facts survive deletion. */
+export const moduleHistory = pgTable("module_history", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  sequence: serial("sequence").notNull().unique(),
+  moduleId: uuid("module_id").notNull().references(() => modules.id, { onDelete: "cascade" }),
+  workItemId: uuid("work_item_id"),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().default(sql`clock_timestamp()`),
+  kind: text("kind").notNull(),
+  member: boolean("member"),
+  stateGroup: text("state_group"),
+  estimate: text("estimate"),
+}, (table) => [index().on(table.moduleId, table.occurredAt)]);
 
 export const oauthClientResource = pgTable(
   "oauth_client_resource",

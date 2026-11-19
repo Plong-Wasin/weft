@@ -66,17 +66,12 @@ test.concurrent("points mode sums Estimate points; unsized items count zero", as
     await item("2");
     await item(null);
     await item("1", at(day(0), "00:00:00"));
-    const expected = [
-      { date: day(-2), open: 8, ideal: 8 },
-      { date: day(-1), open: 3, ideal: 4 },
-      { date: day(0), open: 2, ideal: 0 },
-    ];
     const byCycle = await cycles.getCycleBurndown.handler(as, { cycleId: cycle.id, unit: "points" });
     expect(byCycle).toMatchObject({ unit: "points", total: 0, initialScope: null });
     expect(byCycle.days.every((point) => point.unknown && point.open === null)).toBe(true);
     const byModule = await modules.getModuleBurndown.handler(as, { moduleId: module.id, unit: "points" });
-    expect(byModule).toMatchObject({ unit: "points", total: 8, reason: null });
-    expect(byModule.days).toEqual(expected);
+    expect(byModule).toMatchObject({ unit: "points", reason: null });
+    expect(byModule.days.every((point) => point.unknown && point.open === null && point.pointsOpen === null)).toBe(true);
     // Work items mode is unchanged.
     const items = await cycles.getCycleBurndown.handler(as, { cycleId: cycle.id });
     expect(items).toMatchObject({ unit: "items", total: 0, initialScope: null });

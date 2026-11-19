@@ -67,7 +67,12 @@ try {
       await page.setViewportSize({ width, height: 900 });
       await page.goto(url);
       const card = page.getByTestId(testId);
-      await card.locator("svg").first().waitFor();
+      if (name === "Module") await card.getByRole("status").filter({ hasText: translate("cycles.history.noCoverage") }).waitFor();
+      else {
+        const chart = card.locator("svg").first();
+        const coverage = card.getByRole("status").filter({ hasText: translate("cycles.history.noCoverage") });
+        await Promise.race([chart.waitFor().then(() => "chart"), coverage.waitFor().then(() => "coverage")]);
+      }
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
       check(overflow <= 0, `${name} burndown scrolls the page sideways by ${overflow}px at ${width}px`);
     }

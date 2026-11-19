@@ -2,14 +2,14 @@ import { Type } from "@sinclair/typebox";
 import { and, asc, eq, gte, ilike, inArray, isNotNull, isNull, lte, ne, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { assertNoneArchived, assertNotArchived, liveWorkItems, unarchivedWorkItems } from "./triage";
-import { activities, estimatePoints, moduleItems, moduleMembers, modules, projectMembers, workItemAssignees, workItemLabels, workItemRelations, labels, users, workItemStates, workItems, workspaceMembers } from "@weft/db";
+import { activities, moduleHistory, moduleItems, moduleMembers, modules, projectMembers, workItemAssignees, workItemLabels, workItemRelations, labels, users, workItemStates, workItems, workspaceMembers } from "@weft/db";
 import { assertFeatureEnabled } from "./features";
 import { ActionError } from "./members";
 import { requireProjectAccess } from "./projects";
 import { agentUserIds } from "./agent-access";
 import { activityActor, type ActivityContext } from "./work-items";
-import { burndownSeries, burndownUnitSchema, todayIso, type BurndownUnit } from "./cycles";
-import { pointWeight, requirePointsEstimate } from "./estimates";
+import { burndownUnitSchema, todayIso, type BurndownUnit } from "./cycles";
+import { requirePointsEstimate } from "./estimates";
 import { workItemMarkdownOptions, writtenDescription } from "./work-items";
 import { WRITTEN_FORM_MAX_INPUT_LENGTH } from "./markdown-doc";
 
@@ -257,30 +257,64 @@ export function createModuleActions(db: Database) {
         };
       },
     },
-    /** Same series as a Cycle's (burndownSeries); a Module without start date, target date or work items returns a reason and no days. */
+    /** Reconstructs each day from Module history, including history recorded before dates were set. */
     getModuleBurndown: {
       name: "get_module_burndown", kind: "read" as const,
       input: Type.Object({ moduleId: uuid(), unit: Type.Optional(burndownUnitSchema) }),
       output: Type.Object({
         moduleId: Type.String(), unit: burndownUnitSchema, startDate: Type.Union([Type.String(), Type.Null()]), endDate: Type.Union([Type.String(), Type.Null()]), total: Type.Number(),
         reason: Type.Union([Type.Literal("missing_start_date"), Type.Literal("missing_target_date"), Type.Literal("no_work_items"), Type.Null()]),
-        days: Type.Array(Type.Object({ date: Type.String(), open: Type.Union([Type.Number(), Type.Null()]), ideal: Type.Number() })),
+        coverageStart: Type.String(), unestimated: Type.Union([Type.Number(), Type.Null()]),
+        days: Type.Array(Type.Object({ date: Type.String(), open: Type.Union([Type.Number(), Type.Null()]), completed: Type.Union([Type.Number(), Type.Null()]), cancelled: Type.Union([Type.Number(), Type.Null()]), pointsOpen: Type.Union([Type.Number(), Type.Null()]), pointsCompleted: Type.Union([Type.Number(), Type.Null()]), pointsCancelled: Type.Union([Type.Number(), Type.Null()]), unestimatedOpen: Type.Union([Type.Number(), Type.Null()]), ideal: Type.Union([Type.Number(), Type.Null()]), idealPoints: Type.Union([Type.Number(), Type.Null()]), unknown: Type.Boolean() })),
       }),
       handler: async (context: Context, input: { moduleId: string; unit?: BurndownUnit }) => {
         const { module: found } = await moduleAccess(context, input.moduleId, "read");
         const unit = input.unit ?? "items";
         if (unit === "points") await requirePointsEstimate(db, found.projectId);
-        const rows = await db.select({ completedAt: workItems.completedAt, point: estimatePoints.value }).from(moduleItems)
-          .innerJoin(workItems, and(eq(workItems.id, moduleItems.workItemId), unarchivedWorkItems))
-          // Cancelled work is neither open nor done, so it leaves the chart.
-          .innerJoin(workItemStates, and(eq(workItemStates.id, workItems.stateId), ne(workItemStates.group, "cancelled")))
-          .leftJoin(estimatePoints, eq(estimatePoints.id, workItems.estimatePointId)).where(eq(moduleItems.moduleId, found.id));
-        const weights = unit === "points" ? rows.map((row) => pointWeight(row.point)) : undefined;
-        const base = { moduleId: found.id, unit, startDate: found.startDate, endDate: found.endDate, total: weights ? weights.reduce((sum, weight) => sum + weight, 0) : rows.length };
+        const events = await db.select().from(moduleHistory).where(eq(moduleHistory.moduleId, found.id)).orderBy(asc(moduleHistory.occurredAt), asc(moduleHistory.sequence));
+        const coverageStart = found.historyStartedAt.toISOString();
+        const base = { moduleId: found.id, unit, startDate: found.startDate, endDate: found.endDate, total: 0, coverageStart, unestimated: null as number | null };
         if (!found.startDate) return { ...base, reason: "missing_start_date" as const, days: [] };
         if (!found.endDate) return { ...base, reason: "missing_target_date" as const, days: [] };
-        if (rows.length === 0) return { ...base, reason: "no_work_items" as const, days: [] };
-        return { ...base, reason: null, days: burndownSeries(found.startDate, found.endDate, rows.map((row) => row.completedAt), todayIso(), weights).days };
+        if (events.length === 0) return { ...base, reason: "no_work_items" as const, days: [] };
+
+        const dayMs = 86_400_000, dayOf = (date: string) => Date.parse(`${date}T00:00:00Z`);
+        const initialUnknown = dayOf(found.startDate) < found.historyStartedAt.getTime();
+        const state = new Map<string, { member: boolean; group: string; estimate: number | null }>();
+        const estimateValue = (value: string | null) => value !== null && Number.isFinite(Number(value)) ? Number(value) : null;
+        const snapshots = events.filter((event) => event.workItemId !== null);
+        let cursor = 0;
+        const apply = (event: (typeof snapshots)[number]) => state.set(event.workItemId!, {
+          member: event.member ?? true, group: event.stateGroup ?? "unknown", estimate: estimateValue(event.estimate),
+        });
+        const start = dayOf(found.startDate);
+        while (cursor < snapshots.length && snapshots[cursor]!.occurredAt.getTime() < start) {
+          const event = snapshots[cursor++]!;
+          if (event.occurredAt.getTime() >= found.historyStartedAt.getTime()) apply(event);
+        }
+        const initialItems = [...state.values()].filter((item) => item.member);
+        const initialScope = initialUnknown ? null : initialItems.length;
+        const initialPoints = initialUnknown ? null : initialItems.reduce((sum, item) => sum + (item.estimate ?? 0), 0);
+        const span = (dayOf(found.endDate) - start) / dayMs, today = todayIso();
+        const days = [] as Array<{ date: string; open: number | null; completed: number | null; cancelled: number | null; pointsOpen: number | null; pointsCompleted: number | null; pointsCancelled: number | null; unestimatedOpen: number | null; ideal: number | null; idealPoints: number | null; unknown: boolean }>;
+        for (let offset = 0; offset <= span; offset++) {
+          const date = new Date(start + offset * dayMs).toISOString().slice(0, 10), cutoff = dayOf(date) + dayMs;
+          while (cursor < snapshots.length && snapshots[cursor]!.occurredAt.getTime() < cutoff) apply(snapshots[cursor++]!);
+          const observed = [...state.values()].filter((item) => item.member);
+          const open = observed.filter((item) => item.group !== "completed" && item.group !== "cancelled");
+          const completed = observed.filter((item) => item.group === "completed"), cancelled = observed.filter((item) => item.group === "cancelled");
+          const future = date >= today, unknown = cutoff <= found.historyStartedAt.getTime() || future;
+          days.push({ date, open: unknown ? null : open.length, completed: unknown ? null : completed.length, cancelled: unknown ? null : cancelled.length,
+            pointsOpen: unknown ? null : open.reduce((sum, item) => sum + (item.estimate ?? 0), 0),
+            pointsCompleted: unknown ? null : completed.reduce((sum, item) => sum + (item.estimate ?? 0), 0),
+            pointsCancelled: unknown ? null : cancelled.reduce((sum, item) => sum + (item.estimate ?? 0), 0),
+            unestimatedOpen: unknown ? null : open.filter((item) => item.estimate === null).length,
+            ideal: initialScope === null ? null : Math.round((initialScope * (span - offset) / (span || 1)) * 100) / 100,
+            idealPoints: initialPoints === null ? null : Math.round((initialPoints * (span - offset) / (span || 1)) * 100) / 100, unknown });
+        }
+        const lastKnown = [...days].reverse().find((day) => day.unestimatedOpen !== null);
+        const total = Math.max(0, ...days.flatMap((day) => [day.open, day.completed, day.cancelled].filter((value): value is number => value !== null)));
+        return { ...base, total: initialScope ?? total, unestimated: lastKnown?.unestimatedOpen ?? null, reason: null, days };
       },
     },
     addModuleItems: {

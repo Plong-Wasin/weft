@@ -267,6 +267,12 @@ try {
 
   // Open holds the unsnoozed MOB-3; Closed holds the three decided items.
   await page.getByTestId("intake-open-count").getByText("1", { exact: true }).waitFor();
+  await page.route("**/actions/list_intake_items", async (route) => {
+    const response = await route.fetch();
+    const items = await response.json() as Array<Record<string, unknown>>;
+    for (const item of items) if (item.displayId === "MOB-4") { item.descriptionText = ""; item.descriptionMarkdown = "![[asset:11111111-1111-4111-8111-111111111111]]"; }
+    await route.fulfill({ response, json: items });
+  });
   await page.getByRole("tab", { name: translate("intake.tab.closed") }).click();
   for (const [key, status] of [["MOB-1", "accepted"], ["MOB-2", "rejected"], ["MOB-4", "duplicate"]] as const) {
     await page.getByTestId(`intake-${key}`).getByText(translate(`intake.status.${status}`), { exact: true }).waitFor();
@@ -274,6 +280,8 @@ try {
   check(await page.getByTestId("intake-MOB-3").count() === 0, "snoozed item showed in Closed");
   await page.getByTestId("intake-MOB-4").click();
   await detail.locator("header").getByText("MOB-4", { exact: true }).waitFor();
+  await detail.getByTestId("description-editor").locator(".asset-image-node").waitFor();
+  await page.unroute("**/actions/list_intake_items");
   await detail.getByText(translate("intake.duplicateOf").replace("{id}", "MOB-1")).waitFor();
   check(await detail.getByRole("button", { name: translate("intake.accept"), exact: true }).count() === 0, "decided item still offers Accept");
   await page.screenshot({ path: `${shots}/intake-closed-1440-light.png` });

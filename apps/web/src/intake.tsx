@@ -138,17 +138,18 @@ function ListRow({ item, selected, onSelect }: { item: IntakeItem; selected: boo
 
 type Dialog = "snooze" | "duplicate" | null;
 
-function Detail({ action, workspaceId, item, index, count, canDecide, onMove, onDecided }: {
-  action: Call; workspaceId: string; item: IntakeItem; index: number; count: number; canDecide: boolean; onMove: (delta: number) => void; onDecided: () => void;
+function Detail({ action, workspaceId, item, index, count, canDecide, onMove, onDecided, onChanged }: {
+  action: Call; workspaceId: string; item: IntakeItem; index: number; count: number; canDecide: boolean; onMove: (delta: number) => void; onDecided: () => void; onChanged: () => void;
 }) {
   const [dialog, setDialog] = React.useState<Dialog>(null);
   const [note, setNote] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
   const undecided = item.outcome === "pending" || item.outcome === "snoozed";
+  const unsnoozed = item.outcome === "snoozed";
   const run = async (name: string, body: Record<string, unknown>) => {
     const done = await action(name, { intakeItemId: item.id, ...body });
     setNote(done ? null : t("intake.failed"));
-    if (done) { setDialog(null); onDecided(); }
+    if (done) { setDialog(null); if (name === "unsnooze_intake_item") onChanged(); else onDecided(); }
   };
   return <section aria-label={t("intake.detail")} className="flex min-w-0 flex-1 flex-col">
     <header className="flex flex-wrap items-center gap-2 border-b border-subtle px-5 py-3">
@@ -161,6 +162,7 @@ function Detail({ action, workspaceId, item, index, count, canDecide, onMove, on
         <button type="button" className={quietButton} onClick={() => void run("accept_intake_item", {})}>{t("intake.accept")}</button>
         <button type="button" className={quietButton} onClick={() => void run("reject_intake_item", {})}>{t("intake.reject")}</button>
       </>}
+      {canDecide && unsnoozed && <button type="button" className={quietButton} onClick={() => void run("unsnooze_intake_item", {})}>{t("intake.unsnooze")}</button>}
       <Popover label={t("intake.more")} align="right" className="size-8 justify-center border border-subtle bg-surface-1" trigger={<MoreHorizontal aria-hidden size={16} />}>
         {(close) => <>
           {canDecide && undecided && <>
@@ -235,6 +237,7 @@ export function IntakePage({ workspaceId, projectId, canDecide, enabled, action 
     if (tab === "open") select(neighbour?.id ?? null);
     void load();
   };
+  const afterChange = () => { void load(); };
   return <section className="flex flex-col gap-3" aria-label={t("intake.title")}>
     <div className="flex items-center gap-2">
       <Inbox aria-hidden size={18} className="text-secondary" />
@@ -255,7 +258,7 @@ export function IntakePage({ workspaceId, projectId, canDecide, enabled, action 
         </ul>
       </div>
       {current ? <Detail key={current.id} action={action} workspaceId={workspaceId} item={current} index={index} count={items!.length} canDecide={canDecide}
-        onMove={(delta) => select(items![index + delta]!.id)} onDecided={afterDecision} />
+        onMove={(delta) => select(items![index + delta]!.id)} onDecided={afterDecision} onChanged={afterChange} />
         : items?.length === 0
           ? <div className="grid min-w-0 flex-1 place-items-center">{tab === "open"
             ? <EmptyState title={t("intake.empty")} description={t("intake.emptyHint")} action={<button type="button" className={`${primaryButton} flex items-center gap-1.5`} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("intake.add")}</button>} />

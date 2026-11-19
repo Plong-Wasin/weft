@@ -2,13 +2,16 @@ ALTER TABLE cycles ADD COLUMN history_started_at timestamptz NOT NULL DEFAULT no
 --> statement-breakpoint
 CREATE TABLE cycle_history (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  sequence bigserial NOT NULL UNIQUE,
   cycle_id uuid NOT NULL REFERENCES cycles(id) ON DELETE CASCADE,
   work_item_id uuid,
-  occurred_at timestamptz NOT NULL DEFAULT now(),
+  occurred_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   kind text NOT NULL,
   member boolean,
   state_group text,
   estimate text,
+  previous_start_date date,
+  previous_end_date date,
   start_date date,
   end_date date
 );
@@ -90,10 +93,20 @@ CREATE TRIGGER estimate_points_cycle_history AFTER UPDATE OF value ON estimate_p
 CREATE FUNCTION capture_cycle_date_changes() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF NEW.start_date IS DISTINCT FROM OLD.start_date OR NEW.end_date IS DISTINCT FROM OLD.end_date THEN
-    INSERT INTO cycle_history(cycle_id, kind, start_date, end_date) VALUES (NEW.id, 'dates', NEW.start_date, NEW.end_date);
+    INSERT INTO cycle_history(cycle_id, kind, previous_start_date, previous_end_date, start_date, end_date)
+      VALUES (NEW.id, 'dates', OLD.start_date, OLD.end_date, NEW.start_date, NEW.end_date);
   END IF;
   RETURN NEW;
 END $$;
 --> statement-breakpoint
 CREATE TRIGGER cycles_history_dates AFTER UPDATE OF start_date, end_date ON cycles FOR EACH ROW
   EXECUTE FUNCTION capture_cycle_date_changes();
+--> statement-breakpoint
+-- Record what is actually present at the instant history begins; this is a boundary observation, not a backfill.
+INSERT INTO cycle_history(cycle_id, work_item_id, occurred_at, kind, member, state_group, estimate)
+  SELECT ci.cycle_id, wi.id, c.history_started_at, 'baseline', true, wis.state_group, ep.value
+    FROM cycle_items ci
+    JOIN cycles c ON c.id = ci.cycle_id
+    JOIN work_items wi ON wi.id = ci.work_item_id
+    JOIN work_item_states wis ON wis.id = wi.state_id
+    LEFT JOIN estimate_points ep ON ep.id = wi.estimate_point_id;

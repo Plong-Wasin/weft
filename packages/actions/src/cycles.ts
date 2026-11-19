@@ -145,6 +145,7 @@ export function createCycleActions(db: Database) {
       input: Type.Object({ cycleId: uuid(), name: Type.Optional(nameSchema), startDate: Type.Optional(dateSchema), endDate: Type.Optional(dateSchema) }), output: cycleOutput,
       handler: async (context: Context, input: { cycleId: string; name?: string; startDate?: string; endDate?: string }) => {
         const { cycle } = await cycleAccess(context, input.cycleId, "write");
+        if (cycle.archivedAt) throw new ActionError("Cycle is archived", 400);
         const startDate = input.startDate ?? cycle.startDate, endDate = input.endDate ?? cycle.endDate;
         assertDates(startDate, endDate);
         const [updated] = await db.update(cycles).set({ name: input.name ?? cycle.name, startDate, endDate }).where(eq(cycles.id, cycle.id)).returning();
@@ -177,52 +178,64 @@ export function createCycleActions(db: Database) {
       input: Type.Object({ cycleId: uuid(), unit: Type.Optional(burndownUnitSchema) }),
       output: Type.Object({
         cycleId: Type.String(), unit: burndownUnitSchema, startDate: Type.String(), endDate: Type.String(), total: Type.Number(),
-        initialScope: Type.Union([Type.Number(), Type.Null()]), finalOutcome: Type.Object({ completed: Type.Number(), open: Type.Number(), cancelled: Type.Number() }),
-        initialPoints: Type.Union([Type.Number(), Type.Null()]), unestimated: Type.Number(), coverageStart: Type.String(), dateChanges: Type.Array(Type.Object({ at: Type.String(), startDate: Type.String(), endDate: Type.String() })),
+        initialScope: Type.Union([Type.Number(), Type.Null()]), finalOutcome: Type.Object({ completed: Type.Union([Type.Number(), Type.Null()]), open: Type.Union([Type.Number(), Type.Null()]), cancelled: Type.Union([Type.Number(), Type.Null()]), completedPoints: Type.Union([Type.Number(), Type.Null()]), openPoints: Type.Union([Type.Number(), Type.Null()]), cancelledPoints: Type.Union([Type.Number(), Type.Null()]) }),
+        outcomeDate: Type.Union([Type.String(), Type.Null()]), initialPoints: Type.Union([Type.Number(), Type.Null()]), unestimated: Type.Union([Type.Number(), Type.Null()]), coverageStart: Type.String(), dateChanges: Type.Array(Type.Object({ at: Type.String(), previousStartDate: Type.String(), previousEndDate: Type.String(), startDate: Type.String(), endDate: Type.String() })),
         scopeChanges: Type.Array(Type.Object({ date: Type.String(), added: Type.Number(), removed: Type.Number() })),
-        days: Type.Array(Type.Object({ date: Type.String(), open: Type.Union([Type.Number(), Type.Null()]), completed: Type.Optional(Type.Union([Type.Number(), Type.Null()])), cancelled: Type.Optional(Type.Union([Type.Number(), Type.Null()])), pointsOpen: Type.Optional(Type.Union([Type.Number(), Type.Null()])), unestimatedOpen: Type.Optional(Type.Union([Type.Number(), Type.Null()])), ideal: Type.Union([Type.Number(), Type.Null()]), unknown: Type.Optional(Type.Boolean()) })),
+        days: Type.Array(Type.Object({ date: Type.String(), open: Type.Union([Type.Number(), Type.Null()]), completed: Type.Optional(Type.Union([Type.Number(), Type.Null()])), cancelled: Type.Optional(Type.Union([Type.Number(), Type.Null()])), pointsOpen: Type.Optional(Type.Union([Type.Number(), Type.Null()])), pointsCompleted: Type.Optional(Type.Union([Type.Number(), Type.Null()])), pointsCancelled: Type.Optional(Type.Union([Type.Number(), Type.Null()])), unestimatedOpen: Type.Optional(Type.Union([Type.Number(), Type.Null()])), ideal: Type.Union([Type.Number(), Type.Null()]), idealPoints: Type.Optional(Type.Union([Type.Number(), Type.Null()])), unknown: Type.Optional(Type.Boolean()) })),
       }),
       handler: async (context: Context, input: { cycleId: string; unit?: BurndownUnit }) => {
         const { cycle } = await cycleAccess(context, input.cycleId, "read");
         const unit = input.unit ?? "items";
         if (unit === "points") await requirePointsEstimate(db, cycle.projectId);
-        const events = await db.select().from(cycleHistory).where(eq(cycleHistory.cycleId, cycle.id)).orderBy(asc(cycleHistory.occurredAt), asc(cycleHistory.id));
+        const events = await db.select().from(cycleHistory).where(eq(cycleHistory.cycleId, cycle.id)).orderBy(asc(cycleHistory.occurredAt), asc(cycleHistory.sequence));
         const coverageStart = cycle.historyStartedAt.toISOString();
-        const beforeCoverage = cycle.createdAt < cycle.historyStartedAt || dayOf(cycle.startDate) < cycle.historyStartedAt.getTime();
-        const dateChanges = events.filter((event) => event.kind === "dates" && event.startDate && event.endDate).map((event) => ({ at: event.occurredAt.toISOString(), startDate: event.startDate!, endDate: event.endDate! }));
-        const byItem = new Map<string, typeof events>();
-        for (const event of events) if (event.workItemId) byItem.set(event.workItemId, [...(byItem.get(event.workItemId) ?? []), event]);
+        const initialUnknown = dayOf(cycle.startDate) < cycle.historyStartedAt.getTime();
+        const dateChanges = events.filter((event) => event.kind === "dates" && event.previousStartDate && event.previousEndDate && event.startDate && event.endDate)
+          .map((event) => ({ at: event.occurredAt.toISOString(), previousStartDate: event.previousStartDate!, previousEndDate: event.previousEndDate!, startDate: event.startDate!, endDate: event.endDate! }));
         const state = new Map<string, { member: boolean; group: string; estimate: number | null; known: boolean }>();
         const numericEstimate = (value: string | null) => value !== null && Number.isFinite(Number(value)) ? Number(value) : null;
+        const snapshots = events.filter((event) => event.workItemId !== null);
+        const apply = (event: (typeof snapshots)[number]) => state.set(event.workItemId!, {
+          member: event.member ?? true, group: event.stateGroup ?? "unknown", estimate: numericEstimate(event.estimate), known: true,
+        });
         const initialCutoff = dayOf(cycle.startDate);
-        for (const [itemId, itemEvents] of byItem) for (const event of itemEvents) if (event.occurredAt.getTime() < initialCutoff && event.occurredAt.getTime() >= cycle.historyStartedAt.getTime())
-          state.set(itemId, { member: event.member ?? true, group: event.stateGroup ?? "unknown", estimate: numericEstimate(event.estimate), known: true });
-        const initialScope = beforeCoverage ? null : [...state.values()].filter((item) => item.member).length;
-        const initialPoints = beforeCoverage ? null : [...state.values()].filter((item) => item.member && item.group !== "cancelled").reduce((sum, item) => sum + (item.estimate ?? 0), 0);
-        const scopeChanges: Array<{ date: string; added: number; removed: number }> = [];
-        const days = [] as Array<{ date: string; open: number | null; completed: number | null; cancelled: number | null; pointsOpen: number | null; unestimatedOpen: number | null; ideal: number | null; unknown: boolean }>;
+        let snapshotIndex = 0;
+        while (snapshotIndex < snapshots.length && snapshots[snapshotIndex]!.occurredAt.getTime() < initialCutoff) {
+          const event = snapshots[snapshotIndex++]!;
+          if (event.occurredAt.getTime() >= cycle.historyStartedAt.getTime()) apply(event);
+        }
+        const initialScope = initialUnknown ? null : [...state.values()].filter((item) => item.member).length;
+        const initialPoints = initialUnknown ? null : [...state.values()].filter((item) => item.member).reduce((sum, item) => sum + (item.estimate ?? 0), 0);
+        const changesByDay = new Map<string, { date: string; added: number; removed: number }>();
+        for (const event of events) if (event.kind === "membership") {
+          const date = event.occurredAt.toISOString().slice(0, 10), change = changesByDay.get(date) ?? { date, added: 0, removed: 0 };
+          if (event.member) change.added += 1;
+          else if (event.member === false) change.removed += 1;
+          changesByDay.set(date, change);
+        }
+        const days = [] as Array<{ date: string; open: number | null; completed: number | null; cancelled: number | null; pointsOpen: number | null; pointsCompleted: number | null; pointsCancelled: number | null; unestimatedOpen: number | null; ideal: number | null; idealPoints: number | null; unknown: boolean }>;
         const span = (dayOf(cycle.endDate) - dayOf(cycle.startDate)) / dayMs;
         const today = todayIso();
         for (let offset = 0; offset <= span; offset++) {
           const date = new Date(dayOf(cycle.startDate) + offset * dayMs).toISOString().slice(0, 10), cutoff = dayOf(date) + dayMs;
-          const changes = events.filter((event) => event.kind === "membership" && event.occurredAt.getTime() >= dayOf(date) && event.occurredAt.getTime() < cutoff);
-          if (changes.length) scopeChanges.push({ date, added: changes.filter((event) => event.member).length, removed: changes.filter((event) => event.member === false).length });
-          for (const [itemId, itemEvents] of byItem) for (const event of itemEvents) if (event.occurredAt.getTime() < cutoff && event.occurredAt.getTime() >= cycle.historyStartedAt.getTime()) {
-            state.set(itemId, { member: event.member ?? true, group: event.stateGroup ?? "unknown", estimate: numericEstimate(event.estimate), known: true });
+          while (snapshotIndex < snapshots.length && snapshots[snapshotIndex]!.occurredAt.getTime() < cutoff) {
+            const event = snapshots[snapshotIndex++]!;
+            if (event.occurredAt.getTime() >= cycle.historyStartedAt.getTime()) apply(event);
           }
           const observed = [...state.values()].filter((item) => item.member && item.known);
           const open = observed.filter((item) => item.group !== "completed" && item.group !== "cancelled");
           const completed = observed.filter((item) => item.group === "completed"), cancelled = observed.filter((item) => item.group === "cancelled");
           const future = date >= today;
-          const unknown = beforeCoverage || future;
-          days.push({ date, open: future ? null : (unknown ? null : open.length), completed: future ? null : (unknown ? null : completed.length), cancelled: future ? null : (unknown ? null : cancelled.length), pointsOpen: future || unknown ? null : open.reduce((sum, item) => sum + (item.estimate ?? 0), 0), unestimatedOpen: future || unknown ? null : open.filter((item) => item.estimate === null).length, ideal: initialScope === null ? null : Math.round((initialScope * (span - offset) / (span || 1)) * 100) / 100, unknown });
+          const unknown = cutoff <= cycle.historyStartedAt.getTime() || future;
+          days.push({ date, open: future ? null : (unknown ? null : open.length), completed: future ? null : (unknown ? null : completed.length), cancelled: future ? null : (unknown ? null : cancelled.length), pointsOpen: future || unknown ? null : open.reduce((sum, item) => sum + (item.estimate ?? 0), 0), pointsCompleted: future || unknown ? null : completed.reduce((sum, item) => sum + (item.estimate ?? 0), 0), pointsCancelled: future || unknown ? null : cancelled.reduce((sum, item) => sum + (item.estimate ?? 0), 0), unestimatedOpen: future || unknown ? null : open.filter((item) => item.estimate === null).length, ideal: initialScope === null ? null : Math.round((initialScope * (span - offset) / (span || 1)) * 100) / 100, idealPoints: initialPoints === null ? null : Math.round((initialPoints * (span - offset) / (span || 1)) * 100) / 100, unknown });
         }
-        const finalDay = [...days].reverse().find((day) => day.date < today && !day.unknown);
+        const finalDay = [...days].reverse().find((day) => day.date < today);
         return { cycleId: cycle.id, unit, startDate: cycle.startDate, endDate: cycle.endDate, total: unit === "points" ? (initialPoints ?? 0) : (initialScope ?? 0),
           initialScope,
           initialPoints,
-          finalOutcome: { completed: finalDay?.completed ?? 0, open: finalDay?.open ?? 0, cancelled: finalDay?.cancelled ?? 0 },
-          unestimated: finalDay?.unestimatedOpen ?? 0, coverageStart, dateChanges, scopeChanges, days };
+          finalOutcome: { completed: finalDay?.completed ?? null, open: finalDay?.open ?? null, cancelled: finalDay?.cancelled ?? null, completedPoints: finalDay?.pointsCompleted ?? null, openPoints: finalDay?.pointsOpen ?? null, cancelledPoints: finalDay?.pointsCancelled ?? null },
+          outcomeDate: finalDay?.date ?? null, unestimated: finalDay?.unestimatedOpen ?? null, coverageStart, dateChanges,
+          scopeChanges: [...changesByDay.values()].filter((change) => change.date >= cycle.startDate && change.date <= cycle.endDate), days };
       },
     },
     /** Warning only: the UI shows the overlapping Cycles and lets the user go on. */
@@ -243,6 +256,7 @@ export function createCycleActions(db: Database) {
       output: Type.Object({ added: Type.Array(Type.String()), skipped: Type.Array(Type.Object({ workItemId: Type.String(), cycleId: Type.String() })) }),
       handler: async (context: Context, input: { cycleId: string; workItemIds: string[] }) => {
         const { cycle, project } = await cycleAccess(context, input.cycleId, "write");
+        if (cycle.archivedAt) throw new ActionError("Cycle is archived", 400);
         if (cycleStatus(cycle.startDate, cycle.endDate) === "completed") throw new ActionError("Cannot add work items to a Cycle that has ended", 400);
         const ids = [...new Set(input.workItemIds)];
         return db.transaction(async (transaction) => {
@@ -270,6 +284,7 @@ export function createCycleActions(db: Database) {
       output: Type.Object({ transferred: Type.Array(Type.String()) }),
       handler: async (context: Context, input: { cycleId: string; targetCycleId: string }) => {
         const { cycle, project } = await cycleAccess(context, input.cycleId, "write");
+        if (cycle.archivedAt) throw new ActionError("Cycle is archived", 400);
         if (cycleStatus(cycle.startDate, cycle.endDate) !== "completed") throw new ActionError("Only a completed Cycle can transfer its work items", 400);
         if (input.targetCycleId === cycle.id) throw new ActionError("Choose a different Cycle", 400);
         const [target] = await db.select().from(cycles).where(and(eq(cycles.id, input.targetCycleId), eq(cycles.projectId, project.id), isNull(cycles.deletedAt)));
@@ -332,6 +347,7 @@ export function createCycleActions(db: Database) {
       output: Type.Object({ removed: Type.Array(Type.String()) }),
       handler: async (context: Context, input: { cycleId: string; workItemIds: string[] }) => {
         const { cycle, project } = await cycleAccess(context, input.cycleId, "write");
+        if (cycle.archivedAt) throw new ActionError("Cycle is archived", 400);
         const ids = [...new Set(input.workItemIds)];
         return db.transaction(async (transaction) => {
           const database = tx(transaction);

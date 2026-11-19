@@ -46,18 +46,41 @@ test.concurrent("legacy and backdated Cycle days disclose unknown history", asyn
   });
 });
 
+test.concurrent("date edits recompute the period, preserve known days, and disclose an uncovered extension", async () => {
+  await withRollback(db, async (transaction) => {
+    const { cycles, cycle, as, item, add, transaction: tx } = await setup(transaction, day(-2), day(2));
+    const workItem = await item();
+    await add([workItem.id]);
+    await tx.update(cycleRows).set({ createdAt: at(day(-5)), historyStartedAt: at(day(-1)) }).where(eq(cycleRows.id, cycle.id));
+    const memberEvent = (await tx.select().from(cycleHistory).where(eq(cycleHistory.workItemId, workItem.id))).find((event) => event.kind === "membership")!;
+    await tx.update(cycleHistory).set({ occurredAt: at(day(-1), "13:00:00") }).where(eq(cycleHistory.id, memberEvent.id));
+    await cycles.updateCycle.handler(as, { cycleId: cycle.id, startDate: day(-3), endDate: day(0) });
+
+    const report = await cycles.getCycleBurndown.handler(as, { cycleId: cycle.id });
+    expect(report).toMatchObject({ initialScope: null });
+    expect(report.days.map((point) => point.date)).toEqual([day(-3), day(-2), day(-1), day(0)]);
+    expect(report.dateChanges).toEqual([{
+      at: expect.any(String), previousStartDate: day(-2), previousEndDate: day(2), startDate: day(-3), endDate: day(0),
+    }]);
+    expect(report.days.map((point) => point.unknown)).toEqual([true, true, false, true]);
+    expect(report.days[2]?.open).toBe(1);
+  });
+});
+
 test.concurrent("Action burndown replays completion, reopening and cancellation at UTC day ends", async () => {
   await withRollback(db, async (transaction) => {
     const { cycles, cycle, as, item, add, project, transaction: tx } = await setup(transaction, day(-2), day(1));
     const reopened = await item(null);
     const cancelled = await item(null);
-    await add([reopened.id, cancelled.id]);
+    const removed = await item(null);
+    await transaction.update(workItems).set({ title: "PRIVATE-CYCLE-SECRET" }).where(eq(workItems.id, reopened.id));
+    await add([reopened.id, cancelled.id, removed.id]);
     await tx.update(cycleRows).set({ createdAt: at(day(-4)), historyStartedAt: at(day(-4)), endDate: day(-1) }).where(eq(cycleRows.id, cycle.id));
     await transaction.update(cycleHistory).set({ occurredAt: at(day(-2)) }).where(eq(cycleHistory.cycleId, cycle.id));
     const states = await transaction.select().from(workItemStates).where(eq(workItemStates.projectId, project.id));
     await transaction.update(workItems).set({ stateId: states.find((state) => state.group === "cancelled")!.id }).where(eq(workItems.id, cancelled.id));
     const cancelledEvent = await transaction.select().from(cycleHistory).where(eq(cycleHistory.workItemId, cancelled.id));
-    await transaction.update(cycleHistory).set({ occurredAt: at(day(-1), "10:00:00") }).where(eq(cycleHistory.id, cancelledEvent.at(-1)!.id));
+    await transaction.update(cycleHistory).set({ occurredAt: at(day(-1), "00:00:00") }).where(eq(cycleHistory.id, cancelledEvent.at(-1)!.id));
     const completed = states.find((state) => state.group === "completed")!;
     await transaction.update(workItems).set({ stateId: completed.id }).where(eq(workItems.id, reopened.id));
     const completedEvent = (await transaction.select().from(cycleHistory).where(eq(cycleHistory.workItemId, reopened.id))).at(-1)!;
@@ -65,16 +88,25 @@ test.concurrent("Action burndown replays completion, reopening and cancellation 
     await transaction.update(workItems).set({ stateId: states.find((state) => state.group === "started")!.id }).where(eq(workItems.id, reopened.id));
     const reopenedEvent = (await transaction.select().from(cycleHistory).where(eq(cycleHistory.workItemId, reopened.id))).at(-1)!;
     await transaction.update(cycleHistory).set({ occurredAt: at(day(-1), "12:00:00") }).where(eq(cycleHistory.id, reopenedEvent.id));
+    await cycles.removeCycleItems.handler(as, { cycleId: cycle.id, workItemIds: [removed.id] });
+    const removalEvent = (await transaction.select().from(cycleHistory).where(eq(cycleHistory.workItemId, removed.id))).find((event) => event.kind === "membership" && event.member === false)!;
+    await transaction.update(cycleHistory).set({ occurredAt: at(day(-1), "13:00:00") }).where(eq(cycleHistory.id, removalEvent.id));
     const result = await cycles.getCycleBurndown.handler(as, { cycleId: cycle.id });
-    expect(result.days.map((point) => [point.open, point.completed, point.cancelled])).toEqual([[2, 0, 0], [1, 0, 1]]);
-    expect(result.finalOutcome).toEqual({ completed: 0, open: 1, cancelled: 1 });
+    expect(result.days.map((point) => [point.open, point.completed, point.cancelled])).toEqual([[3, 0, 0], [1, 0, 1]]);
+    expect(result.finalOutcome).toEqual({ completed: 0, open: 1, cancelled: 1, completedPoints: 0, openPoints: 0, cancelledPoints: 0 });
+    expect(result.outcomeDate).toBe(day(-1));
+    expect(result.scopeChanges).toEqual([{ date: day(-2), added: 3, removed: 0 }, { date: day(-1), added: 0, removed: 1 }]);
+    expect(JSON.stringify(result)).not.toContain("PRIVATE-CYCLE-SECRET");
     const target = await cycles.createCycle.handler(as, { projectId: project.id, name: "Next", startDate: day(1), endDate: day(4) });
     await cycles.transferCycleItems.handler(as, { cycleId: cycle.id, targetCycleId: target.id });
+    await tx.update(workItems).set({ archivedAt: new Date() }).where(eq(workItems.id, cancelled.id));
+    await cycles.archiveCycle.handler(as, { cycleId: cycle.id });
     expect((await cycles.getCycleBurndown.handler(as, { cycleId: cycle.id })).finalOutcome).toEqual(result.finalOutcome);
     await tx.delete(workItems).where(eq(workItems.id, reopened.id));
     const afterDelete = await cycles.getCycleBurndown.handler(as, { cycleId: cycle.id });
     expect(afterDelete.finalOutcome).toEqual(result.finalOutcome);
     expect(JSON.stringify(afterDelete)).not.toContain(reopened.id);
+    expect(JSON.stringify(afterDelete)).not.toContain("PRIVATE-CYCLE-SECRET");
   });
 });
 

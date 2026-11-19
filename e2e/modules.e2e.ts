@@ -116,9 +116,14 @@ try {
   await add.getByLabel(/Beta/).check();
   await add.getByRole("button", { name: t("modules.add"), exact: true }).click();
   await add.waitFor({ state: "detached" });
-  await page.getByRole("link", { name: /Alpha/ }).waitFor();
-  await page.getByRole("link", { name: /Beta/ }).waitFor();
+  await page.getByTestId("row-MOB-1").getByRole("link", { name: "Alpha" }).waitFor();
+  await page.getByTestId("row-MOB-2").getByRole("link", { name: "Beta" }).waitFor();
   check((await page.getByTestId("module-items-count").innerText()) === "0/2", "count should be 0/2");
+  await page.getByText(`${t("modules.blocked")} · 0`, { exact: true }).waitFor();
+  await page.getByText(`${t("modules.overdue")} · 0`, { exact: true }).waitFor();
+  await page.getByLabel(t("modules.breakdown"), { exact: true }).selectOption("assignee");
+  await page.getByText("Unassigned", { exact: true }).waitFor();
+  await page.getByLabel(t("modules.breakdown"), { exact: true }).selectOption("state");
 
   // Properties sidebar: status, dates, lead, members are editable inline.
   const side = page.getByRole("complementary", { name: t("modules.properties") });

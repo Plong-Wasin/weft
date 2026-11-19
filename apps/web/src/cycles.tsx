@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, useNavigate } from "react-router";
-import { CalendarDays, CalendarSync, EllipsisVertical, Plus, X } from "lucide-react";
+import { ArchiveRestore, CalendarDays, CalendarSync, EllipsisVertical, Plus, X } from "lucide-react";
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
 import { EmptyState } from "./empty-state";
 import { WorkItemLayouts } from "./work-item-layouts";
@@ -106,7 +106,8 @@ function CycleMenu({ cycle, canWrite, canAdmin, onEdit, onArchive, onDelete }: {
   if (!canWrite && !canAdmin) return null;
   return <Popover label={`${t("cycles.menu")}: ${cycle.name}`} align="right" trigger={<EllipsisVertical aria-hidden size={16} />}>
     {(close) => <>
-      {canWrite && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onEdit(); }}>{t("cycles.edit")}</button>}
+      {canWrite && !cycle.archived && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onEdit(); }}>{t("cycles.edit")}</button>}
+      {canAdmin && cycle.archived && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onArchive(); }}><ArchiveRestore aria-hidden size={14} />{t("cycles.unarchive")}</button>}
       {canArchive && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onArchive(); }}>{t("cycles.archive")}</button>}
       {canAdmin && <button type="button" role="menuitem" className={`${menuItemClass} text-danger-text`} onClick={() => { close(); onDelete(); }}>{t("cycles.delete")}</button>}
     </>}
@@ -117,6 +118,7 @@ function CycleMenu({ cycle, canWrite, canAdmin, onEdit, onArchive, onDelete }: {
 function useCycleCommands(action: Call, reload: () => void, setNote: (note: string | null) => void) {
   return {
     archive: async (cycle: Cycle) => { setNote((await action("archive_cycle", { cycleId: cycle.id })) === null ? t("cycles.failed") : null); reload(); },
+    restore: async (cycle: Cycle) => { setNote((await action("unarchive_cycle", { cycleId: cycle.id })) === null ? t("cycles.failed") : null); reload(); },
     destroy: async (cycle: Cycle) => {
       if (!window.confirm(t("cycles.deleteConfirm"))) return false;
       if ((await action("delete_cycle", { cycleId: cycle.id })) === null) { setNote(t("cycles.failed")); return false; }
@@ -167,7 +169,7 @@ export function CyclesPage({ workspaceSlug, projectKey, projectId, canWrite, can
     {cycles !== null && cycles.length > 0 && shown.length === 0 && <p role="status" className="m-0 px-1 py-4 text-14 text-secondary">{t("cycles.emptyTab")}</p>}
     <ul role="tabpanel" className="m-0 list-none rounded-lg border border-subtle p-0 empty:hidden">
       {shown.map((cycle) => <CycleRow key={cycle.id} cycle={cycle} href={paths.cycle(workspaceSlug, projectKey, cycle.id)}>
-        <CycleMenu cycle={cycle} canWrite={canWrite} canAdmin={canAdmin} onEdit={() => setEditing(cycle)} onArchive={() => void commands.archive(cycle)} onDelete={() => void commands.destroy(cycle)} />
+        <CycleMenu cycle={cycle} canWrite={canWrite} canAdmin={canAdmin} onEdit={() => setEditing(cycle)} onArchive={() => void (cycle.archived ? commands.restore(cycle) : commands.archive(cycle))} onDelete={() => void commands.destroy(cycle)} />
       </CycleRow>)}
     </ul>
     {note && <p role="alert" className="m-0 text-danger-text">{note}</p>}
@@ -186,7 +188,11 @@ function Breakdown({ cycle, items, states }: { cycle: CycleDetail; items: Item[]
   </div>;
 }
 
-type Burndown = { total: number; initialScope: number | null; finalOutcome: { completed: number; open: number; cancelled: number }; unestimated: number; coverageStart: string; dateChanges: Array<{ at: string; startDate: string; endDate: string }>; scopeChanges: Array<{ date: string; added: number; removed: number }>; reason?: string | null; days: Array<{ date: string; open: number | null; completed: number | null; cancelled: number | null; pointsOpen: number | null; unestimatedOpen: number | null; ideal: number | null; unknown: boolean }> };
+type Burndown = { total: number; reason?: string | null; days: Array<{ date: string; open: number | null; ideal: number | null; pointsOpen?: number | null; idealPoints?: number | null; unknown?: boolean }> } & Partial<{
+  initialScope: number | null; finalOutcome: { completed: number | null; open: number | null; cancelled: number | null; completedPoints?: number | null; openPoints?: number | null; cancelledPoints?: number | null }; outcomeDate: string | null;
+  unestimated: number | null; coverageStart: string; dateChanges: Array<{ at: string; previousStartDate: string; previousEndDate: string; startDate: string; endDate: string }>;
+  scopeChanges: Array<{ date: string; added: number; removed: number }>;
+}>;
 
 /** Open work items per day against the ideal line, as plain SVG that scales to its box; future days (open null) are not drawn. */
 export function BurndownChart({ action, name, body, projectId, refreshKey, testId = "cycle-burndown" }: { action: Call; name: string; body: unknown; projectId: string; refreshKey: number; testId?: string }) {
@@ -208,11 +214,19 @@ export function BurndownChart({ action, name, body, projectId, refreshKey, testI
   }, [action, name, JSON.stringify(body), mode, refreshKey]);
   if (!data) return null;
   const w = 320, h = 160, pad = { l: 28, r: 8, t: 8, b: 20 };
-  const values = data.days.map((day) => mode === "points" ? day.pointsOpen : day.open);
+  const values = data.days.map((day) => mode === "points" ? (day.pointsOpen ?? day.open) : day.open);
   const max = Math.max(data.total, ...values.filter((value): value is number => value !== null), 1), last = Math.max(data.days.length - 1, 1);
   const x = (index: number) => pad.l + (index / last) * (w - pad.l - pad.r);
   const y = (value: number) => pad.t + (1 - value / max) * (h - pad.t - pad.b);
-  const line = (values: Array<number | null>) => values.flatMap((value, index) => (value === null ? [] : [`${x(index).toFixed(1)},${y(value).toFixed(1)}`])).join(" ");
+  const lineSegments = (points: Array<number | null>) => {
+    const segments: string[] = []; let current: string[] = [];
+    points.forEach((value, index) => {
+      if (value === null) { if (current.length) segments.push(current.join(" ")); current = []; }
+      else current.push(`${x(index).toFixed(1)},${y(value).toFixed(1)}`);
+    });
+    if (current.length) segments.push(current.join(" "));
+    return segments;
+  };
   const first = data.days[0]?.date, end = data.days[data.days.length - 1]?.date;
   return <div className="grid gap-2" data-testid={testId}>
     <div className="flex items-center justify-between gap-2"><span className="text-13 font-medium">{t("cycles.burndown")}</span>
@@ -220,21 +234,23 @@ export function BurndownChart({ action, name, body, projectId, refreshKey, testI
         {(["items", "points"] as const).map((value) => <button key={value} type="button" aria-pressed={mode === value} onClick={() => setUnit(value)} className={`rounded-md border border-subtle px-2 py-0.5 text-12 ${mode === value ? "bg-layer-1 font-medium text-primary" : "text-secondary"}`}>{t(`cycles.burndownUnit.${value}`)}</button>)}
       </div>}
     </div>
-    <p className="m-0 text-12 text-secondary" role="status">Initial scope: {data.initialScope === null ? "unknown" : count(data.initialScope)} · Outcome: {count(data.finalOutcome.completed)} completed, {count(data.finalOutcome.open)} open, {count(data.finalOutcome.cancelled)} cancelled · {count(data.unestimated)} unestimated · UTC day end</p>
-    {data.scopeChanges.length > 0 && <p className="m-0 text-12 text-secondary">Scope changes: {data.scopeChanges.map((change) => `${formatDay(change.date)} +${change.added} / −${change.removed}`).join(", ")}</p>}
-    {data.dateChanges.length > 0 && <p className="m-0 text-12 text-secondary">Reporting dates changed {data.dateChanges.map((change) => `${formatDay(change.startDate)}–${formatDay(change.endDate)}`).join(", ")}; uncovered history is shown as unknown.</p>}
-    {data.reason ? <p className="m-0 text-13 text-secondary" role="status">{t(`cycles.burndownReason.${data.reason}`)}</p> : data.total === 0 ? <p className="m-0 text-13 text-secondary">{t("cycles.burndownEmpty")}</p> : <>
+    {data.finalOutcome && <p className="m-0 text-12 text-secondary" role="status">
+      {t("cycles.history.initialScope").replace("{count}", data.initialScope == null ? t("cycles.history.unknown") : count(data.initialScope))} · {t("cycles.history.outcome")}{data.outcomeDate ? ` (${formatDay(data.outcomeDate)})` : ""}: {data.finalOutcome.completed === null ? t("cycles.history.unknown") : count(data.finalOutcome.completed)} {t("cycles.history.completed")}, {data.finalOutcome.open === null ? t("cycles.history.unknown") : count(data.finalOutcome.open)} {t("cycles.history.open")}, {data.finalOutcome.cancelled === null ? t("cycles.history.unknown") : count(data.finalOutcome.cancelled)} {t("cycles.history.cancelled")}{mode === "points" && data.finalOutcome.openPoints !== undefined ? ` · ${t("cycles.history.pointsOutcome")}: ${data.finalOutcome.completedPoints == null ? t("cycles.history.unknown") : count(data.finalOutcome.completedPoints)} ${t("cycles.history.completed")}, ${data.finalOutcome.openPoints == null ? t("cycles.history.unknown") : count(data.finalOutcome.openPoints)} ${t("cycles.history.open")}, ${data.finalOutcome.cancelledPoints == null ? t("cycles.history.unknown") : count(data.finalOutcome.cancelledPoints)} ${t("cycles.history.cancelled")}` : ""}{mode === "points" && data.unestimated != null ? ` · ${count(data.unestimated)} ${t("cycles.history.unestimated")}` : ""} · {t("cycles.history.utcEnd")}
+    </p>}
+    {(data.scopeChanges?.length ?? 0) > 0 && <p className="m-0 text-12 text-secondary">{t("cycles.history.scopeChanges")}: {data.scopeChanges!.map((change) => `${formatDay(change.date)} +${change.added} / −${change.removed}`).join(", ")}</p>}
+    {(data.dateChanges?.length ?? 0) > 0 && <div className="grid gap-1 text-12 text-secondary" role="status"><span>{t("cycles.history.dateEdits")}</span>{data.dateChanges!.map((change) => <span key={change.at}>{formatDay(change.previousStartDate)}–{formatDay(change.previousEndDate)} → {formatDay(change.startDate)}–{formatDay(change.endDate)}</span>)}</div>}
+    {data.days.some((day) => day.unknown && day.date < new Date().toISOString().slice(0, 10)) && data.coverageStart && <p className="m-0 text-12 text-secondary">{t("cycles.history.gaps").replace("{date}", formatDay(data.coverageStart.slice(0, 10)))}</p>}
+    {data.days.some((day) => day.date >= new Date().toISOString().slice(0, 10)) && <p className="m-0 text-12 text-secondary">{t("cycles.history.future")}</p>}
+    {data.reason ? <p className="m-0 text-13 text-secondary" role="status">{t(`cycles.burndownReason.${data.reason}`)}</p> : !values.some((value) => value !== null) ? <p className="m-0 text-13 text-secondary" role="status">{data.days.some((day) => day.unknown) ? t("cycles.history.noCoverage") : t("cycles.burndownEmpty")}</p> : <>
       <svg viewBox={`0 0 ${w} ${h}`} role="img" aria-label={t(mode === "points" ? "cycles.burndownLabelPoints" : "cycles.burndownLabel")} className="h-auto w-full max-w-full">
         <line x1={pad.l} y1={y(0)} x2={w - pad.r} y2={y(0)} stroke="var(--border-subtle)" />
         <text x={pad.l - 4} y={y(max) + 4} textAnchor="end" fontSize="10" fill="var(--text-secondary)">{count(data.total)}</text>
         <text x={pad.l - 4} y={y(0) + 4} textAnchor="end" fontSize="10" fill="var(--text-secondary)">0</text>
-        <polyline fill="none" stroke="var(--border-strong)" strokeDasharray="4 3" strokeWidth="1.5" points={line(data.days.map((day) => day.ideal))} />
-        <polyline fill="none" stroke="var(--bg-accent-strong)" strokeWidth="2" points={line(values)} />
+        {lineSegments(data.days.map((day) => mode === "points" ? (day.idealPoints ?? day.ideal) : day.ideal)).map((points, index) => <polyline key={`ideal-${index}`} fill="none" stroke="var(--border-strong)" strokeDasharray="4 3" strokeWidth="1.5" points={points} />)}
+        {lineSegments(values).map((points, index) => <polyline key={`actual-${index}`} fill="none" stroke="var(--bg-accent-strong)" strokeWidth="2" points={points} />)}
         {first && <text x={pad.l} y={h - 4} fontSize="10" fill="var(--text-secondary)">{formatDay(first)}</text>}
         {end && end !== first && <text x={w - pad.r} y={h - 4} textAnchor="end" fontSize="10" fill="var(--text-secondary)">{formatDay(end)}</text>}
       </svg>
-      {data.days.some((day) => day.unknown) && <p className="m-0 text-12 text-secondary">Some days have unknown history; no value is inferred before {formatDay(data.coverageStart.slice(0, 10))}.</p>}
-      {mode === "points" && <p className="m-0 text-12 text-secondary">{count(data.unestimated)} open work items have no Estimate.</p>}
       <div className="flex gap-3 text-12 text-secondary"><span>— {t("cycles.burndownRemaining")}</span><span>- - {t("cycles.burndownIdeal")}</span></div>
     </>}
   </div>;
@@ -287,14 +303,14 @@ export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId,
       <Link to={paths.cycles(workspaceSlug, projectKey)} className="text-13">{t("cycles.back")}</Link>
       <h2 className="m-0 min-w-32 flex-1 truncate text-16 font-semibold">{cycle.name}</h2>
       {canWrite && !ended && !cycle.archived && <button type="button" className={primaryButton} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("cycles.addItems")}</button>}
-      <CycleMenu cycle={cycle} canWrite={canWrite} canAdmin={canAdmin} onEdit={() => setEditing(true)} onArchive={() => void commands.archive(cycle)} onDelete={() => void commands.destroy(cycle).then((gone) => { if (gone) navigate(paths.cycles(workspaceSlug, projectKey)); })} />
+      <CycleMenu cycle={cycle} canWrite={canWrite} canAdmin={canAdmin} onEdit={() => setEditing(true)} onArchive={() => void (cycle.archived ? commands.restore(cycle) : commands.archive(cycle))} onDelete={() => void commands.destroy(cycle).then((gone) => { if (gone) navigate(paths.cycles(workspaceSlug, projectKey)); })} />
     </header>
     {note && <p role="alert" className="m-0 text-danger-text">{note}</p>}
     <div className="flex flex-col gap-4 lg:flex-row">
       <div className="min-w-0 flex-1">
         <h4 className="mb-2 mt-0 text-14 font-semibold">{t("cycles.workItems")}</h4>
         <WorkItemLayouts projectId={projectId} workspaceSlug={workspaceSlug} action={action} run={runQuery} refreshKey={refreshKey} cycleId={cycleId}
-          rowAction={canWrite ? (item) => <button className="secondary" onClick={() => void remove(item.id)}>{t("cycles.remove")}</button> : undefined} />
+          rowAction={canWrite && !cycle.archived ? (item) => <button className="secondary" onClick={() => void remove(item.id)}>{t("cycles.remove")}</button> : undefined} />
       </div>
       <aside aria-label={t("cycles.details")} className="grid h-fit gap-4 rounded-lg border border-subtle p-4 lg:w-80 lg:shrink-0">
         <div className="flex items-center gap-2">{statusPill(cycle.status)}{cycle.archived && <span role="status" className="text-12 text-secondary">{t("cycles.archived")}</span>}</div>

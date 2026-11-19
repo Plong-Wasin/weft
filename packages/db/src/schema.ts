@@ -725,13 +725,16 @@ export const cycleItems = pgTable("cycle_items", {
 /** Durable, anonymous-capable snapshots used to reconstruct Cycle reports. */
 export const cycleHistory = pgTable("cycle_history", {
   id: uuid("id").defaultRandom().primaryKey(),
+  sequence: serial("sequence").notNull().unique(),
   cycleId: uuid("cycle_id").notNull().references(() => cycles.id, { onDelete: "cascade" }),
   workItemId: uuid("work_item_id"),
-  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().default(sql`clock_timestamp()`),
   kind: text("kind").notNull(),
   member: boolean("member"),
   stateGroup: text("state_group"),
   estimate: text("estimate"),
+  previousStartDate: date("previous_start_date"),
+  previousEndDate: date("previous_end_date"),
   startDate: date("start_date"),
   endDate: date("end_date"),
 }, (table) => [index().on(table.cycleId, table.occurredAt)]);

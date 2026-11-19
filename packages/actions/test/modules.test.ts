@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
-import { activities, createDatabase, workItems, type Database } from "@weft/db";
-import { createCycleActions, createIntakeActions, createModuleActions, createProjectActions, createWorkItemActions } from "../src";
+import { activities, createDatabase, moduleItems, workItems, workItemStates, type Database } from "@weft/db";
+import { createCycleActions, createIntakeActions, createModuleActions, createProjectActions, createRelationActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -186,5 +186,35 @@ test.concurrent("a work item still in Intake cannot join a Module and never coun
     const listed = await work.listWorkItems.handler({ userId: admin.id }, { projectId: project.id, moduleId: module.id });
     expect(listed.map((row) => row.id)).toEqual([live.id]);
     expect((await modules.getModule.handler({ userId: admin.id }, { moduleId: module.id })).progress.total).toBe(1);
+  });
+});
+
+test.concurrent("Module insights count an externally blocked item once, find overdue work and group empty values", async () => {
+  await withRollback(db, async (transaction) => {
+    const { member, project, workspace, item, modules, work } = await setup(transaction);
+    const mod = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Insights" });
+    const first = await item("First"), second = await item("Second"), resolvedOnly = await item("Only resolved blocker"), outside = await item("Outside blocker"), outsideTwo = await item("Second blocker"), closed = await item("Closed"), closedBlocker = await item("Resolved blocker");
+    const archived = await item("Archived"), triage = await item("Triage");
+    await modules.addModuleItems.handler({ userId: member.id }, { moduleId: mod.id, workItemIds: [first.id, second.id, resolvedOnly.id, closed.id] });
+    await work.updateWorkItem.handler({ userId: member.id }, { workItemId: first.id, dueDate: "2020-01-01" });
+    const relations = createRelationActions(transaction);
+    await relations.createWorkItemRelation.handler({ userId: member.id }, { workItemId: first.id, relatedWorkItemId: outside.id, type: "blocked_by" });
+    await relations.createWorkItemRelation.handler({ userId: member.id }, { workItemId: first.id, relatedWorkItemId: outsideTwo.id, type: "blocked_by" });
+    const completedState = (await transaction.select().from(workItemStates).where(eq(workItemStates.projectId, project.id))).find((state) => state.group === "completed")!;
+    const triageState = (await transaction.select().from(workItemStates).where(eq(workItemStates.projectId, project.id))).find((state) => state.group === "triage")!;
+    await transaction.update(workItems).set({ stateId: completedState.id, dueDate: "2020-01-01" }).where(eq(workItems.id, closed.id));
+    await transaction.update(workItems).set({ stateId: completedState.id }).where(eq(workItems.id, closedBlocker.id));
+    await relations.createWorkItemRelation.handler({ userId: member.id }, { workItemId: resolvedOnly.id, relatedWorkItemId: closedBlocker.id, type: "blocked_by" });
+    await transaction.update(workItems).set({ archivedAt: new Date(), dueDate: "2020-01-01" }).where(eq(workItems.id, archived.id));
+    await transaction.update(workItems).set({ stateId: triageState.id, dueDate: "2020-01-01" }).where(eq(workItems.id, triage.id));
+    await transaction.insert(moduleItems).values([archived, triage].map((workItem) => ({ moduleId: mod.id, workItemId: workItem.id, workspaceId: workspace.id, projectId: project.id })));
+    const result = await modules.getModuleInsights.handler({ userId: member.id }, { moduleId: mod.id });
+    expect(result.blocked.map((row) => row.id)).toEqual([first.id]);
+    expect(result.overdue.map((row) => row.id)).toEqual([first.id]);
+    expect(result.breakdowns.state.reduce((sum, group) => sum + group.items.length, 0)).toBe(4);
+    expect(result.breakdowns.assignee.find((group) => group.key === "none")?.items).toHaveLength(4);
+    expect(result.breakdowns.label.find((group) => group.key === "none")?.items).toHaveLength(4);
+    expect(result.breakdowns.priority.find((group) => group.key === "none")?.items).toHaveLength(4);
+    expect([...result.blocked, ...result.overdue].some((row) => row.id === closed.id || row.id === archived.id || row.id === triage.id || row.id === resolvedOnly.id)).toBe(false);
   });
 });

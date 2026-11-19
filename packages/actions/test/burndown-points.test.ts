@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { createDatabase, workItems, type Database } from "@weft/db";
+import { createDatabase, cycleHistory, cycles as cycleRows, estimatePoints, workItems, type Database } from "@weft/db";
 import { createAnalyticsActions, createCycleActions, createEstimateActions, createModuleActions, createProjectActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -31,8 +31,33 @@ async function setup(transaction: Database, estimate: { type: "points" | "catego
     await modules.addModuleItems.handler(as, { moduleId: module.id, workItemIds: [row.id] });
     return row;
   };
-  return { workspace, as, project, cycles, cycle, modules, module, item, estimates, analytics: createAnalyticsActions(transaction) };
+  return { workspace, as, project, cycles, cycle, modules, module, item, estimates, created, analytics: createAnalyticsActions(transaction), transaction };
 }
+
+test.concurrent("Cycle points replay item Estimate changes and revalued Estimate points", async () => {
+  await withRollback(db, async (transaction) => {
+    const { as, project, cycles, cycle, item, created, transaction: tx } = await setup(transaction, { type: "points", values: ["1", "2", "5"] });
+    const workItem = await item("1");
+    const points = await tx.select().from(estimatePoints).where(eq(estimatePoints.estimateId, created!.id));
+    const pointOne = points.find((point) => point.value === "1")!, pointTwo = points.find((point) => point.value === "2")!;
+    await tx.update(cycleRows).set({ startDate: day(-3), endDate: day(-1), createdAt: at("2020-01-01"), historyStartedAt: at("2020-01-01") }).where(eq(cycleRows.id, cycle.id));
+    const membership = (await tx.select().from(cycleHistory).where(eq(cycleHistory.workItemId, workItem.id))).find((event) => event.kind === "membership")!;
+    await tx.update(cycleHistory).set({ occurredAt: at(day(-4)) }).where(eq(cycleHistory.id, membership.id));
+    await tx.update(workItems).set({ estimatePointId: pointTwo.id }).where(eq(workItems.id, workItem.id));
+    const itemEstimateEvent = (await tx.select().from(cycleHistory).where(eq(cycleHistory.workItemId, workItem.id))).filter((event) => event.kind === "snapshot").at(-1)!;
+    await tx.update(cycleHistory).set({ occurredAt: at(day(-2)) }).where(eq(cycleHistory.id, itemEstimateEvent.id));
+    const estimates = createEstimateActions(tx);
+    await estimates.updateEstimate.handler(as, { projectId: project.id, points: points.map((point) => ({ id: point.id, value: point.id === pointTwo.id ? "4" : point.value })) });
+    const revalued = (await tx.select().from(cycleHistory).where(eq(cycleHistory.workItemId, workItem.id))).filter((event) => event.kind === "snapshot").at(-1)!;
+    expect(revalued.estimate).toBe("4");
+    await tx.update(cycleHistory).set({ occurredAt: at(day(-1)) }).where(eq(cycleHistory.id, revalued.id));
+
+    const report = await cycles.getCycleBurndown.handler(as, { cycleId: cycle.id, unit: "points" });
+    expect(report.initialPoints).toBe(1);
+    expect(report.days.map((point) => [point.pointsOpen, point.idealPoints])).toEqual([[1, 1], [2, 0.5], [4, 0]]);
+    expect(pointOne.value).toBe("1");
+  });
+});
 
 test.concurrent("points mode sums Estimate points; unsized items count zero", async () => {
   await withRollback(db, async (transaction) => {

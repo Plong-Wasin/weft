@@ -101,7 +101,7 @@ try {
   if (progress !== translate("cycles.progressOf").replace("{done}", "0").replace("{total}", "1")) throw new Error(`unexpected progress: ${progress}`);
   await page.getByTestId("cycle-breakdown").waitFor();
   await page.getByTestId("cycle-burndown").getByRole("status").filter({ hasText: "Initial scope: unknown" }).waitFor();
-  await page.getByText(/Scope changes:.*\+1/).waitFor();
+  await page.getByText(/Scope added \/ removed:.*\+1/).waitFor();
   await page.screenshot({ path: `${shots}/cycle-detail-1440.png` });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: `${shots}/cycle-detail-390.png` });
@@ -113,6 +113,8 @@ try {
   await page.getByLabel(translate("cycles.start")).fill(day(-5));
   await page.getByLabel(translate("cycles.end")).fill(day(-2));
   await page.getByRole("button", { name: translate("cycles.save"), exact: true }).click();
+  await page.getByTestId("cycle-burndown").getByText(/Reporting dates changed/).waitFor();
+  await page.getByTestId("cycle-burndown").getByText(translate("cycles.history.noCoverage")).waitFor();
   await page.getByTestId("cycle-transfer").waitFor();
   await page.getByLabel(translate("cycles.transferTarget")).selectOption({ label: "Sprint 2" });
   await page.getByRole("button", { name: translate("cycles.transfer"), exact: true }).click();
@@ -127,7 +129,16 @@ try {
   check(!(await page.getByRole("link", { name: "Sprint 1" }).isVisible()), "archived Cycle must leave the list");
   await page.getByLabel(translate("cycles.showArchived")).check();
   await page.getByRole("link", { name: "Sprint 1" }).waitFor();
-  await page.getByLabel(translate("cycles.showArchived")).uncheck();
+  await page.getByRole("link", { name: "Sprint 1" }).click();
+  await page.getByRole("button", { name: `${translate("cycles.menu")}: Sprint 1` }).click();
+  check(await page.getByRole("menuitem", { name: translate("cycles.edit") }).count() === 0, "archived Cycle still offers Edit");
+  check(await page.getByRole("button", { name: translate("cycles.remove"), exact: true }).count() === 0, "archived Cycle still offers membership removal");
+  await page.getByRole("menuitem", { name: translate("cycles.unarchive") }).click();
+  await page.getByText(translate("cycles.archived")).waitFor({ state: "detached" });
+  await page.getByRole("button", { name: `${translate("cycles.menu")}: Sprint 1` }).click();
+  await page.getByRole("menuitem", { name: translate("cycles.edit") }).waitFor();
+  await page.getByRole("menuitem", { name: translate("cycles.delete") }).click();
+  await page.getByRole("link", { name: translate("cycles.back") }).waitFor({ state: "detached" });
 
   // Delete Sprint 2 from its row menu.
   await tab("upcoming").click();

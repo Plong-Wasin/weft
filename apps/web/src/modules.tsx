@@ -20,6 +20,7 @@ type Module = {
 };
 type ModuleDetail = Module & { projectId: string; workItemIds: string[] };
 type Item = { id: string; displayId: string; title: string };
+type Insights = { blocked: Item[]; overdue: Item[]; breakdowns: Record<string, Array<{ key: string; label: string; items: Item[] }>> };
 type Person = { userId: string; name: string; isAgent?: boolean };
 type Display = "list" | "grid";
 const t = (key: string) => translate(key as MessageKey);
@@ -248,6 +249,8 @@ export function ModuleDetailPage({ workspaceSlug, projectKey, projectId, moduleI
   const [people, setPeople] = React.useState<Person[]>([]);
   const [note, setNote] = React.useState<string | null>(null);
   const [refreshKey, setRefreshKey] = React.useState(0);
+  const [insights, setInsights] = React.useState<Insights | null>(null);
+  const [breakdown, setBreakdown] = React.useState("state");
   const [editing, setEditing] = React.useState(false);
   const [adding, setAdding] = React.useState(false);
   const back = paths.modules(workspaceSlug, projectKey);
@@ -258,6 +261,7 @@ export function ModuleDetailPage({ workspaceSlug, projectKey, projectId, moduleI
     const found = loaded && loaded.projectId === projectId ? loaded : null;
     setModule(found);
     if (!found) return;
+    setInsights(await action<Insights>("get_module_insights", { moduleId }));
     const everyone = await action<Item[]>("list_work_items", { projectId }) ?? [];
     setCandidates(everyone.filter((item) => !found.workItemIds.includes(item.id)));
     setRefreshKey((key) => key + 1);
@@ -301,6 +305,17 @@ export function ModuleDetailPage({ workspaceSlug, projectKey, projectId, moduleI
       <aside aria-label={t("modules.properties")} className="grid content-start gap-3 border-t border-subtle p-4 sm:p-6 lg:w-80 lg:shrink-0 lg:border-l lg:border-t-0">
         <div className="flex items-center gap-2"><StatusBadge status={module.status} /></div>
         <BurndownChart action={action} name="get_module_burndown" body={{ moduleId }} projectId={projectId} refreshKey={refreshKey} testId="module-burndown" />
+        {insights && <section aria-label={t("modules.risks")} className="grid gap-2 border-t border-subtle pt-3">
+          <h3 className="m-0 text-14 font-semibold text-primary">{t("modules.risks")}</h3>
+          <InsightList title={t("modules.blocked")} items={insights.blocked} workspaceSlug={workspaceSlug} />
+          <InsightList title={t("modules.overdue")} items={insights.overdue} workspaceSlug={workspaceSlug} />
+          <label className="grid gap-1 text-12 text-secondary">{t("modules.breakdown")}
+            <select aria-label={t("modules.breakdown")} value={breakdown} onChange={(event) => setBreakdown(event.target.value)}>
+              {["state", "assignee", "label", "priority"].map((dimension) => <option key={dimension} value={dimension}>{t(`modules.breakdown.${dimension}` as MessageKey)}</option>)}
+            </select>
+          </label>
+          <ul className="m-0 grid list-none gap-1 p-0">{(insights.breakdowns[breakdown] ?? []).map((group) => <li key={group.key} className="rounded border border-subtle p-2"><span className="flex justify-between text-12"><span>{group.label}</span><span>{group.items.length}</span></span><ItemLinks items={group.items} workspaceSlug={workspaceSlug} /></li>)}</ul>
+        </section>}
         <h2 className="m-0 text-20 font-semibold text-primary">{module.name}</h2>
         <PropertyRow icon={<CalendarRange aria-hidden size={15} />} label={t("modules.status")}>
           <SingleSelect label={t("modules.status")} summary={t(`modules.status.${module.status}`)} value={module.status} readOnly={!editable}
@@ -333,4 +348,11 @@ export function ModuleDetailPage({ workspaceSlug, projectKey, projectId, moduleI
     {editing && <ModuleFormModal action={action} projectId={projectId} module={module} onClose={() => setEditing(false)} onSaved={() => void load()} />}
     {adding && <AddItemsModal candidates={candidates} onClose={() => setAdding(false)} onAdd={(ids) => run("add_module_items", { moduleId, workItemIds: ids })} />}
   </section>;
+}
+
+function InsightList({ title, items, workspaceSlug }: { title: string; items: Item[]; workspaceSlug: string }) {
+  return <details><summary className="cursor-pointer text-13 font-medium">{title} · {items.length}</summary><ItemLinks items={items} workspaceSlug={workspaceSlug} /></details>;
+}
+function ItemLinks({ items, workspaceSlug }: { items: Item[]; workspaceSlug: string }) {
+  return items.length ? <ul className="m-0 mt-1 grid list-none gap-1 p-0">{items.map((item) => <li key={item.id}><Link className="text-12 text-primary hover:underline" to={paths.workItem(workspaceSlug, item.displayId)}>{item.displayId} · {item.title}</Link></li>)}</ul> : null;
 }

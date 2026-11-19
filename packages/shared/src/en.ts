@@ -1204,7 +1204,6 @@ export const en = {
     "intake.duplicateTitle": "Mark as duplicate",
     "intake.duplicateHint": "Enter the key of the original work item, for example MOB-1.",
     "intake.snoozeTitle": "Snooze work item",
-    "intake.edit": "Edit",
     "intake.save": "Save changes",
     "intake.saving": "Saving…",
     "inbox.intakeAccepted": "{actor} accepted your Intake item",

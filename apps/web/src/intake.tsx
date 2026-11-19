@@ -7,15 +7,23 @@ import { Popover, menuItemClass } from "./shell/popover";
 import { PriorityIcon } from "./property-dropdowns";
 import { Avatar } from "./avatar";
 import { useWorkspace } from "./layouts/workspace-layout";
+import { markdownToDoc } from "../../../packages/actions/src/markdown-doc";
+import { DescriptionEditor } from "./description-editor";
 
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 const outcomes = ["pending", "snoozed", "accepted", "rejected", "duplicate"] as const;
 type Outcome = (typeof outcomes)[number];
 type Tab = "open" | "closed";
 type IntakeItem = {
-  id: string; displayId: string; title: string; descriptionText: string; descriptionMarkdown: string; priority: string; outcome: Outcome; snoozedTill: string | null;
+  id: string; workItemId: string; displayId: string; title: string; descriptionText: string; descriptionMarkdown: string; priority: string; outcome: Outcome; snoozedTill: string | null;
   duplicateToDisplayId: string | null; createdBy: string; createdByName: string; createdAt: string;
 };
+type IntakeDraft = { title: string; description: unknown; priority: string };
+const titleDraftKey = (id: string) => `intake-title-draft:${id}`;
+const draftKey = (id: string) => `intake-draft:${id}`;
+function readDraft(id: string): IntakeDraft | undefined {
+  try { const value = sessionStorage.getItem(draftKey(id)); return value ? JSON.parse(value) as IntakeDraft : undefined; } catch { return undefined; }
+}
 const t = (key: string) => translate(key as MessageKey);
 // Plane's Open tab holds undecided items (pending and snoozed); Closed holds every decided one.
 const tabOutcomes: Record<Tab, Outcome[]> = { open: ["pending", "snoozed"], closed: ["accepted", "rejected", "duplicate"] };
@@ -51,21 +59,20 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
 }
 
 /** The submission form: any project member, Guests included, can send a work item into Intake. */
-function SubmitModal({ action, projectId, onClose, onSubmitted }: { action: Call; projectId: string; onClose: () => void; onSubmitted: (item: IntakeItem) => void }) {
+function SubmitModal({ action, workspaceId, projectId, onClose, onSubmitted }: { action: Call; workspaceId: string; projectId: string; onClose: () => void; onSubmitted: (item: IntakeItem) => void }) {
   const [title, setTitle] = React.useState("");
-  const [description, setDescription] = React.useState("");
+  const [description, setDescription] = React.useState<unknown>(markdownToDoc(""));
   const [priority, setPriority] = React.useState("none");
   const [note, setNote] = React.useState<string | null>(null);
   return <Modal title={t("intake.modalTitle")} onClose={onClose}>
     <form className="my-0 grid gap-3" onSubmit={async (event) => {
       event.preventDefault();
-      const doc = description.trim() ? { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: description.trim() }] }] } : undefined;
-      const saved = await action<IntakeItem>("submit_intake_item", { projectId, title, priority, ...(doc ? { description: doc } : {}) });
+      const saved = await action<IntakeItem>("submit_intake_item", { projectId, title, priority, description });
       setNote(saved ? null : t("intake.submitFailed"));
       if (saved) onSubmitted(saved);
     }}>
       <input autoFocus required maxLength={500} aria-label={t("intake.titleField")} placeholder={t("intake.titleField")} value={title} className={`${field} text-16`} onChange={(event) => setTitle(event.target.value)} />
-      <textarea aria-label={t("intake.descriptionField")} placeholder={t("intake.descriptionField")} rows={4} value={description} className={field} onChange={(event) => setDescription(event.target.value)} />
+      <div aria-label={t("intake.descriptionField")}><DescriptionEditor workspaceId={workspaceId} workItemId={null} initial={description} editable imageUploads={false} onChange={setDescription} /></div>
       <label className="grid gap-1 text-13 text-secondary">{t("intake.priority")}
         <select value={priority} className="w-full text-14 text-primary" onChange={(event) => setPriority(event.target.value)}>
           {["none", "urgent", "high", "medium", "low"].map((value) => <option key={value} value={value}>{t(`workItems.priority.${value}`)}</option>)}
@@ -139,16 +146,24 @@ function ListRow({ item, selected, onSelect }: { item: IntakeItem; selected: boo
 
 type Dialog = "snooze" | "duplicate" | null;
 
-function Detail({ action, workspaceId, item, index, count, canDecide, canEdit, onMove, onDecided, onUpdated }: {
-  action: Call; workspaceId: string; item: IntakeItem; index: number; count: number; canDecide: boolean; canEdit: boolean; onMove: (delta: number) => void; onDecided: () => void; onUpdated: () => void;
+function Detail({ action, workspaceId, item, index, count, canDecide, canEdit, draft, onDraftChange, onMove, onDecided, onUpdated }: {
+  action: Call; workspaceId: string; item: IntakeItem; index: number; count: number; canDecide: boolean; canEdit: boolean; draft?: IntakeDraft; onDraftChange: (patch: Partial<IntakeDraft>) => void; onMove: (delta: number) => void; onDecided: () => void; onUpdated: () => void;
 }) {
   const [dialog, setDialog] = React.useState<Dialog>(null);
   const [note, setNote] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
-  const [editing, setEditing] = React.useState(false);
-  const [title, setTitle] = React.useState(item.title);
-  const [description, setDescription] = React.useState(item.descriptionMarkdown);
-  const [priority, setPriority] = React.useState(item.priority);
+  const activeDraft = readDraft(item.id) ?? draft;
+  const [title, setTitle] = React.useState(sessionStorage.getItem(titleDraftKey(item.id)) ?? activeDraft?.title ?? item.title);
+  const titleValueRef = React.useRef(title);
+  const titleInputRef = React.useRef<HTMLInputElement | null>(null);
+  const description = activeDraft?.description ?? markdownToDoc(item.descriptionMarkdown);
+  React.useEffect(() => {
+    const cached = sessionStorage.getItem(titleDraftKey(item.id));
+    if (cached !== null && cached !== titleValueRef.current) { titleValueRef.current = cached; setTitle(cached); }
+  }, [description, item.id]);
+  const priority = activeDraft?.priority ?? item.priority;
+  const editable = canEdit && (item.outcome === "pending" || item.outcome === "snoozed");
+  const changeDraft = (patch: Partial<IntakeDraft>) => onDraftChange(patch);
   const [saving, setSaving] = React.useState(false);
   const undecided = item.outcome === "pending" || item.outcome === "snoozed";
   const run = async (name: string, body: Record<string, unknown>) => {
@@ -156,12 +171,14 @@ function Detail({ action, workspaceId, item, index, count, canDecide, canEdit, o
     setNote(done ? null : t("intake.failed"));
     if (done) { setDialog(null); onDecided(); }
   };
-  const save = async (event: React.FormEvent) => {
-    event.preventDefault(); setSaving(true);
+  const save = async () => {
+    setSaving(true);
+    const savedDraft = readDraft(item.id);
+    const attempted = { title: titleInputRef.current?.value ?? sessionStorage.getItem(titleDraftKey(item.id)) ?? titleValueRef.current, description: savedDraft?.description ?? description, priority: savedDraft?.priority ?? priority };
     try {
-      const saved = await action<IntakeItem>("update_intake_item", { intakeItemId: item.id, title, descriptionMarkdown: description, priority });
-      if (!saved) { setNote(t("intake.failed")); return; }
-      setNote(null); setEditing(false); onUpdated();
+      const saved = await action<IntakeItem>("update_intake_item", { intakeItemId: item.id, ...attempted });
+      if (!saved) { onDraftChange(attempted); setNote(t("intake.failed")); return; }
+      titleValueRef.current = attempted.title; setTitle(attempted.title); sessionStorage.removeItem(titleDraftKey(item.id)); sessionStorage.removeItem(draftKey(item.id)); setNote(null); onUpdated();
     } catch { setNote(t("intake.failed")); }
     finally { setSaving(false); }
   };
@@ -170,7 +187,6 @@ function Detail({ action, workspaceId, item, index, count, canDecide, canEdit, o
       <span className="text-16 font-medium text-secondary">{item.displayId}</span>
       <StatusBadge item={item} />
       <span className="flex-1" />
-      {canEdit && undecided && !editing && <button type="button" className={quietButton} onClick={() => setEditing(true)}>{t("intake.edit")}</button>}
       <button type="button" className={iconButton} aria-label={t("intake.previous")} disabled={index <= 0} onClick={() => onMove(-1)}><ChevronUp aria-hidden size={16} /></button>
       <button type="button" className={iconButton} aria-label={t("intake.next")} disabled={index >= count - 1} onClick={() => onMove(1)}><ChevronDown aria-hidden size={16} /></button>
       {canDecide && undecided && <>
@@ -191,13 +207,13 @@ function Detail({ action, workspaceId, item, index, count, canDecide, canEdit, o
       </Popover>
     </header>
     <div className="grid gap-5 overflow-auto px-5 py-5">
-      {editing ? <form className="grid gap-3" onSubmit={(event) => void save(event)}>
-        <label className="grid gap-1 text-13 text-secondary">{t("intake.titleField")}<input required maxLength={500} value={title} className={field} onChange={(event) => setTitle(event.target.value)} /></label>
-        <label className="grid gap-1 text-13 text-secondary">{t("intake.descriptionField")}<textarea rows={8} value={description} className={field} onChange={(event) => setDescription(event.target.value)} /></label>
-        <label className="grid gap-1 text-13 text-secondary">{t("intake.priority")}<select value={priority} className={field} onChange={(event) => setPriority(event.target.value)}>{["none", "urgent", "high", "medium", "low"].map((value) => <option key={value} value={value}>{t(`workItems.priority.${value}`)}</option>)}</select></label>
-        <div className="flex gap-2"><button className={primaryButton} disabled={saving}>{saving ? t("intake.saving") : t("intake.save")}</button><button type="button" className={quietButton} onClick={() => { setEditing(false); setTitle(item.title); setDescription(item.descriptionMarkdown); setPriority(item.priority); }}>{t("intake.cancel")}</button></div>
-      </form> : <><h2 className="m-0 text-24 font-semibold text-primary">{item.title}</h2>
-      <p className="m-0 whitespace-pre-wrap text-14 text-primary">{item.descriptionText || <span className="text-tertiary">{t("intake.noDescription")}</span>}</p></>}
+      {editable ? <div className="grid gap-3">
+        <label className="grid gap-1 text-13 text-secondary">{t("intake.titleField")}<input ref={titleInputRef} name="title" aria-label={t("intake.titleField")} required maxLength={500} value={title} className={`${field} text-24 font-semibold`} onInput={(event) => { titleValueRef.current = event.currentTarget.value; setTitle(event.currentTarget.value); sessionStorage.setItem(titleDraftKey(item.id), event.currentTarget.value); changeDraft({ title: event.currentTarget.value }); }} /></label>
+        <div><p className="mb-1 text-13 text-secondary">{t("intake.descriptionField")}</p><DescriptionEditor workspaceId={workspaceId} workItemId={item.workItemId} initial={description} editable onChange={(doc) => changeDraft({ description: doc })} /></div>
+        <label className="grid gap-1 text-13 text-secondary">{t("intake.priority")}<select name="priority" aria-label={t("intake.priority")} value={priority} className={field} onChange={(event) => changeDraft({ priority: event.target.value })}>{["none", "urgent", "high", "medium", "low"].map((value) => <option key={value} value={value}>{t(`workItems.priority.${value}`)}</option>)}</select></label>
+        <div className="flex gap-2"><button type="button" className={primaryButton} disabled={saving || !title.trim()} onClick={() => void save()}>{saving ? t("intake.saving") : t("intake.save")}</button></div>
+      </div> : <><h2 className="m-0 text-24 font-semibold text-primary">{item.title}</h2>
+      {item.descriptionText ? <DescriptionEditor workspaceId={workspaceId} workItemId={item.workItemId} initial={markdownToDoc(item.descriptionMarkdown)} editable={false} onChange={() => undefined} /> : <p className="m-0 text-14 text-tertiary">{t("intake.noDescription")}</p>}</>}
       <dl className="m-0 grid max-w-md grid-cols-[8rem_1fr] items-center gap-x-3 gap-y-3 text-13">
         <dt className="text-secondary">{t("intake.priority")}</dt>
         <dd className="m-0 flex items-center gap-1.5 text-primary"><PriorityIcon priority={item.priority} />{t(`workItems.priority.${item.priority}`)}</dd>
@@ -223,6 +239,8 @@ export function IntakePage({ workspaceId, projectId, canDecide, canAdmin, enable
   const selectedId = params.get("inboxIssueId");
   const [items, setItems] = React.useState<IntakeItem[] | null>(null);
   const [adding, setAdding] = React.useState(false);
+  const [drafts, setDrafts] = React.useState<Record<string, IntakeDraft>>({});
+  const draftsRef = React.useRef<Record<string, IntakeDraft>>({});
   // A freshly submitted item is selected before the list has reloaded to include it.
   const justAdded = React.useRef<string | null>(null);
   React.useEffect(() => {
@@ -265,6 +283,13 @@ export function IntakePage({ workspaceId, projectId, canDecide, canAdmin, enable
     if (tab === "open") select(neighbour?.id ?? null);
     void load();
   };
+  const updateDraft = (item: IntakeItem, patch: Partial<IntakeDraft>) => {
+    const previous = draftsRef.current[item.id];
+    const next = { title: previous?.title ?? item.title, description: previous?.description ?? markdownToDoc(item.descriptionMarkdown), priority: previous?.priority ?? item.priority, ...patch };
+    sessionStorage.setItem(draftKey(item.id), JSON.stringify(next));
+    draftsRef.current = { ...draftsRef.current, [item.id]: next };
+    setDrafts(draftsRef.current);
+  };
   return <section className="flex flex-col gap-3" aria-label={t("intake.title")}>
     <div className="flex items-center gap-2">
       <Inbox aria-hidden size={18} className="text-secondary" />
@@ -284,14 +309,14 @@ export function IntakePage({ workspaceId, projectId, canDecide, canAdmin, enable
           {(items ?? []).map((item) => <ListRow key={item.id} item={item} selected={item.id === selectedId} onSelect={() => select(item.id)} />)}
         </ul>
       </div>
-      {current ? <Detail key={current.id} action={action} workspaceId={workspaceId} item={current} index={index} count={items!.length} canDecide={canDecide} canEdit={canAdmin || workspaceAdmin || current.createdBy === selfId}
-        onMove={(delta) => select(items![index + delta]!.id)} onDecided={afterDecision} onUpdated={() => void load()} />
+      {current ? <Detail key={current.id} action={action} workspaceId={workspaceId} item={current} index={index} count={items!.length} canDecide={canDecide} canEdit={canAdmin || workspaceAdmin || current.createdBy === selfId} draft={draftsRef.current[current.id] ?? drafts[current.id]} onDraftChange={(patch) => updateDraft(current, patch)}
+        onMove={(delta) => select(items![index + delta]!.id)} onDecided={afterDecision} onUpdated={() => { const { [current.id]: _removed, ...rest } = draftsRef.current; draftsRef.current = rest; setDrafts(rest); void load(); }} />
         : items?.length === 0
           ? <div className="grid min-w-0 flex-1 place-items-center">{tab === "open"
             ? <EmptyState title={t("intake.empty")} description={t("intake.emptyHint")} action={<button type="button" className={`${primaryButton} flex items-center gap-1.5`} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("intake.add")}</button>} />
             : <EmptyState title={t("intake.emptyClosed")} description={t("intake.emptyClosedHint")} />}</div>
           : <div className="grid min-w-0 flex-1 place-items-center p-6 text-14 text-secondary">{t("intake.pick")}</div>}
     </div>
-    {adding && <SubmitModal action={action} projectId={projectId} onClose={() => setAdding(false)} onSubmitted={(item) => { setAdding(false); justAdded.current = item.id; select(item.id, "open"); void load(); }} />}
+    {adding && <SubmitModal action={action} workspaceId={workspaceId} projectId={projectId} onClose={() => setAdding(false)} onSubmitted={(item) => { setAdding(false); justAdded.current = item.id; select(item.id, "open"); void load(); }} />}
   </section>;
 }

@@ -1,6 +1,6 @@
 // Browser end-to-end flow: submit a work item to Intake, accept it, check it leaves Triage and shows in the project list.
 // Run with `bun run e2e` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
-import { chromium, type Page } from "playwright";
+import { chromium, type Locator, type Page } from "playwright";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -10,6 +10,13 @@ const apiPort = Number(Bun.env.E2E_API_PORT ?? 3108);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5208);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
+async function expectValue(locator: Locator, expected: string, label: string) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (await locator.inputValue() === expected) return;
+    await Bun.sleep(100);
+  }
+  throw new Error(`Expected ${label} value ${expected}; got ${await locator.inputValue()}`);
+}
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
   Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
@@ -53,7 +60,12 @@ try {
     await add.click();
     const dialog = page.getByRole("dialog");
     await dialog.getByLabel(translate("intake.titleField")).fill(title);
-    if (description) await dialog.getByLabel(translate("intake.descriptionField")).fill(description);
+    if (description) {
+      const editor = dialog.getByTestId("description-editor").locator('[contenteditable="true"]');
+      await editor.fill(description);
+      await editor.press("Control+A");
+      await dialog.getByRole("toolbar").getByRole("button", { name: translate("wiki.tool.bold") }).click();
+    }
     await dialog.getByRole("button", { name: translate("intake.submit"), exact: true }).click();
     await dialog.waitFor({ state: "detached" });
   };
@@ -68,20 +80,53 @@ try {
   check(await page.getByRole("tab", { name: translate("intake.tab.open") }).getAttribute("aria-selected") === "true", "Open tab is not the default");
   await submit("Dark mode please", "Users want a dark theme");
   await page.getByTestId("intake-MOB-1").waitFor();
-  await detail.getByRole("heading", { name: "Dark mode please" }).waitFor();
-  await detail.getByText("Users want a dark theme").waitFor();
-  await detail.getByRole("button", { name: translate("intake.edit"), exact: true }).click();
+  await detail.getByLabel(translate("intake.titleField")).waitFor();
+  check(await detail.getByLabel(translate("intake.titleField")).inputValue() === "Dark mode please", "created title was not available for inline editing");
+  await detail.getByTestId("description-editor").locator("strong").getByText("Users want a dark theme").waitFor();
+  await submit("Secondary draft");
+  await detail.locator("header").getByText("MOB-2", { exact: true }).waitFor();
+  await page.getByTestId("intake-MOB-1").click();
+  await detail.locator("header").getByText("MOB-1", { exact: true }).waitFor();
   await detail.getByLabel(translate("intake.titleField")).fill("Dark theme please");
-  await detail.getByLabel(translate("intake.descriptionField")).fill("**Updated request**");
+  await detail.getByLabel(translate("intake.priority")).selectOption("high");
+  const editing = detail.getByTestId("description-editor").locator('[contenteditable="true"]');
+  await editing.fill("Updated request");
+  check(await page.evaluate(() => Object.values(sessionStorage).some((value) => value.includes("Updated request"))), "rich-text changes were not retained as a draft");
+  await detail.getByRole("toolbar").getByRole("button", { name: translate("editor.sourceMode") }).click();
+  await detail.getByTestId("editor-source-text").fill("**Updated request**");
+  await detail.getByRole("toolbar").getByRole("button", { name: translate("editor.sourceMode") }).click();
+  await page.getByTestId("intake-MOB-2").click();
+  await detail.locator("header").getByText("MOB-2", { exact: true }).waitFor();
+  await page.getByTestId("intake-MOB-1").click();
+  await detail.locator("header").getByText("MOB-1", { exact: true }).waitFor();
+  await detail.getByLabel(translate("intake.titleField")).waitFor();
+  const switchedTitle = await detail.getByLabel(translate("intake.titleField")).inputValue();
+  check(switchedTitle === "Dark theme please", `switching items discarded the title draft: ${switchedTitle}; id=${await detail.locator("header span").first().innerText()}`);
+  const draftEditorText = await detail.getByTestId("description-editor").locator('[contenteditable="true"]').innerText();
+  check(draftEditorText.includes("Updated request"), `rich-text draft was not restored: ${draftEditorText}`);
+  await detail.getByTestId("description-editor").locator("strong").getByText("Updated request").waitFor();
+  const afterEditorTitle = await detail.getByLabel(translate("intake.titleField")).inputValue();
+  check(afterEditorTitle === "Dark theme please", `switching items discarded the title draft: ${afterEditorTitle}`);
+  await page.route("**/actions/update_intake_item", (route) => route.abort());
   await detail.getByRole("button", { name: translate("intake.save"), exact: true }).click();
-  await detail.getByRole("heading", { name: "Dark theme please" }).waitFor();
+  await detail.getByRole("alert").waitFor();
+  const retainedTitle = await detail.getByLabel(translate("intake.titleField")).inputValue();
+  check(retainedTitle === "Dark theme please", `failed save discarded title draft: ${retainedTitle}`);
+  await detail.getByTestId("description-editor").locator('[contenteditable="true"]').getByText("Updated request").waitFor();
+  await page.unroute("**/actions/update_intake_item");
+  await detail.getByRole("button", { name: translate("intake.save"), exact: true }).click();
+  await detail.getByLabel(translate("intake.titleField")).waitFor();
+  await expectValue(detail.getByLabel(translate("intake.titleField")), "Dark theme please", "saved title");
   await page.reload();
   await page.getByRole("link", { name: translate("intake.title") }).click();
-  await page.getByRole("region", { name: translate("intake.detail") }).getByRole("heading", { name: "Dark theme please" }).waitFor();
-  await page.getByRole("region", { name: translate("intake.detail") }).getByText("Updated request").waitFor();
+  const reopened = page.getByRole("region", { name: translate("intake.detail") });
+  await page.getByTestId("intake-MOB-1").click();
+  await reopened.locator("header").getByText("MOB-1", { exact: true }).waitFor();
+  await expectValue(reopened.getByLabel(translate("intake.titleField")), "Dark theme please", "reopened title");
+  await expectValue(reopened.getByLabel(translate("intake.priority")), "high", "reopened priority");
+  await reopened.getByTestId("description-editor").locator("strong").getByText("Updated request").waitFor();
   await submit("Export to CSV");
   await submit("Slow search");
-  await submit("Typo on home");
   await page.getByTestId("intake-MOB-4").waitFor();
   await page.getByTestId("intake-open-count").getByText("4", { exact: true }).waitFor();
   await page.screenshot({ path: `${shots}/intake-1440-light.png` });

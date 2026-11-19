@@ -7,7 +7,7 @@ import { SourceModeButton } from "./editor-source-mode";
 import { withShortcut } from "./shortcuts";
 
 /** One slim row of icon buttons shared by the Work item description and the comment composer. Each button names itself, shows its shortcut in the tooltip and reports its active state. */
-export function EditorToolbar({ editor, label, testId, onImage, source, end }: { editor: Editor | null; label: string; testId: string; onImage: () => void; source?: { active: boolean; onToggle: () => void }; end?: React.ReactNode }) {
+export function EditorToolbar({ editor, label, testId, onImage, source, end }: { editor: Editor | null; label: string; testId: string; onImage?: () => void; source?: { active: boolean; onToggle: () => void }; end?: React.ReactNode }) {
   const [, refresh] = React.useReducer((n: number) => n + 1, 0);
   React.useEffect(() => {
     if (!editor) return;
@@ -35,7 +35,7 @@ export function EditorToolbar({ editor, label, testId, onImage, source, end }: {
     {separator}
     <LinkButton key="link" editor={editor} />
     {tool(translate("wiki.insert.table"), null, Table2, run((chain) => chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()))}
-    {tool(translate("wiki.insert.image"), null, ImagePlus, onImage)}
+    {onImage && tool(translate("wiki.insert.image"), null, ImagePlus, onImage)}
     <span className="editor-toolbar-end">
       {end}
       {source && <SourceModeButton active={source.active} onClick={source.onToggle} />}

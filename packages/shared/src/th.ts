@@ -1206,7 +1206,6 @@ export const th: Record<keyof typeof en, string> = {
   "intake.duplicateTitle": "ทำเครื่องหมายว่าซ้ำ",
   "intake.duplicateHint": "ใส่รหัสของงานต้นฉบับ เช่น MOB-1",
   "intake.snoozeTitle": "เลื่อนงาน",
-  "intake.edit": "แก้ไข",
   "intake.save": "บันทึกการเปลี่ยนแปลง",
   "intake.saving": "กำลังบันทึก…",
   "inbox.intakeAccepted": "{actor} รับรายการ Intake ของคุณแล้ว",

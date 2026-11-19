@@ -145,6 +145,7 @@ export function createCycleActions(db: Database) {
       input: Type.Object({ cycleId: uuid(), name: Type.Optional(nameSchema), startDate: Type.Optional(dateSchema), endDate: Type.Optional(dateSchema) }), output: cycleOutput,
       handler: async (context: Context, input: { cycleId: string; name?: string; startDate?: string; endDate?: string }) => {
         const { cycle } = await cycleAccess(context, input.cycleId, "write");
+        if (cycle.archivedAt) throw new ActionError("Cycle is archived", 400);
         const startDate = input.startDate ?? cycle.startDate, endDate = input.endDate ?? cycle.endDate;
         assertDates(startDate, endDate);
         const [updated] = await db.update(cycles).set({ name: input.name ?? cycle.name, startDate, endDate }).where(eq(cycles.id, cycle.id)).returning();
@@ -210,6 +211,7 @@ export function createCycleActions(db: Database) {
       output: Type.Object({ added: Type.Array(Type.String()), skipped: Type.Array(Type.Object({ workItemId: Type.String(), cycleId: Type.String() })) }),
       handler: async (context: Context, input: { cycleId: string; workItemIds: string[] }) => {
         const { cycle, project } = await cycleAccess(context, input.cycleId, "write");
+        if (cycle.archivedAt) throw new ActionError("Cycle is archived", 400);
         if (cycleStatus(cycle.startDate, cycle.endDate) === "completed") throw new ActionError("Cannot add work items to a Cycle that has ended", 400);
         const ids = [...new Set(input.workItemIds)];
         return db.transaction(async (transaction) => {
@@ -237,6 +239,7 @@ export function createCycleActions(db: Database) {
       output: Type.Object({ transferred: Type.Array(Type.String()) }),
       handler: async (context: Context, input: { cycleId: string; targetCycleId: string }) => {
         const { cycle, project } = await cycleAccess(context, input.cycleId, "write");
+        if (cycle.archivedAt) throw new ActionError("Cycle is archived", 400);
         if (cycleStatus(cycle.startDate, cycle.endDate) !== "completed") throw new ActionError("Only a completed Cycle can transfer its work items", 400);
         if (input.targetCycleId === cycle.id) throw new ActionError("Choose a different Cycle", 400);
         const [target] = await db.select().from(cycles).where(and(eq(cycles.id, input.targetCycleId), eq(cycles.projectId, project.id), isNull(cycles.deletedAt)));
@@ -299,6 +302,7 @@ export function createCycleActions(db: Database) {
       output: Type.Object({ removed: Type.Array(Type.String()) }),
       handler: async (context: Context, input: { cycleId: string; workItemIds: string[] }) => {
         const { cycle, project } = await cycleAccess(context, input.cycleId, "write");
+        if (cycle.archivedAt) throw new ActionError("Cycle is archived", 400);
         const ids = [...new Set(input.workItemIds)];
         return db.transaction(async (transaction) => {
           const database = tx(transaction);

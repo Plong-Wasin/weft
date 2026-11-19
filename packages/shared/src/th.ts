@@ -1088,6 +1088,7 @@ export const th: Record<keyof typeof en, string> = {
   "cycles.transfer": "ย้ายงานที่ยังไม่เสร็จ",
   "cycles.transferred": "ย้ายแล้ว {count} งาน",
   "cycles.archive": "เก็บ Cycle ถาวร",
+  "cycles.unarchive": "กู้คืน Cycle",
   "cycles.delete": "ลบ Cycle",
   "cycles.deleteConfirm": "ลบ Cycle นี้? งานยังอยู่ แต่จะหลุดออกจาก Cycle",
   "cycles.new": "เพิ่ม Cycle",

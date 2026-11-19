@@ -122,9 +122,11 @@ test.concurrent("archive is Admin only and needs completed or cancelled; archive
     // An archived Module is read-only.
     const one = await item();
     expect(await modules.addModuleItems.handler({ userId: member.id }, { moduleId: mod.id, workItemIds: [one.id] }).then(() => 200, (error: { status: number }) => error.status)).toBe(400);
+    expect(await modules.removeModuleItems.handler({ userId: member.id }, { moduleId: mod.id, workItemIds: [one.id] }).then(() => 200, (error: { status: number }) => error.status)).toBe(400);
     expect(await modules.updateModule.handler({ userId: member.id }, { moduleId: mod.id, name: "B" }).then(() => 200, (error: { status: number }) => error.status)).toBe(400);
     expect(await status(member.id, "unarchiveModule")).toBe(403);
     expect((await modules.unarchiveModule.handler({ userId: admin.id }, { moduleId: mod.id })).archived).toBe(false);
+    expect((await modules.updateModule.handler({ userId: member.id }, { moduleId: mod.id, name: "Restored" })).name).toBe("Restored");
     await modules.updateModule.handler({ userId: member.id }, { moduleId: mod.id, status: "cancelled" });
     expect((await modules.archiveModule.handler({ userId: admin.id }, { moduleId: mod.id })).archived).toBe(true);
   });

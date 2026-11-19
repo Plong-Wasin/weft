@@ -1086,6 +1086,7 @@ export const en = {
     "cycles.transfer": "Transfer unfinished work",
     "cycles.transferred": "{count} work items moved.",
     "cycles.archive": "Archive Cycle",
+    "cycles.unarchive": "Restore Cycle",
     "cycles.delete": "Delete Cycle",
     "cycles.deleteConfirm": "Delete this Cycle? Its work items stay, but they leave the Cycle.",
     "cycles.new": "Add cycle",

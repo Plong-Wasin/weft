@@ -158,7 +158,12 @@ export function ModulesPage({ workspaceSlug, projectKey, projectId, canWrite, ca
   const [display, setDisplay] = useDisplay();
   const [form, setForm] = React.useState<{ module?: Module } | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
-  const load = React.useCallback(async () => setModules(enabled ? await action<Module[]>("list_modules", { projectId, archived, search, ...(statusFilter ? { status: statusFilter } : {}), ...(leadFilter ? { leadId: leadFilter } : {}), ...(memberFilter ? { memberId: memberFilter } : {}), ...(dateFrom ? { dateFrom } : {}), ...(dateTo ? { dateTo } : {}) }) : null), [action, projectId, enabled, archived, search, statusFilter, leadFilter, memberFilter, dateFrom, dateTo]);
+  const requestId = React.useRef(0);
+  const load = React.useCallback(async () => {
+    const currentRequest = ++requestId.current;
+    const result = enabled ? await action<Module[]>("list_modules", { projectId, archived, search, ...(statusFilter ? { status: statusFilter } : {}), ...(leadFilter ? { leadId: leadFilter } : {}), ...(memberFilter ? { memberId: memberFilter } : {}), ...(dateFrom ? { dateFrom } : {}), ...(dateTo ? { dateTo } : {}) }) : null;
+    if (currentRequest === requestId.current) setModules(result);
+  }, [action, projectId, enabled, archived, search, statusFilter, leadFilter, memberFilter, dateFrom, dateTo]);
   React.useEffect(() => { void load(); }, [load]);
   React.useEffect(() => { if (enabled) void action<Person[]>("list_project_members", { projectId }).then((rows) => setPeople(rows ?? [])); }, [action, projectId, enabled]);
   if (!enabled) return <section><p role="status">{t("modules.off")}</p></section>;

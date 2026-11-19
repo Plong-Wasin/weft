@@ -18,6 +18,7 @@ export type ModuleStatus = (typeof moduleStatuses)[number];
 export const archivableModuleStatuses: readonly ModuleStatus[] = ["completed", "cancelled"];
 
 const uuid = () => Type.String({ format: "uuid" });
+const userId = Type.String({ minLength: 1 });
 const dateSchema = Type.String({ pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" });
 const statusSchema = Type.Union(moduleStatuses.map((status) => Type.Literal(status)));
 const nameSchema = Type.String({ minLength: 1, maxLength: 100 });
@@ -177,7 +178,7 @@ export function createModuleActions(db: Database) {
     /** Archived Modules are hidden unless `archived` is true, which lists only them. */
     listModules: {
       name: "list_modules", kind: "read" as const,
-      input: Type.Object({ projectId: uuid(), archived: Type.Optional(Type.Boolean()), search: Type.Optional(Type.String({ maxLength: 200 })), status: Type.Optional(statusSchema), leadId: Type.Optional(uuid()), memberId: Type.Optional(uuid()), dateFrom: Type.Optional(dateSchema), dateTo: Type.Optional(dateSchema) }), output: Type.Array(moduleOutput),
+      input: Type.Object({ projectId: uuid(), archived: Type.Optional(Type.Boolean()), search: Type.Optional(Type.String({ maxLength: 200 })), status: Type.Optional(statusSchema), leadId: Type.Optional(userId), memberId: Type.Optional(userId), dateFrom: Type.Optional(dateSchema), dateTo: Type.Optional(dateSchema) }), output: Type.Array(moduleOutput),
       handler: async (context: Context, input: { projectId: string; archived?: boolean; search?: string; status?: ModuleStatus; leadId?: string; memberId?: string; dateFrom?: string; dateTo?: string }) => {
         const { project } = await requireProjectAccess(db, context.userId, input.projectId, "read");
         assertFeatureEnabled(project, "modules");

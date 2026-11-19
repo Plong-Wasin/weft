@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { createDatabase, workItemStates, workItems, type Database } from "@weft/db";
+import { createDatabase, cycleHistory, cycles as cycleRows, workItemStates, workItems, type Database } from "@weft/db";
 import { burndownSeries, createCycleActions, createProjectActions, createWorkItemActions, createActionList } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -36,42 +36,51 @@ test("burndownSeries uses calendar days for the ideal line", () => {
   expect(burndownSeries("2026-03-01", "2026-03-01", [null], "2026-03-01").days).toEqual([{ date: "2026-03-01", open: 1, ideal: 0 }]);
 });
 
-test.concurrent("exact day series, ideal line and null future days", async () => {
+test.concurrent("legacy and backdated Cycle days disclose unknown history", async () => {
   await withRollback(db, async (transaction) => {
-    const { cycles, cycle, as, item, add } = await setup(transaction, day(-3), day(1));
-    const a = await item(at(day(-2))), b = await item(at(day(-1), "00:00:00")), c = await item(), d = await item();
-    await add([a.id, b.id, c.id, d.id]);
+    const { cycles, cycle, as } = await setup(transaction, day(-3), day(1));
     const result = await cycles.getCycleBurndown.handler(as, { cycleId: cycle.id });
-    expect(result).toMatchObject({ cycleId: cycle.id, startDate: day(-3), endDate: day(1), total: 4 });
-    expect(result.days).toEqual([
-      { date: day(-3), open: 4, ideal: 4 },
-      { date: day(-2), open: 3, ideal: 3 },
-      { date: day(-1), open: 2, ideal: 2 },
-      { date: day(0), open: 2, ideal: 1 },
-      { date: day(1), open: null, ideal: 0 },
-    ]);
+    expect(result).toMatchObject({ cycleId: cycle.id, startDate: day(-3), endDate: day(1), initialScope: null });
+    expect(result.days.filter((point) => point.date <= day(0)).every((point) => point.unknown && point.open === null)).toBe(true);
+    expect(result.days.at(-1)?.open).toBeNull();
   });
 });
 
-test.concurrent("a reopened item counts as open, and a cancelled item leaves the chart so it can still reach zero", async () => {
+test.concurrent("Action burndown replays completion, reopening and cancellation at UTC day ends", async () => {
   await withRollback(db, async (transaction) => {
-    const { cycles, cycle, as, item, add, project } = await setup(transaction, day(-2), day(0));
+    const { cycles, cycle, as, item, add, project, transaction: tx } = await setup(transaction, day(-2), day(1));
     const reopened = await item(null);
     const cancelled = await item(null);
     await add([reopened.id, cancelled.id]);
+    await tx.update(cycleRows).set({ createdAt: at(day(-4)), historyStartedAt: at(day(-4)), endDate: day(-1) }).where(eq(cycleRows.id, cycle.id));
+    await transaction.update(cycleHistory).set({ occurredAt: at(day(-2)) }).where(eq(cycleHistory.cycleId, cycle.id));
     const states = await transaction.select().from(workItemStates).where(eq(workItemStates.projectId, project.id));
     await transaction.update(workItems).set({ stateId: states.find((state) => state.group === "cancelled")!.id }).where(eq(workItems.id, cancelled.id));
-    const open = async () => (await cycles.getCycleBurndown.handler(as, { cycleId: cycle.id }));
-    expect((await open()).total).toBe(1);
-    expect((await open()).days.map((point) => point.open)).toEqual([1, 1, 1]);
-    await transaction.update(workItems).set({ completedAt: at(day(0)) }).where(eq(workItems.id, reopened.id));
-    expect((await open()).days.map((point) => point.open)).toEqual([1, 1, 0]);
+    const cancelledEvent = await transaction.select().from(cycleHistory).where(eq(cycleHistory.workItemId, cancelled.id));
+    await transaction.update(cycleHistory).set({ occurredAt: at(day(-1), "10:00:00") }).where(eq(cycleHistory.id, cancelledEvent.at(-1)!.id));
+    const completed = states.find((state) => state.group === "completed")!;
+    await transaction.update(workItems).set({ stateId: completed.id }).where(eq(workItems.id, reopened.id));
+    const completedEvent = (await transaction.select().from(cycleHistory).where(eq(cycleHistory.workItemId, reopened.id))).at(-1)!;
+    await transaction.update(cycleHistory).set({ occurredAt: at(day(-1), "11:00:00") }).where(eq(cycleHistory.id, completedEvent.id));
+    await transaction.update(workItems).set({ stateId: states.find((state) => state.group === "started")!.id }).where(eq(workItems.id, reopened.id));
+    const reopenedEvent = (await transaction.select().from(cycleHistory).where(eq(cycleHistory.workItemId, reopened.id))).at(-1)!;
+    await transaction.update(cycleHistory).set({ occurredAt: at(day(-1), "12:00:00") }).where(eq(cycleHistory.id, reopenedEvent.id));
+    const result = await cycles.getCycleBurndown.handler(as, { cycleId: cycle.id });
+    expect(result.days.map((point) => [point.open, point.completed, point.cancelled])).toEqual([[2, 0, 0], [1, 0, 1]]);
+    expect(result.finalOutcome).toEqual({ completed: 0, open: 1, cancelled: 1 });
+    const target = await cycles.createCycle.handler(as, { projectId: project.id, name: "Next", startDate: day(1), endDate: day(4) });
+    await cycles.transferCycleItems.handler(as, { cycleId: cycle.id, targetCycleId: target.id });
+    expect((await cycles.getCycleBurndown.handler(as, { cycleId: cycle.id })).finalOutcome).toEqual(result.finalOutcome);
+    await tx.delete(workItems).where(eq(workItems.id, reopened.id));
+    const afterDelete = await cycles.getCycleBurndown.handler(as, { cycleId: cycle.id });
+    expect(afterDelete.finalOutcome).toEqual(result.finalOutcome);
+    expect(JSON.stringify(afterDelete)).not.toContain(reopened.id);
   });
 });
 
 test.concurrent("archived and Triage items are left out of the total and the series", async () => {
   await withRollback(db, async (transaction) => {
-    const { cycles, cycle, as, item, add, transaction: tx } = await setup(transaction, day(-1), day(0));
+    const { cycles, cycle, as, item, add, transaction: tx } = await setup(transaction, day(0), day(0));
     const live = await item(), archived = await item(), triaged = await item();
     await add([live.id, archived.id, triaged.id]);
     await tx.update(workItems).set({ archivedAt: new Date() }).where(eq(workItems.id, archived.id));
@@ -79,8 +88,7 @@ test.concurrent("archived and Triage items are left out of the total and the ser
     const triageState = (await tx.select().from(workItemStates).where(eq(workItemStates.projectId, row!.projectId))).find((candidate) => candidate.group === "triage")!;
     await tx.update(workItems).set({ stateId: triageState.id }).where(eq(workItems.id, triaged.id));
     const result = await cycles.getCycleBurndown.handler(as, { cycleId: cycle.id });
-    expect(result.total).toBe(1);
-    expect(result.days.map((point) => point.open)).toEqual([1, 1]);
+    expect(result.days.every((point) => point.unknown && point.open === null)).toBe(true);
   });
 });
 

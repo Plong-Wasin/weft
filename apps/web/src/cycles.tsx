@@ -186,7 +186,7 @@ function Breakdown({ cycle, items, states }: { cycle: CycleDetail; items: Item[]
   </div>;
 }
 
-type Burndown = { total: number; reason?: string | null; days: Array<{ date: string; open: number | null; ideal: number }> };
+type Burndown = { total: number; initialScope: number | null; finalOutcome: { completed: number; open: number; cancelled: number }; unestimated: number; coverageStart: string; dateChanges: Array<{ at: string; startDate: string; endDate: string }>; scopeChanges: Array<{ date: string; added: number; removed: number }>; reason?: string | null; days: Array<{ date: string; open: number | null; completed: number | null; cancelled: number | null; pointsOpen: number | null; unestimatedOpen: number | null; ideal: number | null; unknown: boolean }> };
 
 /** Open work items per day against the ideal line, as plain SVG that scales to its box; future days (open null) are not drawn. */
 export function BurndownChart({ action, name, body, projectId, refreshKey, testId = "cycle-burndown" }: { action: Call; name: string; body: unknown; projectId: string; refreshKey: number; testId?: string }) {
@@ -208,7 +208,8 @@ export function BurndownChart({ action, name, body, projectId, refreshKey, testI
   }, [action, name, JSON.stringify(body), mode, refreshKey]);
   if (!data) return null;
   const w = 320, h = 160, pad = { l: 28, r: 8, t: 8, b: 20 };
-  const max = Math.max(data.total, 1), last = Math.max(data.days.length - 1, 1);
+  const values = data.days.map((day) => mode === "points" ? day.pointsOpen : day.open);
+  const max = Math.max(data.total, ...values.filter((value): value is number => value !== null), 1), last = Math.max(data.days.length - 1, 1);
   const x = (index: number) => pad.l + (index / last) * (w - pad.l - pad.r);
   const y = (value: number) => pad.t + (1 - value / max) * (h - pad.t - pad.b);
   const line = (values: Array<number | null>) => values.flatMap((value, index) => (value === null ? [] : [`${x(index).toFixed(1)},${y(value).toFixed(1)}`])).join(" ");
@@ -219,16 +220,21 @@ export function BurndownChart({ action, name, body, projectId, refreshKey, testI
         {(["items", "points"] as const).map((value) => <button key={value} type="button" aria-pressed={mode === value} onClick={() => setUnit(value)} className={`rounded-md border border-subtle px-2 py-0.5 text-12 ${mode === value ? "bg-layer-1 font-medium text-primary" : "text-secondary"}`}>{t(`cycles.burndownUnit.${value}`)}</button>)}
       </div>}
     </div>
+    <p className="m-0 text-12 text-secondary" role="status">Initial scope: {data.initialScope === null ? "unknown" : count(data.initialScope)} · Outcome: {count(data.finalOutcome.completed)} completed, {count(data.finalOutcome.open)} open, {count(data.finalOutcome.cancelled)} cancelled · {count(data.unestimated)} unestimated · UTC day end</p>
+    {data.scopeChanges.length > 0 && <p className="m-0 text-12 text-secondary">Scope changes: {data.scopeChanges.map((change) => `${formatDay(change.date)} +${change.added} / −${change.removed}`).join(", ")}</p>}
+    {data.dateChanges.length > 0 && <p className="m-0 text-12 text-secondary">Reporting dates changed {data.dateChanges.map((change) => `${formatDay(change.startDate)}–${formatDay(change.endDate)}`).join(", ")}; uncovered history is shown as unknown.</p>}
     {data.reason ? <p className="m-0 text-13 text-secondary" role="status">{t(`cycles.burndownReason.${data.reason}`)}</p> : data.total === 0 ? <p className="m-0 text-13 text-secondary">{t("cycles.burndownEmpty")}</p> : <>
       <svg viewBox={`0 0 ${w} ${h}`} role="img" aria-label={t(mode === "points" ? "cycles.burndownLabelPoints" : "cycles.burndownLabel")} className="h-auto w-full max-w-full">
         <line x1={pad.l} y1={y(0)} x2={w - pad.r} y2={y(0)} stroke="var(--border-subtle)" />
         <text x={pad.l - 4} y={y(max) + 4} textAnchor="end" fontSize="10" fill="var(--text-secondary)">{count(data.total)}</text>
         <text x={pad.l - 4} y={y(0) + 4} textAnchor="end" fontSize="10" fill="var(--text-secondary)">0</text>
         <polyline fill="none" stroke="var(--border-strong)" strokeDasharray="4 3" strokeWidth="1.5" points={line(data.days.map((day) => day.ideal))} />
-        <polyline fill="none" stroke="var(--bg-accent-strong)" strokeWidth="2" points={line(data.days.map((day) => day.open))} />
+        <polyline fill="none" stroke="var(--bg-accent-strong)" strokeWidth="2" points={line(values)} />
         {first && <text x={pad.l} y={h - 4} fontSize="10" fill="var(--text-secondary)">{formatDay(first)}</text>}
         {end && end !== first && <text x={w - pad.r} y={h - 4} textAnchor="end" fontSize="10" fill="var(--text-secondary)">{formatDay(end)}</text>}
       </svg>
+      {data.days.some((day) => day.unknown) && <p className="m-0 text-12 text-secondary">Some days have unknown history; no value is inferred before {formatDay(data.coverageStart.slice(0, 10))}.</p>}
+      {mode === "points" && <p className="m-0 text-12 text-secondary">{count(data.unestimated)} open work items have no Estimate.</p>}
       <div className="flex gap-3 text-12 text-secondary"><span>— {t("cycles.burndownRemaining")}</span><span>- - {t("cycles.burndownIdeal")}</span></div>
     </>}
   </div>;

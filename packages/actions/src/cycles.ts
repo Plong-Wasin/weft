@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, eq, gte, inArray, isNotNull, isNull, lte, ne, notInArray } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, cycleItems, cycles, estimatePoints, workItemStates, workItems } from "@weft/db";
+import { activities, cycleHistory, cycleItems, cycles, estimatePoints, workItemStates, workItems } from "@weft/db";
 import { pointWeight, requirePointsEstimate } from "./estimates";
 import { assertNoneArchived, assertNotArchived, liveWorkItems, unarchivedWorkItems } from "./triage";
 import { assertFeatureEnabled } from "./features";
@@ -177,19 +177,52 @@ export function createCycleActions(db: Database) {
       input: Type.Object({ cycleId: uuid(), unit: Type.Optional(burndownUnitSchema) }),
       output: Type.Object({
         cycleId: Type.String(), unit: burndownUnitSchema, startDate: Type.String(), endDate: Type.String(), total: Type.Number(),
-        days: Type.Array(Type.Object({ date: Type.String(), open: Type.Union([Type.Number(), Type.Null()]), ideal: Type.Number() })),
+        initialScope: Type.Union([Type.Number(), Type.Null()]), finalOutcome: Type.Object({ completed: Type.Number(), open: Type.Number(), cancelled: Type.Number() }),
+        initialPoints: Type.Union([Type.Number(), Type.Null()]), unestimated: Type.Number(), coverageStart: Type.String(), dateChanges: Type.Array(Type.Object({ at: Type.String(), startDate: Type.String(), endDate: Type.String() })),
+        scopeChanges: Type.Array(Type.Object({ date: Type.String(), added: Type.Number(), removed: Type.Number() })),
+        days: Type.Array(Type.Object({ date: Type.String(), open: Type.Union([Type.Number(), Type.Null()]), completed: Type.Optional(Type.Union([Type.Number(), Type.Null()])), cancelled: Type.Optional(Type.Union([Type.Number(), Type.Null()])), pointsOpen: Type.Optional(Type.Union([Type.Number(), Type.Null()])), unestimatedOpen: Type.Optional(Type.Union([Type.Number(), Type.Null()])), ideal: Type.Union([Type.Number(), Type.Null()]), unknown: Type.Optional(Type.Boolean()) })),
       }),
       handler: async (context: Context, input: { cycleId: string; unit?: BurndownUnit }) => {
         const { cycle } = await cycleAccess(context, input.cycleId, "read");
         const unit = input.unit ?? "items";
         if (unit === "points") await requirePointsEstimate(db, cycle.projectId);
-        const rows = await db.select({ completedAt: workItems.completedAt, point: estimatePoints.value }).from(cycleItems)
-          .innerJoin(workItems, and(eq(workItems.id, cycleItems.workItemId), unarchivedWorkItems))
-          // Cancelled work is neither open nor done, so it leaves the chart (as it leaves a Cycle's progress).
-          .innerJoin(workItemStates, and(eq(workItemStates.id, workItems.stateId), ne(workItemStates.group, "cancelled")))
-          .leftJoin(estimatePoints, eq(estimatePoints.id, workItems.estimatePointId)).where(eq(cycleItems.cycleId, cycle.id));
-        const weights = unit === "points" ? rows.map((row) => pointWeight(row.point)) : undefined;
-        return { cycleId: cycle.id, unit, startDate: cycle.startDate, endDate: cycle.endDate, ...burndownSeries(cycle.startDate, cycle.endDate, rows.map((row) => row.completedAt), todayIso(), weights) };
+        const events = await db.select().from(cycleHistory).where(eq(cycleHistory.cycleId, cycle.id)).orderBy(asc(cycleHistory.occurredAt), asc(cycleHistory.id));
+        const coverageStart = cycle.historyStartedAt.toISOString();
+        const beforeCoverage = cycle.createdAt < cycle.historyStartedAt || dayOf(cycle.startDate) < cycle.historyStartedAt.getTime();
+        const dateChanges = events.filter((event) => event.kind === "dates" && event.startDate && event.endDate).map((event) => ({ at: event.occurredAt.toISOString(), startDate: event.startDate!, endDate: event.endDate! }));
+        const byItem = new Map<string, typeof events>();
+        for (const event of events) if (event.workItemId) byItem.set(event.workItemId, [...(byItem.get(event.workItemId) ?? []), event]);
+        const state = new Map<string, { member: boolean; group: string; estimate: number | null; known: boolean }>();
+        const numericEstimate = (value: string | null) => value !== null && Number.isFinite(Number(value)) ? Number(value) : null;
+        const initialCutoff = dayOf(cycle.startDate);
+        for (const [itemId, itemEvents] of byItem) for (const event of itemEvents) if (event.occurredAt.getTime() < initialCutoff && event.occurredAt.getTime() >= cycle.historyStartedAt.getTime())
+          state.set(itemId, { member: event.member ?? true, group: event.stateGroup ?? "unknown", estimate: numericEstimate(event.estimate), known: true });
+        const initialScope = beforeCoverage ? null : [...state.values()].filter((item) => item.member).length;
+        const initialPoints = beforeCoverage ? null : [...state.values()].filter((item) => item.member && item.group !== "cancelled").reduce((sum, item) => sum + (item.estimate ?? 0), 0);
+        const scopeChanges: Array<{ date: string; added: number; removed: number }> = [];
+        const days = [] as Array<{ date: string; open: number | null; completed: number | null; cancelled: number | null; pointsOpen: number | null; unestimatedOpen: number | null; ideal: number | null; unknown: boolean }>;
+        const span = (dayOf(cycle.endDate) - dayOf(cycle.startDate)) / dayMs;
+        const today = todayIso();
+        for (let offset = 0; offset <= span; offset++) {
+          const date = new Date(dayOf(cycle.startDate) + offset * dayMs).toISOString().slice(0, 10), cutoff = dayOf(date) + dayMs;
+          const changes = events.filter((event) => event.kind === "membership" && event.occurredAt.getTime() >= dayOf(date) && event.occurredAt.getTime() < cutoff);
+          if (changes.length) scopeChanges.push({ date, added: changes.filter((event) => event.member).length, removed: changes.filter((event) => event.member === false).length });
+          for (const [itemId, itemEvents] of byItem) for (const event of itemEvents) if (event.occurredAt.getTime() < cutoff && event.occurredAt.getTime() >= cycle.historyStartedAt.getTime()) {
+            state.set(itemId, { member: event.member ?? true, group: event.stateGroup ?? "unknown", estimate: numericEstimate(event.estimate), known: true });
+          }
+          const observed = [...state.values()].filter((item) => item.member && item.known);
+          const open = observed.filter((item) => item.group !== "completed" && item.group !== "cancelled");
+          const completed = observed.filter((item) => item.group === "completed"), cancelled = observed.filter((item) => item.group === "cancelled");
+          const future = date >= today;
+          const unknown = beforeCoverage || future;
+          days.push({ date, open: future ? null : (unknown ? null : open.length), completed: future ? null : (unknown ? null : completed.length), cancelled: future ? null : (unknown ? null : cancelled.length), pointsOpen: future || unknown ? null : open.reduce((sum, item) => sum + (item.estimate ?? 0), 0), unestimatedOpen: future || unknown ? null : open.filter((item) => item.estimate === null).length, ideal: initialScope === null ? null : Math.round((initialScope * (span - offset) / (span || 1)) * 100) / 100, unknown });
+        }
+        const finalDay = [...days].reverse().find((day) => day.date < today && !day.unknown);
+        return { cycleId: cycle.id, unit, startDate: cycle.startDate, endDate: cycle.endDate, total: unit === "points" ? (initialPoints ?? 0) : (initialScope ?? 0),
+          initialScope,
+          initialPoints,
+          finalOutcome: { completed: finalDay?.completed ?? 0, open: finalDay?.open ?? 0, cancelled: finalDay?.cancelled ?? 0 },
+          unestimated: finalDay?.unestimatedOpen ?? 0, coverageStart, dateChanges, scopeChanges, days };
       },
     },
     /** Warning only: the UI shows the overlapping Cycles and lets the user go on. */

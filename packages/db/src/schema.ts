@@ -706,6 +706,7 @@ export const cycles = pgTable("cycles", {
   endDate: date("end_date").notNull(),
   createdBy: text("created_by").notNull().references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  historyStartedAt: timestamp("history_started_at", { withTimezone: true }).notNull().defaultNow(),
   /** Set only on a completed Cycle; the Cycle keeps its work items and drops out of the default list. */
   archivedAt: timestamp("archived_at", { withTimezone: true }),
   /** Soft delete: the row stays, its membership rows are removed, and every read treats it as gone. */
@@ -720,6 +721,20 @@ export const cycleItems = pgTable("cycle_items", {
   projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index().on(table.cycleId)]);
+
+/** Durable, anonymous-capable snapshots used to reconstruct Cycle reports. */
+export const cycleHistory = pgTable("cycle_history", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  cycleId: uuid("cycle_id").notNull().references(() => cycles.id, { onDelete: "cascade" }),
+  workItemId: uuid("work_item_id"),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+  kind: text("kind").notNull(),
+  member: boolean("member"),
+  stateGroup: text("state_group"),
+  estimate: text("estimate"),
+  startDate: date("start_date"),
+  endDate: date("end_date"),
+}, (table) => [index().on(table.cycleId, table.occurredAt)]);
 
 export const modules = pgTable("modules", {
   id: uuid("id").defaultRandom().primaryKey(),

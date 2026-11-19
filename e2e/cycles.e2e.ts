@@ -100,6 +100,8 @@ try {
   const progress = await page.getByTestId("cycle-progress").first().getAttribute("title");
   if (progress !== translate("cycles.progressOf").replace("{done}", "0").replace("{total}", "1")) throw new Error(`unexpected progress: ${progress}`);
   await page.getByTestId("cycle-breakdown").waitFor();
+  await page.getByTestId("cycle-burndown").getByRole("status").filter({ hasText: "Initial scope: unknown" }).waitFor();
+  await page.getByText(/Scope changes:.*\+1/).waitFor();
   await page.screenshot({ path: `${shots}/cycle-detail-1440.png` });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: `${shots}/cycle-detail-390.png` });

@@ -39,7 +39,7 @@ export function Shell({ current, workspace, signOut, refresh }: { current: Curre
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [drawer]);
-  return <SidecarProvider workspace={workspace} userId={current.user.id}><div className="flex h-screen flex-col bg-canvas text-primary">
+  return <SidecarProvider workspace={workspace} userId={current.user.id}><div className="flex h-dvh flex-col bg-canvas text-primary">
     <a href="#main-content" className="skip-link rounded-md bg-accent-primary px-3 py-1.5 text-14 font-medium text-on-color">{translate("shell.skipToMain")}</a>
     <TopBar current={current} workspace={workspace} signOut={signOut} refresh={refresh} onOpenDrawer={() => setDrawer(true)} sidebarCollapsed={sidebarCollapsed} onToggleSidebar={() => { setSidebarCollapsed((value) => !value); setSidebarPeek(false); }} onPeekSidebar={setSidebarPeek} />
     <div className="flex min-h-0 flex-1">

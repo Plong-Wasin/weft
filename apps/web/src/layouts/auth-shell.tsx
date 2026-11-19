@@ -11,7 +11,7 @@ export function Logo({ className = "" }: { className?: string }) {
 
 /** Plane's auth layout: logo top left, a link to the other mode top right, a narrow centred column, language and theme at the foot. */
 export function AuthShell({ action, footer, children }: { action?: React.ReactNode; footer?: React.ReactNode; children: React.ReactNode }) {
-  return <div className="relative flex min-h-screen w-screen flex-col items-center overflow-y-auto bg-surface-1 px-8 pb-10 pt-6">
+  return <div className="relative flex min-h-dvh w-screen flex-col items-center overflow-y-auto bg-surface-1 px-8 pb-10 pt-6">
     <header className="sticky top-0 flex w-full flex-shrink-0 items-center justify-between gap-6">
       <Logo />
       {action}
@@ -25,7 +25,7 @@ export function AuthShell({ action, footer, children }: { action?: React.ReactNo
 
 /** Plane's workspace creation / invitation layout: a narrow rail with a divider and the logo, then the content. */
 export function OnboardingShell({ action, children }: { action?: React.ReactNode; children: React.ReactNode }) {
-  return <div className="flex min-h-screen flex-col bg-surface-1 sm:flex-row">
+  return <div className="flex min-h-dvh flex-col bg-surface-1 sm:flex-row">
     <div className="relative h-24 flex-shrink-0 sm:h-auto sm:w-2/12 md:w-3/12 lg:w-1/5">
       <div className="absolute left-0 top-1/2 h-px w-full -translate-y-1/2 bg-[var(--border-subtle)] sm:left-1/2 sm:top-0 sm:h-full sm:w-px sm:-translate-x-1/2 sm:translate-y-0 md:left-1/3" />
       <div className="absolute left-5 top-1/2 -translate-y-1/2 bg-surface-1 px-3 sm:left-1/2 sm:top-12 sm:-translate-x-4 sm:translate-y-0 sm:px-0 sm:py-5 md:left-1/3"><Logo /></div>

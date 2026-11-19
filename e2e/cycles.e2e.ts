@@ -94,8 +94,32 @@ try {
   // Detail: add a work item, see progress and the state breakdown.
   await page.getByRole("link", { name: "Sprint 1" }).click();
   await page.getByRole("button", { name: translate("cycles.addItems"), exact: true }).click();
-  await page.getByRole("button", { name: translate("cycles.add"), exact: true }).click();
-  await page.getByRole("button", { name: translate("cycles.close") }).click();
+  await page.getByLabel(`${translate("cycles.selectCandidate")} MOB-1`).check();
+  await page.getByRole("button", { name: translate("cycles.addSelected").replace("{count}", "1"), exact: true }).click();
+  await page.getByRole("dialog", { name: translate("cycles.addTitle") }).waitFor({ state: "detached" });
+  await page.getByRole("button", { name: translate("cycles.remove"), exact: true }).waitFor();
+  // Search finds a work item already in another Cycle, shows its membership, and requires opting into the move.
+  await page.getByRole("link", { name: translate("cycles.back") }).click();
+  await tab("upcoming").click();
+  await page.getByRole("link", { name: "Sprint 2" }).click();
+  await page.getByRole("button", { name: translate("cycles.addItems"), exact: true }).click();
+  const search = page.getByRole("dialog", { name: translate("cycles.addTitle") }).getByLabel(translate("cycles.searchCandidates"));
+  await search.fill("Alpha");
+  await page.getByText(translate("cycles.currentCycle").replace("{name}", "Sprint 1"), { exact: true }).waitFor();
+  const candidate = page.getByLabel(`${translate("cycles.selectCandidate")} MOB-1`);
+  check(!(await candidate.isEnabled()), "an item in another Cycle must not be selectable without the move choice");
+  await page.getByLabel(translate("cycles.allowMove")).check();
+  await candidate.check();
+  await page.getByRole("button", { name: translate("cycles.addSelected").replace("{count}", "1"), exact: true }).click();
+  await page.getByRole("dialog", { name: translate("cycles.addTitle") }).waitFor({ state: "detached" });
+  await page.getByRole("link", { name: translate("cycles.back") }).click();
+  await tab("active").click();
+  await page.getByRole("link", { name: "Sprint 1" }).click();
+  await page.getByRole("button", { name: translate("cycles.addItems"), exact: true }).click();
+  await page.getByLabel(translate("cycles.allowMove")).check();
+  await page.getByLabel(`${translate("cycles.selectCandidate")} MOB-1`).check();
+  await page.getByRole("button", { name: translate("cycles.addSelected").replace("{count}", "1"), exact: true }).click();
+  await page.getByRole("dialog", { name: translate("cycles.addTitle") }).waitFor({ state: "detached" });
   await page.getByRole("button", { name: translate("cycles.remove"), exact: true }).waitFor();
   const progress = await page.getByTestId("cycle-progress").first().getAttribute("title");
   if (progress !== translate("cycles.progressOf").replace("{done}", "0").replace("{total}", "1")) throw new Error(`unexpected progress: ${progress}`);

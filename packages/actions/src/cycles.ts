@@ -207,9 +207,15 @@ export function createCycleActions(db: Database) {
     },
     addCycleItems: {
       name: "add_cycle_items", kind: "write" as const,
-      input: Type.Object({ cycleId: uuid(), workItemIds: Type.Array(uuid(), { minItems: 1, maxItems: 500 }) }),
+      input: Type.Object({
+        cycleId: uuid(), workItemIds: Type.Array(uuid(), { minItems: 1, maxItems: 500 }),
+        /** Moving an item from its current Cycle is always an explicit writer choice. */
+        move: Type.Optional(Type.Boolean()),
+        /** Current membership shown to the writer; reject a move if the selection has since changed. */
+        expectedCycleIds: Type.Optional(Type.Record(uuid(), Type.Union([uuid(), Type.Null()]))),
+      }),
       output: Type.Object({ added: Type.Array(Type.String()), skipped: Type.Array(Type.Object({ workItemId: Type.String(), cycleId: Type.String() })) }),
-      handler: async (context: Context, input: { cycleId: string; workItemIds: string[] }) => {
+      handler: async (context: Context, input: { cycleId: string; workItemIds: string[]; move?: boolean; expectedCycleIds?: Record<string, string | null> }) => {
         const { cycle, project } = await cycleAccess(context, input.cycleId, "write");
         if (cycle.archivedAt) throw new ActionError("Cycle is archived", 400);
         if (cycleStatus(cycle.startDate, cycle.endDate) === "completed") throw new ActionError("Cannot add work items to a Cycle that has ended", 400);
@@ -221,14 +227,43 @@ export function createCycleActions(db: Database) {
           if (found.length !== ids.length) throw new ActionError("Work items must belong to this Cycle's project", 400);
           found.forEach(assertNotArchived);
           // The primary key on work_item_id decides races: the loser of a concurrent add gets no row back and is reported as skipped.
-          const inserted = await database.insert(cycleItems).values(ids.map((workItemId) => ({ workItemId, cycleId: cycle.id, workspaceId: project.workspaceId, projectId: project.id })))
+          const memberships = ids.length ? await database.select({ workItemId: cycleItems.workItemId, cycleId: cycleItems.cycleId, archivedAt: cycles.archivedAt })
+            .from(cycleItems).innerJoin(cycles, eq(cycles.id, cycleItems.cycleId)).where(inArray(cycleItems.workItemId, ids)) : [];
+          const byItem = new Map(memberships.map((row) => [row.workItemId, row]));
+          const added: string[] = [];
+          const skipped: Array<{ workItemId: string; cycleId: string }> = [];
+          for (const workItemId of ids) {
+            const current = byItem.get(workItemId);
+            if (current?.cycleId === cycle.id) continue;
+            if (current) {
+              const expected = input.expectedCycleIds?.[workItemId];
+              // Legacy callers never move. New selection callers must explicitly opt in and prove the source they displayed.
+              if (!input.move || expected !== current.cycleId || current.archivedAt !== null) {
+                skipped.push({ workItemId, cycleId: current.cycleId });
+                continue;
+              }
+              const changed = await database.update(cycleItems).set({ cycleId: cycle.id }).where(and(eq(cycleItems.workItemId, workItemId), eq(cycleItems.cycleId, current.cycleId))).returning({ workItemId: cycleItems.workItemId });
+              if (!changed.length) {
+                const [latest] = await database.select({ cycleId: cycleItems.cycleId }).from(cycleItems).where(eq(cycleItems.workItemId, workItemId));
+                if (latest) skipped.push({ workItemId, cycleId: latest.cycleId });
+                continue;
+              }
+              await logCycleChange(database, context, project, workItemId, current.cycleId, cycle.id);
+              added.push(workItemId);
+              continue;
+            }
+            const inserted = await database.insert(cycleItems).values({ workItemId, cycleId: cycle.id, workspaceId: project.workspaceId, projectId: project.id })
             .onConflictDoNothing().returning({ workItemId: cycleItems.workItemId });
-          const added = new Set(inserted.map((row) => row.workItemId));
-          const rest = ids.filter((id) => !added.has(id));
-          const existing = rest.length ? await database.select().from(cycleItems).where(inArray(cycleItems.workItemId, rest)) : [];
-          for (const workItemId of ids.filter((id) => added.has(id))) await logCycleChange(database, context, project, workItemId, null, cycle.id);
+            if (inserted.length) {
+              await logCycleChange(database, context, project, workItemId, null, cycle.id);
+              added.push(workItemId);
+            } else {
+              const [latest] = await database.select({ cycleId: cycleItems.cycleId }).from(cycleItems).where(eq(cycleItems.workItemId, workItemId));
+              if (latest && latest.cycleId !== cycle.id) skipped.push({ workItemId, cycleId: latest.cycleId });
+            }
+          }
           // Already in this very Cycle is a no-op, not a skip.
-          return { added: ids.filter((id) => added.has(id)), skipped: existing.filter((row) => row.cycleId !== cycle.id).map((row) => ({ workItemId: row.workItemId, cycleId: row.cycleId })) };
+          return { added, skipped };
         });
       },
     },

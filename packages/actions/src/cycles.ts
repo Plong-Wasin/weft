@@ -8,6 +8,9 @@ import { assertFeatureEnabled } from "./features";
 import { ActionError } from "./members";
 import { requireProjectAccess } from "./projects";
 import { activityActor, type ActivityContext } from "./work-items";
+import { workItemMarkdownOptions, writtenDescription } from "./work-items";
+import { storedDocumentOf, readWrittenFormOf } from "./written-form-pool";
+import { WRITTEN_FORM_MAX_INPUT_LENGTH } from "./markdown-doc";
 
 export const cycleStatuses = ["upcoming", "active", "completed"] as const;
 export type CycleStatus = (typeof cycleStatuses)[number];
@@ -18,6 +21,7 @@ const statusSchema = Type.Union(cycleStatuses.map((status) => Type.Literal(statu
 const cycleOutput = Type.Object({
   id: Type.String(), projectId: Type.String(), name: Type.String(), startDate: Type.String(), endDate: Type.String(),
   status: statusSchema, createdBy: Type.String(), createdAt: Type.String(), itemCount: Type.Integer(),
+  descriptionMarkdown: Type.String(), description: Type.Optional(Type.Any()),
   /** completed over total, where total leaves out cancelled work items. */
   progress: Type.Object({ completed: Type.Integer(), total: Type.Integer() }), archived: Type.Boolean(),
 });
@@ -85,6 +89,7 @@ export function createCycleActions(db: Database) {
     return {
       id: row.id, projectId: row.projectId, name: row.name, startDate: row.startDate, endDate: row.endDate,
       status: cycleStatus(row.startDate, row.endDate), createdBy: row.createdBy, createdAt: row.createdAt.toISOString(), itemCount: members.length,
+      descriptionMarkdown: row.descriptionMarkdown ?? "", description: row.descriptionDoc ?? undefined,
       progress: cycleProgress(members.map((member) => member.group)), archived: row.archivedAt !== null,
     };
   }
@@ -129,26 +134,34 @@ export function createCycleActions(db: Database) {
   return {
     createCycle: {
       name: "create_cycle", kind: "write" as const,
-      input: Type.Object({ ...projectInput, name: nameSchema, startDate: dateSchema, endDate: dateSchema }), output: cycleOutput,
-      handler: async (context: Context, input: { projectId: string; name: string; startDate: string; endDate: string }) => {
+      input: Type.Object({ ...projectInput, name: nameSchema, startDate: dateSchema, endDate: dateSchema, descriptionMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH })) }), output: cycleOutput,
+      handler: async (context: Context, input: { projectId: string; name: string; startDate: string; endDate: string; descriptionMarkdown?: string }) => {
         const { project } = await requireProjectAccess(db, context.userId, input.projectId, "write");
         assertFeatureEnabled(project, "cycles");
         assertDates(input.startDate, input.endDate);
+        const options = await workItemMarkdownOptions(db, context.userId, project.workspaceId, project.id, input.descriptionMarkdown);
+        const description = await writtenDescription(undefined, input.descriptionMarkdown, options);
         const [cycle] = await db.insert(cycles).values({
-          workspaceId: project.workspaceId, projectId: project.id, name: input.name, startDate: input.startDate, endDate: input.endDate, createdBy: context.userId,
+          workspaceId: project.workspaceId, projectId: project.id, name: input.name, startDate: input.startDate, endDate: input.endDate, createdBy: context.userId, descriptionMarkdown: description.markdown, descriptionDoc: description.document,
         }).returning();
         return out(cycle!, []);
       },
     },
     updateCycle: {
       name: "update_cycle", kind: "write" as const,
-      input: Type.Object({ cycleId: uuid(), name: Type.Optional(nameSchema), startDate: Type.Optional(dateSchema), endDate: Type.Optional(dateSchema) }), output: cycleOutput,
-      handler: async (context: Context, input: { cycleId: string; name?: string; startDate?: string; endDate?: string }) => {
-        const { cycle } = await cycleAccess(context, input.cycleId, "write");
+      input: Type.Object({ cycleId: uuid(), name: Type.Optional(nameSchema), startDate: Type.Optional(dateSchema), endDate: Type.Optional(dateSchema), descriptionMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH })) }), output: cycleOutput,
+      handler: async (context: Context, input: { cycleId: string; name?: string; startDate?: string; endDate?: string; descriptionMarkdown?: string }) => {
+        const { cycle, project } = await cycleAccess(context, input.cycleId, "write");
         if (cycle.archivedAt) throw new ActionError("Cycle is archived", 400);
         const startDate = input.startDate ?? cycle.startDate, endDate = input.endDate ?? cycle.endDate;
         assertDates(startDate, endDate);
-        const [updated] = await db.update(cycles).set({ name: input.name ?? cycle.name, startDate, endDate }).where(eq(cycles.id, cycle.id)).returning();
+        const patch: Partial<typeof cycles.$inferInsert> = { name: input.name ?? cycle.name, startDate, endDate };
+        if (input.descriptionMarkdown !== undefined) {
+          const options = await workItemMarkdownOptions(db, context.userId, project.workspaceId, project.id, input.descriptionMarkdown);
+          const description = await writtenDescription(undefined, input.descriptionMarkdown, options);
+          patch.descriptionMarkdown = description.markdown; patch.descriptionDoc = description.document;
+        }
+        const [updated] = await db.update(cycles).set(patch).where(eq(cycles.id, cycle.id)).returning();
         return out(updated!, (await counts(db, [cycle.id])).get(cycle.id)!);
       },
     },
@@ -170,7 +183,11 @@ export function createCycleActions(db: Database) {
       handler: async (context: Context, input: { cycleId: string }) => {
         const { cycle } = await cycleAccess(context, input.cycleId, "read");
         const members = (await counts(db, [cycle.id])).get(cycle.id)!;
-        return { ...out(cycle, members), workItemIds: members.map((member) => member.workItemId) };
+        const result = out(cycle, members);
+        const options = await workItemMarkdownOptions(db, context.userId, (await requireProjectAccess(db, context.userId, cycle.projectId, "read")).project.workspaceId, cycle.projectId, cycle.descriptionMarkdown ?? "");
+        result.description = cycle.descriptionDoc ?? await storedDocumentOf(cycle.descriptionMarkdown ?? "", options);
+        if (cycle.descriptionMarkdown === null) result.descriptionMarkdown = await readWrittenFormOf(result.description, "");
+        return { ...result, workItemIds: members.map((member) => member.workItemId) };
       },
     },
     getCycleBurndown: {

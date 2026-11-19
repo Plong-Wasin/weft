@@ -35,6 +35,18 @@ test.concurrent("a Member creates, updates, lists and gets a Module; status is s
   });
 });
 
+test.concurrent("Module descriptions are optional Written form Markdown and can be edited and cleared", async () => {
+  await withRollback(db, async (transaction) => {
+    const { modules, member, project, item } = await setup(transaction);
+    const workItem = await item();
+    const markdown = `## Goal\n\nA **clear** goal with [[MOB-1|work-item:${workItem.id}]] and @{Member|${member.id}}.`;
+    const created = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Scope", descriptionMarkdown: markdown });
+    expect(created.descriptionMarkdown).toBe(markdown);
+    expect((await modules.getModule.handler({ userId: member.id }, { moduleId: created.id })).descriptionMarkdown).toBe(created.descriptionMarkdown);
+    expect((await modules.updateModule.handler({ userId: member.id }, { moduleId: created.id, descriptionMarkdown: "" })).descriptionMarkdown).toBe("");
+  });
+});
+
 test.concurrent("Module discovery combines text, status, lead, member and overlapping dates in the chosen archive set", async () => {
   await withRollback(db, async (transaction) => {
     const { modules, member, admin, project } = await setup(transaction);

@@ -65,6 +65,7 @@ try {
   const modal = page.getByRole("dialog", { name: t("modules.addTitleModal") });
   check(await modal.evaluate((element) => element.scrollHeight <= element.clientHeight), "Create Module dialog should fit without a scrollbar at 1080p");
   await modal.getByLabel(t("modules.name")).fill("Auth");
+  await modal.getByRole("textbox", { name: "Description" }).fill("Initial module purpose");
   const status = modal.getByRole("button", { name: new RegExp(`^${t("modules.status")}:`) });
   await status.click();
   const dates = await modal.getByLabel(t("modules.start")).evaluate((element) => {
@@ -125,6 +126,9 @@ try {
   // Detail: add work items from the module page.
   await page.getByRole("link", { name: "Authentication" }).click();
   await page.getByRole("heading", { name: "Authentication" }).waitFor();
+  await page.getByRole("textbox", { name: "Description" }).fill("Module scope and goal");
+  await page.getByRole("heading", { name: "Authentication" }).click();
+  check((await page.getByRole("textbox", { name: "Description" }).inputValue()) === "Module scope and goal", "Module description did not save through Actions");
   await page.getByRole("button", { name: t("modules.addWorkItems") }).click();
   const add = page.getByRole("dialog", { name: t("modules.addItemsTitle") });
   await add.getByLabel(/Alpha/).check();

@@ -65,6 +65,7 @@ try {
     await page.getByLabel(translate("cycles.name")).fill(name);
     await page.getByLabel(translate("cycles.start")).fill(start);
     await page.getByLabel(translate("cycles.end")).fill(end);
+    await page.getByRole("textbox", { name: "Description" }).fill("Initial cycle purpose");
     return page.getByRole("button", { name: translate("cycles.create"), exact: true });
   };
   const tab = (status: string) => page.getByRole("tab", { name: new RegExp(`^${translate(`cycles.status.${status}`)}`) });
@@ -93,6 +94,10 @@ try {
 
   // Detail: add a work item, see progress and the state breakdown.
   await page.getByRole("link", { name: "Sprint 1" }).click();
+  await page.getByRole("textbox", { name: "Description" }).fill("Updated cycle purpose");
+  await page.getByRole("heading", { name: translate("cycles.workItems") }).click();
+  await page.getByRole("textbox", { name: "Description" }).waitFor();
+  check((await page.getByRole("textbox", { name: "Description" }).inputValue()) === "Updated cycle purpose", "Cycle description did not save through Actions");
   await page.getByRole("button", { name: translate("cycles.addItems"), exact: true }).click();
   await page.getByLabel(`${translate("cycles.selectCandidate")} MOB-1`).check();
   await page.getByRole("button", { name: translate("cycles.addSelected").replace("{count}", "1"), exact: true }).click();

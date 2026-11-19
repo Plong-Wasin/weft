@@ -76,12 +76,14 @@ test.concurrent("Intake stores submitted descriptions in Written form", async ()
 
 test.concurrent("Intake content edits are limited to creators and Admins on pending or snoozed items", async () => {
   await withRollback(db, async (transaction) => {
-    const { admin, member, guest, submit, intake, project } = await setup(transaction);
+    const { admin, member, guest, workspace, submit, intake, project } = await setup(transaction);
+    const workspaceAdmin = await createMemberFactory(transaction, workspace.id, "Admin");
     const created = await submit(guest.id, "Original");
     const changed = await intake.updateIntakeItem.handler({ userId: guest.id }, { intakeItemId: created.id, title: "Corrected", descriptionMarkdown: "**More detail**", priority: "high" });
     expect(changed).toMatchObject({ title: "Corrected", descriptionMarkdown: "**More detail**", priority: "high" });
     await expect(intake.updateIntakeItem.handler({ userId: member.id }, { intakeItemId: created.id, title: "Other member" })).rejects.toMatchObject({ status: 403 });
     expect((await intake.updateIntakeItem.handler({ userId: admin.id }, { intakeItemId: created.id, title: "Admin edit" })).title).toBe("Admin edit");
+    expect((await intake.updateIntakeItem.handler({ userId: workspaceAdmin.id }, { intakeItemId: created.id, title: "Workspace admin edit" })).title).toBe("Workspace admin edit");
     const snoozed = await intake.snoozeIntakeItem.handler({ userId: member.id }, { intakeItemId: created.id, snoozedTill: new Date(Date.now() + 3_600_000).toISOString() });
     expect((await intake.updateIntakeItem.handler({ userId: guest.id }, { intakeItemId: snoozed.id, title: "Snoozed edit" })).title).toBe("Snoozed edit");
     for (const action of [intake.rejectIntakeItem, intake.duplicateIntakeItem]) {
@@ -94,7 +96,7 @@ test.concurrent("Intake content edits are limited to creators and Admins on pend
       }
       await expect(intake.updateIntakeItem.handler({ userId: guest.id }, { intakeItemId: item.id, title: "Should be frozen" })).rejects.toMatchObject({ status: 400 });
     }
-    expect(await transaction.select().from(activities).where(and(eq(activities.entityType, "work_item"), eq(activities.projectId, project.id), eq(activities.field, "title")))).toHaveLength(3);
+    expect(await transaction.select().from(activities).where(and(eq(activities.entityType, "work_item"), eq(activities.projectId, project.id), eq(activities.field, "title")))).toHaveLength(4);
   });
 });
 

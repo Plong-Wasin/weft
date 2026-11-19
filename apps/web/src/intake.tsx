@@ -217,6 +217,7 @@ function Detail({ action, workspaceId, item, index, count, canDecide, canEdit, o
 
 export function IntakePage({ workspaceId, projectId, canDecide, canAdmin, enabled, action }: { workspaceId: string; workspaceSlug?: string; projectKey?: string; projectId: string; canDecide: boolean; canAdmin: boolean; enabled: boolean; action: Call }) {
   const { selfId } = useWorkspace();
+  const [workspaceAdmin, setWorkspaceAdmin] = React.useState(false);
   const [params, setParams] = useSearchParams();
   const tab: Tab = params.get("currentTab") === "closed" ? "closed" : "open";
   const selectedId = params.get("inboxIssueId");
@@ -224,6 +225,13 @@ export function IntakePage({ workspaceId, projectId, canDecide, canAdmin, enable
   const [adding, setAdding] = React.useState(false);
   // A freshly submitted item is selected before the list has reloaded to include it.
   const justAdded = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    let active = true;
+    void action<Array<{ userId: string; role: string }>>("list_members", { workspaceId }).then((members) => {
+      if (active) setWorkspaceAdmin(members?.some((member) => member.userId === selfId && member.role === "Admin") ?? false);
+    });
+    return () => { active = false; };
+  }, [action, selfId, workspaceId]);
   const load = React.useCallback(async () => {
     if (!enabled) { setItems(null); return; }
     const lists = await Promise.all(tabOutcomes[tab].map((outcome) => action<IntakeItem[]>("list_intake_items", { projectId, outcome })));
@@ -276,7 +284,7 @@ export function IntakePage({ workspaceId, projectId, canDecide, canAdmin, enable
           {(items ?? []).map((item) => <ListRow key={item.id} item={item} selected={item.id === selectedId} onSelect={() => select(item.id)} />)}
         </ul>
       </div>
-      {current ? <Detail key={current.id} action={action} workspaceId={workspaceId} item={current} index={index} count={items!.length} canDecide={canDecide} canEdit={canAdmin || current.createdBy === selfId}
+      {current ? <Detail key={current.id} action={action} workspaceId={workspaceId} item={current} index={index} count={items!.length} canDecide={canDecide} canEdit={canAdmin || workspaceAdmin || current.createdBy === selfId}
         onMove={(delta) => select(items![index + delta]!.id)} onDecided={afterDecision} onUpdated={() => void load()} />
         : items?.length === 0
           ? <div className="grid min-w-0 flex-1 place-items-center">{tab === "open"

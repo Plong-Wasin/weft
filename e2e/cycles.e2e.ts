@@ -154,6 +154,9 @@ try {
   const progress = await page.getByTestId("cycle-progress").first().getAttribute("title");
   if (progress !== translate("cycles.progressOf").replace("{done}", "0").replace("{total}", "1")) throw new Error(`unexpected progress: ${progress}`);
   await page.getByTestId("cycle-breakdown").waitFor();
+  await page.getByTestId("cycle-burndown").getByRole("status").filter({ hasText: "Initial scope: unknown" }).waitFor();
+  // The item entered this Cycle twice and left it once in the move round-trip above.
+  await page.getByText(/Scope added \/ removed:.*\+2 \/ −1/).waitFor();
   await page.screenshot({ path: `${shots}/cycle-detail-1440.png` });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: `${shots}/cycle-detail-390.png` });
@@ -165,6 +168,8 @@ try {
   await page.getByLabel(translate("cycles.start")).fill(day(-5));
   await page.getByLabel(translate("cycles.end")).fill(day(-2));
   await page.getByRole("button", { name: translate("cycles.save"), exact: true }).click();
+  await page.getByTestId("cycle-burndown").getByText(/Reporting dates changed/).waitFor();
+  await page.getByTestId("cycle-burndown").getByText(translate("cycles.history.noCoverage")).waitFor();
   await page.getByTestId("cycle-transfer").waitFor();
   await page.getByLabel(translate("cycles.transferTarget")).selectOption({ label: "Sprint 2" });
   await page.getByRole("button", { name: translate("cycles.transfer"), exact: true }).click();

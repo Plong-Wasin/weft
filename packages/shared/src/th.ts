@@ -1174,6 +1174,7 @@ export const th: Record<keyof typeof en, string> = {
   "intake.submitFailed": "ส่งไม่สำเร็จ ลองใหม่อีกครั้ง",
   "intake.by": "โดย {name}",
   "intake.accept": "รับ",
+  "intake.acceptIntoState": "รับเข้า State",
   "intake.reject": "ปฏิเสธ",
   "intake.snooze": "เลื่อนไว้",
   "intake.unsnooze": "นำกลับมาดำเนินการ",

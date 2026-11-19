@@ -153,7 +153,7 @@ export function createIntakeActions(db: Database) {
     return { row, item, project };
   }
 
-  async function decide(context: Context, intakeItemId: string, decision: "accepted" | "rejected" | "snoozed" | "duplicate", options: { snoozedTill?: Date; duplicateTo?: string } = {}) {
+  async function decide(context: Context, intakeItemId: string, decision: "accepted" | "rejected" | "snoozed" | "duplicate", options: { snoozedTill?: Date; duplicateTo?: string; stateId?: string } = {}) {
     const { row, item, project } = await forDecision(context, intakeItemId);
     return db.transaction(async (transaction) => {
       const database = tx(transaction);
@@ -163,9 +163,14 @@ export function createIntakeActions(db: Database) {
       const patch: Partial<typeof intakeItems.$inferInsert> = { outcome: decision, decidedBy: context.userId, decidedAt: new Date(), snoozedTill: null, duplicateTo: null };
       let entry: { field: string; newValue: unknown } = { field: `intake_${decision === "accepted" ? "accepted" : decision === "rejected" ? "rejected" : decision === "snoozed" ? "snoozed" : "duplicate"}`, newValue: null };
       if (decision === "accepted") {
-        const states = await database.select().from(workItemStates).where(and(eq(workItemStates.projectId, project.id), eq(workItemStates.group, "backlog"))).orderBy(asc(workItemStates.sortOrder));
-        const target = states[0];
-        if (!target) throw new ActionError("Project has no Backlog state to accept into", 400);
+        let target: typeof workItemStates.$inferSelect | undefined;
+        if (options.stateId !== undefined) {
+          [target] = await database.select().from(workItemStates).where(and(eq(workItemStates.id, options.stateId), eq(workItemStates.projectId, project.id)));
+          if (!target || target.group === triageGroup) throw new ActionError("State must be a normal State in this project", 400);
+        } else {
+          [target] = await database.select().from(workItemStates).where(and(eq(workItemStates.projectId, project.id), eq(workItemStates.group, "backlog"))).orderBy(asc(workItemStates.sortOrder));
+          if (!target) throw new ActionError("Project has no Backlog state to accept into", 400);
+        }
         if (project.typesEnabled && item.typeId) {
           const type = await database.select().from(workItemTypes).where(eq(workItemTypes.id, item.typeId));
           const properties = await loadProperties(database, project.id, item.typeId);
@@ -292,8 +297,8 @@ export function createIntakeActions(db: Database) {
       },
     },
     acceptIntakeItem: {
-      name: "accept_intake_item", kind: "write" as const, input: Type.Object(idInput), output: intakeOutput,
-      handler: (context: Context, input: { intakeItemId: string }) => decide(context, input.intakeItemId, "accepted"),
+      name: "accept_intake_item", kind: "write" as const, input: Type.Object({ ...idInput, stateId: Type.Optional(uuid()) }), output: intakeOutput,
+      handler: (context: Context, input: { intakeItemId: string; stateId?: string }) => decide(context, input.intakeItemId, "accepted", { stateId: input.stateId }),
     },
     rejectIntakeItem: {
       name: "reject_intake_item", kind: "write" as const, input: Type.Object(idInput), output: intakeOutput,

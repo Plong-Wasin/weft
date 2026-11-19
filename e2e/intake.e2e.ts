@@ -202,7 +202,19 @@ try {
   await page.goto(`${web}/${slug}/projects/MOB/intake`);
 
   // Accept MOB-1: it leaves Open and shows in Closed as Accepted.
-  await decide("MOB-1", translate("intake.accept"));
+  await page.getByTestId("intake-MOB-1").click();
+  await detail.getByRole("button", { name: translate("intake.accept"), exact: true }).click();
+  const acceptDialog = page.getByRole("dialog", { name: translate("intake.acceptIntoState") });
+  const targetState = acceptDialog.getByLabel(translate("workItems.state"));
+  await page.waitForFunction(() => {
+    const select = document.querySelector<HTMLSelectElement>('[role="dialog"] select[aria-label="State"]');
+    return select?.options.length && [...select.options].some((option) => option.textContent === "Backlog") && [...select.options].some((option) => option.textContent === "Done") && [...select.options].some((option) => option.textContent === "Cancelled");
+  });
+  const backlogId = await targetState.locator("option", { hasText: "Backlog" }).getAttribute("value");
+  check(await targetState.inputValue() === backlogId, "accept did not default to the first Backlog State");
+  await targetState.selectOption({ label: "Done" });
+  await acceptDialog.getByRole("button", { name: translate("intake.accept"), exact: true }).click();
+  await acceptDialog.waitFor({ state: "detached" });
   await page.getByTestId("intake-MOB-1").waitFor({ state: "detached" });
   // Decline MOB-2.
   await decide("MOB-2", translate("intake.reject"));

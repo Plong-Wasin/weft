@@ -50,15 +50,17 @@ test.concurrent("a mention notifies the mentioned member, not the author, and sh
 
 test.concurrent("an Intake comment notifies its Guest creator and mentioned members, not its actor", async () => {
   await withRollback(db, async (transaction) => {
-    const { workspace, admin, author, other, project, comments, inbox } = await setup(transaction);
+    const { workspace, admin, author, other, third, project, comments, inbox } = await setup(transaction);
     const guest = await createMemberFactory(transaction, workspace.id, "Guest");
     await createProjectActions(transaction).addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: guest.id, role: "Guest" });
-    const submitted = await createIntakeActions(transaction).submitIntakeItem.handler({ userId: guest.id }, { projectId: project.id, title: "Guest request" });
-    const added = await comments.createComment.handler({ userId: author.id }, { workItemId: submitted.workItemId, body: doc("Review ", { mention: other.id }) });
+    const submitted = await createIntakeActions(transaction).submitIntakeItem.handler({ userId: guest.id }, { projectId: project.id, title: "Guest request", assigneeIds: [other.id] });
+    const added = await comments.createComment.handler({ userId: author.id }, { workItemId: submitted.workItemId, body: doc("Review ", { mention: other.id }, " and ", { mention: third.id }) });
     expect(added.wakeOutcomes).toEqual([]);
     await drain(transaction);
     expect((await inbox.listNotifications.handler({ userId: guest.id }, { workspaceId: workspace.id })).notifications).toMatchObject([{ kind: "mention", workItemId: submitted.workItemId, actorId: author.id }]);
     expect((await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).notifications).toMatchObject([{ kind: "mention", workItemId: submitted.workItemId, actorId: author.id }]);
+    expect((await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).notifications).toHaveLength(1);
+    expect((await inbox.listNotifications.handler({ userId: third.id }, { workspaceId: workspace.id })).notifications).toMatchObject([{ kind: "mention", workItemId: submitted.workItemId, actorId: author.id }]);
     expect((await inbox.listNotifications.handler({ userId: author.id }, { workspaceId: workspace.id })).notifications).toHaveLength(0);
   });
 });

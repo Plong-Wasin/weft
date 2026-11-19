@@ -6,13 +6,14 @@ import { EmptyState } from "./empty-state";
 import { Popover, menuItemClass } from "./shell/popover";
 import { PriorityIcon } from "./property-dropdowns";
 import { Avatar } from "./avatar";
+import { useWorkspace } from "./layouts/workspace-layout";
 
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 const outcomes = ["pending", "snoozed", "accepted", "rejected", "duplicate"] as const;
 type Outcome = (typeof outcomes)[number];
 type Tab = "open" | "closed";
 type IntakeItem = {
-  id: string; displayId: string; title: string; descriptionText: string; priority: string; outcome: Outcome; snoozedTill: string | null;
+  id: string; displayId: string; title: string; descriptionText: string; descriptionMarkdown: string; priority: string; outcome: Outcome; snoozedTill: string | null;
   duplicateToDisplayId: string | null; createdBy: string; createdByName: string; createdAt: string;
 };
 const t = (key: string) => translate(key as MessageKey);
@@ -138,23 +139,38 @@ function ListRow({ item, selected, onSelect }: { item: IntakeItem; selected: boo
 
 type Dialog = "snooze" | "duplicate" | null;
 
-function Detail({ action, workspaceId, item, index, count, canDecide, onMove, onDecided }: {
-  action: Call; workspaceId: string; item: IntakeItem; index: number; count: number; canDecide: boolean; onMove: (delta: number) => void; onDecided: () => void;
+function Detail({ action, workspaceId, item, index, count, canDecide, canEdit, onMove, onDecided, onUpdated }: {
+  action: Call; workspaceId: string; item: IntakeItem; index: number; count: number; canDecide: boolean; canEdit: boolean; onMove: (delta: number) => void; onDecided: () => void; onUpdated: () => void;
 }) {
   const [dialog, setDialog] = React.useState<Dialog>(null);
   const [note, setNote] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
+  const [editing, setEditing] = React.useState(false);
+  const [title, setTitle] = React.useState(item.title);
+  const [description, setDescription] = React.useState(item.descriptionMarkdown);
+  const [priority, setPriority] = React.useState(item.priority);
+  const [saving, setSaving] = React.useState(false);
   const undecided = item.outcome === "pending" || item.outcome === "snoozed";
   const run = async (name: string, body: Record<string, unknown>) => {
     const done = await action(name, { intakeItemId: item.id, ...body });
     setNote(done ? null : t("intake.failed"));
     if (done) { setDialog(null); onDecided(); }
   };
+  const save = async (event: React.FormEvent) => {
+    event.preventDefault(); setSaving(true);
+    try {
+      const saved = await action<IntakeItem>("update_intake_item", { intakeItemId: item.id, title, descriptionMarkdown: description, priority });
+      if (!saved) { setNote(t("intake.failed")); return; }
+      setNote(null); setEditing(false); onUpdated();
+    } catch { setNote(t("intake.failed")); }
+    finally { setSaving(false); }
+  };
   return <section aria-label={t("intake.detail")} className="flex min-w-0 flex-1 flex-col">
     <header className="flex flex-wrap items-center gap-2 border-b border-subtle px-5 py-3">
       <span className="text-16 font-medium text-secondary">{item.displayId}</span>
       <StatusBadge item={item} />
       <span className="flex-1" />
+      {canEdit && undecided && !editing && <button type="button" className={quietButton} onClick={() => setEditing(true)}>{t("intake.edit")}</button>}
       <button type="button" className={iconButton} aria-label={t("intake.previous")} disabled={index <= 0} onClick={() => onMove(-1)}><ChevronUp aria-hidden size={16} /></button>
       <button type="button" className={iconButton} aria-label={t("intake.next")} disabled={index >= count - 1} onClick={() => onMove(1)}><ChevronDown aria-hidden size={16} /></button>
       {canDecide && undecided && <>
@@ -175,8 +191,13 @@ function Detail({ action, workspaceId, item, index, count, canDecide, onMove, on
       </Popover>
     </header>
     <div className="grid gap-5 overflow-auto px-5 py-5">
-      <h2 className="m-0 text-24 font-semibold text-primary">{item.title}</h2>
-      <p className="m-0 whitespace-pre-wrap text-14 text-primary">{item.descriptionText || <span className="text-tertiary">{t("intake.noDescription")}</span>}</p>
+      {editing ? <form className="grid gap-3" onSubmit={(event) => void save(event)}>
+        <label className="grid gap-1 text-13 text-secondary">{t("intake.titleField")}<input required maxLength={500} value={title} className={field} onChange={(event) => setTitle(event.target.value)} /></label>
+        <label className="grid gap-1 text-13 text-secondary">{t("intake.descriptionField")}<textarea rows={8} value={description} className={field} onChange={(event) => setDescription(event.target.value)} /></label>
+        <label className="grid gap-1 text-13 text-secondary">{t("intake.priority")}<select value={priority} className={field} onChange={(event) => setPriority(event.target.value)}>{["none", "urgent", "high", "medium", "low"].map((value) => <option key={value} value={value}>{t(`workItems.priority.${value}`)}</option>)}</select></label>
+        <div className="flex gap-2"><button className={primaryButton} disabled={saving}>{saving ? t("intake.saving") : t("intake.save")}</button><button type="button" className={quietButton} onClick={() => { setEditing(false); setTitle(item.title); setDescription(item.descriptionMarkdown); setPriority(item.priority); }}>{t("intake.cancel")}</button></div>
+      </form> : <><h2 className="m-0 text-24 font-semibold text-primary">{item.title}</h2>
+      <p className="m-0 whitespace-pre-wrap text-14 text-primary">{item.descriptionText || <span className="text-tertiary">{t("intake.noDescription")}</span>}</p></>}
       <dl className="m-0 grid max-w-md grid-cols-[8rem_1fr] items-center gap-x-3 gap-y-3 text-13">
         <dt className="text-secondary">{t("intake.priority")}</dt>
         <dd className="m-0 flex items-center gap-1.5 text-primary"><PriorityIcon priority={item.priority} />{t(`workItems.priority.${item.priority}`)}</dd>
@@ -194,7 +215,8 @@ function Detail({ action, workspaceId, item, index, count, canDecide, onMove, on
   </section>;
 }
 
-export function IntakePage({ workspaceId, projectId, canDecide, enabled, action }: { workspaceId: string; workspaceSlug?: string; projectKey?: string; projectId: string; canDecide: boolean; enabled: boolean; action: Call }) {
+export function IntakePage({ workspaceId, projectId, canDecide, canAdmin, enabled, action }: { workspaceId: string; workspaceSlug?: string; projectKey?: string; projectId: string; canDecide: boolean; canAdmin: boolean; enabled: boolean; action: Call }) {
+  const { selfId } = useWorkspace();
   const [params, setParams] = useSearchParams();
   const tab: Tab = params.get("currentTab") === "closed" ? "closed" : "open";
   const selectedId = params.get("inboxIssueId");
@@ -254,8 +276,8 @@ export function IntakePage({ workspaceId, projectId, canDecide, enabled, action 
           {(items ?? []).map((item) => <ListRow key={item.id} item={item} selected={item.id === selectedId} onSelect={() => select(item.id)} />)}
         </ul>
       </div>
-      {current ? <Detail key={current.id} action={action} workspaceId={workspaceId} item={current} index={index} count={items!.length} canDecide={canDecide}
-        onMove={(delta) => select(items![index + delta]!.id)} onDecided={afterDecision} />
+      {current ? <Detail key={current.id} action={action} workspaceId={workspaceId} item={current} index={index} count={items!.length} canDecide={canDecide} canEdit={canAdmin || current.createdBy === selfId}
+        onMove={(delta) => select(items![index + delta]!.id)} onDecided={afterDecision} onUpdated={() => void load()} />
         : items?.length === 0
           ? <div className="grid min-w-0 flex-1 place-items-center">{tab === "open"
             ? <EmptyState title={t("intake.empty")} description={t("intake.emptyHint")} action={<button type="button" className={`${primaryButton} flex items-center gap-1.5`} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("intake.add")}</button>} />

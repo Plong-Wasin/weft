@@ -205,10 +205,14 @@ export function createIntakeActions(db: Database) {
         if (!admin && row.createdBy !== context.userId) throw new ActionError("Forbidden", 403);
         if (project.archivedAt) throw new ActionError("Project is archived", 400);
         if (row.outcome === "accepted") throw new ActionError("An accepted item is edited as a work item", 400);
+        if (row.outcome === "rejected" || row.outcome === "duplicate") throw new ActionError("A decided Intake item is read-only", 400);
         let descriptionWarnings: string[] = [];
         let descriptionWarningDetails: Array<{ code: string; message: string }> = [];
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
+          const [locked] = await database.select().from(intakeItems).where(eq(intakeItems.id, row.id)).for("update");
+          if (!locked) throw new ActionError("Intake item not found", 404);
+          if (locked.outcome !== "pending" && locked.outcome !== "snoozed") throw new ActionError("A decided Intake item is read-only", 400);
           const changes: Array<{ field: string; column: Partial<typeof workItems.$inferInsert>; oldValue: unknown; newValue: unknown }> = [];
           if (input.title !== undefined && input.title !== item.title) changes.push({ field: "title", column: { title: input.title }, oldValue: item.title, newValue: input.title });
           if (input.priority !== undefined && input.priority !== item.priority) changes.push({ field: "priority", column: { priority: input.priority }, oldValue: item.priority, newValue: input.priority });

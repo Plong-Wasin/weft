@@ -24,7 +24,7 @@ export function ProjectModuleRoute() { const { moduleId = "" } = useParams(); re
 export function ProjectIntakeRoute() {
   const { workspace } = useWorkspace();
   const { project } = useProject();
-  return <IntakePage workspaceId={workspace.id} workspaceSlug={workspace.slug} projectKey={project.key} projectId={project.id} canDecide={project.role !== "Guest"} enabled={project.features.intake} action={action} />;
+  return <IntakePage workspaceId={workspace.id} workspaceSlug={workspace.slug} projectKey={project.key} projectId={project.id} canDecide={project.role !== "Guest"} canAdmin={project.role === "Admin"} enabled={project.features.intake} action={action} />;
 }
 
 export function ProjectPagesRoute() { const { workspace } = useWorkspace(); const { project } = useProject(); return <ProjectPagesPage workspace={workspace} project={project} canWrite={project.role !== "Guest"} />; }

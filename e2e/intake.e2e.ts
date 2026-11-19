@@ -70,6 +70,15 @@ try {
   await page.getByTestId("intake-MOB-1").waitFor();
   await detail.getByRole("heading", { name: "Dark mode please" }).waitFor();
   await detail.getByText("Users want a dark theme").waitFor();
+  await detail.getByRole("button", { name: translate("intake.edit"), exact: true }).click();
+  await detail.getByLabel(translate("intake.titleField")).fill("Dark theme please");
+  await detail.getByLabel(translate("intake.descriptionField")).fill("**Updated request**");
+  await detail.getByRole("button", { name: translate("intake.save"), exact: true }).click();
+  await detail.getByRole("heading", { name: "Dark theme please" }).waitFor();
+  await page.reload();
+  await page.getByRole("link", { name: translate("intake.title") }).click();
+  await page.getByRole("region", { name: translate("intake.detail") }).getByRole("heading", { name: "Dark theme please" }).waitFor();
+  await page.getByRole("region", { name: translate("intake.detail") }).getByText("Updated request").waitFor();
   await submit("Export to CSV");
   await submit("Slow search");
   await submit("Typo on home");
@@ -81,7 +90,7 @@ try {
   await page.goto(`${web}/${slug}/projects/MOB/issues`);
   // Only Triage items exist in the project, so its list shows the empty state, not status groups.
   await page.getByRole("status").filter({ hasText: translate("workItems.emptyHint") }).waitFor();
-  check(await page.getByRole("link", { name: /Dark mode please/ }).count() === 0, "a Triage work item showed in the project list");
+  check(await page.getByRole("link", { name: /Dark theme please/ }).count() === 0, "a Triage work item showed in the project list");
   await page.goto(`${web}/${slug}/projects/MOB/intake`);
 
   // Accept MOB-1: it leaves Open and shows in Closed as Accepted.
@@ -128,7 +137,7 @@ try {
 
   // Only the accepted item reaches the project list; declined, snoozed and duplicate stay out.
   await page.goto(`${web}/${slug}/projects/MOB/issues`);
-  await page.getByRole("link", { name: /Dark mode please/ }).waitFor();
+  await page.getByRole("link", { name: /Dark theme please/ }).waitFor();
   for (const title of ["Export to CSV", "Slow search", "Typo on home"]) check(await page.getByRole("link", { name: new RegExp(title) }).count() === 0, `${title} showed in the project list`);
   console.log("e2e intake: ok");
   await browser.close();

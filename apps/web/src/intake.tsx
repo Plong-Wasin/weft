@@ -309,7 +309,10 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
     const attempted = { title: titleInputRef.current?.value ?? sessionStorage.getItem(titleDraftKey(item.id)) ?? titleValueRef.current, description: savedDraft?.description ?? description, priority: savedDraft?.priority ?? priority, assigneeIds: savedDraft?.assigneeIds ?? assigneeIds, labelIds: savedDraft?.labelIds ?? labelIds, dueDate: savedDraft ? savedDraft.dueDate : (dueDate || null) };
     try {
       const saved = await action<IntakeItem>("update_intake_item", { intakeItemId: item.id, ...attempted });
-      if (!saved) { onDraftChange(attempted); setNote(t("intake.failed")); return; }
+      if (!saved) {
+        if (sessionStorage.getItem(draftKey(item.id)) === draftSnapshot && sessionStorage.getItem(titleDraftKey(item.id)) === titleSnapshot) onDraftChange(attempted);
+        setNote(t("intake.failed")); return;
+      }
       if (sessionStorage.getItem(draftKey(item.id)) === draftSnapshot && sessionStorage.getItem(titleDraftKey(item.id)) === titleSnapshot) {
         titleValueRef.current = attempted.title; setTitle(attempted.title); sessionStorage.removeItem(titleDraftKey(item.id)); sessionStorage.removeItem(draftKey(item.id)); onUpdated();
       } else onChanged();

@@ -177,9 +177,11 @@ try {
   await detail.getByTestId("description-editor").locator("strong").getByText("Updated request").waitFor();
   const afterEditorTitle = await detail.getByLabel(translate("intake.titleField")).inputValue();
   check(afterEditorTitle === "Dark theme please", `switching items discarded the title draft: ${afterEditorTitle}`);
-  await page.route("**/actions/update_intake_item", (route) => route.abort());
+  await page.route("**/actions/update_intake_item", async (route) => { await Bun.sleep(500); await route.abort(); });
   await detail.getByRole("button", { name: translate("intake.save"), exact: true }).click();
+  await detail.getByLabel(translate("workItems.dueDate")).fill("2030-05-09");
   await detail.getByRole("alert").waitFor();
+  await expectValue(detail.getByLabel(translate("workItems.dueDate")), "2030-05-09", "edit during failed save");
   const retainedTitle = await detail.getByLabel(translate("intake.titleField")).inputValue();
   check(retainedTitle === "Dark theme please", `failed save discarded title draft: ${retainedTitle}`);
   await detail.getByTestId("description-editor").locator('[contenteditable="true"]').getByText("Updated request").waitFor();

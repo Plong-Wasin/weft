@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { createActionList } from "../src";
 import { agentActionGroup, agentMayUseAction, classifyAgentAction } from "../src/agent-action-policy";
+import { aiWriteActions } from "../src/confirmations";
 
 const allGrants = { allowProjectActions: true, allowMemberActions: true, allowFeatureActions: true, allowExportActions: true };
 const noGrants = { allowProjectActions: false, allowMemberActions: false, allowFeatureActions: false, allowExportActions: false };
@@ -81,6 +82,13 @@ test("page import uses the existing feature grant and adds no Agent capability",
   expect(agentActionGroup("create_wiki_page")).toBe("feature");
   expect(agentMayUseAction("create_wiki_page", noGrants)).toBe(false);
   expect(agentMayUseAction("create_wiki_page", allGrants)).toBe(true);
+});
+
+test("selective Cycle transfer follows transfer permissions and requires normal write confirmation", () => {
+  expect(agentActionGroup("selective_transfer_cycle_items")).toBe(agentActionGroup("transfer_cycle_items"));
+  expect(agentMayUseAction("selective_transfer_cycle_items", noGrants)).toBe(false);
+  expect(agentMayUseAction("selective_transfer_cycle_items", allGrants)).toBe(agentMayUseAction("transfer_cycle_items", allGrants));
+  expect(aiWriteActions).toContain("selective_transfer_cycle_items");
 });
 
 test("every work item and comment Action in the registry is open to an Agent with no grants, unless it is a people-only surface", () => {

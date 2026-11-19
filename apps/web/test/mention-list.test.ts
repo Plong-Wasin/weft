@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { Editor } from "@tiptap/core";
 import { translate } from "@weft/shared";
+import { mentionExtension } from "../src/mention-extension";
 import { mentionGroup, mentionNotes, nextSelection } from "../src/suggest-list";
 
 const src = (name: string) => readFileSync(join(import.meta.dir, "..", "src", name), "utf8");
@@ -31,12 +33,29 @@ test("people and Agents fall under the People and Agents headings", () => {
   expect(translate(mentionGroup({ id: "a", label: "Atlas", isAgent: true }))).toBe("Agents");
 });
 
-test("the Wiki and comment mention lists and the emoji list all come from the shared renderer", () => {
-  for (const name of ["wiki.tsx", "comments-panel.tsx"]) {
+test("the shared rich-text mention extension filters, groups and marks inaccessible Agents", async () => {
+  const people = { current: [
+    { userId: "agent-z", name: "Atlas", isAgent: true, codeCapable: true, hasAccess: false, accessReason: "Ask the owner" },
+    { userId: "person-z", name: "Alex" },
+    { userId: "agent-a", name: "Albert", isAgent: true, codeCapable: false, hasAccess: true },
+    { userId: "person-a", name: "Bob" },
+  ] };
+  const extension = mentionExtension(people);
+  const suggestion = extension.options.suggestion;
+  const items = await suggestion.items?.({ query: "a", editor: {} as Editor, signal: new AbortController().signal }) ?? [];
+  expect(items.map((item) => item.id)).toEqual(["person-z", "agent-a", "agent-z"]);
+  expect(items.at(-1)).toMatchObject({ isAgent: true, codeCapable: true, unavailable: true, unavailableReason: "Ask the owner" });
+  expect(suggestion.render).toBeDefined();
+});
+
+test("Wiki and rich-text editors use the shared mention popup behavior", () => {
+  const wiki = src("wiki.tsx");
+  expect(wiki).toContain("render: mentionRender(\"wiki.mentionMembers\")");
+  for (const name of ["comments-panel.tsx", "description-editor.tsx"]) {
     const text = src(name);
-    expect(text).toContain('from "./suggest-list"');
-    expect(text).not.toContain('"listbox"');
-    expect(text).not.toContain("◉");
+    expect(text).toContain('from "./mention-extension"');
+    expect(text).toContain("mention: mentionExtension(peopleRef)");
   }
+  expect(src("mention-extension.ts")).toContain("render: mentionRender(\"wiki.mentionMembers\")");
   expect(src("editor-extensions.ts")).toContain("suggestRender<");
 });

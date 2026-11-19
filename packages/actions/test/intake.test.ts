@@ -1,8 +1,8 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
-import { activities, createDatabase, cycleItems, intakeItems, notifications, outboundWebhookDeliveries, workItemPropertyValues, workItemStates, workItems, workItemRelations, type Database } from "@weft/db";
+import { activities, createDatabase, cycleItems, intakeItems, notifications, outboundWebhookDeliveries, runs, workItemAssignees, workItemLabels, workItemPropertyValues, workItemStates, workItems, workItemRelations, type Database } from "@weft/db";
 import {
-  createCommentActions, createCycleActions, createIntakeActions, createOutboundWebhookActions, createWorkItemTypeActions, createJobHandlers, createNotificationActions, createProjectActions, createRelationActions,
+  createAgentActions, createCommentActions, createCycleActions, createIntakeActions, createOutboundWebhookActions, createWorkItemTypeActions, createJobHandlers, createNotificationActions, createProjectActions, createRelationActions, createTriggerActions,
   createSearchActions, createWorkItemActions, effectiveOutcome,
 } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
@@ -27,6 +27,59 @@ async function setup(transaction: Database, visibility: "public" | "private" = "
 }
 
 const triageStates = (transaction: Database, projectId: string) => transaction.select().from(workItemStates).where(and(eq(workItemStates.projectId, projectId), eq(workItemStates.group, "triage")));
+
+test.concurrent("Intake submission and edits persist assignees, labels, and due date with Activity", async () => {
+  await withRollback(db, async (transaction) => {
+    const { admin, member, guest, intake, project } = await setup(transaction);
+    const label = await createWorkItemActions(transaction).createLabel.handler({ userId: admin.id }, { projectId: project.id, name: "Customer" });
+    const dueDate = "2030-05-06";
+    const created = await intake.submitIntakeItem.handler({ userId: guest.id }, { projectId: project.id, title: "Properties on submit", assigneeIds: [member.id], labelIds: [label.id], dueDate });
+    expect(created).toMatchObject({ assigneeIds: [member.id], labelIds: [label.id], dueDate });
+    expect(await transaction.select().from(workItemAssignees).where(eq(workItemAssignees.workItemId, created.workItemId))).toMatchObject([{ userId: member.id }]);
+    expect(await transaction.select().from(workItemLabels).where(eq(workItemLabels.workItemId, created.workItemId))).toMatchObject([{ labelId: label.id }]);
+    expect((await transaction.select().from(workItems).where(eq(workItems.id, created.workItemId)))[0]?.dueDate).toBe(dueDate);
+
+    const updated = await intake.updateIntakeItem.handler({ userId: guest.id }, { intakeItemId: created.id, assigneeIds: [admin.id], labelIds: [], dueDate: null });
+    expect(updated).toMatchObject({ title: "Properties on submit", assigneeIds: [admin.id], labelIds: [], dueDate: null });
+    expect(await transaction.select().from(workItemAssignees).where(eq(workItemAssignees.workItemId, created.workItemId))).toMatchObject([{ userId: admin.id }]);
+    expect(await transaction.select().from(workItemLabels).where(eq(workItemLabels.workItemId, created.workItemId))).toHaveLength(0);
+    expect((await transaction.select().from(workItems).where(eq(workItems.id, created.workItemId)))[0]?.dueDate).toBeNull();
+    const fields = (await transaction.select({ field: activities.field }).from(activities).where(eq(activities.entityId, created.workItemId))).map((row) => row.field);
+    expect(fields).toEqual(expect.arrayContaining(["assignees", "labels", "dueDate"]));
+    await expect(intake.updateIntakeItem.handler({ userId: guest.id }, { intakeItemId: created.id, dueDate: "2030-02-31" })).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+test.concurrent("an Agent assigned to Intake waits for acceptance, then gets one Run", async () => {
+  await withRollback(db, async (transaction) => {
+    const { admin, member, workspace, project, intake } = await setup(transaction);
+    const agents = createAgentActions(transaction);
+    const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Intake Agent", instructions: "Review approved requests", model: "default" });
+    await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id] });
+    await createTriggerActions(transaction).createTrigger.handler({ userId: admin.id }, { agentId: agent.id, projectId: project.id, eventType: "work_item_created" });
+    const label = await createWorkItemActions(transaction).createLabel.handler({ userId: admin.id }, { projectId: project.id, name: "Approved context" });
+    const created = await intake.submitIntakeItem.handler({ userId: member.id }, { projectId: project.id, title: "Not approved yet", assigneeIds: [agent.userId], labelIds: [label.id], dueDate: "2030-05-06" });
+    expect(await transaction.select().from(runs).where(eq(runs.workItemId, created.workItemId))).toHaveLength(0);
+    const accepted = await intake.acceptIntakeItem.handler({ userId: member.id }, { intakeItemId: created.id });
+    expect(accepted).toMatchObject({ outcome: "accepted", assigneeIds: [agent.userId], labelIds: [label.id], dueDate: "2030-05-06" });
+    expect(await transaction.select().from(runs).where(eq(runs.workItemId, created.workItemId))).toHaveLength(1);
+  });
+});
+
+test.concurrent("Intake property validation rejects foreign labels, non-members, and Agents outside the actor's access", async () => {
+  await withRollback(db, async (transaction) => {
+    const { admin, member, guest, workspace, project, intake } = await setup(transaction);
+    const foreignProject = await createProjectActions(transaction).createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Other", key: "OTH", visibility: "public" });
+    const foreignLabel = await createWorkItemActions(transaction).createLabel.handler({ userId: admin.id }, { projectId: foreignProject.id, name: "Private label" });
+    const agents = createAgentActions(transaction);
+    const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Restricted Agent", instructions: "Review requests", model: "default" });
+    await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id] });
+    await agents.setAgentAccess.handler({ userId: admin.id }, { agentId: agent.id, userIds: [admin.id] });
+    await expect(intake.submitIntakeItem.handler({ userId: guest.id }, { projectId: project.id, title: "Bad label", labelIds: [foreignLabel.id] })).rejects.toMatchObject({ status: 400 });
+    await expect(intake.submitIntakeItem.handler({ userId: guest.id }, { projectId: project.id, title: "Not a member", assigneeIds: [workspace.id] })).rejects.toMatchObject({ status: 400 });
+    await expect(intake.submitIntakeItem.handler({ userId: member.id }, { projectId: project.id, title: "No Agent access", assigneeIds: [agent.userId] })).rejects.toMatchObject({ status: 403 });
+  });
+});
 
 test.concurrent("a new project has exactly one Triage state, hidden from list_states", async () => {
   await withRollback(db, async (transaction) => {

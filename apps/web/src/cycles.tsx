@@ -8,14 +8,17 @@ import { paths } from "./routes";
 import { Popover, menuItemClass } from "./shell/popover";
 import { StateIcon, formatDay } from "./property-dropdowns";
 import { stateGroups, type StateGroup } from "./types";
+import { DescriptionEditor } from "./description-editor";
+import { EntityDescription } from "./entity-description";
 
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
 type Status = "upcoming" | "active" | "completed";
-export type Cycle = { id: string; projectId?: string; name: string; startDate: string; endDate: string; status: Status; itemCount: number; progress: { completed: number; total: number }; archived: boolean; descriptionMarkdown?: string };
+export type Cycle = { id: string; projectId?: string; name: string; startDate: string; endDate: string; status: Status; itemCount: number; progress: { completed: number; total: number }; archived: boolean; descriptionMarkdown?: string; description?: unknown };
 type CycleDetail = Cycle & { workItemIds: string[] };
 type Item = { id: string; displayId: string; title: string; stateId?: string };
 type State = { id: string; name: string; group: StateGroup };
+type Person = { userId: string; name: string; isAgent?: boolean; codeCapable?: boolean; hasAccess?: boolean; accessReason?: string | null; accessAsk?: "owner" | "admin" | null; accessOwnerName?: string | null };
 const t = (key: string) => translate(key as MessageKey);
 const tabs: Status[] = ["upcoming", "active", "completed"];
 /** Which tab opens first when the user has not picked one: the first with Cycles in it. */
@@ -59,23 +62,25 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
 }
 
 /** Create or edit a Cycle. The overlap notice is a warning: saving stays possible. */
-function CycleModal({ action, projectId, cycle, onClose, onSaved }: { action: Call; projectId: string; cycle?: Cycle; onClose: () => void; onSaved: () => void }) {
+function CycleModal({ action, projectId, workspaceId, cycle, onClose, onSaved }: { action: Call; projectId: string; workspaceId: string; cycle?: Cycle; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = React.useState(cycle?.name ?? "");
   const [startDate, setStartDate] = React.useState(cycle?.startDate ?? "");
   const [endDate, setEndDate] = React.useState(cycle?.endDate ?? "");
-  const [descriptionMarkdown, setDescriptionMarkdown] = React.useState(cycle?.descriptionMarkdown ?? "");
+  const [description, setDescription] = React.useState<unknown>(cycle?.description ?? null);
+  const [mentionPeople, setMentionPeople] = React.useState<Person[]>([]);
   const [note, setNote] = React.useState<string | null>(null);
   const overlap = useOverlap(action, projectId, startDate, endDate, cycle?.id);
+  React.useEffect(() => { void action<Person[]>("list_project_members", { projectId }).then((rows) => setMentionPeople(rows ?? [])); }, [action, projectId]);
   return <Modal title={t(cycle ? "cycles.editTitle" : "cycles.newTitle")} onClose={onClose}>
     <form className="grid gap-3" onSubmit={async (event) => {
       event.preventDefault();
-      const saved = cycle ? await action("update_cycle", { cycleId: cycle.id, name, startDate, endDate, descriptionMarkdown }) : await action("create_cycle", { projectId, name, startDate, endDate, descriptionMarkdown });
+      const saved = cycle ? await action("update_cycle", { cycleId: cycle.id, name, startDate, endDate, description }) : await action("create_cycle", { projectId, name, startDate, endDate, ...(description ? { description } : {}) });
       if (!saved) return setNote(t("cycles.failed"));
       onSaved();
       onClose();
     }}>
       <label>{t("cycles.name")}<input autoFocus required value={name} onChange={(event) => setName(event.target.value)} /></label>
-      <label>Description<textarea aria-label="Description" rows={4} value={descriptionMarkdown} onChange={(event) => setDescriptionMarkdown(event.target.value)} /></label>
+      <div className="grid gap-1 text-13 text-secondary"><span>{t("workItems.description")}</span><DescriptionEditor workspaceId={workspaceId} owner={cycle ? { ownerType: "cycle", ownerId: cycle.id } : undefined} mentionPeople={mentionPeople} initial={description} editable onChange={setDescription} /></div>
       <div className="grid gap-3 sm:grid-cols-2">
         <label>{t("cycles.start")}<input required type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label>
         <label>{t("cycles.end")}<input required type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label>
@@ -142,7 +147,7 @@ function CycleRow({ cycle, href, children }: { cycle: Cycle; href: string; child
   </li>;
 }
 
-export function CyclesPage({ workspaceSlug, projectKey, projectId, canWrite, canAdmin = false, enabled, action }: { workspaceSlug: string; projectKey: string; projectId: string; canWrite: boolean; canAdmin?: boolean; enabled: boolean; action: Call }) {
+export function CyclesPage({ workspaceId, workspaceSlug, projectKey, projectId, canWrite, canAdmin = false, enabled, action }: { workspaceId: string; workspaceSlug: string; projectKey: string; projectId: string; canWrite: boolean; canAdmin?: boolean; enabled: boolean; action: Call }) {
   const [cycles, setCycles] = React.useState<Cycle[] | null>(null);
   const [archived, setArchived] = React.useState(false);
   const [pickedTab, setTab] = React.useState<Status | null>(null);
@@ -175,7 +180,7 @@ export function CyclesPage({ workspaceSlug, projectKey, projectId, canWrite, can
       </CycleRow>)}
     </ul>
     {note && <p role="alert" className="m-0 text-danger-text">{note}</p>}
-    {editing && <CycleModal action={action} projectId={projectId} cycle={editing === "new" ? undefined : editing} onClose={() => setEditing(null)} onSaved={() => void load()} />}
+    {editing && <CycleModal action={action} projectId={projectId} workspaceId={workspaceId} cycle={editing === "new" ? undefined : editing} onClose={() => setEditing(null)} onSaved={() => void load()} />}
   </section>;
 }
 
@@ -238,11 +243,12 @@ export function BurndownChart({ action, name, body, projectId, refreshKey, testI
   </div>;
 }
 
-export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId, canWrite, canAdmin = false, enabled, action, run: runQuery }: { workspaceSlug: string; projectKey: string; projectId: string; cycleId: string; canWrite: boolean; canAdmin?: boolean; enabled: boolean; action: Call; run?: Run }) {
+export function CycleDetailPage({ workspaceId, workspaceSlug, projectKey, projectId, cycleId, canWrite, canAdmin = false, enabled, action, run: runQuery }: { workspaceId: string; workspaceSlug: string; projectKey: string; projectId: string; cycleId: string; canWrite: boolean; canAdmin?: boolean; enabled: boolean; action: Call; run?: Run }) {
   const navigate = useNavigate();
   const [cycle, setCycle] = React.useState<CycleDetail | null | undefined>(undefined);
   const [everyone, setEveryone] = React.useState<Item[]>([]);
   const [states, setStates] = React.useState<State[]>([]);
+  const [mentionPeople, setMentionPeople] = React.useState<Person[]>([]);
   const [note, setNote] = React.useState<string | null>(null);
   const [refreshKey, setRefreshKey] = React.useState(0);
   const [others, setOthers] = React.useState<Cycle[]>([]);
@@ -261,6 +267,7 @@ export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId,
     setCycle(found);
     if (!found) return;
     setEveryone(await action<Item[]>("list_work_items", { projectId }) ?? []);
+    setMentionPeople(await action<Person[]>("list_project_members", { projectId }) ?? []);
     setStates(await action<State[]>("list_states", { projectId }) ?? []);
     const activeCycles = await action<Cycle[]>("list_cycles", { projectId }) ?? [];
     const archivedCycles = await action<Cycle[]>("list_cycles", { projectId, archived: true }) ?? [];
@@ -298,7 +305,7 @@ export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId,
           rowAction={canWrite && !cycle.archived ? (item) => <button className="secondary" onClick={() => void remove(item.id)}>{t("cycles.remove")}</button> : undefined} />
       </div>
       <aside aria-label={t("cycles.details")} className="grid h-fit gap-4 rounded-lg border border-subtle p-4 lg:w-80 lg:shrink-0">
-        <section className="grid gap-2" aria-label="Description"><h3 className="m-0 text-14 font-semibold">Description</h3>{canWrite && !cycle.archived && <textarea aria-label="Description" rows={4} value={cycle.descriptionMarkdown ?? ""} onChange={(event) => setCycle({ ...cycle, descriptionMarkdown: event.target.value })} onBlur={() => { if (cycle.descriptionMarkdown !== undefined) void action("update_cycle", { cycleId, descriptionMarkdown: cycle.descriptionMarkdown }).then(() => void load()); }} />}{(!canWrite || cycle.archived) && <p className="m-0 whitespace-pre-wrap text-13 text-secondary">{cycle.descriptionMarkdown || ""}</p>}</section>
+        <section className="grid gap-2" aria-label={t("workItems.description")}><h3 className="m-0 text-14 font-semibold">{t("workItems.description")}</h3><EntityDescription key={cycle.id} action={action} workspaceId={workspaceId} owner={{ ownerType: "cycle", ownerId: cycle.id }} mentionPeople={mentionPeople} initial={cycle.description ?? null} editable={canWrite && !cycle.archived} /></section>
         <div className="flex items-center gap-2">{statusPill(cycle.status)}{cycle.archived && <span role="status" className="text-12 text-secondary">{t("cycles.archived")}</span>}</div>
         <p className="m-0 flex items-center gap-1.5 text-13 text-secondary"><CalendarDays aria-hidden size={14} />{range(cycle)}</p>
         <p className="m-0 text-13 text-secondary">{t("cycles.itemCount").replace("{count}", count(cycle.itemCount))}</p>
@@ -314,7 +321,7 @@ export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId,
         </div>}
       </aside>
     </div>
-    {editing && <CycleModal action={action} projectId={projectId} cycle={cycle} onClose={() => setEditing(false)} onSaved={() => void load()} />}
+    {editing && <CycleModal action={action} projectId={projectId} workspaceId={workspaceId} cycle={cycle} onClose={() => setEditing(false)} onSaved={() => void load()} />}
     {adding && <Modal title={t("cycles.addTitle")} onClose={() => setAdding(false)}>
       <div className="grid gap-3">
       <label>{t("cycles.searchCandidates")}<input autoFocus type="search" value={candidateQuery} onChange={(event) => setCandidateQuery(event.target.value)} /></label>

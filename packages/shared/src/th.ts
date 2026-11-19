@@ -127,6 +127,7 @@ export const th: Record<keyof typeof en, string> = {
   "workItems.descriptionSave.updating": "กำลังอัปเดตลิงก์…",
   "workItems.descriptionSave.failed": "บันทึกไม่ได้ ข้อความที่แก้ยังอยู่ ลองอีกครั้ง",
   "workItems.descriptionSave.notSaved": "ยังไม่ได้บันทึก: แก้ปัญหาที่แจ้งไว้ก่อน",
+  "workItems.descriptionSave.retry": "ลองอีกครั้ง",
   "workItems.more": "เพิ่มเติม",
   "outlinks.title": "ลิงก์",
   "outlinks.explanation": "ลิงก์แสดงว่าข้อความนี้อ้างถึงที่ใด และมีอะไรลิงก์มาหาข้อความนี้",

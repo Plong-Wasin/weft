@@ -4,6 +4,8 @@ import { Archive, ArchiveRestore, CalendarRange, ChevronRight, CircleUserRound, 
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
 import { EmptyState } from "./empty-state";
 import { WorkItemLayouts } from "./work-item-layouts";
+import { DescriptionEditor } from "./description-editor";
+import { EntityDescription } from "./entity-description";
 import { BurndownChart } from "./cycles";
 import { paths } from "./routes";
 import { Popover, menuItemClass } from "./shell/popover";
@@ -16,7 +18,7 @@ const statuses = ["backlog", "planned", "in-progress", "paused", "completed", "c
 type Status = (typeof statuses)[number];
 type Module = {
   id: string; name: string; status: Status; leadId: string | null; memberIds: string[]; startDate: string | null; endDate: string | null; archived: boolean;
-  itemCount: number; progress: { total: number; completed: number; cancelled: number; percent: number }; descriptionMarkdown?: string;
+  itemCount: number; progress: { total: number; completed: number; cancelled: number; percent: number }; descriptionMarkdown?: string; description?: unknown;
 };
 type ModuleDetail = Module & { projectId: string; workItemIds: string[] };
 type Item = { id: string; displayId: string; title: string };
@@ -68,14 +70,14 @@ function Overlay({ label, onClose, children }: { label: string; onClose: () => v
   </>;
 }
 
-function ModuleFormModal({ action, projectId, module, onClose, onSaved }: { action: Call; projectId: string; module?: Module; onClose: () => void; onSaved: () => void }) {
+function ModuleFormModal({ action, projectId, workspaceId, module, onClose, onSaved }: { action: Call; projectId: string; workspaceId: string; module?: Module; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = React.useState(module?.name ?? "");
   const [status, setStatus] = React.useState<Status>(module?.status ?? "backlog");
   const [leadId, setLeadId] = React.useState(module?.leadId ?? "");
   const [memberIds, setMemberIds] = React.useState<string[]>(module?.memberIds ?? []);
   const [startDate, setStartDate] = React.useState(module?.startDate ?? "");
   const [endDate, setEndDate] = React.useState(module?.endDate ?? "");
-  const [descriptionMarkdown, setDescriptionMarkdown] = React.useState(module?.descriptionMarkdown ?? "");
+  const [description, setDescription] = React.useState<unknown>(module?.description ?? null);
   const [people, setPeople] = React.useState<Person[]>([]);
   const [note, setNote] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
@@ -87,7 +89,7 @@ function ModuleFormModal({ action, projectId, module, onClose, onSaved }: { acti
       event.preventDefault();
       if (busy) return;
       setBusy(true);
-      const body = { name, status, leadId: leadId || null, memberIds, startDate: startDate || null, endDate: endDate || null, descriptionMarkdown };
+      const body = { name, status, leadId: leadId || null, memberIds, startDate: startDate || null, endDate: endDate || null, description };
       const saved = module ? await action("update_module", { moduleId: module.id, ...body }) : await action("create_module", { projectId, ...body });
       setBusy(false);
       if (!saved) return setNote(t("modules.failed"));
@@ -99,7 +101,7 @@ function ModuleFormModal({ action, projectId, module, onClose, onSaved }: { acti
         <button type="button" className={iconButton} aria-label={t("modules.close")} onClick={onClose}><X aria-hidden size={16} /></button>
       </div>
       <input autoFocus required aria-label={t("modules.name")} placeholder={t("modules.name")} value={name} maxLength={255} className="w-full text-16" onChange={(event) => setName(event.target.value)} />
-      <label className="grid gap-1 text-13 text-secondary">Description<textarea aria-label="Description" rows={4} value={descriptionMarkdown} onChange={(event) => setDescriptionMarkdown(event.target.value)} /></label>
+      <div className="grid gap-1 text-13 text-secondary"><span>{t("workItems.description")}</span><DescriptionEditor workspaceId={workspaceId} owner={module ? { ownerType: "module", ownerId: module.id } : undefined} mentionPeople={people} initial={description} editable onChange={setDescription} /></div>
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-2 text-13 text-secondary">{t("modules.start")}<input type="date" value={startDate} max={endDate || undefined} className="w-auto" onChange={(event) => setStartDate(event.target.value)} /></label>
         <label className="flex items-center gap-2 text-13 text-secondary">{t("modules.end")}<input type="date" value={endDate} min={startDate || undefined} className="w-auto" onChange={(event) => setEndDate(event.target.value)} /></label>
@@ -148,7 +150,7 @@ function useDisplay(): [Display, (next: Display) => void] {
   return [display, (next) => { setDisplay(next); try { localStorage.setItem(displayKey, next); } catch { /* storage unavailable: the choice lasts for this visit */ } }];
 }
 
-export function ModulesPage({ workspaceSlug, projectKey, projectId, canWrite, canAdmin, enabled, action }: { workspaceSlug: string; projectKey: string; projectId: string; canWrite: boolean; canAdmin: boolean; enabled: boolean; action: Call }) {
+export function ModulesPage({ workspaceId, workspaceSlug, projectKey, projectId, canWrite, canAdmin, enabled, action }: { workspaceId: string; workspaceSlug: string; projectKey: string; projectId: string; canWrite: boolean; canAdmin: boolean; enabled: boolean; action: Call }) {
   const [modules, setModules] = React.useState<Module[] | null>(null);
   const [people, setPeople] = React.useState<Person[]>([]);
   const [archived, setArchived] = React.useState(false);
@@ -226,7 +228,7 @@ export function ModulesPage({ workspaceSlug, projectKey, projectId, canWrite, ca
           <span className="ml-auto flex items-center gap-2"><Members ids={module.memberIds} people={people} />{leadOf(module) && <span title={`${t("modules.lead")}: ${leadOf(module)?.name}`}><Avatar name={leadOf(module)?.name ?? ""} id={module.leadId ?? undefined} /></span>}</span>
         </div>
       </li>)}</ul>}
-    {form && <ModuleFormModal action={action} projectId={projectId} module={form.module} onClose={() => setForm(null)} onSaved={() => void load()} />}
+    {form && <ModuleFormModal action={action} projectId={projectId} workspaceId={workspaceId} module={form.module} onClose={() => setForm(null)} onSaved={() => void load()} />}
   </section>;
 }
 
@@ -264,7 +266,7 @@ function PropertyRow({ icon, label, children }: { icon: React.ReactNode; label: 
   </div>;
 }
 
-export function ModuleDetailPage({ workspaceSlug, projectKey, projectId, moduleId, canWrite, canAdmin, enabled, action, run: runQuery }: { workspaceSlug: string; projectKey: string; projectId: string; moduleId: string; canWrite: boolean; canAdmin: boolean; enabled: boolean; action: Call; run?: Run }) {
+export function ModuleDetailPage({ workspaceId, workspaceSlug, projectKey, projectId, moduleId, canWrite, canAdmin, enabled, action, run: runQuery }: { workspaceId: string; workspaceSlug: string; projectKey: string; projectId: string; moduleId: string; canWrite: boolean; canAdmin: boolean; enabled: boolean; action: Call; run?: Run }) {
   const navigate = useNavigate();
   const [module, setModule] = React.useState<ModuleDetail | null | undefined>(undefined);
   const [candidates, setCandidates] = React.useState<Item[]>([]);
@@ -325,7 +327,7 @@ export function ModuleDetailPage({ workspaceSlug, projectKey, projectId, moduleI
           rowAction={editable ? (item) => <button className="whitespace-nowrap rounded-md border border-subtle bg-surface-1 px-2 py-1 text-12 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={() => void run("remove_module_items", { moduleId, workItemIds: [item.id] })}>{t("modules.remove")}</button> : undefined} />
       </div>
       <aside aria-label={t("modules.properties")} className="grid content-start gap-3 border-t border-subtle p-4 sm:p-6 lg:w-80 lg:shrink-0 lg:border-l lg:border-t-0">
-        <section className="grid gap-2" aria-label="Description"><h3 className="m-0 text-14 font-semibold">Description</h3>{editable && <textarea aria-label="Description" rows={4} value={module.descriptionMarkdown ?? ""} onChange={(event) => setModule({ ...module, descriptionMarkdown: event.target.value })} onBlur={() => { if (module.descriptionMarkdown !== undefined) void action("update_module", { moduleId, descriptionMarkdown: module.descriptionMarkdown }).then(() => void load()); }} />}{!editable && <p className="m-0 whitespace-pre-wrap text-13 text-secondary">{module.descriptionMarkdown || ""}</p>}</section>
+        <section className="grid gap-2" aria-label={t("workItems.description")}><h3 className="m-0 text-14 font-semibold">{t("workItems.description")}</h3><EntityDescription key={module.id} action={action} workspaceId={workspaceId} owner={{ ownerType: "module", ownerId: module.id }} mentionPeople={people} initial={module.description ?? null} editable={editable} /></section>
         <div className="flex items-center gap-2"><StatusBadge status={module.status} /></div>
         <BurndownChart action={action} name="get_module_burndown" body={{ moduleId }} projectId={projectId} refreshKey={refreshKey} testId="module-burndown" />
         {insights && <section aria-label={t("modules.risks")} className="grid gap-2 border-t border-subtle pt-3">
@@ -368,7 +370,7 @@ export function ModuleDetailPage({ workspaceSlug, projectKey, projectId, moduleI
         </div>
       </aside>
     </div>
-    {editing && <ModuleFormModal action={action} projectId={projectId} module={module} onClose={() => setEditing(false)} onSaved={() => void load()} />}
+    {editing && <ModuleFormModal action={action} projectId={projectId} workspaceId={workspaceId} module={module} onClose={() => setEditing(false)} onSaved={() => void load()} />}
     {adding && <AddItemsModal candidates={candidates} onClose={() => setAdding(false)} onAdd={(ids) => run("add_module_items", { moduleId, workItemIds: ids })} />}
   </section>;
 }

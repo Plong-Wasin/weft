@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
-import { activities, createDatabase, moduleItems, workItems, workItemStates, type Database } from "@weft/db";
+import { activities, assets, createDatabase, moduleItems, workItems, workItemStates, type Database } from "@weft/db";
 import { createCycleActions, createIntakeActions, createModuleActions, createProjectActions, createRelationActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -44,6 +44,29 @@ test.concurrent("Module descriptions are optional Written form Markdown and can 
     expect(created.descriptionMarkdown).toBe(markdown);
     expect((await modules.getModule.handler({ userId: member.id }, { moduleId: created.id })).descriptionMarkdown).toBe(created.descriptionMarkdown);
     expect((await modules.updateModule.handler({ userId: member.id }, { moduleId: created.id, descriptionMarkdown: "" })).descriptionMarkdown).toBe("");
+  });
+});
+
+test.concurrent("Module rich descriptions round-trip formatting, stable references, mentions, and owned images", async () => {
+  await withRollback(db, async (transaction) => {
+    const { modules, member, project, workspace, item } = await setup(transaction);
+    const workItem = await item();
+    const module = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Rich" });
+    const assetId = crypto.randomUUID();
+    await transaction.insert(assets).values({ id: assetId, workspaceId: workspace.id, projectId: project.id, ownerType: "module", ownerId: module.id, uploaderId: member.id, storageKey: `test/${assetId}`, filename: "plan.png", contentType: "image/png", size: 10, status: "uploaded", uploadedAt: new Date() });
+    const description = { type: "doc", content: [
+      { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Goal" }] },
+      { type: "paragraph", content: [{ type: "text", text: "bold", marks: [{ type: "bold" }] }, { type: "text", text: " " }, { type: "mention", attrs: { id: member.id, label: "Member" } }, { type: "text", text: " " }, { type: "text", text: "Alpha", marks: [{ type: "link", attrs: { href: `weft://work-item/${workItem.id}`, kind: "work-item", targetId: workItem.id, target: "MOB-1" } }] }] },
+      { type: "assetImage", attrs: { assetId, alt: "Plan" } },
+    ] };
+    const saved = await modules.updateModule.handler({ userId: member.id }, { moduleId: module.id, description });
+    expect(saved.descriptionMarkdown).toContain("**bold**");
+    expect(saved.descriptionMarkdown).toContain(`@{Member|${member.id}}`);
+    expect(saved.descriptionMarkdown).toContain(`work-item:${workItem.id}`);
+    expect(saved.descriptionMarkdown).toContain(`![[asset:${assetId}|Plan]]`);
+    const loaded = await modules.getModule.handler({ userId: member.id }, { moduleId: module.id });
+    expect(JSON.stringify(loaded.description)).toContain('"type":"assetImage"');
+    expect(JSON.stringify(loaded.description)).toContain(`"id":"${member.id}"`);
   });
 });
 
@@ -152,6 +175,7 @@ test.concurrent("archive is Admin only and needs completed or cancelled; archive
     expect(await modules.addModuleItems.handler({ userId: member.id }, { moduleId: mod.id, workItemIds: [one.id] }).then(() => 200, (error: { status: number }) => error.status)).toBe(400);
     expect(await modules.removeModuleItems.handler({ userId: member.id }, { moduleId: mod.id, workItemIds: [one.id] }).then(() => 200, (error: { status: number }) => error.status)).toBe(400);
     expect(await modules.updateModule.handler({ userId: member.id }, { moduleId: mod.id, name: "B" }).then(() => 200, (error: { status: number }) => error.status)).toBe(400);
+    await expect(modules.updateModule.handler({ userId: member.id }, { moduleId: mod.id, descriptionMarkdown: "Changed" })).rejects.toMatchObject({ status: 400 });
     expect(await status(member.id, "unarchiveModule")).toBe(403);
     expect((await modules.unarchiveModule.handler({ userId: admin.id }, { moduleId: mod.id })).archived).toBe(false);
     expect((await modules.updateModule.handler({ userId: member.id }, { moduleId: mod.id, name: "Restored" })).name).toBe("Restored");

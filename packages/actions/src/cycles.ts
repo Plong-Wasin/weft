@@ -11,6 +11,7 @@ import { activityActor, type ActivityContext } from "./work-items";
 import { workItemMarkdownOptions, writtenDescription } from "./work-items";
 import { storedDocumentOf, readWrittenFormOf } from "./written-form-pool";
 import { WRITTEN_FORM_MAX_INPUT_LENGTH } from "./markdown-doc";
+import { validateRichTextAssets } from "./rich-text-validation";
 
 export const cycleStatuses = ["upcoming", "active", "completed"] as const;
 export type CycleStatus = (typeof cycleStatuses)[number];
@@ -134,31 +135,36 @@ export function createCycleActions(db: Database) {
   return {
     createCycle: {
       name: "create_cycle", kind: "write" as const,
-      input: Type.Object({ ...projectInput, name: nameSchema, startDate: dateSchema, endDate: dateSchema, descriptionMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH })) }), output: cycleOutput,
-      handler: async (context: Context, input: { projectId: string; name: string; startDate: string; endDate: string; descriptionMarkdown?: string }) => {
+      input: Type.Object({ ...projectInput, name: nameSchema, startDate: dateSchema, endDate: dateSchema, description: Type.Optional(Type.Any()), descriptionMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH })) }), output: cycleOutput,
+      handler: async (context: Context, input: { projectId: string; name: string; startDate: string; endDate: string; description?: unknown; descriptionMarkdown?: string }) => {
         const { project } = await requireProjectAccess(db, context.userId, input.projectId, "write");
         assertFeatureEnabled(project, "cycles");
         assertDates(input.startDate, input.endDate);
         const options = await workItemMarkdownOptions(db, context.userId, project.workspaceId, project.id, input.descriptionMarkdown);
-        const description = await writtenDescription(undefined, input.descriptionMarkdown, options);
-        const [cycle] = await db.insert(cycles).values({
-          workspaceId: project.workspaceId, projectId: project.id, name: input.name, startDate: input.startDate, endDate: input.endDate, createdBy: context.userId, descriptionMarkdown: description.markdown, descriptionDoc: description.document,
-        }).returning();
-        return out(cycle!, []);
+        const description = await writtenDescription(input.description, input.descriptionMarkdown, options);
+        return db.transaction(async (transaction) => {
+          const database = tx(transaction);
+          const [cycle] = await database.insert(cycles).values({
+            workspaceId: project.workspaceId, projectId: project.id, name: input.name, startDate: input.startDate, endDate: input.endDate, createdBy: context.userId, descriptionMarkdown: description.markdown, descriptionDoc: description.document,
+          }).returning();
+          await validateRichTextAssets(database, description.document, "cycle", cycle!.id, context.userId);
+          return out(cycle!, []);
+        });
       },
     },
     updateCycle: {
       name: "update_cycle", kind: "write" as const,
-      input: Type.Object({ cycleId: uuid(), name: Type.Optional(nameSchema), startDate: Type.Optional(dateSchema), endDate: Type.Optional(dateSchema), descriptionMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH })) }), output: cycleOutput,
-      handler: async (context: Context, input: { cycleId: string; name?: string; startDate?: string; endDate?: string; descriptionMarkdown?: string }) => {
+      input: Type.Object({ cycleId: uuid(), name: Type.Optional(nameSchema), startDate: Type.Optional(dateSchema), endDate: Type.Optional(dateSchema), description: Type.Optional(Type.Any()), descriptionMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH })) }), output: cycleOutput,
+      handler: async (context: Context, input: { cycleId: string; name?: string; startDate?: string; endDate?: string; description?: unknown; descriptionMarkdown?: string }) => {
         const { cycle, project } = await cycleAccess(context, input.cycleId, "write");
         if (cycle.archivedAt) throw new ActionError("Cycle is archived", 400);
         const startDate = input.startDate ?? cycle.startDate, endDate = input.endDate ?? cycle.endDate;
         assertDates(startDate, endDate);
         const patch: Partial<typeof cycles.$inferInsert> = { name: input.name ?? cycle.name, startDate, endDate };
-        if (input.descriptionMarkdown !== undefined) {
+        if (input.description !== undefined || input.descriptionMarkdown !== undefined) {
           const options = await workItemMarkdownOptions(db, context.userId, project.workspaceId, project.id, input.descriptionMarkdown);
-          const description = await writtenDescription(undefined, input.descriptionMarkdown, options);
+          const description = await writtenDescription(input.description, input.descriptionMarkdown, options);
+          await validateRichTextAssets(db, description.document, "cycle", cycle.id, context.userId, cycle.descriptionDoc);
           patch.descriptionMarkdown = description.markdown; patch.descriptionDoc = description.document;
         }
         const [updated] = await db.update(cycles).set(patch).where(eq(cycles.id, cycle.id)).returning();

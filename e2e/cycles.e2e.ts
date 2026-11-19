@@ -30,6 +30,7 @@ try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
   const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
   const page = await browser.newPage();
+  const call = async <T>(name: string, body: unknown) => { const response = await page.context().request.post(`${api}/actions/${name}`, { data: body }); if (!response.ok()) throw new Error(`${name} failed: ${response.status()}`); return await response.json() as T; };
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   await page.goto(web);
@@ -65,7 +66,10 @@ try {
     await page.getByLabel(translate("cycles.name")).fill(name);
     await page.getByLabel(translate("cycles.start")).fill(start);
     await page.getByLabel(translate("cycles.end")).fill(end);
-    await page.getByRole("textbox", { name: "Description" }).fill("Initial cycle purpose");
+    const toolbar = page.getByRole("toolbar", { name: translate("wiki.toolbar") });
+    await toolbar.getByRole("button", { name: translate("editor.sourceMode") }).click();
+    await page.getByRole("textbox", { name: translate("editor.sourceText") }).fill("**Initial cycle purpose**");
+    await toolbar.getByRole("button", { name: translate("editor.sourceMode") }).click();
     return page.getByRole("button", { name: translate("cycles.create"), exact: true });
   };
   const tab = (status: string) => page.getByRole("tab", { name: new RegExp(`^${translate(`cycles.status.${status}`)}`) });
@@ -94,10 +98,31 @@ try {
 
   // Detail: add a work item, see progress and the state breakdown.
   await page.getByRole("link", { name: "Sprint 1" }).click();
-  await page.getByRole("textbox", { name: "Description" }).fill("Updated cycle purpose");
+  const descriptionEditor = page.locator('[data-testid="description-editor"] [contenteditable="true"]');
+  await page.context().route("**/actions/update_cycle", (route) => route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ error: "temporary save failure" }) }));
+  const descriptionToolbar = page.getByRole("toolbar", { name: translate("wiki.toolbar") });
+  await descriptionToolbar.getByRole("button", { name: translate("editor.sourceMode") }).click();
+  await page.getByRole("textbox", { name: translate("editor.sourceText") }).fill("**Preserved after an error**");
+  await descriptionToolbar.getByRole("button", { name: translate("editor.sourceMode") }).click();
+  await page.getByTestId("entity-description-save-status").getByText(translate("workItems.descriptionSave.failed")).waitFor();
+  check(await descriptionEditor.locator("strong").filter({ hasText: "Preserved after an error" }).count() === 1, "failed description save discarded the editor contents");
+  await page.context().unroute("**/actions/update_cycle");
+  await page.getByRole("button", { name: translate("workItems.descriptionSave.retry") }).click();
+  await page.getByTestId("entity-description-save-status").getByText(translate("workItems.descriptionSave.saved")).waitFor();
+  await page.getByRole("toolbar", { name: translate("wiki.toolbar") }).getByRole("button", { name: translate("editor.sourceMode") }).click();
+  const currentMe = await (await page.context().request.get(`${api}/api/me`)).json() as { workspaces: Array<{ id: string }> };
+  const [currentProject] = await call<Array<{ id: string }>>("list_projects", { workspaceId: currentMe.workspaces[0]!.id, archived: false });
+  const workItems = await call<Array<{ id: string; displayId: string }>>("list_work_items", { projectId: currentProject!.id });
+  const people = await call<Array<{ userId: string; name: string }>>("list_project_members", { projectId: currentProject!.id });
+  const cycleDescriptionMarkdown = `**Updated cycle purpose** with [[MOB-1|work-item:${workItems[0]!.id}]] and @{Cycles Tester|${people.find(({ name }) => name === "Cycles Tester")!.userId}}.`;
+  await page.getByRole("textbox", { name: translate("editor.sourceText") }).fill(cycleDescriptionMarkdown);
+  await page.getByRole("toolbar", { name: translate("wiki.toolbar") }).getByRole("button", { name: translate("editor.sourceMode") }).click();
   await page.getByRole("heading", { name: translate("cycles.workItems") }).click();
-  await page.getByRole("textbox", { name: "Description" }).waitFor();
-  check((await page.getByRole("textbox", { name: "Description" }).inputValue()) === "Updated cycle purpose", "Cycle description did not save through Actions");
+  await page.getByTestId("entity-description-save-status").getByText(translate("workItems.descriptionSave.saving")).waitFor();
+  await page.getByTestId("entity-description-save-status").getByText(translate("workItems.descriptionSave.saved")).waitFor();
+  const cycleDescription = await call<{ descriptionMarkdown: string }>("get_cycle", { cycleId: (await call<Array<{ id: string; name: string }>>("list_cycles", { projectId: currentProject!.id })).find(({ name }) => name === "Sprint 1")!.id });
+  check(cycleDescription.descriptionMarkdown.includes(`work-item:${workItems[0]!.id}`) && cycleDescription.descriptionMarkdown.includes(`@{Cycles Tester|${people.find(({ name }) => name === "Cycles Tester")!.userId}}`), "Cycle description references did not round-trip");
+  check(await descriptionEditor.locator("strong").filter({ hasText: "Updated cycle purpose" }).count() === 1, "Cycle rich formatting did not render safely");
   await page.getByRole("button", { name: translate("cycles.addItems"), exact: true }).click();
   await page.getByLabel(`${translate("cycles.selectCandidate")} MOB-1`).check();
   await page.getByRole("button", { name: translate("cycles.addSelected").replace("{count}", "1"), exact: true }).click();
@@ -158,6 +183,7 @@ try {
   await page.getByRole("button", { name: `${translate("cycles.menu")}: Sprint 1` }).click();
   check(await page.getByRole("menuitem", { name: translate("cycles.edit") }).count() === 0, "archived Cycle still offers Edit");
   check(await page.getByRole("button", { name: translate("cycles.remove"), exact: true }).count() === 0, "archived Cycle still offers membership removal");
+  check(await page.locator('[data-testid="description-editor"] [contenteditable="true"]').count() === 0, "archived Cycle description must be read-only");
   await page.getByRole("menuitem", { name: translate("cycles.unarchive") }).click();
   await page.getByText(translate("cycles.archived")).waitFor({ state: "detached" });
   await page.getByRole("button", { name: `${translate("cycles.menu")}: Sprint 1` }).click();

@@ -65,6 +65,26 @@ test.concurrent("an Intake comment notifies its Guest creator and mentioned memb
   });
 });
 
+test.concurrent("Intake notifications and email retain the current destination through decisions", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, admin, author, other, project, comments, inbox } = await setup(transaction);
+    const actions = createIntakeActions(transaction);
+    for (const outcome of ["pending", "rejected", "accepted"] as const) {
+      const item = await actions.submitIntakeItem.handler({ userId: author.id }, { projectId: project.id, title: outcome });
+      await comments.createComment.handler({ userId: author.id }, { workItemId: item.workItemId, body: doc({ mention: other.id }) });
+      await drain(transaction);
+      if (outcome === "rejected") await actions.rejectIntakeItem.handler({ userId: admin.id }, { intakeItemId: item.id });
+      if (outcome === "accepted") await actions.acceptIntakeItem.handler({ userId: admin.id }, { intakeItemId: item.id });
+      const notice = (await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).notifications.find((row) => row.workItemId === item.workItemId)!;
+      expect(notice).toMatchObject({ intakeId: item.id, intakeOutcome: outcome });
+      const messages: Array<{ text: string }> = [];
+      await sendNotificationDigests(transaction, { mailer: { send: async (message) => { messages.push(message); } }, webOrigin: "https://weft.test", defaultLocale: null });
+      const target = outcome === "accepted" ? `/browse/${item.displayId}` : `/projects/MOB/intake?currentTab=${outcome === "pending" ? "open" : "closed"}&inboxIssueId=${item.id}`;
+      expect(messages.some((message) => message.text.includes(target))).toBe(true);
+    }
+  });
+});
+
 test.concurrent("Intake replies notify the parent author once, including overlap with mentions", async () => {
   await withRollback(db, async (transaction) => {
     const { workspace, author, other, third, project, comments, inbox } = await setup(transaction);

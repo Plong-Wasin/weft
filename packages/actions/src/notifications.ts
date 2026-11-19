@@ -208,6 +208,7 @@ const uuid = () => Type.String({ format: "uuid" });
 const notificationOutput = Type.Object({
   id: Type.String(), kind: Type.Union((["mention", "assignment", "reply", "intake_accepted", "intake_rejected", "intake_duplicate", "run_confirmation", "run_skipped", "wake_skipped", "recurrence_paused", "auto_rule"] as const).map((kind) => Type.Literal(kind))), workItemId: Type.Union([Type.String(), Type.Null()]), wikiPageId: Type.Union([Type.String(), Type.Null()]), pageTitle: Type.Union([Type.String(), Type.Null()]), projectId: Type.Union([Type.String(), Type.Null()]), recurrenceId: Type.Union([Type.String(), Type.Null()]), detail: Type.Union([Type.String(), Type.Null()]),
   displayId: Type.String(), projectKey: Type.Union([Type.String(), Type.Null()]), workItemTitle: Type.String(), commentId: Type.Union([Type.String(), Type.Null()]),
+  intakeId: Type.Union([Type.String(), Type.Null()]), intakeOutcome: Type.Union([Type.String(), Type.Null()]),
   actorId: Type.String(), actorName: Type.String(), readAt: Type.Union([Type.String(), Type.Null()]), createdAt: Type.String(),
 });
 
@@ -218,12 +219,13 @@ export function createNotificationActions(db: Database) {
     const rows = await db.select({
       id: notifications.id, kind: notifications.kind, workItemId: notifications.workItemId, wikiPageId: notifications.wikiPageId, recurrenceId: notifications.recurrenceId, detail: notifications.detail,
       projectId: workItems.projectId, projectKey: projects.key, sequence: workItems.sequence, title: workItems.title, deletedAt: workItems.deletedAt,
+      intakeId: intakeItems.id, intakeOutcome: intakeItems.outcome,
       recurrenceProjectId: recurrences.projectId,
       pageTitle: wikiPages.title, pageDeletedAt: wikiPages.deletedAt, pageAccess: wikiPages.access, pageOwnerId: wikiPages.ownerId, pageProjectId: wikiPages.projectId,
       commentId: notifications.commentId, actorId: notifications.actorId,
       actorName: users.name, readAt: notifications.readAt, createdAt: notifications.createdAt,
     }).from(notifications)
-      .leftJoin(workItems, eq(workItems.id, notifications.workItemId)).leftJoin(wikiPages, eq(wikiPages.id, notifications.wikiPageId)).leftJoin(recurrences, eq(recurrences.id, notifications.recurrenceId))
+      .leftJoin(workItems, eq(workItems.id, notifications.workItemId)).leftJoin(intakeItems, eq(intakeItems.workItemId, workItems.id)).leftJoin(wikiPages, eq(wikiPages.id, notifications.wikiPageId)).leftJoin(recurrences, eq(recurrences.id, notifications.recurrenceId))
       .leftJoin(projects, sql`${projects.id} = coalesce(${workItems.projectId}, ${wikiPages.projectId})`).innerJoin(users, eq(users.id, notifications.actorId))
       .where(and(eq(notifications.userId, userId), eq(notifications.workspaceId, workspaceId), ...(unreadOnly ? [isNull(notifications.readAt)] : [])))
       .orderBy(desc(notifications.createdAt), desc(notifications.id));
@@ -265,7 +267,7 @@ export function createNotificationActions(db: Database) {
           notifications: shown.map((row) => ({
             id: row.id, kind: row.kind as NotificationKind, workItemId: row.workItemId, wikiPageId: row.wikiPageId, pageTitle: row.pageTitle,
             projectId: row.projectId ?? row.pageProjectId ?? row.recurrenceProjectId, projectKey: row.projectKey, recurrenceId: row.recurrenceId, detail: row.detail, displayId: row.projectKey && row.sequence ? `${row.projectKey}-${row.sequence}` : "",
-            workItemTitle: row.title ?? "", commentId: row.commentId, actorId: row.actorId, actorName: row.actorName,
+            workItemTitle: row.title ?? "", commentId: row.commentId, intakeId: row.intakeId, intakeOutcome: row.intakeOutcome, actorId: row.actorId, actorName: row.actorName,
             readAt: row.readAt ? row.readAt.toISOString() : null, createdAt: row.createdAt.toISOString(),
           })),
         };

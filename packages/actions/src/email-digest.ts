@@ -135,14 +135,16 @@ async function resolveItem(database: Database, userId: string, row: PendingRow, 
   const kind = row.kind as DigestItem["kind"];
 
   if (row.workItemId) {
-    const [item] = await database.select({ projectId: workItems.projectId, key: projects.key, sequence: workItems.sequence, title: workItems.title, deletedAt: workItems.deletedAt })
-      .from(workItems).innerJoin(projects, eq(projects.id, workItems.projectId)).where(eq(workItems.id, row.workItemId));
+    const [item] = await database.select({ projectId: workItems.projectId, key: projects.key, sequence: workItems.sequence, title: workItems.title, deletedAt: workItems.deletedAt, intakeId: intakeItems.id, intakeOutcome: intakeItems.outcome })
+      .from(workItems).innerJoin(projects, eq(projects.id, workItems.projectId)).leftJoin(intakeItems, eq(intakeItems.workItemId, workItems.id)).where(eq(workItems.id, row.workItemId));
     if (!item || item.deletedAt) return null;
     if (!await canViewNotificationItem(database, userId, row.workItemId, item.projectId)) return null;
     const displayId = `${item.key}-${item.sequence}`;
     return {
       kind, actorName, target: `${displayId} ${item.title}`, status: row.detail ?? undefined,
-      url: `${webOrigin}/${slug}/browse/${encodeURIComponent(displayId)}`,
+      url: item.intakeId && item.intakeOutcome !== "accepted"
+        ? `${webOrigin}/${slug}/projects/${encodeURIComponent(item.key)}/intake?currentTab=${item.intakeOutcome === "pending" || item.intakeOutcome === "snoozed" ? "open" : "closed"}&inboxIssueId=${encodeURIComponent(item.intakeId)}${row.commentId ? `#comment-${row.commentId}` : ""}`
+        : `${webOrigin}/${slug}/browse/${encodeURIComponent(displayId)}`,
     };
   }
   if (row.wikiPageId) {

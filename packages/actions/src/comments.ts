@@ -388,8 +388,8 @@ export function createCommentActions(db: Database) {
           await enqueueNotification(database, { kind: "mention", workItemId: item.id, commentId: row!.id, actorId: context.userId, recipientIds: recipients });
           // A mention wakes an enabled Agent. An Agent-authored or Autopilot comment is decided per Agent by the wake decision: it wakes only when that Agent's Run may wake Agents (ADR 0013).
           const wakeOutcomes = intake ? [] : await queueRunsForAssignees(database, { originatorId: context.userId, waker: wakerOf(context.source), wakingRunId: context.agent?.runId ?? null, project, workItemId: item.id, assigneeUserIds: mentionIds, commentId: row!.id });
-          // A parent author who is also mentioned gets the mention, not a second notification.
-          if (parent && !intake) await enqueueNotification(database, { kind: "reply", workItemId: item.id, commentId: row!.id, actorId: context.userId, recipientIds: mentionIds.includes(parent.authorId) ? [] : [parent.authorId] });
+          // A parent author who already receives the comment notification gets no duplicate reply.
+          if (parent) await enqueueNotification(database, { kind: "reply", workItemId: item.id, commentId: row!.id, actorId: context.userId, recipientIds: recipients.includes(parent.authorId) ? [] : [parent.authorId] });
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, workItemId: item.id }, "comment_added", { commentId: row!.id });
           if (!intake) {
             await fireEventTriggers(database, { eventType: "comment_added", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });

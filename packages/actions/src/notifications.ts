@@ -90,11 +90,19 @@ async function fanOut(database: Database, payload: NotifyPayload, job: { id: str
       const projectRoles = new Map(projectRows.map((row) => [row.userId, row.role]));
       const roles = new Map(workspaceRows.map((row) => [row.userId, row.role]));
       const participants = new Set([intake.createdBy, ...assigneeRows.map((row) => row.userId)]);
+      let replyAuthor: string | undefined;
+      if (payload.kind === "reply" && payload.commentId) {
+        const [reply] = await database.select({ parentId: comments.parentId }).from(comments).where(and(eq(comments.id, payload.commentId), isNull(comments.deletedAt)));
+        if (reply?.parentId) {
+          const [parent] = await database.select({ authorId: comments.authorId }).from(comments).where(and(eq(comments.id, reply.parentId), isNull(comments.deletedAt)));
+          replyAuthor = parent?.authorId;
+        }
+      }
       allowedRecipients = payload.recipientIds.filter((id) => {
         const role = roles.get(id);
         if (!role || (project.visibility === "private" && role !== "Admin" && !projectIds.has(id))) return false;
         if (role !== "Admin" && (role === "Guest" || projectRoles.get(id) === "Guest")) return id === intake.createdBy;
-        return participants.has(id) || (payload.kind === "mention" && payload.commentId !== undefined);
+        return participants.has(id) || (payload.kind === "mention" && payload.commentId !== undefined) || id === replyAuthor;
       });
     }
   }

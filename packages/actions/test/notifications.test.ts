@@ -65,6 +65,23 @@ test.concurrent("an Intake comment notifies its Guest creator and mentioned memb
   });
 });
 
+test.concurrent("Intake replies notify the parent author once, including overlap with mentions", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, author, other, third, project, comments, inbox } = await setup(transaction);
+    const item = await createIntakeActions(transaction).submitIntakeItem.handler({ userId: author.id }, { projectId: project.id, title: "Request" });
+    const parent = await comments.createComment.handler({ userId: other.id }, { workItemId: item.workItemId, body: doc("Question") });
+    await drain(transaction);
+    await comments.createComment.handler({ userId: third.id }, { workItemId: item.workItemId, parentId: parent.id, body: doc("Answer") });
+    await drain(transaction);
+    expect((await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).notifications).toMatchObject([{ kind: "reply", workItemId: item.workItemId }]);
+    await comments.createComment.handler({ userId: third.id }, { workItemId: item.workItemId, parentId: parent.id, body: doc("Follow-up ", { mention: other.id }) });
+    await drain(transaction);
+    const notices = (await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).notifications;
+    expect(notices).toHaveLength(2);
+    expect(notices.map((notice) => notice.kind).sort()).toEqual(["mention", "reply"]);
+  });
+});
+
 test.concurrent("an Intake mention queued before access revocation is dropped at notification fan-out", async () => {
   await withRollback(db, async (transaction) => {
     const { workspace, admin, author, other, project, comments, inbox } = await setup(transaction, "private");

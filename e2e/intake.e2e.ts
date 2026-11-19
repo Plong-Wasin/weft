@@ -213,6 +213,41 @@ try {
   await page.screenshot({ path: `${shots}/intake-390-light.png`, fullPage: true });
   await page.setViewportSize({ width: 1440, height: 900 });
 
+  const { client: inviteClient, db: inviteDb } = createDatabase();
+  const guestWorkspaceRow = await inviteDb.query.workspaces.findFirst({ where: (table, { eq }) => eq(table.slug, slug) });
+  if (!guestWorkspaceRow) throw new Error("E2E workspace was not persisted");
+  const guestSignup = async (name: string, suffix: string) => {
+    const response = await page.request.post(`${api}/actions/create_invite`, { data: { workspaceId: guestWorkspaceRow.id, role: "Guest" } });
+    const invite = await response.json() as { token: string };
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+    const guestPage = await context.newPage();
+    await guestPage.goto(`${web}/invite/${invite.token}`);
+    await guestPage.getByLabel(translate("auth.name")).fill(name);
+    await guestPage.getByLabel(translate("auth.email")).fill(`${slug}-${suffix}@example.test`);
+    await guestPage.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
+    await guestPage.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
+    await guestPage.getByRole("button", { name: translate("auth.signUp") }).click();
+    await guestPage.waitForURL(`${web}/${slug}`);
+    await guestPage.goto(`${web}/${slug}/projects/MOB/intake`);
+    await guestPage.getByRole("button", { name: translate("intake.add"), exact: true }).waitFor();
+    return { context, page: guestPage };
+  };
+  const firstGuest = await guestSignup("Intake Guest One", "guest-one");
+  await firstGuest.page.getByRole("button", { name: translate("intake.add"), exact: true }).click();
+  const guestDialog = firstGuest.page.getByRole("dialog");
+  await guestDialog.getByLabel(translate("intake.titleField")).fill("Guest private request");
+  await guestDialog.getByRole("button", { name: translate("intake.submit"), exact: true }).click();
+  await firstGuest.page.getByText("Guest private request", { exact: true }).waitFor();
+  const guestDetail = firstGuest.page.getByRole("region", { name: translate("intake.detail") });
+  await guestDetail.getByTestId("comment-editor").locator('[contenteditable="true"]').fill("Guest discussion");
+  await guestDetail.getByRole("button", { name: translate("comments.add"), exact: true }).click();
+  await guestDetail.getByText("Guest discussion", { exact: true }).waitFor();
+  const secondGuest = await guestSignup("Intake Guest Two", "guest-two");
+  check(await secondGuest.page.getByText("Guest private request", { exact: true }).count() === 0, "a Guest could see another Guest's Intake item");
+  await firstGuest.context.close();
+  await secondGuest.context.close();
+  await inviteClient.end();
+
   // Only the accepted item reaches the project list; declined, snoozed and duplicate stay out.
   await page.goto(`${web}/${slug}/projects/MOB/issues`);
   await page.getByRole("link", { name: /Dark theme please/ }).waitFor();

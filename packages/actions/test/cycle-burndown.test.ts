@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { createDatabase, cycleHistory, cycles as cycleRows, workItemStates, workItems, workspaces, type Database } from "@weft/db";
+import { createDatabase, cycleHistory, cycleItems, cycles as cycleRows, workItemStates, workItems, workspaces, type Database } from "@weft/db";
 import { burndownSeries, createCycleActions, createProjectActions, createWorkItemActions, createActionList } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -53,6 +53,37 @@ test.concurrent("legacy and backdated Cycle days disclose unknown history", asyn
     expect(result).toMatchObject({ cycleId: cycle.id, startDate: day(-3), endDate: day(1), initialScope: null });
     expect(result.days.filter((point) => point.date <= day(0)).every((point) => point.unknown && point.open === null)).toBe(true);
     expect(result.days.at(-1)?.open).toBeNull();
+  });
+});
+
+test.concurrent("Cycle start-day coverage after UTC midnight leaves the initial scope and ideal line unknown", async () => {
+  await withRollback(db, async (transaction) => {
+    const { cycles, cycle, workspace, as, item, transaction: tx } = await setup(transaction, day(-4), day(-2));
+    const workItem = await item();
+    await tx.insert(cycleItems).values({ workItemId: workItem.id, cycleId: cycle.id, workspaceId: workspace.id, projectId: cycle.projectId });
+    await tx.update(cycleRows).set({ historyStartedAt: at(day(-4), "12:00:00") }).where(eq(cycleRows.id, cycle.id));
+    const events = await tx.select().from(cycleHistory).where(eq(cycleHistory.cycleId, cycle.id));
+    for (const event of events) await tx.update(cycleHistory).set({ occurredAt: at(day(-4), "13:00:00") }).where(eq(cycleHistory.id, event.id));
+
+    const report = await cycles.getCycleBurndown.handler(as, { cycleId: cycle.id });
+    expect(report.initialScope).toBeNull();
+    expect(report.days[0]).toMatchObject({ unknown: false, open: 1, ideal: null });
+    expect(report.days[1]).toMatchObject({ unknown: false, open: 1 });
+  });
+});
+
+test.concurrent("Cycle history covering midnight retains a known initial scope and ideal line", async () => {
+  await withRollback(db, async (transaction) => {
+    const { cycles, cycle, workspace, as, item, transaction: tx } = await setup(transaction, day(-4), day(-2));
+    const workItem = await item();
+    await tx.insert(cycleItems).values({ workItemId: workItem.id, cycleId: cycle.id, workspaceId: workspace.id, projectId: cycle.projectId });
+    await tx.update(cycleRows).set({ historyStartedAt: at(day(-5)) }).where(eq(cycleRows.id, cycle.id));
+    const event = (await tx.select().from(cycleHistory).where(eq(cycleHistory.cycleId, cycle.id)))[0]!;
+    await tx.update(cycleHistory).set({ occurredAt: at(day(-5), "12:00:00") }).where(eq(cycleHistory.id, event.id));
+
+    const report = await cycles.getCycleBurndown.handler(as, { cycleId: cycle.id });
+    expect(report.initialScope).toBe(1);
+    expect(report.days[0]).toMatchObject({ unknown: false, open: 1, ideal: 1 });
   });
 });
 

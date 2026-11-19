@@ -290,6 +290,7 @@ export function createModuleActions(db: Database) {
         if (events.length === 0) return { ...base, reason: "no_work_items" as const, days: [] };
 
         const dayMs = 86_400_000, dayOf = (date: string) => Date.parse(`${date}T00:00:00Z`);
+        // The ideal baseline is the start-of-day scope; EOD observations on the start day remain usable after coverage begins.
         const initialUnknown = dayOf(found.startDate) < found.historyStartedAt.getTime();
         const state = new Map<string, { member: boolean; group: string; estimate: number | null }>();
         const estimateValue = (value: string | null) => value !== null && Number.isFinite(Number(value)) ? Number(value) : null;

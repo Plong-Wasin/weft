@@ -226,6 +226,7 @@ export function createCycleActions(db: Database) {
         if (unit === "points") await requirePointsEstimate(db, cycle.projectId);
         const events = await db.select().from(cycleHistory).where(eq(cycleHistory.cycleId, cycle.id)).orderBy(asc(cycleHistory.occurredAt), asc(cycleHistory.sequence));
         const coverageStart = cycle.historyStartedAt.toISOString();
+        // The ideal baseline is the start-of-day scope; EOD observations on the start day remain usable after coverage begins.
         const initialUnknown = dayOf(cycle.startDate) < cycle.historyStartedAt.getTime();
         const dateChanges = events.filter((event) => event.kind === "dates" && event.previousStartDate && event.previousEndDate && event.startDate && event.endDate)
           .map((event) => ({ at: event.occurredAt.toISOString(), previousStartDate: event.previousStartDate!, previousEndDate: event.previousEndDate!, startDate: event.startDate!, endDate: event.endDate! }));

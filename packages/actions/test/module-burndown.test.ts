@@ -67,6 +67,7 @@ test.concurrent("history records additions, removals, estimate changes, completi
       [5, 0, 0, 11, 0, 0, 1, false], [5, 0, 0, 12, 0, 0, 1, false], [4, 1, 0, 10, 2, 0, 1, false],
       [3, 2, 0, 8, 4, 0, 1, false], [2, 1, 1, 4, 4, 3, 1, false], [null, null, null, null, null, null, null, true], [null, null, null, null, null, null, null, true],
     ]);
+    expect(result.days[0]?.ideal).toBe(5);
     const points = await modules.getModuleBurndown.handler(as, { moduleId: module.id, unit: "points" });
     expect(points.unestimated).toBe(1);
     expect(points.days.map((row) => row.idealPoints)).toEqual([11, 9.17, 7.33, 5.5, 3.67, 1.83, 0]);
@@ -105,6 +106,21 @@ test.concurrent("Module history is recorded without dates and later reports unkn
     // Module status stays a manual field; a date range does not write a Cycle-style close outcome.
     expect((await modules.getModule.handler(as, { moduleId: module.id })).status).toBe("backlog");
     expect("finalOutcome" in report).toBe(false);
+  });
+});
+
+test.concurrent("Module start-day coverage after UTC midnight leaves the initial scope and ideal line unknown", async () => {
+  await withRollback(db, async (transaction) => {
+    const { modules, module, as, item, add } = await setup(transaction, day(-4), day(-2));
+    const workItem = await item();
+    await add([workItem.id]);
+    await transaction.update(moduleTable).set({ historyStartedAt: at(day(-4), "12:00:00") }).where(eq(moduleTable.id, module.id));
+    const events = await transaction.select().from(moduleHistory).where(eq(moduleHistory.moduleId, module.id));
+    for (const event of events) await transaction.update(moduleHistory).set({ occurredAt: at(day(-4), "13:00:00") }).where(eq(moduleHistory.id, event.id));
+
+    const report = await modules.getModuleBurndown.handler(as, { moduleId: module.id });
+    expect(report.days[0]).toMatchObject({ unknown: false, open: 1, ideal: null });
+    expect(report.days[1]).toMatchObject({ unknown: false, open: 1 });
   });
 });
 

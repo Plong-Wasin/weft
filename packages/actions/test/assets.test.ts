@@ -191,6 +191,33 @@ test("upload completion observes a concurrent Intake decision before changing as
   }
 });
 
+test("attachment deletion observes a concurrent Intake decision", async () => {
+  const env = await setup(db);
+  try {
+    const item = await createIntakeActions(db).submitIntakeItem.handler({ userId: env.guest.id }, { projectId: env.project.id, title: "Request" });
+    const asset = await upload(env, env.guest.id, { filename: "race.png", contentType: "image/png", size: 10 }, { ownerType: "work_item", ownerId: item.workItemId });
+    let release!: () => void;
+    let signal!: () => void;
+    const locked = new Promise<void>((resolve) => { signal = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const decision = db.transaction(async (transaction) => {
+      await transaction.update(intakeItems).set({ outcome: "rejected" }).where(eq(intakeItems.id, item.id));
+      signal(); await gate;
+    });
+    await locked;
+    let settled = false;
+    const deletion = env.assets.deleteAsset.handler({ userId: env.guest.id }, { assetId: asset.id }).then(() => null, (error) => error).finally(() => { settled = true; });
+    await Bun.sleep(100);
+    const settledBeforeDecision = settled;
+    release(); await decision;
+    expect(settledBeforeDecision).toBe(false);
+    expect(await deletion).toMatchObject({ status: 400 });
+    expect(env.mem.objects.has(`${env.workspace.id}/${asset.id}`)).toBe(true);
+    expect(await db.select().from(assetTable).where(eq(assetTable.id, asset.id))).toHaveLength(1);
+    expect((await db.select().from(activities).where(eq(activities.entityId, item.workItemId))).some((row) => row.field === "attachment_removed")).toBe(false);
+  } finally { await db.delete(workspaces).where(eq(workspaces.id, env.workspace.id)); }
+});
+
 test.concurrent("the uploader can discard pending bytes after an Intake decision or feature disable", async () => {
   await withRollback(db, async (transaction) => {
     const env = await setup(transaction);

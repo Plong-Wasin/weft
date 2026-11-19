@@ -275,6 +275,9 @@ export function createIntakeActions(db: Database) {
           const [locked] = await database.select().from(intakeItems).where(eq(intakeItems.id, row.id)).for("update");
           if (!locked) throw new ActionError("Intake item not found", 404);
           if (locked.outcome !== "pending" && locked.outcome !== "snoozed") throw new ActionError("A decided Intake item is read-only", 400);
+          // Another edit may have committed while this caller waited for the Intake lock.
+          const [item] = await database.select().from(workItems).where(and(eq(workItems.id, row.workItemId), isNull(workItems.deletedAt)));
+          if (!item) throw new ActionError("Intake item not found", 404);
           const changes: Array<{ field: string; column: Partial<typeof workItems.$inferInsert>; oldValue: unknown; newValue: unknown }> = [];
           if (input.dueDate !== undefined && input.dueDate !== item.dueDate) changes.push({ field: "dueDate", column: { dueDate: input.dueDate }, oldValue: item.dueDate, newValue: input.dueDate });
           if (input.title !== undefined && input.title !== item.title) changes.push({ field: "title", column: { title: input.title }, oldValue: item.title, newValue: input.title });

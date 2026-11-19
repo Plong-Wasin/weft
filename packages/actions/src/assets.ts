@@ -89,9 +89,9 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
   }
 
   /** An archived work item is read-only, and so are the files on it and on its comments. */
-  async function assertOwnerOpen(owner: Owner | null) {
+  async function assertOwnerOpen(owner: Owner | null, database: Database = db) {
     if (!owner?.workItemId) return;
-    const [item] = await db.select({ archivedAt: workItems.archivedAt }).from(workItems).where(eq(workItems.id, owner.workItemId));
+    const [item] = await database.select({ archivedAt: workItems.archivedAt }).from(workItems).where(eq(workItems.id, owner.workItemId));
     if (item) assertNotArchived(item);
   }
 
@@ -227,9 +227,17 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
         await requireRowAccess(row, context.userId, row.uploaderId === context.userId ? "write" : "admin");
         const owner = await resolveOwner(row.ownerType as OwnerType, row.ownerId).catch(() => null);
         await assertOwnerOpen(owner);
-        await store().remove(row.storageKey);
         await db.transaction(async (transaction) => {
           const database = transaction as unknown as Database;
+          if (owner?.workItemId) {
+            // Decisions and uploads take the Intake lock before the asset lock.
+            await database.select({ id: intakeItems.id }).from(intakeItems).where(eq(intakeItems.workItemId, owner.workItemId)).for("update");
+            await requireOwnerAccess(owner, context.userId, row.uploaderId === context.userId ? "write" : "admin", database);
+            await assertOwnerOpen(owner, database);
+          }
+          const [locked] = await database.select().from(assets).where(eq(assets.id, row.id)).for("update");
+          if (!locked) throw new ActionError("Asset not found", 404);
+          await store().remove(locked.storageKey);
           await database.delete(assets).where(eq(assets.id, row.id));
           if (owner?.workItemId && owner.projectId) {
             await database.insert(activities).values({

@@ -28,6 +28,29 @@ async function setup(transaction: Database, visibility: "public" | "private" = "
 
 const triageStates = (transaction: Database, projectId: string) => transaction.select().from(workItemStates).where(and(eq(workItemStates.projectId, projectId), eq(workItemStates.group, "triage")));
 
+test("a concurrent Intake edit compares against the current item after locking", async () => {
+  const env = await setup(db);
+  try {
+    const item = await env.submit(env.guest.id, "Original");
+    let release!: () => void;
+    let signal!: () => void;
+    const locked = new Promise<void>((resolve) => { signal = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const first = db.transaction(async (transaction) => {
+      await transaction.select().from(intakeItems).where(eq(intakeItems.id, item.id)).for("update");
+      await transaction.update(workItems).set({ title: "Changed" }).where(eq(workItems.id, item.workItemId));
+      signal(); await gate;
+    });
+    await locked;
+    const second = env.intake.updateIntakeItem.handler({ userId: env.guest.id }, { intakeItemId: item.id, title: "Original" });
+    await Bun.sleep(100);
+    release(); await first;
+    expect((await second).title).toBe("Original");
+    const log = await db.select().from(activities).where(and(eq(activities.entityId, item.workItemId), eq(activities.field, "title")));
+    expect(log).toMatchObject([{ oldValue: "Changed", newValue: "Original" }]);
+  } finally { await db.delete(workspaces).where(eq(workspaces.id, env.workspace.id)); }
+});
+
 test.concurrent("Intake submission and edits persist assignees, labels, and due date with Activity", async () => {
   await withRollback(db, async (transaction) => {
     const { admin, member, guest, intake, project } = await setup(transaction);

@@ -113,6 +113,17 @@ export function createCycleActions(db: Database) {
     return { cycle, project };
   }
 
+  /** Lock Cycle rows before work-item rows in every writer, using id order for multi-Cycle operations. */
+  async function lockWritableCycles(database: Database, ids: string[], projectId: string) {
+    const uniqueIds = [...new Set(ids)].sort();
+    const rows = await database.select().from(cycles).where(and(inArray(cycles.id, uniqueIds), eq(cycles.projectId, projectId), isNull(cycles.deletedAt)))
+      .orderBy(asc(cycles.id)).for("update");
+    if (rows.length !== uniqueIds.length) throw new ActionError("Cycle not found", 404);
+    const archived = rows.find((row) => row.archivedAt !== null);
+    if (archived) throw new ActionError("Cycle is archived", 400);
+    return rows;
+  }
+
   async function logCycleChange(database: Database, context: Context, project: { id: string; workspaceId: string }, workItemId: string, oldValue: string | null, newValue: string | null) {
     await database.insert(activities).values({
       workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: workItemId, field: "cycle", oldValue, newValue,
@@ -157,18 +168,21 @@ export function createCycleActions(db: Database) {
       input: Type.Object({ cycleId: uuid(), name: Type.Optional(nameSchema), startDate: Type.Optional(dateSchema), endDate: Type.Optional(dateSchema), description: Type.Optional(Type.Any()), descriptionMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH })) }), output: cycleOutput,
       handler: async (context: Context, input: { cycleId: string; name?: string; startDate?: string; endDate?: string; description?: unknown; descriptionMarkdown?: string }) => {
         const { cycle, project } = await cycleAccess(context, input.cycleId, "write");
-        if (cycle.archivedAt) throw new ActionError("Cycle is archived", 400);
-        const startDate = input.startDate ?? cycle.startDate, endDate = input.endDate ?? cycle.endDate;
-        assertDates(startDate, endDate);
-        const patch: Partial<typeof cycles.$inferInsert> = { name: input.name ?? cycle.name, startDate, endDate };
-        if (input.description !== undefined || input.descriptionMarkdown !== undefined) {
-          const options = await workItemMarkdownOptions(db, context.userId, project.workspaceId, project.id, input.descriptionMarkdown);
-          const description = await writtenDescription(input.description, input.descriptionMarkdown, options);
-          await validateRichTextAssets(db, description.document, "cycle", cycle.id, context.userId, cycle.descriptionDoc);
-          patch.descriptionMarkdown = description.markdown; patch.descriptionDoc = description.document;
-        }
-        const [updated] = await db.update(cycles).set(patch).where(eq(cycles.id, cycle.id)).returning();
-        return out(updated!, (await counts(db, [cycle.id])).get(cycle.id)!);
+        return db.transaction(async (transaction) => {
+          const database = tx(transaction);
+          const [current] = await lockWritableCycles(database, [cycle.id], project.id);
+          const startDate = input.startDate ?? current!.startDate, endDate = input.endDate ?? current!.endDate;
+          assertDates(startDate, endDate);
+          const patch: Partial<typeof cycles.$inferInsert> = { name: input.name ?? current!.name, startDate, endDate };
+          if (input.description !== undefined || input.descriptionMarkdown !== undefined) {
+            const options = await workItemMarkdownOptions(database, context.userId, project.workspaceId, project.id, input.descriptionMarkdown);
+            const description = await writtenDescription(input.description, input.descriptionMarkdown, options);
+            await validateRichTextAssets(database, description.document, "cycle", current!.id, context.userId, current!.descriptionDoc);
+            patch.descriptionMarkdown = description.markdown; patch.descriptionDoc = description.document;
+          }
+          const [updated] = await database.update(cycles).set(patch).where(eq(cycles.id, current!.id)).returning();
+          return out(updated!, (await counts(database, [cycle.id])).get(cycle.id)!);
+        });
       },
     },
     listCycles: {
@@ -292,14 +306,20 @@ export function createCycleActions(db: Database) {
         const ids = [...new Set(input.workItemIds)];
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
+          const memberships = ids.length ? await database.select({ workItemId: cycleItems.workItemId, cycleId: cycleItems.cycleId })
+            .from(cycleItems).where(inArray(cycleItems.workItemId, ids)) : [];
+          const sourceIds = memberships.map((row) => row.cycleId);
+          const lockedCycles = await lockWritableCycles(database, [cycle.id, ...sourceIds], project.id);
+          const targetNow = lockedCycles.find((row) => row.id === cycle.id)!;
+          if (cycleStatus(targetNow.startDate, targetNow.endDate) === "completed") throw new ActionError("Cannot add work items to a Cycle that has ended", 400);
           const found = await database.select({ id: workItems.id, archivedAt: workItems.archivedAt }).from(workItems)
             .where(and(inArray(workItems.id, ids), eq(workItems.projectId, project.id), liveWorkItems)).orderBy(workItems.id).for("no key update");
           if (found.length !== ids.length) throw new ActionError("Work items must belong to this Cycle's project", 400);
           found.forEach(assertNotArchived);
           // The primary key on work_item_id decides races: the loser of a concurrent add gets no row back and is reported as skipped.
-          const memberships = ids.length ? await database.select({ workItemId: cycleItems.workItemId, cycleId: cycleItems.cycleId, archivedAt: cycles.archivedAt })
-            .from(cycleItems).innerJoin(cycles, eq(cycles.id, cycleItems.cycleId)).where(inArray(cycleItems.workItemId, ids)) : [];
-          const byItem = new Map(memberships.map((row) => [row.workItemId, row]));
+          const currentMemberships = ids.length ? await database.select({ workItemId: cycleItems.workItemId, cycleId: cycleItems.cycleId })
+            .from(cycleItems).where(inArray(cycleItems.workItemId, ids)) : [];
+          const byItem = new Map(currentMemberships.map((row) => [row.workItemId, row]));
           const added: string[] = [];
           const skipped: Array<{ workItemId: string; cycleId: string }> = [];
           for (const workItemId of ids) {
@@ -308,7 +328,7 @@ export function createCycleActions(db: Database) {
             if (current) {
               const expected = input.expectedCycleIds?.[workItemId];
               // Legacy callers never move. New selection callers must explicitly opt in and prove the source they displayed.
-              if (!input.move || expected !== current.cycleId || current.archivedAt !== null) {
+              if (!input.move || expected !== current.cycleId) {
                 skipped.push({ workItemId, cycleId: current.cycleId });
                 continue;
               }
@@ -344,22 +364,27 @@ export function createCycleActions(db: Database) {
       output: Type.Object({ transferred: Type.Array(Type.String()) }),
       handler: async (context: Context, input: { cycleId: string; targetCycleId: string }) => {
         const { cycle, project } = await cycleAccess(context, input.cycleId, "write");
-        if (cycle.archivedAt) throw new ActionError("Cycle is archived", 400);
-        if (cycleStatus(cycle.startDate, cycle.endDate) !== "completed") throw new ActionError("Only a completed Cycle can transfer its work items", 400);
         if (input.targetCycleId === cycle.id) throw new ActionError("Choose a different Cycle", 400);
-        const [target] = await db.select().from(cycles).where(and(eq(cycles.id, input.targetCycleId), eq(cycles.projectId, project.id), isNull(cycles.deletedAt)));
-        if (!target) throw new ActionError("Cycle not found", 404);
-        if (target.archivedAt || cycleStatus(target.startDate, target.endDate) === "completed") throw new ActionError("Cannot transfer work items to a Cycle that has ended", 400);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
+          const locked = await database.select().from(cycles).where(and(inArray(cycles.id, [cycle.id, input.targetCycleId].sort()), eq(cycles.projectId, project.id), isNull(cycles.deletedAt)))
+            .orderBy(asc(cycles.id)).for("update");
+          if (locked.length !== 2) throw new ActionError("Cycle not found", 404);
+          const source = locked.find((row) => row.id === cycle.id)!, target = locked.find((row) => row.id === input.targetCycleId)!;
+          if (source.archivedAt) throw new ActionError("Cycle is archived", 400);
+          if (cycleStatus(source.startDate, source.endDate) !== "completed") throw new ActionError("Only a completed Cycle can transfer its work items", 400);
+          if (target.archivedAt || cycleStatus(target.startDate, target.endDate) === "completed") throw new ActionError("Cannot transfer work items to a Cycle that has ended", 400);
+          const members = await database.select({ id: cycleItems.workItemId }).from(cycleItems).where(eq(cycleItems.cycleId, source.id)).orderBy(asc(cycleItems.workItemId));
+          const candidateIds = members.map((row) => row.id);
+          if (candidateIds.length) await database.select({ id: workItems.id }).from(workItems).where(inArray(workItems.id, candidateIds)).orderBy(asc(workItems.id)).for("update");
           const unfinished = await database.select({ id: cycleItems.workItemId }).from(cycleItems)
             .innerJoin(workItems, and(eq(workItems.id, cycleItems.workItemId), isNull(workItems.deletedAt)))
             .innerJoin(workItemStates, eq(workItemStates.id, workItems.stateId))
             .where(and(eq(cycleItems.cycleId, cycle.id), notInArray(workItemStates.group, ["completed", "cancelled"])));
           const ids = unfinished.map((row) => row.id);
           if (ids.length) {
-            await database.update(cycleItems).set({ cycleId: target.id }).where(inArray(cycleItems.workItemId, ids));
-            for (const workItemId of ids) await logCycleChange(database, context, project, workItemId, cycle.id, target.id);
+            await database.update(cycleItems).set({ cycleId: target.id }).where(and(inArray(cycleItems.workItemId, ids), eq(cycleItems.cycleId, source.id)));
+            for (const workItemId of ids) await logCycleChange(database, context, project, workItemId, source.id, target.id);
           }
           return { transferred: ids };
         });
@@ -390,7 +415,7 @@ export function createCycleActions(db: Database) {
           if (!targetNow || targetNow.deletedAt || targetNow.projectId !== project.id) throw new ActionError("Cycle not found", 404);
           if (targetNow.archivedAt || cycleStatus(targetNow.startDate, targetNow.endDate) === "completed") throw new ActionError("Cannot transfer work items to a Cycle that has ended", 400);
           // Serialize against state and membership changes before deciding eligibility.
-          await database.select({ id: workItems.id }).from(workItems).where(inArray(workItems.id, ids)).for("update");
+          await database.select({ id: workItems.id }).from(workItems).where(inArray(workItems.id, ids)).orderBy(asc(workItems.id)).for("update");
           const current = await database.select({ id: cycleItems.workItemId, group: workItemStates.group }).from(cycleItems)
             .innerJoin(workItems, and(eq(workItems.id, cycleItems.workItemId), isNull(workItems.deletedAt)))
             .innerJoin(workItemStates, eq(workItemStates.id, workItems.stateId))
@@ -417,9 +442,14 @@ export function createCycleActions(db: Database) {
       name: "archive_cycle", kind: "write" as const,
       input: Type.Object({ cycleId: uuid() }), output: cycleOutput,
       handler: async (context: Context, input: { cycleId: string }) => {
-        const { cycle } = await cycleAccess(context, input.cycleId, "admin");
-        if (cycleStatus(cycle.startDate, cycle.endDate) !== "completed") throw new ActionError("Only a completed Cycle can be archived", 400);
-        const [updated] = await db.update(cycles).set({ archivedAt: cycle.archivedAt ?? new Date() }).where(eq(cycles.id, cycle.id)).returning();
+        const { cycle, project } = await cycleAccess(context, input.cycleId, "admin");
+        const [updated] = await db.transaction(async (transaction) => {
+          const database = tx(transaction);
+          const [current] = await database.select().from(cycles).where(and(eq(cycles.id, cycle.id), eq(cycles.projectId, project.id), isNull(cycles.deletedAt))).for("update");
+          if (!current) throw new ActionError("Cycle not found", 404);
+          if (cycleStatus(current.startDate, current.endDate) !== "completed") throw new ActionError("Only a completed Cycle can be archived", 400);
+          return database.update(cycles).set({ archivedAt: current.archivedAt ?? new Date() }).where(eq(cycles.id, current.id)).returning();
+        });
         return out(updated!, (await counts(db, [cycle.id])).get(cycle.id)!);
       },
     },
@@ -428,8 +458,12 @@ export function createCycleActions(db: Database) {
       name: "unarchive_cycle", kind: "write" as const,
       input: Type.Object({ cycleId: uuid() }), output: cycleOutput,
       handler: async (context: Context, input: { cycleId: string }) => {
-        const { cycle } = await cycleAccess(context, input.cycleId, "admin");
-        const [updated] = await db.update(cycles).set({ archivedAt: null }).where(eq(cycles.id, cycle.id)).returning();
+        const { cycle, project } = await cycleAccess(context, input.cycleId, "admin");
+        const [updated] = await db.transaction(async (transaction) => {
+          const database = tx(transaction);
+          await database.select({ id: cycles.id }).from(cycles).where(and(eq(cycles.id, cycle.id), eq(cycles.projectId, project.id), isNull(cycles.deletedAt))).for("update");
+          return database.update(cycles).set({ archivedAt: null }).where(eq(cycles.id, cycle.id)).returning();
+        });
         return out(updated!, (await counts(db, [cycle.id])).get(cycle.id)!);
       },
     },
@@ -441,6 +475,7 @@ export function createCycleActions(db: Database) {
         const { cycle, project } = await cycleAccess(context, input.cycleId, "admin");
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
+          await database.select({ id: cycles.id }).from(cycles).where(and(eq(cycles.id, cycle.id), eq(cycles.projectId, project.id), isNull(cycles.deletedAt))).for("update");
           await database.update(cycles).set({ deletedAt: new Date() }).where(eq(cycles.id, cycle.id));
           const released = await database.delete(cycleItems).where(eq(cycleItems.cycleId, cycle.id)).returning({ workItemId: cycleItems.workItemId });
           for (const row of released) await logCycleChange(database, context, project, row.workItemId, cycle.id, null);
@@ -458,6 +493,7 @@ export function createCycleActions(db: Database) {
         const ids = [...new Set(input.workItemIds)];
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
+          await lockWritableCycles(database, [cycle.id], project.id);
           await assertNoneArchived(database, ids);
           const deleted = await database.delete(cycleItems).where(and(eq(cycleItems.cycleId, cycle.id), inArray(cycleItems.workItemId, ids))).returning({ workItemId: cycleItems.workItemId });
           for (const row of deleted) await logCycleChange(database, context, project, row.workItemId, cycle.id, null);

@@ -112,6 +112,14 @@ export function createModuleActions(db: Database) {
     if (found.archivedAt) throw new ActionError("Module is archived", 400);
   }
 
+  /** Module rows are the first locks in all Module writers; membership work-item locks follow. */
+  async function lockOpenModule(database: Database, id: string, projectId: string) {
+    const [row] = await database.select().from(modules).where(and(eq(modules.id, id), eq(modules.projectId, projectId), isNull(modules.deletedAt))).for("update");
+    if (!row) throw new ActionError("Module not found", 404);
+    assertOpen(row);
+    return row;
+  }
+
   async function logModuleChange(database: Database, context: Context, project: { id: string; workspaceId: string }, workItemId: string, oldValue: string | null, newValue: string | null) {
     await database.insert(activities).values({
       workspaceId: project.workspaceId, projectId: project.id, entityType: "work_item", entityId: workItemId, field: "module", oldValue, newValue,
@@ -164,19 +172,19 @@ export function createModuleActions(db: Database) {
         memberIds: Type.Optional(people), startDate: Type.Optional(nullableDate), endDate: Type.Optional(nullableDate), description: Type.Optional(Type.Any()), descriptionMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH })),
       }), output: moduleOutput,
       handler: async (context: Context, input: UpdateInput) => {
-        const { module: current, project } = await moduleAccess(context, input.moduleId, "write");
-        assertOpen(current);
-        const startDate = input.startDate === undefined ? current.startDate : input.startDate, endDate = input.endDate === undefined ? current.endDate : input.endDate;
-        assertDates(startDate, endDate);
-        const descriptionPatch: Partial<typeof modules.$inferInsert> = {};
-        if (input.description !== undefined || input.descriptionMarkdown !== undefined) {
-          const options = await workItemMarkdownOptions(db, context.userId, project.workspaceId, project.id, input.descriptionMarkdown);
-          const description = await writtenDescription(input.description, input.descriptionMarkdown, options);
-          await validateRichTextAssets(db, description.document, "module", current.id, context.userId, current.descriptionDoc);
-          descriptionPatch.descriptionMarkdown = description.markdown; descriptionPatch.descriptionDoc = description.document;
-        }
+        const { module, project } = await moduleAccess(context, input.moduleId, "write");
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
+          const current = await lockOpenModule(database, module.id, project.id);
+          const startDate = input.startDate === undefined ? current.startDate : input.startDate, endDate = input.endDate === undefined ? current.endDate : input.endDate;
+          assertDates(startDate, endDate);
+          const descriptionPatch: Partial<typeof modules.$inferInsert> = {};
+          if (input.description !== undefined || input.descriptionMarkdown !== undefined) {
+            const options = await workItemMarkdownOptions(database, context.userId, project.workspaceId, project.id, input.descriptionMarkdown);
+            const description = await writtenDescription(input.description, input.descriptionMarkdown, options);
+            await validateRichTextAssets(database, description.document, "module", current.id, context.userId, current.descriptionDoc);
+            descriptionPatch.descriptionMarkdown = description.markdown; descriptionPatch.descriptionDoc = description.document;
+          }
           const leadId = input.leadId === undefined ? current.leadId : input.leadId;
           await assertPeople(database, project, [...(input.leadId ? [input.leadId] : []), ...(input.memberIds ?? [])]);
           await assertLeadIsPerson(database, input.leadId);
@@ -326,10 +334,10 @@ export function createModuleActions(db: Database) {
       output: Type.Object({ added: Type.Array(Type.String()) }),
       handler: async (context: Context, input: { moduleId: string; workItemIds: string[] }) => {
         const { module: found, project } = await moduleAccess(context, input.moduleId, "write");
-        assertOpen(found);
         const ids = [...new Set(input.workItemIds)];
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
+          await lockOpenModule(database, found.id, project.id);
           const known = await database.select({ id: workItems.id, archivedAt: workItems.archivedAt }).from(workItems).where(and(inArray(workItems.id, ids), eq(workItems.projectId, project.id), liveWorkItems)).orderBy(workItems.id).for("no key update");
           if (known.length !== ids.length) throw new ActionError("Work items must belong to this Module's project", 400);
           known.forEach(assertNotArchived);
@@ -347,10 +355,10 @@ export function createModuleActions(db: Database) {
       output: Type.Object({ removed: Type.Array(Type.String()) }),
       handler: async (context: Context, input: { moduleId: string; workItemIds: string[] }) => {
         const { module: found, project } = await moduleAccess(context, input.moduleId, "write");
-        assertOpen(found);
         const ids = [...new Set(input.workItemIds)];
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
+          await lockOpenModule(database, found.id, project.id);
           await assertNoneArchived(database, ids);
           const deleted = await database.delete(moduleItems).where(and(eq(moduleItems.moduleId, found.id), inArray(moduleItems.workItemId, ids))).returning({ workItemId: moduleItems.workItemId });
           for (const row of deleted) await logModuleChange(database, context, project, row.workItemId, found.id, null);
@@ -362,9 +370,14 @@ export function createModuleActions(db: Database) {
       name: "archive_module", kind: "write" as const,
       input: Type.Object({ moduleId: uuid() }), output: moduleOutput,
       handler: async (context: Context, input: { moduleId: string }) => {
-        const { module: found } = await moduleAccess(context, input.moduleId, "admin");
-        if (!archivableModuleStatuses.includes(found.status as ModuleStatus)) throw new ActionError("Only a completed or cancelled Module can be archived", 400);
-        const [row] = await db.update(modules).set({ archivedAt: found.archivedAt ?? new Date() }).where(eq(modules.id, found.id)).returning();
+        const { module: found, project } = await moduleAccess(context, input.moduleId, "admin");
+        const [row] = await db.transaction(async (transaction) => {
+          const database = tx(transaction);
+          const [current] = await database.select().from(modules).where(and(eq(modules.id, found.id), eq(modules.projectId, project.id), isNull(modules.deletedAt))).for("update");
+          if (!current) throw new ActionError("Module not found", 404);
+          if (!archivableModuleStatuses.includes(current.status as ModuleStatus)) throw new ActionError("Only a completed or cancelled Module can be archived", 400);
+          return database.update(modules).set({ archivedAt: current.archivedAt ?? new Date() }).where(eq(modules.id, current.id)).returning();
+        });
         return strip((await present(db, [row!]))[0]!);
       },
     },
@@ -372,8 +385,12 @@ export function createModuleActions(db: Database) {
       name: "unarchive_module", kind: "write" as const,
       input: Type.Object({ moduleId: uuid() }), output: moduleOutput,
       handler: async (context: Context, input: { moduleId: string }) => {
-        const { module: found } = await moduleAccess(context, input.moduleId, "admin");
-        const [row] = await db.update(modules).set({ archivedAt: null }).where(eq(modules.id, found.id)).returning();
+        const { module: found, project } = await moduleAccess(context, input.moduleId, "admin");
+        const [row] = await db.transaction(async (transaction) => {
+          const database = tx(transaction);
+          await database.select({ id: modules.id }).from(modules).where(and(eq(modules.id, found.id), eq(modules.projectId, project.id), isNull(modules.deletedAt))).for("update");
+          return database.update(modules).set({ archivedAt: null }).where(eq(modules.id, found.id)).returning();
+        });
         return strip((await present(db, [row!]))[0]!);
       },
     },
@@ -385,6 +402,7 @@ export function createModuleActions(db: Database) {
         const { module: found, project } = await moduleAccess(context, input.moduleId, "admin");
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
+          await database.select({ id: modules.id }).from(modules).where(and(eq(modules.id, found.id), eq(modules.projectId, project.id), isNull(modules.deletedAt))).for("update");
           await database.update(modules).set({ deletedAt: new Date() }).where(eq(modules.id, found.id));
           const removed = await database.delete(moduleItems).where(eq(moduleItems.moduleId, found.id)).returning({ workItemId: moduleItems.workItemId });
           for (const row of removed) await logModuleChange(database, context, project, row.workItemId, found.id, null);

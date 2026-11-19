@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
-import { and, eq } from "drizzle-orm";
-import { activities, createDatabase, workItemStates, workItems, type Database } from "@weft/db";
+import { and, eq, sql } from "drizzle-orm";
+import { activities, createDatabase, cycles as cycleRows, workItemStates, workItems, workspaces, type Database } from "@weft/db";
 import { createCycleActions, createProjectActions, createWorkItemActions, cycleStatus, todayIso, aiWriteActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -333,6 +333,47 @@ test.concurrent("archive is Admin only and only for a completed Cycle; archived 
     await cycles.unarchiveCycle.handler({ userId: admin.id }, { cycleId: cycle.id });
     expect((await cycles.updateCycle.handler({ userId: member.id }, { cycleId: cycle.id, name: "Restored" })).name).toBe("Restored");
   });
+});
+
+test("a Cycle property or membership write that waits behind archive rechecks the locked archived state", async () => {
+  const { workspace, admin, member, project, item, cycles } = await setup(db);
+  const cycle = await cycles.createCycle.handler({ userId: member.id }, { projectId: project.id, name: "Race", startDate: day(-5), endDate: day(5) });
+  const workItem = await item("Keep me");
+  await cycles.addCycleItems.handler({ userId: member.id }, { cycleId: cycle.id, workItemIds: [workItem.id] });
+  await cycles.updateCycle.handler({ userId: member.id }, { cycleId: cycle.id, endDate: day(-1) });
+  const target = await cycles.createCycle.handler({ userId: member.id }, { projectId: project.id, name: "Target", startDate: day(0), endDate: day(5) });
+  const race = async (write: () => Promise<unknown>) => {
+    let release!: () => void, locked!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const held = new Promise<void>((resolve) => { locked = resolve; });
+    const blocker = db.transaction(async (transaction) => {
+      await transaction.select().from(cycleRows).where(eq(cycleRows.id, cycle.id)).for("update");
+      locked(); await gate;
+      await transaction.update(cycleRows).set({ archivedAt: new Date() }).where(eq(cycleRows.id, cycle.id));
+    });
+    try {
+      await held;
+      const pending = write();
+      const deadline = Date.now() + 5_000;
+      let blocked = false;
+      while (!blocked && Date.now() < deadline) {
+        blocked = (await db.execute(sql`select 1 from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock' and query like '%"cycles"%' and query ilike '%for update%'`)).length > 0;
+        if (!blocked) await Bun.sleep(20);
+      }
+      expect(blocked).toBe(true);
+      release(); await blocker;
+      await expect(pending).rejects.toMatchObject({ status: 400 });
+    } finally { release(); await blocker.catch(() => undefined); }
+  };
+  await race(() => cycles.updateCycle.handler({ userId: member.id }, { cycleId: cycle.id, name: "Must not save", descriptionMarkdown: "Must not save" }));
+  await cycles.unarchiveCycle.handler({ userId: admin.id }, { cycleId: cycle.id });
+  await race(() => cycles.selectiveTransferCycleItems.handler({ userId: member.id }, { cycleId: cycle.id, targetCycleId: target.id, workItemIds: [workItem.id] }));
+  await cycles.unarchiveCycle.handler({ userId: admin.id }, { cycleId: cycle.id });
+  await race(() => cycles.transferCycleItems.handler({ userId: member.id }, { cycleId: cycle.id, targetCycleId: target.id }));
+  await cycles.unarchiveCycle.handler({ userId: admin.id }, { cycleId: cycle.id });
+  await race(() => cycles.removeCycleItems.handler({ userId: member.id }, { cycleId: cycle.id, workItemIds: [workItem.id] }));
+  expect((await cycles.getCycle.handler({ userId: member.id }, { cycleId: cycle.id })).workItemIds).toContain(workItem.id);
+  await db.delete(workspaces).where(eq(workspaces.id, workspace.id));
 });
 
 test.concurrent("unarchive restores a Cycle for an Admin only, refuses a Member, a Guest and an outsider, and is a Write action needing Confirmation", async () => {

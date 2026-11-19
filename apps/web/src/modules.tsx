@@ -75,6 +75,7 @@ function ModuleFormModal({ action, projectId, module, onClose, onSaved }: { acti
   const [memberIds, setMemberIds] = React.useState<string[]>(module?.memberIds ?? []);
   const [startDate, setStartDate] = React.useState(module?.startDate ?? "");
   const [endDate, setEndDate] = React.useState(module?.endDate ?? "");
+  const [descriptionMarkdown, setDescriptionMarkdown] = React.useState(module?.descriptionMarkdown ?? "");
   const [people, setPeople] = React.useState<Person[]>([]);
   const [note, setNote] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
@@ -86,7 +87,7 @@ function ModuleFormModal({ action, projectId, module, onClose, onSaved }: { acti
       event.preventDefault();
       if (busy) return;
       setBusy(true);
-      const body = { name, status, leadId: leadId || null, memberIds, startDate: startDate || null, endDate: endDate || null };
+      const body = { name, status, leadId: leadId || null, memberIds, startDate: startDate || null, endDate: endDate || null, descriptionMarkdown };
       const saved = module ? await action("update_module", { moduleId: module.id, ...body }) : await action("create_module", { projectId, ...body });
       setBusy(false);
       if (!saved) return setNote(t("modules.failed"));
@@ -98,6 +99,7 @@ function ModuleFormModal({ action, projectId, module, onClose, onSaved }: { acti
         <button type="button" className={iconButton} aria-label={t("modules.close")} onClick={onClose}><X aria-hidden size={16} /></button>
       </div>
       <input autoFocus required aria-label={t("modules.name")} placeholder={t("modules.name")} value={name} maxLength={255} className="w-full text-16" onChange={(event) => setName(event.target.value)} />
+      <label className="grid gap-1 text-13 text-secondary">Description<textarea aria-label="Description" rows={4} value={descriptionMarkdown} onChange={(event) => setDescriptionMarkdown(event.target.value)} /></label>
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-2 text-13 text-secondary">{t("modules.start")}<input type="date" value={startDate} max={endDate || undefined} className="w-auto" onChange={(event) => setStartDate(event.target.value)} /></label>
         <label className="flex items-center gap-2 text-13 text-secondary">{t("modules.end")}<input type="date" value={endDate} min={startDate || undefined} className="w-auto" onChange={(event) => setEndDate(event.target.value)} /></label>

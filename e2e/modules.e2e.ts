@@ -65,6 +65,7 @@ try {
   const modal = page.getByRole("dialog", { name: t("modules.addTitleModal") });
   check(await modal.evaluate((element) => element.scrollHeight <= element.clientHeight), "Create Module dialog should fit without a scrollbar at 1080p");
   await modal.getByLabel(t("modules.name")).fill("Auth");
+  await modal.getByRole("textbox", { name: "Description" }).fill("Initial module purpose");
   const status = modal.getByRole("button", { name: new RegExp(`^${t("modules.status")}:`) });
   await status.click();
   const dates = await modal.getByLabel(t("modules.start")).evaluate((element) => {

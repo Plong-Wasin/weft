@@ -147,17 +147,21 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
         const row = await loadAsset(input.assetId);
         await requireRowAccess(row, context.userId, "write");
         if (row.uploaderId !== context.userId) throw new ActionError("Only the uploader can complete an upload", 403);
-        if (row.status === "uploaded") return out(row);
-        const stored = await store().head(row.storageKey);
-        if (!stored) throw new ActionError("File was not uploaded", 400);
-        if (stored.size < 1 || stored.size > limitBytes()) {
-          await store().remove(row.storageKey);
-          await db.delete(assets).where(eq(assets.id, row.id));
-          throw new ActionError("File exceeds the size limit", 413);
-        }
         const owner = await resolveOwner(row.ownerType as OwnerType, row.ownerId);
-        return db.transaction(async (transaction) => {
+        const result = await db.transaction(async (transaction) => {
           const database = transaction as unknown as Database;
+          // Completion and cancellation must serialize before touching storage;
+          // otherwise cancellation can remove bytes belonging to an uploaded row.
+          const [locked] = await database.select().from(assets).where(eq(assets.id, row.id)).for("update");
+          if (!locked) throw new ActionError("Asset not found", 404);
+          if (locked.status === "uploaded") return { asset: out(locked) };
+          const stored = await store().head(locked.storageKey);
+          if (!stored) throw new ActionError("File was not uploaded", 400);
+          if (stored.size < 1 || stored.size > limitBytes()) {
+            await store().remove(locked.storageKey);
+            await database.delete(assets).where(eq(assets.id, locked.id));
+            return { oversize: true as const };
+          }
           const [updated] = await database.update(assets).set({ status: "uploaded", size: stored.size, uploadedAt: new Date() }).where(eq(assets.id, row.id)).returning();
           if (owner.workItemId && owner.projectId) {
             await database.insert(activities).values({
@@ -165,22 +169,25 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
               newValue: { assetId: row.id, filename: row.filename, ownerType: row.ownerType }, ...activityActor(context),
             });
           }
-          return out(updated!);
+          return { asset: out(updated!) };
         });
+        if (result.oversize) throw new ActionError("File exceeds the size limit", 413);
+        return result.asset!;
       },
     },
     cancelAssetUpload: {
       name: "cancel_asset_upload", kind: "write" as const,
       input: Type.Object({ assetId: uuid() }), output: Type.Object({ ok: Type.Boolean() }),
       handler: async (context: Context, input: { assetId: string }) => {
-        const row = await loadAsset(input.assetId);
-        if (row.uploaderId !== context.userId || row.status !== "pending") throw new ActionError("Pending upload not found", 404);
-        // The uploader may always discard their own unfinished upload, even if
-        // access or the owner's editable state changed during the transfer.
-        // This grants no read access to the owner or the stored object.
-        await store().remove(row.storageKey);
-        await db.delete(assets).where(and(eq(assets.id, row.id), eq(assets.status, "pending")));
-        return { ok: true };
+        return db.transaction(async (transaction) => {
+          const database = transaction as unknown as Database;
+          const [row] = await database.select().from(assets).where(eq(assets.id, input.assetId)).for("update");
+          if (!row || row.uploaderId !== context.userId || row.status !== "pending") throw new ActionError("Pending upload not found", 404);
+          // The uploader may discard their unfinished upload after losing access.
+          await store().remove(row.storageKey);
+          await database.delete(assets).where(eq(assets.id, row.id));
+          return { ok: true };
+        });
       },
     },
     listAssets: {

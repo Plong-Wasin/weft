@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { activities, assets as assetTable, createDatabase, type Database } from "@weft/db";
+import { activities, assets as assetTable, createDatabase, workspaces, type Database } from "@weft/db";
 import { createAssetActions, createCommentActions, createIntakeActions, createProjectActions, createWikiActions, createWorkItemActions, signPostPolicy, type AssetStorage } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -129,6 +129,35 @@ test.concurrent("failed upload cancellation removes the pending row and stored o
     expect(env.mem.objects.has(ticket.fields.key!)).toBe(false);
     expect(await transaction.select().from(assetTable).where(eq(assetTable.id, ticket.assetId))).toHaveLength(0);
   });
+});
+
+test("cancellation and completion serialize before changing stored bytes", async () => {
+  // Separate committed transactions are needed to exercise the row lock.
+  const env = await setup(db);
+  try {
+    const ticket = await env.assets.requestAssetUpload.handler({ userId: env.member.id }, { ownerType: "work_item", ownerId: env.item.id, filename: "race.png", contentType: "image/png", size: 10 });
+    env.mem.put(ticket.fields.key!, 10);
+    let releaseHead!: () => void;
+    let enteredHead!: () => void;
+    const entered = new Promise<void>((resolve) => { enteredHead = resolve; });
+    const gate = new Promise<void>((resolve) => { releaseHead = resolve; });
+    const originalHead = env.mem.storage.head;
+    env.mem.storage.head = async (key) => { enteredHead(); await gate; return originalHead(key); };
+    const completing = env.assets.completeAssetUpload.handler({ userId: env.member.id }, { assetId: ticket.assetId });
+    await entered;
+    let cancelled = false;
+    const cancelling = env.assets.cancelAssetUpload.handler({ userId: env.member.id }, { assetId: ticket.assetId }).then(() => null, (error) => error).finally(() => { cancelled = true; });
+    await Bun.sleep(100);
+    expect(cancelled).toBe(false);
+    expect(env.mem.objects.has(ticket.fields.key!)).toBe(true);
+    releaseHead();
+    expect((await completing).id).toBe(ticket.assetId);
+    expect(await cancelling).toMatchObject({ status: 404 });
+    expect(env.mem.objects.has(ticket.fields.key!)).toBe(true);
+    expect((await db.select().from(assetTable).where(eq(assetTable.id, ticket.assetId)))[0]?.status).toBe("uploaded");
+  } finally {
+    await db.delete(workspaces).where(eq(workspaces.id, env.workspace.id));
+  }
 });
 
 test.concurrent("the uploader can discard pending bytes after an Intake decision or feature disable", async () => {

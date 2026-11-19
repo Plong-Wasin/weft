@@ -136,6 +136,8 @@ type Action = <T>(name: string, body: unknown) => Promise<T | null>;
 
 export function AttachmentsPanel({ workItemId, canWrite, action, onChange, showForm, onCount, pickerRef, failedFiles, onFailedFilesChange }: { workItemId: string; canWrite: boolean; action: Action; onChange?: () => void; showForm: boolean; onCount: (count: number) => void; pickerRef?: React.RefObject<HTMLInputElement | null>; failedFiles?: File[]; onFailedFilesChange?: (files: File[]) => void }) {
   const owner: OwnerRef = { ownerType: "work_item", ownerId: workItemId };
+  const localPickerRef = React.useRef<HTMLInputElement>(null);
+  const filePickerRef = pickerRef ?? localPickerRef;
   const [rows, setRows] = React.useState<AssetRow[]>([]);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -184,12 +186,12 @@ export function AttachmentsPanel({ workItemId, canWrite, action, onChange, showF
         {canWrite && <button type="button" className="grid size-7 place-items-center rounded-md !bg-transparent !p-0 text-secondary hover:!bg-layer-transparent-hover hover:!text-danger-text" aria-label={`${translate("assets.delete")} ${row.filename}`} title={translate("assets.delete")} onClick={() => void remove(row)}><Trash2 aria-hidden size={13} /></button>}
       </span>
     </li>)}</ul>
-    {canWrite && <input ref={pickerRef} hidden type="file" multiple data-testid="attach-input" onChange={(event) => { void attach([...(event.target.files ?? [])]); event.target.value = ""; }} />}
+    {canWrite && <input ref={filePickerRef} hidden type="file" multiple data-testid="attach-input" onChange={(event) => { void attach([...(event.target.files ?? [])]); event.target.value = ""; }} />}
     {canWrite && showForm && <div data-testid="attachment-dropzone" role="button" tabIndex={0}
       aria-label={translate("assets.dropHint")}
       className={`my-3 grid min-h-20 cursor-pointer place-items-center rounded border border-dashed p-4 text-center text-13 text-secondary ${dragging ? "border-accent bg-accent/10" : "border-subtle"}`}
-      onClick={() => pickerRef?.current?.click()}
-      onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); pickerRef?.current?.click(); } }}>
+      onClick={() => filePickerRef.current?.click()}
+      onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); filePickerRef.current?.click(); } }}>
       {translate("assets.dropHint")}
     </div>}
     {busy && <p role="status">{translate("assets.uploading")}</p>}

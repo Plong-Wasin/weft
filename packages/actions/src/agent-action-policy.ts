@@ -43,6 +43,7 @@ export function classifyAgentAction(action: string): AgentActionGroup | undefine
   if (memberActions.has(action) || action.includes("member")) return "member";
   if (projectActions.has(action) || action.includes("project")) return "project";
   if (exportActions.has(action) || action.includes("export")) return "export";
+  if (action === "cancel_asset_upload") return "feature";
   // Actions that alter workspace/project features (Cycles, Modules, Intake, Views, states, labels, wiki pages, estimates
   // and notifications) and the read actions on them need an explicit grant.
   if (featureVerbs.some((verb) => action.startsWith(verb)) || /^(list|get|search|check)_/.test(action)) return "feature";

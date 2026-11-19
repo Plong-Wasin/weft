@@ -28,6 +28,20 @@ type IntakePerson = { userId: string; name: string; isAgent?: boolean; hasAccess
 type IntakeLabel = { id: string; name: string };
 type ActivityRow = { id: string; field: string; oldValue: unknown; newValue: unknown; actorName: string; createdAt: string };
 type IntakeState = { id: string; name: string; group: string };
+type PendingImages = { files: File[]; assetIds: string[] };
+function appendImages(description: unknown, ids: string[]) {
+  const base = description && typeof description === "object" ? description as { type?: string; content?: unknown[] } : { type: "doc", content: [] };
+  const present = new Set<string>();
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== "object") return;
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    const node = value as { type?: unknown; attrs?: { assetId?: unknown }; content?: unknown };
+    if (node.type === "assetImage" && typeof node.attrs?.assetId === "string") present.add(node.attrs.assetId);
+    visit(node.content);
+  };
+  visit(base);
+  return { ...base, type: "doc", content: [...(Array.isArray(base.content) ? base.content : []), ...[...new Set(ids)].filter((id) => !present.has(id)).map((assetId) => ({ type: "assetImage", attrs: { assetId } }))] };
+}
 const titleDraftKey = (id: string) => `intake-title-draft:${id}`;
 const draftKey = (id: string) => `intake-draft:${id}`;
 function readDraft(id: string): IntakeDraft | undefined {
@@ -68,7 +82,7 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
 }
 
 /** The submission form: any project member, Guests included, can send a work item into Intake. */
-function SubmitModal({ action, workspaceId, projectId, onClose, onSubmitted }: { action: Call; workspaceId: string; projectId: string; onClose: () => void; onSubmitted: (item: IntakeItem, failedFiles: File[]) => void }) {
+function SubmitModal({ action, workspaceId, projectId, onClose, onSubmitted }: { action: Call; workspaceId: string; projectId: string; onClose: () => void; onSubmitted: (item: IntakeItem, failedFiles: File[], pendingImages: PendingImages) => void }) {
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState<unknown>(markdownToDoc(""));
   const [priority, setPriority] = React.useState("none");
@@ -78,14 +92,19 @@ function SubmitModal({ action, workspaceId, projectId, onClose, onSubmitted }: {
   const [labelIds, setLabelIds] = React.useState<string[]>([]);
   const [dueDate, setDueDate] = React.useState("");
   const [note, setNote] = React.useState<string | null>(null);
+  const [submitting, setSubmitting] = React.useState(false);
+  const submittingRef = React.useRef(false);
   const [files, setFiles] = React.useState<File[]>([]);
   const [inlineImages, setInlineImages] = React.useState<File[]>([]);
   const picker = React.useRef<HTMLInputElement>(null);
   const imagePicker = React.useRef<HTMLInputElement>(null);
   React.useEffect(() => { void Promise.all([action<IntakePerson[]>("list_project_members", { projectId }), action<IntakeLabel[]>("list_labels", { projectId })]).then(([members, projectLabels]) => { if (members) setPeople(members); if (projectLabels) setLabels(projectLabels); }); }, [action, projectId]);
-  return <Modal title={t("intake.modalTitle")} onClose={onClose}>
+  return <Modal title={t("intake.modalTitle")} onClose={() => { if (!submittingRef.current) onClose(); }}>
     <form className="my-0 grid gap-3" onSubmit={async (event) => {
       event.preventDefault();
+      if (submittingRef.current) return;
+      submittingRef.current = true; setSubmitting(true);
+      try {
       const saved = await action<IntakeItem>("submit_intake_item", { projectId, title, priority, description, assigneeIds, labelIds, dueDate: dueDate || null });
       setNote(saved ? null : t("intake.submitFailed"));
       if (saved) {
@@ -95,21 +114,22 @@ function SubmitModal({ action, workspaceId, projectId, onClose, onSubmitted }: {
           catch { failed.push(file); }
         }
         const imageIds: string[] = [];
+        const failedImages: File[] = [];
         for (const file of inlineImages) {
           try { imageIds.push((await uploadAsset({ api }, { ownerType: "work_item", ownerId: saved.workItemId }, file)).id); }
-          catch { failed.push(file); }
+          catch { failedImages.push(file); }
         }
+        let pendingIds = imageIds;
         if (imageIds.length) {
-          const base = description && typeof description === "object" ? description as { type?: string; content?: unknown[] } : { type: "doc", content: [] };
-          const content = Array.isArray(base.content) ? base.content : [];
-          const withImages = { ...base, type: "doc", content: [...content, ...imageIds.map((assetId) => ({ type: "assetImage", attrs: { assetId } }))] };
-          if (!await action("update_intake_item", { intakeItemId: saved.id, description: withImages })) setNote(t("intake.failed"));
+          try { if (await action("update_intake_item", { intakeItemId: saved.id, description: appendImages(description, imageIds) })) pendingIds = []; } catch { /* Retry from the saved item. */ }
         }
-        onSubmitted(saved, failed);
+        onSubmitted(saved, failed, { files: failedImages, assetIds: pendingIds });
       }
+      } finally { submittingRef.current = false; setSubmitting(false); }
     }}>
+      <fieldset disabled={submitting} className="m-0 grid min-w-0 gap-3 border-0 p-0">
       <input autoFocus required maxLength={500} aria-label={t("intake.titleField")} placeholder={t("intake.titleField")} value={title} className={`${field} text-16`} onChange={(event) => setTitle(event.target.value)} />
-      <div aria-label={t("intake.descriptionField")}><DescriptionEditor workspaceId={workspaceId} workItemId={null} initial={description} editable imageUploads={false} onChange={setDescription} /></div>
+      <div aria-label={t("intake.descriptionField")}><DescriptionEditor workspaceId={workspaceId} workItemId={null} initial={description} editable={!submitting} imageUploads={false} onChange={setDescription} /></div>
       <label className="grid gap-1 text-13 text-secondary">{t("intake.priority")}
         <select value={priority} className="w-full text-14 text-primary" onChange={(event) => setPriority(event.target.value)}>
           {["none", "urgent", "high", "medium", "low"].map((value) => <option key={value} value={value}>{t(`workItems.priority.${value}`)}</option>)}
@@ -124,9 +144,10 @@ function SubmitModal({ action, workspaceId, projectId, onClose, onSubmitted }: {
       <div className="grid gap-1"><button type="button" className={quietButton} onClick={() => imagePicker.current?.click()}>{t("assets.inlineImage")}</button>{inlineImages.map((file, index) => <span key={`${file.name}-${index}`} className="text-13 text-secondary">{file.name}</span>)}</div>
       {note && <p role="alert" className="m-0 text-13 text-danger-text">{note}</p>}
       <div className="flex justify-end gap-2">
-        <button type="button" className={quietButton} onClick={onClose}>{t("intake.cancel")}</button>
-        <button className={primaryButton}>{t("intake.submit")}</button>
+        <button type="button" className={quietButton} disabled={submitting} onClick={onClose}>{t("intake.cancel")}</button>
+        <button className={primaryButton} disabled={submitting}>{t("intake.submit")}</button>
       </div>
+      </fieldset>
     </form>
   </Modal>;
 }
@@ -218,8 +239,8 @@ function ListRow({ item, selected, onSelect }: { item: IntakeItem; selected: boo
 
 type Dialog = "accept" | "snooze" | "duplicate" | null;
 
-function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, selfId, item, index, count, canDecide, canEdit, draft, failedFiles, onFailedFilesChange, onDraftChange, onMove, onDecided, onChanged, onUpdated }: {
-  action: Call; workspaceId: string; workspaceSlug: string; projectKey: string; projectId: string; selfId: string; item: IntakeItem; index: number; count: number; canDecide: boolean; canEdit: boolean; draft?: IntakeDraft; failedFiles: File[]; onFailedFilesChange: (files: File[]) => void; onDraftChange: (patch: Partial<IntakeDraft>) => void; onMove: (delta: number) => void; onDecided: () => void; onChanged: () => void; onUpdated: () => void;
+function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, selfId, item, index, count, canDecide, canEdit, draft, failedFiles, onFailedFilesChange, pendingImages, onPendingImagesChange, onDraftChange, onMove, onDecided, onChanged, onUpdated }: {
+  action: Call; workspaceId: string; workspaceSlug: string; projectKey: string; projectId: string; selfId: string; item: IntakeItem; index: number; count: number; canDecide: boolean; canEdit: boolean; draft?: IntakeDraft; failedFiles: File[]; onFailedFilesChange: (files: File[]) => void; pendingImages: PendingImages; onPendingImagesChange: (value: PendingImages) => void; onDraftChange: (patch: Partial<IntakeDraft>) => void; onMove: (delta: number) => void; onDecided: () => void; onChanged: () => void; onUpdated: () => void;
 }) {
   const [dialog, setDialog] = React.useState<Dialog>(null);
   const [note, setNote] = React.useState<string | null>(null);
@@ -244,6 +265,33 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
   const editable = canEdit && (item.outcome === "pending" || item.outcome === "snoozed");
   const changeDraft = (patch: Partial<IntakeDraft>) => onDraftChange(patch);
   const [saving, setSaving] = React.useState(false);
+  const [retryingImages, setRetryingImages] = React.useState(false);
+  const [editorRevision, setEditorRevision] = React.useState(0);
+  const retryImages = async () => {
+    setRetryingImages(true);
+    const failures: File[] = [];
+    const ids = [...pendingImages.assetIds];
+    for (const file of pendingImages.files) {
+      try { ids.push((await uploadAsset({ api }, { ownerType: "work_item", ownerId: item.workItemId }, file)).id); }
+      catch { failures.push(file); }
+    }
+    let remaining = ids;
+    if (ids.length) {
+      try {
+        const currentDescription = readDraft(item.id)?.description ?? description;
+        const updated = appendImages(currentDescription, ids);
+        if (await action("update_intake_item", { intakeItemId: item.id, description: updated })) {
+          remaining = [];
+          const latestDescription = readDraft(item.id)?.description ?? currentDescription;
+          onDraftChange({ description: latestDescription === currentDescription ? updated : appendImages(latestDescription, ids) });
+          setEditorRevision((revision) => revision + 1);
+          onChanged();
+        }
+      } catch { /* Keep the uploaded IDs for another retry. */ }
+    }
+    onPendingImagesChange({ files: failures, assetIds: remaining });
+    setRetryingImages(false);
+  };
   const undecided = item.outcome === "pending" || item.outcome === "snoozed";
   const unsnoozed = item.outcome === "snoozed";
   const loadActivity = React.useCallback(async () => setActivity(await action<ActivityRow[]>("list_work_item_activities", { workItemId: item.workItemId }) ?? []), [action, item.workItemId]);
@@ -255,12 +303,17 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
   };
   const save = async () => {
     setSaving(true);
+    const draftSnapshot = sessionStorage.getItem(draftKey(item.id));
+    const titleSnapshot = sessionStorage.getItem(titleDraftKey(item.id));
     const savedDraft = readDraft(item.id);
     const attempted = { title: titleInputRef.current?.value ?? sessionStorage.getItem(titleDraftKey(item.id)) ?? titleValueRef.current, description: savedDraft?.description ?? description, priority: savedDraft?.priority ?? priority, assigneeIds: savedDraft?.assigneeIds ?? assigneeIds, labelIds: savedDraft?.labelIds ?? labelIds, dueDate: savedDraft ? savedDraft.dueDate : (dueDate || null) };
     try {
       const saved = await action<IntakeItem>("update_intake_item", { intakeItemId: item.id, ...attempted });
       if (!saved) { onDraftChange(attempted); setNote(t("intake.failed")); return; }
-      titleValueRef.current = attempted.title; setTitle(attempted.title); sessionStorage.removeItem(titleDraftKey(item.id)); sessionStorage.removeItem(draftKey(item.id)); setNote(null); onUpdated();
+      if (sessionStorage.getItem(draftKey(item.id)) === draftSnapshot && sessionStorage.getItem(titleDraftKey(item.id)) === titleSnapshot) {
+        titleValueRef.current = attempted.title; setTitle(attempted.title); sessionStorage.removeItem(titleDraftKey(item.id)); sessionStorage.removeItem(draftKey(item.id)); onUpdated();
+      } else onChanged();
+      setNote(null);
     } catch { setNote(t("intake.failed")); }
     finally { setSaving(false); }
   };
@@ -292,12 +345,12 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
     <div className="grid gap-5 overflow-auto px-5 py-5">
       {editable ? <div className="grid gap-3">
         <label className="grid gap-1 text-13 text-secondary">{t("intake.titleField")}<input ref={titleInputRef} name="title" aria-label={t("intake.titleField")} required maxLength={500} value={title} className={`${field} text-24 font-semibold`} onInput={(event) => { titleValueRef.current = event.currentTarget.value; setTitle(event.currentTarget.value); sessionStorage.setItem(titleDraftKey(item.id), event.currentTarget.value); changeDraft({ title: event.currentTarget.value }); }} /></label>
-        <div><p className="mb-1 text-13 text-secondary">{t("intake.descriptionField")}</p><DescriptionEditor workspaceId={workspaceId} workItemId={item.workItemId} initial={description} editable onChange={(doc) => changeDraft({ description: doc })} /></div>
+        <div><p className="mb-1 text-13 text-secondary">{t("intake.descriptionField")}</p><DescriptionEditor key={editorRevision} workspaceId={workspaceId} workItemId={item.workItemId} initial={description} editable onChange={(doc) => changeDraft({ description: doc })} /></div>
         <label className="grid gap-1 text-13 text-secondary">{t("intake.priority")}<select name="priority" aria-label={t("intake.priority")} value={priority} className={field} onChange={(event) => changeDraft({ priority: event.target.value })}>{["none", "urgent", "high", "medium", "low"].map((value) => <option key={value} value={value}>{t(`workItems.priority.${value}`)}</option>)}</select></label>
         <label className="grid gap-1 text-13 text-secondary">{t("workItems.assignees")}<select multiple aria-label={t("workItems.assignees")} value={assigneeIds} className={`${field} min-h-20`} onChange={(event) => changeDraft({ assigneeIds: [...event.currentTarget.selectedOptions].map((option) => option.value) })}>{people.map((person) => <option key={person.userId} value={person.userId} disabled={person.isAgent && person.hasAccess === false}>{person.name}{person.isAgent && person.hasAccess === false ? " (no access)" : ""}</option>)}</select></label>
         <label className="grid gap-1 text-13 text-secondary">{t("workItems.labels")}<select multiple aria-label={t("workItems.labels")} value={labelIds} className={`${field} min-h-20`} onChange={(event) => changeDraft({ labelIds: [...event.currentTarget.selectedOptions].map((option) => option.value) })}>{labels.map((label) => <option key={label.id} value={label.id}>{label.name}</option>)}</select></label>
         <label className="grid gap-1 text-13 text-secondary">{t("workItems.dueDate")}<input type="date" aria-label={t("workItems.dueDate")} value={dueDate} className={field} onChange={(event) => changeDraft({ dueDate: event.target.value || null })} /></label>
-        <div className="flex gap-2"><button type="button" className={primaryButton} disabled={saving || !title.trim()} onClick={() => void save()}>{saving ? t("intake.saving") : t("intake.save")}</button></div>
+        <div className="flex gap-2"><button type="button" className={primaryButton} disabled={saving || retryingImages || !title.trim()} onClick={() => void save()}>{saving ? t("intake.saving") : t("intake.save")}</button></div>
       </div> : <><h2 className="m-0 text-24 font-semibold text-primary">{item.title}</h2>
       {item.descriptionText ? <DescriptionEditor workspaceId={workspaceId} workItemId={item.workItemId} initial={markdownToDoc(item.descriptionMarkdown)} editable={false} onChange={() => undefined} /> : <p className="m-0 text-14 text-tertiary">{t("intake.noDescription")}</p>}</>}
       <dl className="m-0 grid max-w-md grid-cols-[8rem_1fr] items-center gap-x-3 gap-y-3 text-13">
@@ -313,9 +366,10 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
         {item.outcome === "snoozed" && item.snoozedTill && <><dt className="text-secondary">{t("intake.status.snoozed")}</dt><dd className="m-0 text-primary">{t("intake.snoozedTill").replace("{date}", formatDate(item.snoozedTill))}</dd></>}
         {item.outcome === "duplicate" && item.duplicateToDisplayId && <><dt className="text-secondary">{t("intake.status.duplicate")}</dt><dd className="m-0 text-primary">{t("intake.duplicateOf").replace("{id}", item.duplicateToDisplayId)}</dd></>}
       </dl>
-      <TimelinePanel workspaceId={workspaceId} workItemId={item.workItemId} projectId={projectId} selfId={selfId} canComment={item.outcome === "accepted" ? canDecide : true} linkBase={item.outcome === "accepted" ? paths.workItem(workspaceSlug, item.displayId) : paths.intake(workspaceSlug, projectKey)} action={action as never} actionResult={actionResult} onChange={onUpdated} />
+      <TimelinePanel workspaceId={workspaceId} workItemId={item.workItemId} projectId={projectId} selfId={selfId} canComment={item.outcome === "accepted" ? canDecide : true} linkBase={item.outcome === "accepted" ? paths.workItem(workspaceSlug, item.displayId) : paths.intake(workspaceSlug, projectKey)} action={action as never} actionResult={actionResult} onChange={onChanged} />
       {note && <p role="alert" className="m-0 text-13 text-danger-text">{note}</p>}
       <AttachmentsPanel workItemId={item.workItemId} canWrite={editable || (item.outcome === "accepted" && canDecide)} action={action} onChange={() => { void loadActivity(); onChanged(); }} showForm={editable} onCount={() => undefined} failedFiles={failedFiles} onFailedFilesChange={onFailedFilesChange} />
+      {editable && (pendingImages.files.length > 0 || pendingImages.assetIds.length > 0) && <div role="alert" className="grid gap-1 text-13 text-danger-text"><p className="m-0">{t("assets.uploadFailed")}</p><ul>{pendingImages.files.map((file, index) => <li key={`${file.name}-${index}`}>{file.name}</li>)}</ul><button type="button" className={quietButton} disabled={saving || retryingImages} onClick={() => void retryImages()}>{t("assets.retryFailed")}</button></div>}
       <section aria-label={t("intake.activity")} className="grid gap-2 border-t border-subtle pt-3">
         <h3 className="m-0 text-14 font-medium text-primary">{t("intake.activity")}</h3>
         <ul className="m-0 grid list-none gap-2 !pl-0 text-13 text-secondary">{activity.filter((row) => row.field === "attachment_added" || row.field === "attachment_removed").map((row) => {
@@ -342,6 +396,7 @@ export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, 
   const [adding, setAdding] = React.useState(false);
   const [drafts, setDrafts] = React.useState<Record<string, IntakeDraft>>({});
   const [failedUploads, setFailedUploads] = React.useState<Record<string, File[]>>({});
+  const [pendingImages, setPendingImages] = React.useState<Record<string, PendingImages>>({});
   const draftsRef = React.useRef<Record<string, IntakeDraft>>({});
   // A freshly submitted item is selected before the list has reloaded to include it.
   const justAdded = React.useRef<string | null>(null);
@@ -386,8 +441,8 @@ export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, 
     void load();
   };
   const updateDraft = (item: IntakeItem, patch: Partial<IntakeDraft>) => {
-    const previous = draftsRef.current[item.id];
-    const next: IntakeDraft = { title: previous?.title ?? item.title, description: previous?.description ?? markdownToDoc(item.descriptionMarkdown), priority: previous?.priority ?? item.priority, assigneeIds: previous?.assigneeIds ?? item.assigneeIds, labelIds: previous?.labelIds ?? item.labelIds, dueDate: previous?.dueDate ?? item.dueDate, ...patch };
+    const previous = draftsRef.current[item.id] ?? readDraft(item.id);
+    const next: IntakeDraft = { title: previous?.title ?? item.title, description: previous?.description ?? markdownToDoc(item.descriptionMarkdown), priority: previous?.priority ?? item.priority, assigneeIds: previous?.assigneeIds ?? item.assigneeIds, labelIds: previous?.labelIds ?? item.labelIds, dueDate: previous ? previous.dueDate : item.dueDate, ...patch };
     sessionStorage.setItem(draftKey(item.id), JSON.stringify(next));
     draftsRef.current = { ...draftsRef.current, [item.id]: next };
     setDrafts(draftsRef.current);
@@ -412,7 +467,7 @@ export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, 
           {(items ?? []).map((item) => <ListRow key={item.id} item={item} selected={item.id === selectedId} onSelect={() => select(item.id)} />)}
         </ul>
       </div>
-      {current ? <Detail key={current.id} action={action} workspaceId={workspaceId} workspaceSlug={workspaceSlug ?? ""} projectKey={projectKey ?? ""} projectId={projectId} selfId={selfId} item={current} index={index} count={items!.length} canDecide={canDecide} canEdit={canAdmin || workspaceAdmin || current.createdBy === selfId} draft={draftsRef.current[current.id] ?? drafts[current.id]} onDraftChange={(patch) => updateDraft(current, patch)} failedFiles={failedUploads[current.id] ?? []} onFailedFilesChange={(files) => setFailedUploads((previous) => ({ ...previous, [current.id]: files }))}
+      {current ? <Detail key={current.id} action={action} workspaceId={workspaceId} workspaceSlug={workspaceSlug ?? ""} projectKey={projectKey ?? ""} projectId={projectId} selfId={selfId} item={current} index={index} count={items!.length} canDecide={canDecide} canEdit={canAdmin || workspaceAdmin || current.createdBy === selfId} draft={draftsRef.current[current.id] ?? drafts[current.id]} onDraftChange={(patch) => updateDraft(current, patch)} failedFiles={failedUploads[current.id] ?? []} onFailedFilesChange={(files) => setFailedUploads((previous) => ({ ...previous, [current.id]: files }))} pendingImages={pendingImages[current.id] ?? { files: [], assetIds: [] }} onPendingImagesChange={(value) => setPendingImages((previous) => ({ ...previous, [current.id]: value }))}
         onMove={(delta) => select(items![index + delta]!.id)} onDecided={afterDecision} onChanged={afterChange} onUpdated={() => { const { [current.id]: _removed, ...rest } = draftsRef.current; draftsRef.current = rest; setDrafts(rest); void load(); }} />
         : items?.length === 0
           ? <div className="grid min-w-0 flex-1 place-items-center">{tab === "open"
@@ -420,6 +475,6 @@ export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, 
             : <EmptyState title={t("intake.emptyClosed")} description={t("intake.emptyClosedHint")} />}</div>
           : <div className="grid min-w-0 flex-1 place-items-center p-6 text-14 text-secondary">{t("intake.pick")}</div>}
     </div>
-    {adding && <SubmitModal action={action} workspaceId={workspaceId} projectId={projectId} onClose={() => setAdding(false)} onSubmitted={(item, failedFiles) => { if (failedFiles.length) setFailedUploads((previous) => ({ ...previous, [item.id]: failedFiles })); setAdding(false); justAdded.current = item.id; select(item.id, "open"); void load(); }} />}
+    {adding && <SubmitModal action={action} workspaceId={workspaceId} projectId={projectId} onClose={() => setAdding(false)} onSubmitted={(item, failedFiles, images) => { if (failedFiles.length) setFailedUploads((previous) => ({ ...previous, [item.id]: failedFiles })); if (images.files.length || images.assetIds.length) setPendingImages((previous) => ({ ...previous, [item.id]: images })); setAdding(false); justAdded.current = item.id; select(item.id, "open"); void load(); }} />}
   </section>;
 }

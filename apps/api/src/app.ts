@@ -82,6 +82,8 @@ export function createApp(
   features: { integrations?: boolean; outboundWebhooks?: boolean } = {},
   /** Rate limits. settings default to the environment (see rate-limits.ts); now is the clock, injectable for tests. */
   limits: { settings?: Partial<RateLimitSettings>; now?: () => number } = {},
+  /** The clock of the Runtime actions (offline time, freshness, dispatch); injectable for tests. */
+  clock: () => Date = () => new Date(),
 ) {
   const integrations = features.integrations ?? integrationsEnabled();
   const outboundWebhooks = features.outboundWebhooks ?? outboundWebhooksEnabled();
@@ -115,10 +117,10 @@ export function createApp(
   const microsoft = authOptions.microsoft ?? microsoftAuthSettings();
   const passwordSignInEnabled = authOptions.passwordSignInEnabled ?? (Bun.env.PASSWORD_SIGN_IN_ENABLED ?? "true").toLowerCase() !== "false";
   const cookieSecure = (Bun.env.WEFT_PUBLIC_URL ?? Bun.env.BETTER_AUTH_URL ?? "http://localhost:3000").startsWith("https://");
-  const memberActions = createActionList(db, { integrations, passwordSignInEnabled, outboundWebhooks });
+  const memberActions = createActionList(db, { integrations, passwordSignInEnabled, outboundWebhooks, clock });
   const tokens = createApiTokenActions(db);
-  const runtimeActions = createRuntimeActions(db);
-  const runtimeDispatch = createRuntimeDispatchActions(db);
+  const runtimeActions = createRuntimeActions(db, clock);
+  const runtimeDispatch = createRuntimeDispatchActions(db, clock);
   const registrationLimiter = createRegistrationLimiter({ trustedProxyHops });
   /** Cookie session first (unchanged), then a personal API token in `Authorization: Bearer`. */
   async function resolveCaller(request: Request): Promise<ActionContext | null> {
@@ -547,8 +549,11 @@ export function createApp(
       if (!daemon) { socket.close(1008, "Daemon registration required"); return; }
       // A credential rotated during this connection is superseded: the Daemon reconnects with the one it adopted.
       if (daemon.tokenId !== caller.tokenId) { socket.close(4001, "Daemon credential was replaced. Reconnect to use the new credential."); return; }
-      await runtimeActions.heartbeat({ userId: caller.userId }, daemon.id);
-      socket.send(JSON.stringify({ type: "heartbeat_ack", at: new Date().toISOString() }));
+      // The Daemon names the Runtimes it holds; ids that are not well-formed cannot be Runtimes and are not looked up.
+      const named = (message as { runtimeIds?: unknown } | null)?.runtimeIds;
+      const runtimeIds = Array.isArray(named) ? named.filter((id): id is string => typeof id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) : [];
+      const { goneRuntimeIds } = await runtimeActions.heartbeat({ userId: caller.userId }, daemon.id, runtimeIds);
+      socket.send(JSON.stringify({ type: "heartbeat_ack", at: new Date().toISOString(), goneRuntimeIds }));
       daemonSockets.set(socket.id, { socket, daemonId: daemon.id });
       signalTimer ??= setInterval(() => { for (const [id, entry] of daemonSockets) void signalDaemon(entry.socket, entry.daemonId).catch(() => daemonSockets.delete(id)); if (!daemonSockets.size && signalTimer) { clearInterval(signalTimer); signalTimer = undefined; } }, 2_000).unref();
       await signalDaemon(socket, daemon.id);

@@ -453,21 +453,24 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
   let backoffMs = 1_000;
   let authBackoffMs = AUTH_RETRY_MIN_MS;
   let registeredClis = "";
+  /** The Runtime ids this Daemon holds, from its latest registration. A heartbeat names them; the server answers with those it deleted. */
+  let heldRuntimeIds = new Set<string>();
   // Lives across reconnects: a cancel arriving on a new socket must still reach Runs claimed on an old one.
   const cancellations = new Map<string, () => void>();
   /** Registers this Daemon; asks for a new credential when none is held or the last one was refused. */
   const register = async (agentClis: string[]) => {
-    let registration: { daemonId: string; daemonToken?: string };
+    let registration: { daemonId: string; daemonToken?: string; runtimes?: Array<{ id: string }> };
     // Read at every attempt: `weft login` while the Daemon runs replaces the CLI token, and the next retry must use it.
     const personalToken = env.WEFT_TOKEN ?? (await readCliConfig(env)).token ?? "";
     try {
-      registration = await post(fetcher, apiUrl, personalToken, "/api/daemon/register", { hostname: env.WEFT_HOSTNAME ?? hostname(), version: CLI_VERSION, agentClis, rotate: !credential || rotateNext }) as { daemonId: string; daemonToken?: string };
+      registration = await post(fetcher, apiUrl, personalToken, "/api/daemon/register", { hostname: env.WEFT_HOSTNAME ?? hostname(), version: CLI_VERSION, agentClis, rotate: !credential || rotateNext }) as { daemonId: string; daemonToken?: string; runtimes?: Array<{ id: string }> };
     } catch (error) {
       if (isUnauthorized(error)) throw new RegistrationUnauthorized((error as Error).message);
       throw error;
     }
     await adoptCredential(registration);
     rotateNext = false;
+    heldRuntimeIds = new Set((registration.runtimes ?? []).map((runtime) => runtime.id));
     return registration;
   };
   /** One Daemon request with the current credential. A 401 marks the credential for rotation, then retries once with the credential on disk, which may have been rotated. */
@@ -521,7 +524,7 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
         const done = () => { if (!settled) { settled = true; clearInterval(heartbeat); clearInterval(probe); clearInterval(safetyPoll); if (connectedAt && Date.now() - connectedAt >= 60_000) backoffMs = 1_000; reject(new Error("Daemon WebSocket closed")); } };
         const fail = (error: Error) => { if (!settled) { settled = true; clearInterval(heartbeat); clearInterval(probe); clearInterval(safetyPoll); reject(error); } };
         const heartbeat = setInterval(() => {
-          if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "heartbeat", daemonId: registration.daemonId }));
+          if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "heartbeat", daemonId: registration.daemonId, runtimeIds: [...heldRuntimeIds] }));
         }, environment.heartbeatMs ?? 15_000);
         const probe = setInterval(async () => {
           const next = await detectedClis(env.PATH ?? "");
@@ -536,8 +539,12 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
         safetyPoll = setInterval(() => { void claim(); }, environment.safetyPollMs ?? 180_000);
         socket.addEventListener("message", (event) => {
           try {
-            const message = JSON.parse(String(event.data)) as { type?: string; runId?: string };
+            const message = JSON.parse(String(event.data)) as { type?: string; runId?: string; goneRuntimeIds?: unknown };
             if (message.type === "work_available") void claim();
+            // A Runtime deleted on the server is forgotten here; the Session folders it used stay for the sweep, and the other Runtimes keep running.
+            if (message.type === "heartbeat_ack" && Array.isArray(message.goneRuntimeIds)) {
+              for (const id of message.goneRuntimeIds) if (typeof id === "string" && heldRuntimeIds.delete(id)) output(environment, `Runtime ${id} was deleted on the server; the Daemon forgets it and keeps running.\n`);
+            }
             if (message.type === "cancel" && message.runId) cancellations.get(message.runId)?.();
           } catch { /* ignore unrelated frames */ }
         });

@@ -189,6 +189,42 @@ test("daemon detects Claude and Codex on the injected PATH, registers them, and 
   expect(JSON.parse(frames[0]!)).toMatchObject({ type: "heartbeat", daemonId: "daemon-id" });
 });
 
+test("a Daemon told by a heartbeat acknowledgement that a Runtime is gone drops its record of it, keeps the other Runtime, and keeps running", async () => {
+  const path = await mkdtemp(join(tmpdir(), "weft-gone-path-")); scratch.push(path);
+  const configHome = await mkdtemp(join(tmpdir(), "weft-gone-config-")); scratch.push(configHome);
+  await mkdir(join(configHome, "weft"), { recursive: true });
+  await writeFile(join(configHome, "weft/config.json"), JSON.stringify({ token: "weft_cli", apiUrl: "https://weft.example" }));
+  await Promise.all(["claude", "codex"].map(async (name) => { const file = join(path, name); await writeFile(file, "#!/bin/sh\nexit 0\n"); await chmod(file, 0o755); }));
+  const controller = new AbortController();
+  const heartbeats: Array<{ runtimeIds: string[] }> = [];
+  class GoneSocket extends EventTarget {
+    readyState = 0;
+    constructor() { super(); setTimeout(() => { this.readyState = 1; this.dispatchEvent(new Event("open")); }, 0); }
+    send(frame: string) {
+      const message = JSON.parse(frame) as { type: string; runtimeIds?: string[] };
+      if (message.type !== "heartbeat") return;
+      heartbeats.push({ runtimeIds: message.runtimeIds ?? [] });
+      // The first heartbeat is answered: the codex Runtime was deleted on the server. The Daemon must stop naming it.
+      if (heartbeats.length === 1) this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ type: "heartbeat_ack", at: new Date().toISOString(), goneRuntimeIds: ["codex-runtime"] }) }));
+      // Keep heartbeating for a few more frames, so the Daemon is seen to keep running after the acknowledgement.
+      if (heartbeats.length === 4) controller.abort();
+    }
+    close() { this.readyState = 3; this.dispatchEvent(new Event("close")); }
+  }
+  await startDaemon({
+    env: { XDG_CONFIG_HOME: configHome, PATH: path, WEFT_HOSTNAME: "devbox" },
+    fetch: async (input) => {
+      if (String(input).endsWith("/api/daemon/register")) return Response.json({ daemonId: "daemon-id", runtimes: [{ id: "claude-runtime", agentCli: "claude" }, { id: "codex-runtime", agentCli: "codex" }], daemonToken: "weft_daemon_test" });
+      return Response.json([]);
+    },
+    webSocket: () => new GoneSocket() as unknown as WebSocket,
+    signal: controller.signal, heartbeatMs: 5, reprobeMs: 60_000, reregisterMs: 60_000, safetyPollMs: 60_000,
+  });
+  expect(heartbeats[0]!.runtimeIds.sort()).toEqual(["claude-runtime", "codex-runtime"]);
+  expect(heartbeats.length).toBeGreaterThanOrEqual(4);
+  for (const frame of heartbeats.slice(1)) expect(frame.runtimeIds).toEqual(["claude-runtime"]);
+}, 30_000);
+
 test("daemon reconnects with exponential backoff after dropped WebSockets", async () => {
   const controller = new AbortController();
   const waits: number[] = [];

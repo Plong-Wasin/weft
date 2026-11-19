@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import { and, asc, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, eq, gte, ilike, inArray, isNotNull, isNull, lte, ne, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { assertNoneArchived, assertNotArchived, liveWorkItems, unarchivedWorkItems } from "./triage";
 import { activities, estimatePoints, moduleItems, moduleMembers, modules, projectMembers, workItemAssignees, workItemLabels, workItemRelations, labels, users, workItemStates, workItems, workspaceMembers } from "@weft/db";
@@ -18,6 +18,7 @@ export type ModuleStatus = (typeof moduleStatuses)[number];
 export const archivableModuleStatuses: readonly ModuleStatus[] = ["completed", "cancelled"];
 
 const uuid = () => Type.String({ format: "uuid" });
+const userId = Type.String({ minLength: 1 });
 const dateSchema = Type.String({ pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" });
 const statusSchema = Type.Union(moduleStatuses.map((status) => Type.Literal(status)));
 const nameSchema = Type.String({ minLength: 1, maxLength: 100 });
@@ -177,12 +178,23 @@ export function createModuleActions(db: Database) {
     /** Archived Modules are hidden unless `archived` is true, which lists only them. */
     listModules: {
       name: "list_modules", kind: "read" as const,
-      input: Type.Object({ projectId: uuid(), archived: Type.Optional(Type.Boolean()) }), output: Type.Array(moduleOutput),
-      handler: async (context: Context, input: { projectId: string; archived?: boolean }) => {
+      input: Type.Object({ projectId: uuid(), archived: Type.Optional(Type.Boolean()), search: Type.Optional(Type.String({ maxLength: 200 })), status: Type.Optional(statusSchema), leadId: Type.Optional(userId), memberId: Type.Optional(userId), dateFrom: Type.Optional(dateSchema), dateTo: Type.Optional(dateSchema) }), output: Type.Array(moduleOutput),
+      handler: async (context: Context, input: { projectId: string; archived?: boolean; search?: string; status?: ModuleStatus; leadId?: string; memberId?: string; dateFrom?: string; dateTo?: string }) => {
         const { project } = await requireProjectAccess(db, context.userId, input.projectId, "read");
         assertFeatureEnabled(project, "modules");
+        assertDates(input.dateFrom ?? null, input.dateTo ?? null);
+        if (input.dateFrom && input.dateTo && input.dateFrom > input.dateTo) throw new ActionError("Start date must not be after end date", 400);
+        const matchingMembers = input.memberId ? (await db.select({ moduleId: moduleMembers.moduleId }).from(moduleMembers).where(eq(moduleMembers.userId, input.memberId))).map((row) => row.moduleId) : undefined;
+        if (matchingMembers && matchingMembers.length === 0) return [];
+        const filters = [eq(modules.projectId, project.id), isNull(modules.deletedAt), input.archived ? isNotNull(modules.archivedAt) : isNull(modules.archivedAt)];
+        if (input.search?.trim()) filters.push(ilike(modules.name, `%${input.search.trim().replace(/[\\%_]/g, "\\$&")}%`));
+        if (input.status) filters.push(eq(modules.status, input.status));
+        if (input.leadId) filters.push(eq(modules.leadId, input.leadId));
+        if (matchingMembers) filters.push(inArray(modules.id, matchingMembers));
+        if (input.dateTo) filters.push(lte(modules.startDate, input.dateTo));
+        if (input.dateFrom) filters.push(gte(modules.endDate, input.dateFrom));
         const rows = await db.select().from(modules)
-          .where(and(eq(modules.projectId, project.id), isNull(modules.deletedAt), input.archived ? isNotNull(modules.archivedAt) : isNull(modules.archivedAt)))
+          .where(and(...filters))
           .orderBy(asc(modules.createdAt), asc(modules.id));
         return (await present(db, rows)).map(strip);
       },

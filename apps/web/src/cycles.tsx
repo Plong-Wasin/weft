@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, useNavigate } from "react-router";
-import { CalendarDays, CalendarSync, EllipsisVertical, Plus, X } from "lucide-react";
+import { ArchiveRestore, CalendarDays, CalendarSync, EllipsisVertical, Plus, X } from "lucide-react";
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
 import { EmptyState } from "./empty-state";
 import { WorkItemLayouts } from "./work-item-layouts";
@@ -106,7 +106,8 @@ function CycleMenu({ cycle, canWrite, canAdmin, onEdit, onArchive, onDelete }: {
   if (!canWrite && !canAdmin) return null;
   return <Popover label={`${t("cycles.menu")}: ${cycle.name}`} align="right" trigger={<EllipsisVertical aria-hidden size={16} />}>
     {(close) => <>
-      {canWrite && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onEdit(); }}>{t("cycles.edit")}</button>}
+      {canWrite && !cycle.archived && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onEdit(); }}>{t("cycles.edit")}</button>}
+      {canAdmin && cycle.archived && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onArchive(); }}><ArchiveRestore aria-hidden size={14} />{t("cycles.unarchive")}</button>}
       {canArchive && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onArchive(); }}>{t("cycles.archive")}</button>}
       {canAdmin && <button type="button" role="menuitem" className={`${menuItemClass} text-danger-text`} onClick={() => { close(); onDelete(); }}>{t("cycles.delete")}</button>}
     </>}
@@ -117,6 +118,7 @@ function CycleMenu({ cycle, canWrite, canAdmin, onEdit, onArchive, onDelete }: {
 function useCycleCommands(action: Call, reload: () => void, setNote: (note: string | null) => void) {
   return {
     archive: async (cycle: Cycle) => { setNote((await action("archive_cycle", { cycleId: cycle.id })) === null ? t("cycles.failed") : null); reload(); },
+    restore: async (cycle: Cycle) => { setNote((await action("unarchive_cycle", { cycleId: cycle.id })) === null ? t("cycles.failed") : null); reload(); },
     destroy: async (cycle: Cycle) => {
       if (!window.confirm(t("cycles.deleteConfirm"))) return false;
       if ((await action("delete_cycle", { cycleId: cycle.id })) === null) { setNote(t("cycles.failed")); return false; }
@@ -167,7 +169,7 @@ export function CyclesPage({ workspaceSlug, projectKey, projectId, canWrite, can
     {cycles !== null && cycles.length > 0 && shown.length === 0 && <p role="status" className="m-0 px-1 py-4 text-14 text-secondary">{t("cycles.emptyTab")}</p>}
     <ul role="tabpanel" className="m-0 list-none rounded-lg border border-subtle p-0 empty:hidden">
       {shown.map((cycle) => <CycleRow key={cycle.id} cycle={cycle} href={paths.cycle(workspaceSlug, projectKey, cycle.id)}>
-        <CycleMenu cycle={cycle} canWrite={canWrite} canAdmin={canAdmin} onEdit={() => setEditing(cycle)} onArchive={() => void commands.archive(cycle)} onDelete={() => void commands.destroy(cycle)} />
+        <CycleMenu cycle={cycle} canWrite={canWrite} canAdmin={canAdmin} onEdit={() => setEditing(cycle)} onArchive={() => void (cycle.archived ? commands.restore(cycle) : commands.archive(cycle))} onDelete={() => void commands.destroy(cycle)} />
       </CycleRow>)}
     </ul>
     {note && <p role="alert" className="m-0 text-danger-text">{note}</p>}
@@ -281,14 +283,14 @@ export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId,
       <Link to={paths.cycles(workspaceSlug, projectKey)} className="text-13">{t("cycles.back")}</Link>
       <h2 className="m-0 min-w-32 flex-1 truncate text-16 font-semibold">{cycle.name}</h2>
       {canWrite && !ended && !cycle.archived && <button type="button" className={primaryButton} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("cycles.addItems")}</button>}
-      <CycleMenu cycle={cycle} canWrite={canWrite} canAdmin={canAdmin} onEdit={() => setEditing(true)} onArchive={() => void commands.archive(cycle)} onDelete={() => void commands.destroy(cycle).then((gone) => { if (gone) navigate(paths.cycles(workspaceSlug, projectKey)); })} />
+      <CycleMenu cycle={cycle} canWrite={canWrite} canAdmin={canAdmin} onEdit={() => setEditing(true)} onArchive={() => void (cycle.archived ? commands.restore(cycle) : commands.archive(cycle))} onDelete={() => void commands.destroy(cycle).then((gone) => { if (gone) navigate(paths.cycles(workspaceSlug, projectKey)); })} />
     </header>
     {note && <p role="alert" className="m-0 text-danger-text">{note}</p>}
     <div className="flex flex-col gap-4 lg:flex-row">
       <div className="min-w-0 flex-1">
         <h4 className="mb-2 mt-0 text-14 font-semibold">{t("cycles.workItems")}</h4>
         <WorkItemLayouts projectId={projectId} workspaceSlug={workspaceSlug} action={action} run={runQuery} refreshKey={refreshKey} cycleId={cycleId}
-          rowAction={canWrite ? (item) => <button className="secondary" onClick={() => void remove(item.id)}>{t("cycles.remove")}</button> : undefined} />
+          rowAction={canWrite && !cycle.archived ? (item) => <button className="secondary" onClick={() => void remove(item.id)}>{t("cycles.remove")}</button> : undefined} />
       </div>
       <aside aria-label={t("cycles.details")} className="grid h-fit gap-4 rounded-lg border border-subtle p-4 lg:w-80 lg:shrink-0">
         <div className="flex items-center gap-2">{statusPill(cycle.status)}{cycle.archived && <span role="status" className="text-12 text-secondary">{t("cycles.archived")}</span>}</div>

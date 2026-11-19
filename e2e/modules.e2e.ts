@@ -148,6 +148,9 @@ try {
   await page.getByRole("menuitem", { name: t("modules.archive") }).click();
   await page.getByText(t("modules.archivedNote")).waitFor();
   check(await page.getByRole("button", { name: t("modules.remove") }).count() === 0, "archived module must be read-only");
+  await page.getByRole("button", { name: t("modules.actions") }).click();
+  check(await page.getByRole("menuitem", { name: t("modules.edit") }).count() === 0, "archived Module still offers Edit");
+  await page.keyboard.press("Escape");
   await page.goto(`${base}/modules`);
   await page.getByText(t("modules.empty")).waitFor();
   await page.getByLabel(t("modules.showArchived")).check();

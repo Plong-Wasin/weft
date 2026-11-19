@@ -125,7 +125,17 @@ try {
   check(!(await page.getByRole("link", { name: "Sprint 1" }).isVisible()), "archived Cycle must leave the list");
   await page.getByLabel(translate("cycles.showArchived")).check();
   await page.getByRole("link", { name: "Sprint 1" }).waitFor();
-  await page.getByLabel(translate("cycles.showArchived")).uncheck();
+  await page.getByRole("link", { name: "Sprint 1" }).click();
+  await page.getByRole("button", { name: `${translate("cycles.menu")}: Sprint 1` }).click();
+  check(await page.getByRole("menuitem", { name: translate("cycles.edit") }).count() === 0, "archived Cycle still offers Edit");
+  check(await page.getByRole("button", { name: translate("cycles.remove"), exact: true }).count() === 0, "archived Cycle still offers membership removal");
+  await page.getByRole("menuitem", { name: translate("cycles.unarchive") }).click();
+  await page.getByText(translate("cycles.archived")).waitFor({ state: "detached" });
+  await page.getByRole("button", { name: `${translate("cycles.menu")}: Sprint 1` }).click();
+  await page.getByRole("menuitem", { name: translate("cycles.edit") }).waitFor();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("menuitem", { name: translate("cycles.delete") }).click();
+  await page.waitForURL("**/cycles");
 
   // Delete Sprint 2 from its row menu.
   await tab("upcoming").click();

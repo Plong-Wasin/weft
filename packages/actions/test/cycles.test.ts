@@ -267,6 +267,13 @@ test.concurrent("archive is Admin only and only for a completed Cycle; archived 
     expect((await cycles.listCycles.handler({ userId: member.id }, { projectId: project.id, archived: true })).map((row) => row.name)).toEqual(["Sprint 1"]);
     expect((await cycles.getCycle.handler({ userId: member.id }, { cycleId: cycle.id })).workItemIds).toHaveLength(4);
     await expect(cycles.transferCycleItems.handler({ userId: member.id }, { cycleId: next.id, targetCycleId: cycle.id })).rejects.toMatchObject({ status: 400 });
+    const itemId = (await cycles.getCycle.handler({ userId: member.id }, { cycleId: cycle.id })).workItemIds[0]!;
+    await expect(cycles.updateCycle.handler({ userId: member.id }, { cycleId: cycle.id, name: "Changed" })).rejects.toMatchObject({ status: 400 });
+    await expect(cycles.addCycleItems.handler({ userId: member.id }, { cycleId: cycle.id, workItemIds: [itemId] })).rejects.toMatchObject({ status: 400 });
+    await expect(cycles.removeCycleItems.handler({ userId: member.id }, { cycleId: cycle.id, workItemIds: [itemId] })).rejects.toMatchObject({ status: 400 });
+    await expect(cycles.transferCycleItems.handler({ userId: member.id }, { cycleId: cycle.id, targetCycleId: next.id })).rejects.toMatchObject({ status: 400 });
+    await cycles.unarchiveCycle.handler({ userId: admin.id }, { cycleId: cycle.id });
+    expect((await cycles.updateCycle.handler({ userId: member.id }, { cycleId: cycle.id, name: "Restored" })).name).toBe("Restored");
   });
 });
 

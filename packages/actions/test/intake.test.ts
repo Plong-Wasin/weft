@@ -369,6 +369,9 @@ test.concurrent("leak: a Triage item stays out of normal reads while its Intake 
     const comments = createCommentActions(transaction);
     const search = createSearchActions(transaction);
     for (const user of [admin, member, guest]) {
+      await expect(work.listWorkItemActivities.handler({ userId: user.id }, { workItemId: hidden.workItemId })).resolves.toHaveLength(1);
+    }
+    for (const user of [admin, member, guest]) {
       const as = { userId: user.id };
       const listed = await work.listWorkItems.handler(as, { projectId: project.id });
       expect(listed.map((row) => row.id).sort()).toEqual([normal.id, parent.id].sort());

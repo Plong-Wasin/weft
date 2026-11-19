@@ -39,6 +39,18 @@ test("oversize file maps to the too-large message, from the Action or from stora
   await expect(uploadAsset({ api: "http://api.test", fetch: other.impl }, owner, file)).rejects.toMatchObject({ key: "assets.uploadFailed" });
 });
 
+test("failed transfer cancels its pending asset upload before reporting failure", async () => {
+  const { impl, calls } = fakeFetch({
+    "/actions/request_asset_upload": () => Response.json({ assetId: "a1", url: "http://storage.test/bucket", fields: {} }),
+    "/bucket": () => new Response("failed", { status: 500 }),
+    "/actions/cancel_asset_upload": () => Response.json({ ok: true }),
+  });
+  await expect(uploadAsset({ api: "http://api.test", fetch: impl }, owner, new File(["x"], "a.png", { type: "image/png" }))).rejects.toMatchObject({ key: "assets.uploadFailed" });
+  expect(calls.map((call) => call.url)).toEqual([
+    "http://api.test/actions/request_asset_upload", "http://storage.test/bucket", "http://api.test/actions/cancel_asset_upload",
+  ]);
+});
+
 test("only png, jpeg, gif and webp pass the inline check", () => {
   for (const type of ["image/png", "image/jpeg", "image/gif", "image/webp", "IMAGE/PNG; x=y"]) expect(() => checkInlineImage({ type })).not.toThrow();
   for (const type of ["image/svg+xml", "text/html", "application/pdf", ""]) expect(() => checkInlineImage({ type })).toThrow(UploadError);

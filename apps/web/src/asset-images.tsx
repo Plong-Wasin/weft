@@ -134,22 +134,27 @@ export const readOnlyImages = AssetImage.configure({ upload: null });
 
 type Action = <T>(name: string, body: unknown) => Promise<T | null>;
 
-export function AttachmentsPanel({ workItemId, canWrite, action, onChange, showForm, onCount, pickerRef }: { workItemId: string; canWrite: boolean; action: Action; onChange?: () => void; showForm: boolean; onCount: (count: number) => void; pickerRef?: React.RefObject<HTMLInputElement | null> }) {
+export function AttachmentsPanel({ workItemId, canWrite, action, onChange, showForm, onCount, pickerRef, failedFiles, onFailedFilesChange }: { workItemId: string; canWrite: boolean; action: Action; onChange?: () => void; showForm: boolean; onCount: (count: number) => void; pickerRef?: React.RefObject<HTMLInputElement | null>; failedFiles?: File[]; onFailedFilesChange?: (files: File[]) => void }) {
   const owner: OwnerRef = { ownerType: "work_item", ownerId: workItemId };
   const [rows, setRows] = React.useState<AssetRow[]>([]);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [dragging, setDragging] = React.useState(false);
+  const [localFailedFiles, setLocalFailedFiles] = React.useState<File[]>([]);
+  const retryFiles = failedFiles ?? localFailedFiles;
+  const updateFailedFiles = (files: File[]) => { setLocalFailedFiles(files); onFailedFilesChange?.(files); };
   const load = React.useCallback(async () => setRows(await action<AssetRow[]>("list_assets", { ownerType: "work_item", ownerId: workItemId }) ?? []), [action, workItemId]);
   React.useEffect(() => { void load(); }, [load]);
   React.useEffect(() => { onCount(rows.length); }, [onCount, rows.length]);
 
   async function attach(files: File[]) {
-    if (!files.length) return;
+    if (!files.length && retryFiles.length === 0) return;
     setBusy(true); setError(null);
-    for (const file of files) {
-      try { await uploadAsset(deps, owner, file); } catch (failure) { setError(translate(failure instanceof UploadError ? failure.key : "assets.uploadFailed")); }
+    const failures: File[] = [];
+    for (const file of [...retryFiles, ...files]) {
+      try { await uploadAsset(deps, owner, file); } catch (failure) { failures.push(file); setError(translate(failure instanceof UploadError ? failure.key : "assets.uploadFailed")); }
     }
+    updateFailedFiles(failures);
     setBusy(false); await load(); onChange?.();
   }
   async function download(row: AssetRow) {
@@ -188,6 +193,7 @@ export function AttachmentsPanel({ workItemId, canWrite, action, onChange, showF
       {translate("assets.dropHint")}
     </div>}
     {busy && <p role="status">{translate("assets.uploading")}</p>}
+    {canWrite && retryFiles.length > 0 && <div role="alert" className="grid gap-1 text-13 text-danger-text"><p className="m-0">{translate("assets.uploadFailed")}</p><ul className="m-0 list-disc pl-5">{retryFiles.map((file, index) => <li key={`${file.name}-${index}`}>{file.name}</li>)}</ul><button type="button" className="w-fit rounded-md border border-subtle bg-surface-1 px-2 py-1 text-primary" disabled={busy} onClick={() => void attach([])}>{translate("assets.retryFailed")}</button></div>}
     {error && <p role="alert">{error}</p>}
   </section>;
 }

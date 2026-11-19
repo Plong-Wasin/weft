@@ -23,17 +23,24 @@ export async function uploadAsset(deps: UploadDeps, owner: OwnerRef, file: File)
   const ticketResponse = await post(deps, "request_asset_upload", { ...owner, filename: file.name || "file", contentType, size: file.size });
   if (!ticketResponse.ok) throw new UploadError(ticketResponse.status === 413 ? "assets.tooLarge" : "assets.uploadFailed");
   const ticket = await ticketResponse.json() as { assetId: string; url: string; fields: Record<string, string> };
-  const form = new FormData();
-  for (const [name, value] of Object.entries(ticket.fields)) form.append(name, value);
-  form.append("file", file);
-  const stored = await (deps.fetch ?? fetch)(ticket.url, { method: "POST", body: form });
-  if (!stored.ok) {
-    const text = await stored.text().catch(() => "");
-    throw new UploadError(stored.status === 413 || text.includes("EntityTooLarge") ? "assets.tooLarge" : "assets.uploadFailed");
+  try {
+    const form = new FormData();
+    for (const [name, value] of Object.entries(ticket.fields)) form.append(name, value);
+    form.append("file", file);
+    const stored = await (deps.fetch ?? fetch)(ticket.url, { method: "POST", body: form });
+    if (!stored.ok) {
+      const text = await stored.text().catch(() => "");
+      throw new UploadError(stored.status === 413 || text.includes("EntityTooLarge") ? "assets.tooLarge" : "assets.uploadFailed");
+    }
+    const done = await post(deps, "complete_asset_upload", { assetId: ticket.assetId });
+    if (!done.ok) throw new UploadError(done.status === 413 ? "assets.tooLarge" : "assets.uploadFailed");
+    return await done.json() as AssetRow;
+  } catch (failure) {
+    // A failed transfer or completion must not leave an invisible pending asset
+    // tied to the item. Retrying creates a fresh upload ticket.
+    await post(deps, "cancel_asset_upload", { assetId: ticket.assetId }).catch(() => undefined);
+    throw failure;
   }
-  const done = await post(deps, "complete_asset_upload", { assetId: ticket.assetId });
-  if (!done.ok) throw new UploadError(done.status === 413 ? "assets.tooLarge" : "assets.uploadFailed");
-  return await done.json() as AssetRow;
 }
 
 /** Editors only embed png, jpeg, gif and webp; anything else (SVG included) must be attached as a download instead. */

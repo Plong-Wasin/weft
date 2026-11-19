@@ -196,7 +196,7 @@ function Breakdown({ cycle, items, states }: { cycle: CycleDetail; items: Item[]
 }
 
 type Burndown = { total: number; reason?: string | null; days: Array<{ date: string; open: number | null; ideal: number | null; pointsOpen?: number | null; idealPoints?: number | null; unknown?: boolean; unestimatedOpen?: number | null }> } & Partial<{
-  initialScope: number | null; finalOutcome: { completed: number | null; open: number | null; cancelled: number | null; completedPoints?: number | null; openPoints?: number | null; cancelledPoints?: number | null }; outcomeDate: string | null;
+  initialScope: number | null; finalOutcome: { completed: number | null; open: number | null; cancelled: number | null; completedPoints?: number | null; openPoints?: number | null; cancelledPoints?: number | null } | null; outcomeDate: string | null;
   unestimated: number | null; coverageStart: string; dateChanges: Array<{ at: string; previousStartDate: string; previousEndDate: string; startDate: string; endDate: string }>;
   scopeChanges: Array<{ date: string; added: number; removed: number }>;
 }>;

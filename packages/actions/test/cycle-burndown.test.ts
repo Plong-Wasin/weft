@@ -56,6 +56,27 @@ test.concurrent("legacy and backdated Cycle days disclose unknown history", asyn
   });
 });
 
+test.concurrent("Cycle end outcome is withheld until the inclusive UTC end date has passed", async () => {
+  await withRollback(db, async (transaction) => {
+    const { cycles, cycle, as, transaction: tx } = await setup(transaction, day(-1), day(1));
+    await tx.update(cycleRows).set({ historyStartedAt: at(day(-2)) }).where(eq(cycleRows.id, cycle.id));
+
+    const active = await cycles.getCycleBurndown.handler(as, { cycleId: cycle.id });
+    expect(active.finalOutcome).toBeNull();
+    expect(active.outcomeDate).toBeNull();
+
+    await cycles.updateCycle.handler(as, { cycleId: cycle.id, endDate: day(0) });
+    const endingToday = await cycles.getCycleBurndown.handler(as, { cycleId: cycle.id });
+    expect(endingToday.finalOutcome).toBeNull();
+    expect(endingToday.outcomeDate).toBeNull();
+
+    await cycles.updateCycle.handler(as, { cycleId: cycle.id, endDate: day(-1) });
+    const completed = await cycles.getCycleBurndown.handler(as, { cycleId: cycle.id });
+    expect(completed.finalOutcome).toEqual({ completed: 0, open: 0, cancelled: 0, completedPoints: 0, openPoints: 0, cancelledPoints: 0 });
+    expect(completed.outcomeDate).toBe(day(-1));
+  });
+});
+
 test.concurrent("date edits recompute the period, preserve known days, and disclose an uncovered extension", async () => {
   await withRollback(db, async (transaction) => {
     const { cycles, cycle, as, item, add, transaction: tx } = await setup(transaction, day(-2), day(2));

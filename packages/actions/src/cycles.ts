@@ -201,7 +201,7 @@ export function createCycleActions(db: Database) {
       input: Type.Object({ cycleId: uuid(), unit: Type.Optional(burndownUnitSchema) }),
       output: Type.Object({
         cycleId: Type.String(), unit: burndownUnitSchema, startDate: Type.String(), endDate: Type.String(), total: Type.Number(),
-        initialScope: Type.Union([Type.Number(), Type.Null()]), finalOutcome: Type.Object({ completed: Type.Union([Type.Number(), Type.Null()]), open: Type.Union([Type.Number(), Type.Null()]), cancelled: Type.Union([Type.Number(), Type.Null()]), completedPoints: Type.Union([Type.Number(), Type.Null()]), openPoints: Type.Union([Type.Number(), Type.Null()]), cancelledPoints: Type.Union([Type.Number(), Type.Null()]) }),
+        initialScope: Type.Union([Type.Number(), Type.Null()]), finalOutcome: Type.Union([Type.Object({ completed: Type.Union([Type.Number(), Type.Null()]), open: Type.Union([Type.Number(), Type.Null()]), cancelled: Type.Union([Type.Number(), Type.Null()]), completedPoints: Type.Union([Type.Number(), Type.Null()]), openPoints: Type.Union([Type.Number(), Type.Null()]), cancelledPoints: Type.Union([Type.Number(), Type.Null()]) }), Type.Null()]),
         outcomeDate: Type.Union([Type.String(), Type.Null()]), initialPoints: Type.Union([Type.Number(), Type.Null()]), unestimated: Type.Union([Type.Number(), Type.Null()]), coverageStart: Type.String(), dateChanges: Type.Array(Type.Object({ at: Type.String(), previousStartDate: Type.String(), previousEndDate: Type.String(), startDate: Type.String(), endDate: Type.String() })),
         scopeChanges: Type.Array(Type.Object({ date: Type.String(), added: Type.Number(), removed: Type.Number() })),
         days: Type.Array(Type.Object({ date: Type.String(), open: Type.Union([Type.Number(), Type.Null()]), completed: Type.Optional(Type.Union([Type.Number(), Type.Null()])), cancelled: Type.Optional(Type.Union([Type.Number(), Type.Null()])), pointsOpen: Type.Optional(Type.Union([Type.Number(), Type.Null()])), pointsCompleted: Type.Optional(Type.Union([Type.Number(), Type.Null()])), pointsCancelled: Type.Optional(Type.Union([Type.Number(), Type.Null()])), unestimatedOpen: Type.Optional(Type.Union([Type.Number(), Type.Null()])), ideal: Type.Union([Type.Number(), Type.Null()]), idealPoints: Type.Optional(Type.Union([Type.Number(), Type.Null()])), unknown: Type.Optional(Type.Boolean()) })),
@@ -252,11 +252,13 @@ export function createCycleActions(db: Database) {
           const unknown = cutoff <= cycle.historyStartedAt.getTime() || future;
           days.push({ date, open: future ? null : (unknown ? null : open.length), completed: future ? null : (unknown ? null : completed.length), cancelled: future ? null : (unknown ? null : cancelled.length), pointsOpen: future || unknown ? null : open.reduce((sum, item) => sum + (item.estimate ?? 0), 0), pointsCompleted: future || unknown ? null : completed.reduce((sum, item) => sum + (item.estimate ?? 0), 0), pointsCancelled: future || unknown ? null : cancelled.reduce((sum, item) => sum + (item.estimate ?? 0), 0), unestimatedOpen: future || unknown ? null : open.filter((item) => item.estimate === null).length, ideal: initialScope === null ? null : Math.round((initialScope * (span - offset) / (span || 1)) * 100) / 100, idealPoints: initialPoints === null ? null : Math.round((initialPoints * (span - offset) / (span || 1)) * 100) / 100, unknown });
         }
-        const finalDay = [...days].reverse().find((day) => day.date < today);
+        // The inclusive end date is only an outcome after its UTC calendar day has closed.
+        const cycleEnded = cycle.endDate < today;
+        const finalDay = cycleEnded ? days.find((day) => day.date === cycle.endDate) : undefined;
         return { cycleId: cycle.id, unit, startDate: cycle.startDate, endDate: cycle.endDate, total: unit === "points" ? (initialPoints ?? 0) : (initialScope ?? 0),
           initialScope,
           initialPoints,
-          finalOutcome: { completed: finalDay?.completed ?? null, open: finalDay?.open ?? null, cancelled: finalDay?.cancelled ?? null, completedPoints: finalDay?.pointsCompleted ?? null, openPoints: finalDay?.pointsOpen ?? null, cancelledPoints: finalDay?.pointsCancelled ?? null },
+          finalOutcome: finalDay ? { completed: finalDay.completed, open: finalDay.open, cancelled: finalDay.cancelled, completedPoints: finalDay.pointsCompleted, openPoints: finalDay.pointsOpen, cancelledPoints: finalDay.pointsCancelled } : null,
           outcomeDate: finalDay?.date ?? null, unestimated: finalDay?.unestimatedOpen ?? null, coverageStart, dateChanges,
           scopeChanges: [...changesByDay.values()].filter((change) => change.date >= cycle.startDate && change.date <= cycle.endDate), days };
       },

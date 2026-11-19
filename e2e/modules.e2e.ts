@@ -105,6 +105,21 @@ try {
   await edit.getByRole("button", { name: t("modules.save"), exact: true }).click();
   await edit.waitFor({ state: "detached" });
   await page.getByTestId("module-row-Authentication").waitFor();
+  // Search and combined filters produce the same result in list and grid.
+  await page.getByRole("searchbox", { name: t("modules.searchModules") }).fill("auth");
+  await page.getByLabel(t("modules.statusFilter")).selectOption("in-progress");
+  await page.getByLabel(t("modules.leadFilter")).selectOption({ label: "Modules Tester" });
+  await page.getByLabel(t("modules.memberFilter")).selectOption({ label: "Modules Tester" });
+  await page.locator('input[type="date"]').nth(0).fill("2026-02-01");
+  await page.locator('input[type="date"]').nth(1).fill("2026-02-28");
+  await page.getByTestId("module-row-Authentication").waitFor();
+  await page.getByRole("button", { name: t("modules.display.grid"), exact: true }).click();
+  await page.getByTestId("module-card-Authentication").waitFor();
+  await page.getByRole("searchbox", { name: t("modules.searchModules") }).fill("nothing matches");
+  await page.getByText(t("modules.noMatches")).waitFor();
+  await page.getByRole("searchbox", { name: t("modules.searchModules") }).fill("auth");
+  await page.getByRole("button", { name: t("modules.display.list"), exact: true }).click();
+  await page.getByRole("button", { name: t("modules.clearFilters") }).click();
   console.log("modules: create, grid/list, edit");
 
   // Detail: add work items from the module page.

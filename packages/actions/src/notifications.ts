@@ -80,7 +80,7 @@ async function fanOut(database: Database, payload: NotifyPayload, job: { id: str
     const [intake] = await database.select().from(intakeItems).where(and(eq(intakeItems.workItemId, item.id), sql`${intakeItems.outcome} <> 'accepted'`));
     if (intake) {
       const [project] = await database.select().from(projects).where(eq(projects.id, item.projectId));
-      if (!project) return;
+      if (!project || !project.intakeEnabled) return;
       const [projectRows, workspaceRows, assigneeRows] = await Promise.all([
         database.select({ userId: projectMembers.userId, role: projectMembers.role }).from(projectMembers).where(eq(projectMembers.projectId, project.id)),
         database.select({ userId: workspaceMembers.userId, role: workspaceMembers.role }).from(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, item.workspaceId), inArray(workspaceMembers.userId, payload.recipientIds), isNull(workspaceMembers.suspendedAt))),

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import { assets, commentMentions, commentVersions, comments as commentsTable, createDatabase, outlinks, type Database } from "@weft/db";
+import { assets, commentMentions, commentVersions, comments as commentsTable, createDatabase, intakeItems, outlinks, workspaces, type Database } from "@weft/db";
 import { backfillCommentWrittenForms } from "../src/migrations/comment-written-form";
 import { commentMarkdownOptions, createAgentActions, createApiTokenActions, createCommentActions, createIntakeActions, createProjectActions, createRuntimeActions, createTimelineActions, createWikiActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
@@ -56,6 +56,34 @@ async function setup(transaction: Database, visibility: "public" | "private" = "
   const item = await items.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Item" });
   return { workspace, admin, member, other, bystander, guest, items, item, project, comments: createCommentActions(transaction) };
 }
+
+test("a pending Intake comment write rechecks permissions after a concurrent acceptance", async () => {
+  const env = await setup(db);
+  try {
+    const intake = createIntakeActions(db);
+    for (const operation of ["create", "update", "delete"] as const) {
+      const item = await intake.submitIntakeItem.handler({ userId: env.guest.id }, { projectId: env.project.id, title: operation });
+      const comment = await env.comments.createComment.handler({ userId: env.guest.id }, { workItemId: item.workItemId, body: doc("Before") });
+      let release!: () => void;
+      let locked!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const entered = new Promise<void>((resolve) => { locked = resolve; });
+      const decision = db.transaction(async (transaction) => {
+        await transaction.update(intakeItems).set({ outcome: "accepted" }).where(eq(intakeItems.id, item.id));
+        locked(); await gate;
+      });
+      await entered;
+      const actor = { userId: env.guest.id };
+      const writing = (operation === "create" ? env.comments.createComment.handler(actor, { workItemId: item.workItemId, body: doc("After") }) : operation === "update" ? env.comments.updateComment.handler(actor, { commentId: comment.id, body: doc("After") }) : env.comments.deleteComment.handler(actor, { commentId: comment.id })).then(() => null, (error) => error);
+      await Bun.sleep(100);
+      release(); await decision;
+      expect(await writing).toMatchObject({ status: 403 });
+      const [stored] = await db.select().from(commentsTable).where(eq(commentsTable.id, comment.id));
+      expect(stored?.bodyText).toBe("Before");
+      expect(stored?.deletedAt).toBeNull();
+    }
+  } finally { await db.delete(workspaces).where(eq(workspaces.id, env.workspace.id)); }
+});
 
 test("comment reference lookup skips plain text and uses a bounded number of queries", async () => {
   await withRollback(db, async (transaction) => {

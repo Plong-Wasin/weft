@@ -149,16 +149,22 @@ export function createCommentActions(db: Database) {
     return item;
   }
 
-  async function accessForComment(context: Context, item: typeof workItems.$inferSelect, requirement: "read" | "write") {
-    const [intake] = await db.select().from(intakeItems).where(eq(intakeItems.workItemId, item.id));
-    const access = await requireProjectAccess(db, context.userId, item.projectId, "read");
+  async function accessForComment(context: Context, item: typeof workItems.$inferSelect, requirement: "read" | "write", database: Database = db) {
+    const [intake] = await database.select().from(intakeItems).where(eq(intakeItems.workItemId, item.id));
+    const access = await requireProjectAccess(database, context.userId, item.projectId, "read");
     if (intake && intake.outcome !== "accepted") {
       assertFeatureEnabled(access.project, "intake");
       if (requirement === "write" && access.project.archivedAt) throw new ActionError("Project is archived", 400);
       const guest = access.workspaceRole !== "Admin" && (access.workspaceRole === "Guest" || access.projectRole === "Guest");
       if (guest && intake.createdBy !== context.userId) throw new ActionError("Forbidden", 403);
-    } else if (requirement === "write") await requireProjectAccess(db, context.userId, item.projectId, "write");
+    } else if (requirement === "write") await requireProjectAccess(database, context.userId, item.projectId, "write");
     return { project: access.project, intake: intake && intake.outcome !== "accepted" ? intake : null };
+  }
+
+  async function lockCommentAccess(database: Database, context: Context, item: typeof workItems.$inferSelect) {
+    // Match Intake decisions' lock order before deciding which permission and wake rules apply.
+    await database.select({ id: intakeItems.id }).from(intakeItems).where(eq(intakeItems.workItemId, item.id)).for("update");
+    return accessForComment(context, item, "write", database);
   }
 
   async function loadComment(commentId: string) {
@@ -362,7 +368,7 @@ export function createCommentActions(db: Database) {
       input: Type.Object({ workItemId: uuid(), body: Type.Optional(bodyInput), bodyMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH, description: "Markdown comment text. Use this instead of body; for example, **bold** or | A | B |. Mention a person or Agent with @{exact name}; a plain @Name is only text." })), parentId: Type.Optional(uuid()) }), output: Type.Intersect([commentOutput, Type.Object({ wakeOutcomes: Type.Array(wakeOutcomeOutput) })]),
       handler: async (context: Context, input: { workItemId: string; body?: unknown; bodyMarkdown?: string; parentId?: string }) => {
         const item = await loadItem(input.workItemId);
-        const { project, intake } = await accessForComment(context, item, "write");
+        const { project } = await accessForComment(context, item, "write");
         const prepared = await commentBody(context, { id: item.id, projectId: item.projectId, workspaceId: project.workspaceId }, input.body, input.bodyMarkdown);
         input.body = prepared.document;
         if (input.bodyMarkdown !== undefined) input.body = resolveMarkdownMentions(input.body, await mentionable(project));
@@ -375,6 +381,7 @@ export function createCommentActions(db: Database) {
         const mentionIds = await validatedMentions(project, context.userId, mentions);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
+          const { intake } = await lockCommentAccess(database, context, item);
           // Archiving takes the item row FOR UPDATE, so this share lock makes a comment and an archive wait for each other.
           const [locked] = await database.select().from(workItems).where(and(eq(workItems.id, item.id), isNull(workItems.deletedAt))).for("share");
           if (!locked) throw new ActionError("Work item not found", 404);
@@ -407,7 +414,7 @@ export function createCommentActions(db: Database) {
       handler: async (context: Context, input: { commentId: string; body?: unknown; bodyMarkdown?: string }) => {
         const existing = await loadComment(input.commentId);
         const item = await loadItem(existing.workItemId!);
-        const { project, intake } = await accessForComment(context, item, "write");
+        const { project } = await accessForComment(context, item, "write");
         const prepared = await commentBody(context, { id: existing.workItemId!, projectId: project.id, workspaceId: project.workspaceId }, input.body, input.bodyMarkdown, await existingStableReferences(db, "work-item", existing.workItemId!, commentPart(existing.id), existing.bodyMarkdown));
         input.body = prepared.document;
         if (input.bodyMarkdown !== undefined) input.body = resolveMarkdownMentions(input.body, await mentionable(project));
@@ -418,6 +425,7 @@ export function createCommentActions(db: Database) {
         const mentionIds = await validatedMentions(project, context.userId, mentions);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
+          const { intake } = await lockCommentAccess(database, context, item);
           await database.insert(commentVersions).values({ commentId: existing.id, body: existing.body, bodyMarkdown: existing.bodyMarkdown ?? await writtenFormOf(existing.body), bodyText: existing.bodyText, writtenAt: existing.editedAt ?? existing.createdAt, createdAt: sql`clock_timestamp()` });
           const [row] = await database.update(comments).set({ body: input.body, bodyMarkdown: written, bodyText: text, editedAt: new Date() }).where(eq(comments.id, existing.id)).returning();
           await setOutlinksFromDocument(database, "work-item", existing.workItemId!, commentPart(existing.id), input.body);
@@ -447,6 +455,7 @@ export function createCommentActions(db: Database) {
         assertNotArchived(await loadItem(existing.workItemId!));
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
+          await lockCommentAccess(database, context, item);
           await database.update(comments).set({ deletedAt: new Date() }).where(eq(comments.id, existing.id));
           // The deleted text must not survive in any earlier version, nor in the hidden replies' versions.
           const replyIds = (await database.select({ id: comments.id }).from(comments).where(eq(comments.parentId, existing.id))).map((row) => row.id);

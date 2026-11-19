@@ -115,6 +115,24 @@ test.concurrent("Intake notifications and queued email respect project Guest acc
   });
 });
 
+test.concurrent("disabled Intake hides existing notifications and drops queued deliveries", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, admin, author, other, third, project, comments, inbox } = await setup(transaction);
+    const intake = await createIntakeActions(transaction).submitIntakeItem.handler({ userId: author.id }, { projectId: project.id, title: "Request" });
+    await comments.createComment.handler({ userId: author.id }, { workItemId: intake.workItemId, body: doc({ mention: other.id }) });
+    await drain(transaction);
+    expect((await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).notifications).toHaveLength(1);
+    await comments.createComment.handler({ userId: author.id }, { workItemId: intake.workItemId, body: doc({ mention: third.id }) });
+    await createProjectActions(transaction).setProjectFeatures.handler({ userId: admin.id }, { projectId: project.id, features: { intake: false } });
+    await drain(transaction);
+    expect((await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).notifications).toHaveLength(0);
+    expect(await transaction.select().from(notifications).where(eq(notifications.userId, third.id))).toHaveLength(0);
+    const delivered: unknown[] = [];
+    await sendNotificationDigests(transaction, { mailer: { send: async (message) => { delivered.push(message); } }, webOrigin: "https://weft.test", defaultLocale: null });
+    expect(delivered).toHaveLength(0);
+  });
+});
+
 test.concurrent("workspace Admin with project Guest role receives Intake mentions", async () => {
   await withRollback(db, async (transaction) => {
     const { workspace, admin, author, project, comments, inbox } = await setup(transaction);

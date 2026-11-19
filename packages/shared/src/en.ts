@@ -125,6 +125,7 @@ export const en = {
     "workItems.descriptionSave.updating": "Updating links…",
     "workItems.descriptionSave.failed": "Could not save. Your changes are still here; try again.",
     "workItems.descriptionSave.notSaved": "Not saved yet: fix the highlighted problem.",
+    "workItems.descriptionSave.retry": "Retry",
     "workItems.more": "More",
     "outlinks.title": "Links",
     "outlinks.explanation": "Links show where this text points and what points to it.",

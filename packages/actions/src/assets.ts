@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, assets, comments, wikiPages, workItems } from "@weft/db";
+import { activities, assets, comments, cycles, modules, wikiPages, workItems } from "@weft/db";
 import { assertNotArchived, liveWorkItems } from "./triage";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
@@ -13,8 +13,8 @@ type Context = ActivityContext;
 type AssetRow = typeof assets.$inferSelect;
 
 const uuid = () => Type.String({ format: "uuid" });
-type OwnerType = "work_item" | "comment" | "wiki_page";
-const ownerType = Type.Union([Type.Literal("work_item"), Type.Literal("comment"), Type.Literal("wiki_page")]);
+type OwnerType = "work_item" | "comment" | "wiki_page" | "cycle" | "module";
+const ownerType = Type.Union([Type.Literal("work_item"), Type.Literal("comment"), Type.Literal("wiki_page"), Type.Literal("cycle"), Type.Literal("module")]);
 const assetOutput = Type.Object({
   id: Type.String(), ownerType, ownerId: Type.String(), uploaderId: Type.String(), filename: Type.String(), contentType: Type.String(),
   size: Type.Number(), inline: Type.Boolean(), createdAt: Type.String(),
@@ -39,7 +39,7 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
   let lazyStorage = storage;
   const store = () => (lazyStorage ??= createS3Storage());
 
-  type Owner = { workspaceId: string; projectId: string | null; workItemId: string | null; wikiPageId: string | null };
+  type Owner = { workspaceId: string; projectId: string | null; workItemId: string | null; wikiPageId: string | null; archivedAt?: Date | null };
 
   async function resolveOwner(type: OwnerType, id: string): Promise<Owner> {
     if (type === "work_item") {
@@ -51,6 +51,12 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
       const [page] = await db.select().from(wikiPages).where(and(eq(wikiPages.id, id), isNull(wikiPages.deletedAt)));
       if (!page) throw new ActionError("Owner not found", 404);
       return { workspaceId: page.workspaceId, projectId: page.projectId, workItemId: null, wikiPageId: page.id };
+    }
+    if (type === "cycle" || type === "module") {
+      const table = type === "cycle" ? cycles : modules;
+      const [entity] = await db.select().from(table).where(and(eq(table.id, id), isNull(table.deletedAt)));
+      if (!entity) throw new ActionError("Owner not found", 404);
+      return { workspaceId: entity.workspaceId, projectId: entity.projectId, workItemId: null, wikiPageId: null, archivedAt: entity.archivedAt };
     }
     const [comment] = await db.select().from(comments).where(and(eq(comments.id, id), isNull(comments.deletedAt)));
     if (!comment) throw new ActionError("Owner not found", 404);
@@ -67,7 +73,9 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
 
   /** An archived work item is read-only, and so are the files on it and on its comments. */
   async function assertOwnerOpen(owner: Owner | null) {
-    if (!owner?.workItemId) return;
+    if (!owner) return;
+    if (owner.archivedAt) throw new ActionError("This archived item is read-only", 400);
+    if (!owner.workItemId) return;
     const [item] = await db.select({ archivedAt: workItems.archivedAt }).from(workItems).where(eq(workItems.id, owner.workItemId));
     if (item) assertNotArchived(item);
   }

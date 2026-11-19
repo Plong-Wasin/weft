@@ -65,7 +65,9 @@ try {
   const modal = page.getByRole("dialog", { name: t("modules.addTitleModal") });
   check(await modal.evaluate((element) => element.scrollHeight <= element.clientHeight), "Create Module dialog should fit without a scrollbar at 1080p");
   await modal.getByLabel(t("modules.name")).fill("Auth");
-  await modal.getByRole("textbox", { name: "Description" }).fill("Initial module purpose");
+  await modal.getByRole("toolbar", { name: t("wiki.toolbar") }).getByRole("button", { name: t("editor.sourceMode") }).click();
+  await modal.getByRole("textbox", { name: t("editor.sourceText") }).fill("**Initial module purpose**");
+  await modal.getByRole("toolbar", { name: t("wiki.toolbar") }).getByRole("button", { name: t("editor.sourceMode") }).click();
   const status = modal.getByRole("button", { name: new RegExp(`^${t("modules.status")}:`) });
   await status.click();
   const dates = await modal.getByLabel(t("modules.start")).evaluate((element) => {
@@ -89,6 +91,8 @@ try {
   await row.waitFor();
   check((await row.innerText()).includes(t("modules.status.in-progress")), "status badge missing in list");
   check((await row.innerText()).includes("0"), "progress missing");
+  const createdModule = (await call<Array<{ id: string; name: string; descriptionMarkdown: string }>>("list_modules", { projectId: project!.id })).find(({ name }) => name === "Auth")!;
+  check(createdModule.descriptionMarkdown.includes("**Initial module purpose**"), "Module description formatting was not written as Markdown");
   await page.screenshot({ path: `${shots}/modules-list-1440.png` });
 
   // Grid display.
@@ -126,9 +130,19 @@ try {
   // Detail: add work items from the module page.
   await page.getByRole("link", { name: "Authentication" }).click();
   await page.getByRole("heading", { name: "Authentication" }).waitFor();
-  await page.getByRole("textbox", { name: "Description" }).fill("Module scope and goal");
+  const moduleDescriptionEditor = page.locator('[data-testid="description-editor"] [contenteditable="true"]');
+  await page.getByRole("toolbar", { name: t("wiki.toolbar") }).getByRole("button", { name: t("editor.sourceMode") }).click();
+  const itemsForDescription = await call<Array<{ id: string; displayId: string }>>("list_work_items", { projectId: project!.id });
+  const modulePeople = await call<Array<{ userId: string; name: string }>>("list_project_members", { projectId: project!.id });
+  const moduleDescriptionMarkdown = `**Module scope and goal** with [[MOB-1|work-item:${itemsForDescription[0]!.id}]] and @{Modules Tester|${modulePeople.find(({ name }) => name === "Modules Tester")!.userId}}.`;
+  await page.getByRole("textbox", { name: t("editor.sourceText") }).fill(moduleDescriptionMarkdown);
+  await page.getByRole("toolbar", { name: t("wiki.toolbar") }).getByRole("button", { name: t("editor.sourceMode") }).click();
   await page.getByRole("heading", { name: "Authentication" }).click();
-  check((await page.getByRole("textbox", { name: "Description" }).inputValue()) === "Module scope and goal", "Module description did not save through Actions");
+  await page.getByTestId("entity-description-save-status").getByText(t("workItems.descriptionSave.saving")).waitFor();
+  await page.getByTestId("entity-description-save-status").getByText(t("workItems.descriptionSave.saved")).waitFor();
+  const savedModule = await call<{ descriptionMarkdown: string }>("get_module", { moduleId: createdModule.id });
+  check(savedModule.descriptionMarkdown.includes(`work-item:${itemsForDescription[0]!.id}`) && savedModule.descriptionMarkdown.includes(`@{Modules Tester|${modulePeople.find(({ name }) => name === "Modules Tester")!.userId}}`), "Module description references did not round-trip");
+  check(await moduleDescriptionEditor.locator("strong").filter({ hasText: "Module scope and goal" }).count() === 1, "Module rich formatting did not render safely");
   await page.getByRole("button", { name: t("modules.addWorkItems") }).click();
   const add = page.getByRole("dialog", { name: t("modules.addItemsTitle") });
   await add.getByLabel(/Alpha/).check();
@@ -172,6 +186,7 @@ try {
   await page.getByRole("menuitem", { name: t("modules.archive") }).click();
   await page.getByText(t("modules.archivedNote")).waitFor();
   check(await page.getByRole("button", { name: t("modules.remove") }).count() === 0, "archived module must be read-only");
+  check(await page.getByRole("complementary", { name: t("modules.properties") }).locator('[data-testid="description-editor"] [contenteditable="true"]').count() === 0, "archived Module description must be read-only");
   await page.getByRole("button", { name: t("modules.actions") }).click();
   check(await page.getByRole("menuitem", { name: t("modules.edit") }).count() === 0, "archived Module still offers Edit");
   await page.keyboard.press("Escape");

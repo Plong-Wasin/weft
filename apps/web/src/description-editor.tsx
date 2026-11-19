@@ -14,19 +14,26 @@ import { WikiBlockControls } from "./wiki-block-controls";
 import { EditorSourceMode, editorLimitWarnings } from "./editor-source-mode";
 import { EditorToolbar } from "./editor-toolbar";
 import { ReferencePicker } from "./reference-picker";
+import type { OwnerRef } from "./asset-upload";
+import { mentionExtension, type MentionPerson } from "./mention-extension";
+export type DescriptionMentionPerson = MentionPerson;
 
 /** Work item description: a Tiptap editor that accepts pasted or dropped images, owned by the work item. */
 /** The owner passes its save status as `status`; it sits at the end of the toolbar. */
-export function DescriptionEditor({ workspaceId, workItemId, initial, editable, onChange, onSourceDraftChange, status }: { workspaceId: string; workItemId: string; initial: unknown; editable: boolean; onChange: (doc: unknown) => void; onSourceDraftChange?: (hasDraft: boolean) => void; status?: React.ReactNode }) {
+export function DescriptionEditor({ workspaceId, workItemId, owner, mentionPeople = [], initial, editable, onChange, onSourceDraftChange, status }: { workspaceId: string; workItemId?: string; owner?: OwnerRef; mentionPeople?: DescriptionMentionPerson[]; initial: unknown; editable: boolean; onChange: (doc: unknown) => void; onSourceDraftChange?: (hasDraft: boolean) => void; status?: React.ReactNode }) {
+  const peopleRef = React.useRef(mentionPeople);
+  peopleRef.current = mentionPeople;
   const sourceToggle = React.useRef<(() => void) | null>(null);
   const [sourceActive, setSourceActive] = React.useState(false);
-  const { extension, error, uploadFile } = useAssetImages(editable ? { ownerType: "work_item", ownerId: workItemId } : null);
+  const imageOwner = owner ?? (workItemId ? { ownerType: "work_item" as const, ownerId: workItemId } : null);
+  const { extension, error, uploadFile } = useAssetImages(editable ? imageOwner : null);
   const picker = React.useRef<HTMLInputElement>(null);
   const limitWarnings = React.useMemo(() => editorLimitWarnings(initial), [initial]);
   const editor = useEditor({
-    extensions: [...surfaceEditorExtensions({ surface: "full", image: extension }), ListIndent, BlockKeyboardShortcuts, MarkdownPaste, CodeBlockCopy, EmojiSuggestions, ReferencePicker.configure({ workspaceId }), AiAssist, SlashMenu.configure({ commands: [...blockCommands, ...wikiCommands.filter((command) => ["todo", "table", "callout", "emoji", "color", "image"].includes(command.id))], onImage: () => picker.current?.click() }), SafeLinkClick, EditorPlaceholder], content: normalizeAssetImages((initial as object | null) ?? ""), editable,
+    extensions: [...surfaceEditorExtensions({ surface: "full", mention: mentionExtension(peopleRef), image: extension }), ListIndent, BlockKeyboardShortcuts, MarkdownPaste, CodeBlockCopy, EmojiSuggestions, ReferencePicker.configure({ workspaceId }), AiAssist, SlashMenu.configure({ commands: [...blockCommands, ...wikiCommands.filter((command) => ["todo", "table", "callout", "emoji", "color", "image"].includes(command.id))], onImage: () => picker.current?.click() }), SafeLinkClick, EditorPlaceholder], content: normalizeAssetImages((initial as object | null) ?? ""), editable,
     onUpdate: ({ editor: current }) => onChange(current.getJSON()),
   });
+  React.useEffect(() => { editor?.setEditable(editable); }, [editor, editable]);
   return <div>
     {editable
       ? <EditorToolbar editor={editor} label={translate("wiki.toolbar")} testId="description-toolbar" onImage={() => picker.current?.click()} source={editor?.isEditable ? { active: sourceActive, onToggle: () => sourceToggle.current?.() } : undefined} end={status} />

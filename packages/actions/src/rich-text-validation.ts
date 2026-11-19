@@ -1,5 +1,5 @@
 import { and, eq, inArray, isNull } from "drizzle-orm";
-import { assets, collectionMembers, collections, comments, projects, wikiPageShares, wikiPages, workItems, type Database } from "@weft/db";
+import { assets, collectionMembers, collections, comments, cycles, modules, projects, wikiPageShares, wikiPages, workItems, type Database } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 
@@ -8,14 +8,15 @@ type RichTextNode = { type?: string; attrs?: Record<string, unknown>; content?: 
 const assetIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Validate embedded images for every write surface; shared workspace assets must be visible to the writer. */
-export async function validateRichTextAssets(database: Database, document: unknown, ownerType: "work_item" | "wiki_page", ownerId: string, userId?: string, previouslyStoredDocument?: unknown) {
+export type RichTextOwnerType = "work_item" | "wiki_page" | "cycle" | "module";
+export async function validateRichTextAssets(database: Database, document: unknown, ownerType: RichTextOwnerType, ownerId: string, userId?: string, previouslyStoredDocument?: unknown) {
   const { invalid, unavailable } = await unavailableRichTextAssets(database, document, ownerType, ownerId, userId, previouslyStoredDocument);
   if (invalid.length) throw new ActionError("An image reference is not valid.", 400, "asset-invalid");
   if (unavailable.length) throw new ActionError("An image is not available in the content being saved.", 400, "asset-unavailable");
 }
 
 /** Image ids in a document that are not asset ids at all (`invalid`) or that the writer cannot use (`unavailable`). Never throws for either, so a live save can store the state as typed. */
-export async function unavailableRichTextAssets(database: Database, document: unknown, ownerType: "work_item" | "wiki_page", ownerId: string, userId?: string, previouslyStoredDocument?: unknown): Promise<{ invalid: string[]; unavailable: string[] }> {
+export async function unavailableRichTextAssets(database: Database, document: unknown, ownerType: RichTextOwnerType, ownerId: string, userId?: string, previouslyStoredDocument?: unknown): Promise<{ invalid: string[]; unavailable: string[] }> {
   const ids = new Set<string>();
   const previouslyStoredIds = new Set<string>();
   const visit = (node: RichTextNode) => {
@@ -34,7 +35,11 @@ export async function unavailableRichTextAssets(database: Database, document: un
   if (!ids.size) return { invalid, unavailable: [] };
   const current = ownerType === "work_item"
     ? (await database.select({ workspaceId: projects.workspaceId }).from(workItems).innerJoin(projects, eq(projects.id, workItems.projectId)).where(eq(workItems.id, ownerId)))[0]
-    : (await database.select({ workspaceId: wikiPages.workspaceId }).from(wikiPages).where(eq(wikiPages.id, ownerId)))[0];
+    : ownerType === "wiki_page"
+      ? (await database.select({ workspaceId: wikiPages.workspaceId, projectId: wikiPages.projectId }).from(wikiPages).where(eq(wikiPages.id, ownerId)))[0]
+      : ownerType === "cycle"
+        ? (await database.select({ workspaceId: cycles.workspaceId, projectId: cycles.projectId }).from(cycles).where(eq(cycles.id, ownerId)))[0]
+        : (await database.select({ workspaceId: modules.workspaceId, projectId: modules.projectId }).from(modules).where(eq(modules.id, ownerId)))[0];
   const rows = await database.select({ id: assets.id, workspaceId: assets.workspaceId, ownerType: assets.ownerType, ownerId: assets.ownerId, projectId: assets.projectId })
     .from(assets).where(and(inArray(assets.id, [...ids]), eq(assets.status, "uploaded")));
   const available = new Set<string>();

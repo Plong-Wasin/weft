@@ -13,7 +13,7 @@ import { ViewDetailPage, ViewsPage } from "../views";
 function useShared(feature: "cycles" | "modules") {
   const { workspace } = useWorkspace();
   const { project } = useProject();
-  return { workspaceSlug: workspace.slug, projectKey: project.key, projectId: project.id, canWrite: project.role !== "Guest", canAdmin: project.role === "Admin" || project.role === null, enabled: project.features[feature], action, run: actionResult };
+  return { workspaceId: workspace.id, workspaceSlug: workspace.slug, projectKey: project.key, projectId: project.id, canWrite: project.role !== "Guest", canAdmin: project.role === "Admin" || project.role === null, enabled: project.features[feature], action, run: actionResult };
 }
 
 export function ProjectCyclesRoute() { return <CyclesPage {...useShared("cycles")} />; }

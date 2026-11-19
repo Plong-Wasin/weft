@@ -12,6 +12,7 @@ import { burndownUnitSchema, todayIso, type BurndownUnit } from "./cycles";
 import { requirePointsEstimate } from "./estimates";
 import { workItemMarkdownOptions, writtenDescription } from "./work-items";
 import { WRITTEN_FORM_MAX_INPUT_LENGTH } from "./markdown-doc";
+import { validateRichTextAssets } from "./rich-text-validation";
 
 /** Set by hand, never computed from dates or work items. */
 export const moduleStatuses = ["backlog", "planned", "in-progress", "paused", "completed", "cancelled"] as const;
@@ -125,7 +126,7 @@ export function createModuleActions(db: Database) {
 
   const nullableDate = Type.Union([dateSchema, Type.Null()]);
   const people = Type.Array(Type.String({ minLength: 1 }), { maxItems: 200 });
-  type CreateInput = { projectId: string; name: string; status?: ModuleStatus; leadId?: string | null; memberIds?: string[]; startDate?: string | null; endDate?: string | null; descriptionMarkdown?: string };
+  type CreateInput = { projectId: string; name: string; status?: ModuleStatus; leadId?: string | null; memberIds?: string[]; startDate?: string | null; endDate?: string | null; description?: unknown; descriptionMarkdown?: string };
   type UpdateInput = Partial<Omit<CreateInput, "projectId">> & { moduleId: string };
 
   return {
@@ -133,14 +134,14 @@ export function createModuleActions(db: Database) {
       name: "create_module", kind: "write" as const,
       input: Type.Object({
         projectId: uuid(), name: nameSchema, status: Type.Optional(statusSchema), leadId: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Null()])),
-        memberIds: Type.Optional(people), startDate: Type.Optional(nullableDate), endDate: Type.Optional(nullableDate), descriptionMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH })),
+        memberIds: Type.Optional(people), startDate: Type.Optional(nullableDate), endDate: Type.Optional(nullableDate), description: Type.Optional(Type.Any()), descriptionMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH })),
       }), output: moduleOutput,
       handler: async (context: Context, input: CreateInput) => {
         const { project } = await requireProjectAccess(db, context.userId, input.projectId, "write");
         assertFeatureEnabled(project, "modules");
         assertDates(input.startDate ?? null, input.endDate ?? null);
         const options = await workItemMarkdownOptions(db, context.userId, project.workspaceId, project.id, input.descriptionMarkdown);
-        const description = await writtenDescription(undefined, input.descriptionMarkdown, options);
+        const description = await writtenDescription(input.description, input.descriptionMarkdown, options);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
           await assertPeople(database, project, [...(input.leadId ? [input.leadId] : []), ...(input.memberIds ?? [])]);
@@ -149,6 +150,7 @@ export function createModuleActions(db: Database) {
             workspaceId: project.workspaceId, projectId: project.id, name: input.name, status: input.status ?? "backlog", leadId: input.leadId ?? null,
             startDate: input.startDate ?? null, endDate: input.endDate ?? null, createdBy: context.userId, descriptionMarkdown: description.markdown, descriptionDoc: description.document,
           }).returning();
+          await validateRichTextAssets(database, description.document, "module", row!.id, context.userId);
           const memberIds = [...new Set(input.memberIds ?? [])];
           if (memberIds.length) await database.insert(moduleMembers).values(memberIds.map((userId) => ({ moduleId: row!.id, userId })));
           return strip((await present(database, [row!]))[0]!);
@@ -159,7 +161,7 @@ export function createModuleActions(db: Database) {
       name: "update_module", kind: "write" as const,
       input: Type.Object({
         moduleId: uuid(), name: Type.Optional(nameSchema), status: Type.Optional(statusSchema), leadId: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Null()])),
-        memberIds: Type.Optional(people), startDate: Type.Optional(nullableDate), endDate: Type.Optional(nullableDate), descriptionMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH })),
+        memberIds: Type.Optional(people), startDate: Type.Optional(nullableDate), endDate: Type.Optional(nullableDate), description: Type.Optional(Type.Any()), descriptionMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH })),
       }), output: moduleOutput,
       handler: async (context: Context, input: UpdateInput) => {
         const { module: current, project } = await moduleAccess(context, input.moduleId, "write");
@@ -167,9 +169,10 @@ export function createModuleActions(db: Database) {
         const startDate = input.startDate === undefined ? current.startDate : input.startDate, endDate = input.endDate === undefined ? current.endDate : input.endDate;
         assertDates(startDate, endDate);
         const descriptionPatch: Partial<typeof modules.$inferInsert> = {};
-        if (input.descriptionMarkdown !== undefined) {
+        if (input.description !== undefined || input.descriptionMarkdown !== undefined) {
           const options = await workItemMarkdownOptions(db, context.userId, project.workspaceId, project.id, input.descriptionMarkdown);
-          const description = await writtenDescription(undefined, input.descriptionMarkdown, options);
+          const description = await writtenDescription(input.description, input.descriptionMarkdown, options);
+          await validateRichTextAssets(db, description.document, "module", current.id, context.userId, current.descriptionDoc);
           descriptionPatch.descriptionMarkdown = description.markdown; descriptionPatch.descriptionDoc = description.document;
         }
         return db.transaction(async (transaction) => {

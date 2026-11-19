@@ -19,7 +19,7 @@ import { prepareRichTextGuarded, inlineStoredDocument, PAGE_MARKDOWN_BUDGET, rea
 import { markdownToDoc, storedMarkdownToDoc, markdownToDocWithWarnings, resolverFromReferences } from "./markdown-doc";
 import { WRITTEN_FORM_MAX_INPUT_LENGTH, type MarkdownOptions, type ResolvedReference } from "./markdown-doc";
 import { clearOutlinkPart, commentPart, existingStableReferences, makeUnavailableReferencesPlainText, setOutlinksFromDocument } from "./outlinks";
-import { featuresOf } from "./features";
+import { assertFeatureEnabled, featuresOf } from "./features";
 import { validateRichTextAssets } from "./rich-text-validation";
 
 type Context = ActivityContext;
@@ -153,6 +153,7 @@ export function createCommentActions(db: Database) {
     const [intake] = await db.select().from(intakeItems).where(eq(intakeItems.workItemId, item.id));
     const access = await requireProjectAccess(db, context.userId, item.projectId, "read");
     if (intake && intake.outcome !== "accepted") {
+      assertFeatureEnabled(access.project, "intake");
       if (requirement === "write" && access.project.archivedAt) throw new ActionError("Project is archived", 400);
       const guest = access.workspaceRole === "Guest" || access.projectRole === "Guest";
       if (guest && intake.createdBy !== context.userId) throw new ActionError("Forbidden", 403);

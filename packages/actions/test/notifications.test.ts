@@ -1,9 +1,9 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import { aiRequests, createDatabase, jobs, notifications, sessions, workspaceInvites, type Database } from "@weft/db";
+import { aiRequests, createDatabase, jobs, notificationEmails, notifications, projectMembers, sessions, workspaceInvites, type Database } from "@weft/db";
 import {
   createAgentActions, createCommentActions, createIntakeActions, createJobHandlers, createNotificationActions, createProjectActions, createWorkItemActions,
-  runNextJob, scheduleCleanupJobs,
+  runNextJob, scheduleCleanupJobs, sendNotificationDigests,
 } from "../src";
 import { createMemberFactory, createUserFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -76,6 +76,25 @@ test.concurrent("an Intake mention queued before access revocation is dropped at
     await drain(transaction);
     expect((await inbox.listNotifications.handler({ userId: guest.id }, { workspaceId: workspace.id })).notifications).toMatchObject([{ kind: "mention", workItemId: submitted.workItemId }]);
     expect((await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).notifications).toHaveLength(0);
+  });
+});
+
+test.concurrent("Intake notifications and queued email respect project Guest access at fan-out and after demotion", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, author, other, third, project, comments, inbox } = await setup(transaction);
+    const intake = await createIntakeActions(transaction).submitIntakeItem.handler({ userId: author.id }, { projectId: project.id, title: "Private request" });
+    await comments.createComment.handler({ userId: author.id }, { workItemId: intake.workItemId, body: doc({ mention: other.id }, { mention: third.id }) });
+    await transaction.update(projectMembers).set({ role: "Guest" }).where(sql`${projectMembers.projectId} = ${project.id} AND ${projectMembers.userId} = ${other.id}`);
+    await drain(transaction);
+    expect(await transaction.select().from(notifications).where(eq(notifications.userId, other.id))).toHaveLength(0);
+    expect(await transaction.select().from(notificationEmails).where(eq(notificationEmails.userId, other.id))).toHaveLength(0);
+    expect((await inbox.listNotifications.handler({ userId: third.id }, { workspaceId: workspace.id })).notifications).toHaveLength(1);
+    expect(await transaction.select().from(notificationEmails).where(eq(notificationEmails.userId, third.id))).toHaveLength(1);
+    await transaction.update(projectMembers).set({ role: "Guest" }).where(sql`${projectMembers.projectId} = ${project.id} AND ${projectMembers.userId} = ${third.id}`);
+    expect((await inbox.listNotifications.handler({ userId: third.id }, { workspaceId: workspace.id })).notifications).toHaveLength(0);
+    const delivered: unknown[] = [];
+    await sendNotificationDigests(transaction, { mailer: { send: async (message) => { delivered.push(message); } }, webOrigin: "https://weft.test", defaultLocale: null });
+    expect(delivered).toHaveLength(0);
   });
 });
 

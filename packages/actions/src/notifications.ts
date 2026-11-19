@@ -13,7 +13,7 @@ import { fireScheduleRecurrence } from "./recurrences";
 import { purgeIntegrationDeliveries } from "./integration-deliveries";
 import { purgeStaleRuntimes } from "./runtimes";
 import { applyAutoRules, autoRulesJobType } from "./auto-rules";
-import { purgeNotificationEmails, queueNotificationEmails, sendNotificationDigests } from "./email-digest";
+import { canViewNotificationItem, purgeNotificationEmails, queueNotificationEmails, sendNotificationDigests } from "./email-digest";
 import type { MailLocale } from "./email-templates";
 import { webOriginFromEnv, type Mailer } from "./mail";
 import { outboundDeliveryJobHandler, outboundJobType, purgeOutboundDeliveries } from "./outbound-webhooks";
@@ -82,17 +82,18 @@ async function fanOut(database: Database, payload: NotifyPayload, job: { id: str
       const [project] = await database.select().from(projects).where(eq(projects.id, item.projectId));
       if (!project) return;
       const [projectRows, workspaceRows, assigneeRows] = await Promise.all([
-        database.select({ userId: projectMembers.userId }).from(projectMembers).where(eq(projectMembers.projectId, project.id)),
+        database.select({ userId: projectMembers.userId, role: projectMembers.role }).from(projectMembers).where(eq(projectMembers.projectId, project.id)),
         database.select({ userId: workspaceMembers.userId, role: workspaceMembers.role }).from(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, item.workspaceId), inArray(workspaceMembers.userId, payload.recipientIds), isNull(workspaceMembers.suspendedAt))),
         database.select({ userId: workItemAssignees.userId }).from(workItemAssignees).where(eq(workItemAssignees.workItemId, item.id)),
       ]);
       const projectIds = new Set(projectRows.map((row) => row.userId));
+      const projectRoles = new Map(projectRows.map((row) => [row.userId, row.role]));
       const roles = new Map(workspaceRows.map((row) => [row.userId, row.role]));
       const participants = new Set([intake.createdBy, ...assigneeRows.map((row) => row.userId)]);
       allowedRecipients = payload.recipientIds.filter((id) => {
         const role = roles.get(id);
         if (!role || (project.visibility === "private" && role !== "Admin" && !projectIds.has(id))) return false;
-        if (role === "Guest") return id === intake.createdBy;
+        if (role === "Guest" || projectRoles.get(id) === "Guest") return id === intake.createdBy;
         return participants.has(id) || (payload.kind === "mention" && payload.commentId !== undefined);
       });
     }
@@ -222,6 +223,10 @@ export function createNotificationActions(db: Database) {
     for (const projectId of new Set(rows.flatMap((row) => row.projectId ? [row.projectId] : row.recurrenceProjectId ? [row.recurrenceProjectId] : []))) {
       visibleProjects.set(projectId, await requireProjectAccess(db, userId, projectId, "read").then(() => true, () => false));
     }
+    const visibleItems = new Map<string, boolean>();
+    for (const row of rows) if (row.workItemId && row.projectId && !visibleItems.has(row.workItemId)) {
+      visibleItems.set(row.workItemId, await canViewNotificationItem(db, userId, row.workItemId, row.projectId));
+    }
     const visiblePages = new Map<string, boolean>();
     for (const row of rows) if (row.wikiPageId) {
       const [share] = row.pageAccess === "private" && row.pageOwnerId !== userId && !row.pageProjectId
@@ -235,7 +240,7 @@ export function createNotificationActions(db: Database) {
       }
     }
     return rows.filter((row) => row.recurrenceId !== null ? visibleProjects.get(row.recurrenceProjectId!) : (row.workItemId
-      ? row.deletedAt === null && visibleProjects.get(row.projectId!)
+      ? row.deletedAt === null && visibleItems.get(row.workItemId)
       : row.wikiPageId !== null && visiblePages.get(row.wikiPageId)));
   }
 

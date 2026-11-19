@@ -17,6 +17,31 @@ const doc = (...parts: Array<string | { mention: string }>) => ({
   content: [{ type: "paragraph", content: parts.map((part) => typeof part === "string" ? { type: "text", text: part } : { type: "mention", attrs: { id: part.mention, label: "x" } }) }],
 });
 
+test.concurrent("disabling Intake blocks discussion and Activity of undecided items, while accepted work remains accessible", async () => {
+  await withRollback(db, async (transaction) => {
+    const { comments, member, admin, project, items } = await setup(transaction);
+    const intake = createIntakeActions(transaction);
+    const pending = await intake.submitIntakeItem.handler({ userId: member.id }, { projectId: project.id, title: "Pending" });
+    const accepted = await intake.submitIntakeItem.handler({ userId: member.id }, { projectId: project.id, title: "Accepted" });
+    const comment = await comments.createComment.handler({ userId: member.id }, { workItemId: pending.workItemId, body: doc("before") });
+    await intake.acceptIntakeItem.handler({ userId: admin.id }, { intakeItemId: accepted.id });
+    await createProjectActions(transaction).setProjectFeatures.handler({ userId: admin.id }, { projectId: project.id, features: { intake: false } });
+    const actor = { userId: member.id };
+    const denied = [
+      () => comments.listComments.handler(actor, { workItemId: pending.workItemId }),
+      () => comments.createComment.handler(actor, { workItemId: pending.workItemId, body: doc("after") }),
+      () => comments.updateComment.handler(actor, { commentId: comment.id, body: doc("after") }),
+      () => comments.deleteComment.handler(actor, { commentId: comment.id }),
+      () => comments.listCommentVersions.handler(actor, { commentId: comment.id }),
+      () => items.listWorkItemActivities.handler(actor, { workItemId: pending.workItemId }),
+      () => createTimelineActions(transaction).listTimeline.handler(actor, { workItemId: pending.workItemId }),
+    ];
+    for (const call of denied) await expect(call()).rejects.toMatchObject({ status: 400 });
+    await expect(comments.listComments.handler(actor, { workItemId: accepted.workItemId })).resolves.toEqual([]);
+    await expect(items.listWorkItemActivities.handler(actor, { workItemId: accepted.workItemId })).resolves.toBeArray();
+  });
+});
+
 async function setup(transaction: Database, visibility: "public" | "private" = "public") {
   const workspace = await createWorkspaceFactory(transaction);
   const admin = await createMemberFactory(transaction, workspace.id, "Admin");

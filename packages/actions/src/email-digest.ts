@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, isNull, lt } from "drizzle-orm";
-import { agents, notificationEmails, projectMembers, projects, users, wikiPages, workItems, workspaceMembers, workspaces, type Database } from "@weft/db";
+import { agents, intakeItems, notificationEmails, projectMembers, projects, users, wikiPages, workItems, workspaceMembers, workspaces, type Database } from "@weft/db";
 import { requireProjectAccess } from "./projects";
 import { requireWikiPageAccess } from "./wiki";
 import { digestEmail, type DigestItem, type MailLocale } from "./email-templates";
@@ -111,6 +111,17 @@ async function sendUserDigest(database: Database, userId: string, options: Diges
 
 type PendingRow = typeof notificationEmails.$inferSelect;
 
+/** Recheck item-level Intake visibility when displaying or delivering a notification. */
+export async function canViewNotificationItem(database: Database, userId: string, workItemId: string, projectId: string): Promise<boolean> {
+  try {
+    const { workspaceRole, projectRole } = await requireProjectAccess(database, userId, projectId, "read");
+    const [intake] = await database.select({ outcome: intakeItems.outcome, createdBy: intakeItems.createdBy }).from(intakeItems).where(eq(intakeItems.workItemId, workItemId));
+    return !intake || intake.outcome === "accepted" || (workspaceRole !== "Guest" && projectRole !== "Guest") || intake.createdBy === userId;
+  } catch {
+    return false;
+  }
+}
+
 /** Turns a queued row into a digest line, or null when the person may no longer see the item (or it was deleted). */
 async function resolveItem(database: Database, userId: string, row: PendingRow, webOrigin: string): Promise<DigestItem | null> {
   const [member] = await database.select({ userId: workspaceMembers.userId }).from(workspaceMembers)
@@ -127,11 +138,7 @@ async function resolveItem(database: Database, userId: string, row: PendingRow, 
     const [item] = await database.select({ projectId: workItems.projectId, key: projects.key, sequence: workItems.sequence, title: workItems.title, deletedAt: workItems.deletedAt })
       .from(workItems).innerJoin(projects, eq(projects.id, workItems.projectId)).where(eq(workItems.id, row.workItemId));
     if (!item || item.deletedAt) return null;
-    try {
-      await requireProjectAccess(database, userId, item.projectId, "read");
-    } catch {
-      return null;
-    }
+    if (!await canViewNotificationItem(database, userId, row.workItemId, item.projectId)) return null;
     const displayId = `${item.key}-${item.sequence}`;
     return {
       kind, actorName, target: `${displayId} ${item.title}`, status: row.detail ?? undefined,

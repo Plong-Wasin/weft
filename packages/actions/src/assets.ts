@@ -175,7 +175,9 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
       handler: async (context: Context, input: { assetId: string }) => {
         const row = await loadAsset(input.assetId);
         if (row.uploaderId !== context.userId || row.status !== "pending") throw new ActionError("Pending upload not found", 404);
-        await requireRowAccess(row, context.userId, "write");
+        // The uploader may always discard their own unfinished upload, even if
+        // access or the owner's editable state changed during the transfer.
+        // This grants no read access to the owner or the stored object.
         await store().remove(row.storageKey);
         await db.delete(assets).where(and(eq(assets.id, row.id), eq(assets.status, "pending")));
         return { ok: true };

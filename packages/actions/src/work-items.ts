@@ -1137,6 +1137,7 @@ export function createWorkItemActions(db: Database) {
           if (!intake) throw new ActionError("Work item not found", 404);
         }
         const access = await requireProjectAccess(db, context.userId, item.projectId, "read");
+        if (intake && intake.outcome !== "accepted") assertFeatureEnabled(access.project, "intake");
         if (intake && intake.outcome !== "accepted" && (access.workspaceRole === "Guest" || access.projectRole === "Guest") && intake.createdBy !== context.userId) throw new ActionError("Forbidden", 403);
         const originator = alias(users, "originator");
         const rows = (await db.select({ activity: activities, actorName: users.name, actorIsAgent: users.isAgent, originatorName: originator.name }).from(activities).innerJoin(users, eq(users.id, activities.actorId)).leftJoin(originator, eq(originator.id, activities.originatorId))

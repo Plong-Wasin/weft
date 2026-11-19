@@ -117,6 +117,29 @@ test.concurrent("failed upload cancellation removes the pending row and stored o
   });
 });
 
+test.concurrent("the uploader can discard pending bytes after an Intake decision or feature disable", async () => {
+  await withRollback(db, async (transaction) => {
+    const env = await setup(transaction);
+    const intake = createIntakeActions(transaction);
+    const file = { filename: "partial.bin", contentType: "application/octet-stream", size: 10 };
+    const rejected = await intake.submitIntakeItem.handler({ userId: env.guest.id }, { projectId: env.project.id, title: "Reject" });
+    const disabled = await intake.submitIntakeItem.handler({ userId: env.guest.id }, { projectId: env.project.id, title: "Disable" });
+    const first = await env.assets.requestAssetUpload.handler({ userId: env.guest.id }, { ownerType: "work_item", ownerId: rejected.workItemId, ...file });
+    const second = await env.assets.requestAssetUpload.handler({ userId: env.guest.id }, { ownerType: "work_item", ownerId: disabled.workItemId, ...file });
+    env.mem.put(first.fields.key!, 4); env.mem.put(second.fields.key!, 4);
+    await intake.rejectIntakeItem.handler({ userId: env.member.id }, { intakeItemId: rejected.id });
+    await expect(env.assets.cancelAssetUpload.handler({ userId: env.member.id }, { assetId: first.assetId })).rejects.toMatchObject({ status: 404 });
+    await expect(env.assets.completeAssetUpload.handler({ userId: env.guest.id }, { assetId: first.assetId })).rejects.toMatchObject({ status: 400 });
+    await env.assets.cancelAssetUpload.handler({ userId: env.guest.id }, { assetId: first.assetId });
+    await createProjectActions(transaction).setProjectFeatures.handler({ userId: env.admin.id }, { projectId: env.project.id, features: { intake: false } });
+    await expect(env.assets.completeAssetUpload.handler({ userId: env.guest.id }, { assetId: second.assetId })).rejects.toMatchObject({ status: 400 });
+    await env.assets.cancelAssetUpload.handler({ userId: env.guest.id }, { assetId: second.assetId });
+    expect(env.mem.objects.size).toBe(0);
+    expect(await transaction.select().from(assetTable).where(eq(assetTable.id, first.assetId))).toHaveLength(0);
+    expect(await transaction.select().from(assetTable).where(eq(assetTable.id, second.assetId))).toHaveLength(0);
+  });
+});
+
 test.concurrent("asset is tied to one owner: a comment's asset lists under the comment only", async () => {
   await withRollback(db, async (transaction) => {
     const env = await setup(transaction);

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 import { assets, commentMentions, commentVersions, comments as commentsTable, createDatabase, outlinks, type Database } from "@weft/db";
 import { backfillCommentWrittenForms } from "../src/migrations/comment-written-form";
-import { commentMarkdownOptions, createAgentActions, createApiTokenActions, createCommentActions, createProjectActions, createRuntimeActions, createTimelineActions, createWikiActions, createWorkItemActions } from "../src";
+import { commentMarkdownOptions, createAgentActions, createApiTokenActions, createCommentActions, createIntakeActions, createProjectActions, createRuntimeActions, createTimelineActions, createWikiActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -72,6 +72,23 @@ test.concurrent("comment create and update save legacy alignment with the same w
     expect(created.markdownWarningDetails).toContainEqual(expect.objectContaining({ code: "attribute-not-persisted", message: expect.stringContaining("text alignment") }));
     const updated = await comments.updateComment.handler({ userId: member.id }, { commentId: created.id, body });
     expect(updated.markdownWarningDetails).toContainEqual(expect.objectContaining({ code: "attribute-not-persisted" }));
+  });
+});
+
+test.concurrent("a Guest can discuss their own Triage item through Activity, but cannot read another Guest's item", async () => {
+  await withRollback(db, async (transaction) => {
+    const env = await setup(transaction);
+    const intake = createIntakeActions(transaction);
+    const own = await intake.submitIntakeItem.handler({ userId: env.guest.id }, { projectId: env.project.id, title: "Guest request" });
+    const other = await intake.submitIntakeItem.handler({ userId: env.bystander.id }, { projectId: env.project.id, title: "Private request" });
+    const created = await env.comments.createComment.handler({ userId: env.guest.id }, { workItemId: own.workItemId, body: doc("More detail") });
+    expect((await env.comments.listComments.handler({ userId: env.guest.id }, { workItemId: own.workItemId })).map((row) => row.bodyText)).toEqual(["More detail"]);
+    expect((await createTimelineActions(transaction).listTimeline.handler({ userId: env.guest.id }, { workItemId: own.workItemId })).some((entry) => entry.kind === "comment" && entry.comment?.id === created.id)).toBe(true);
+    await expect(env.comments.listComments.handler({ userId: env.guest.id }, { workItemId: other.workItemId })).rejects.toMatchObject({ status: 403 });
+    await expect(createTimelineActions(transaction).listTimeline.handler({ userId: env.guest.id }, { workItemId: other.workItemId })).rejects.toMatchObject({ status: 403 });
+    await intake.rejectIntakeItem.handler({ userId: env.member.id }, { intakeItemId: own.id });
+    await env.comments.createComment.handler({ userId: env.member.id }, { workItemId: own.workItemId, body: doc("Decision follow-up") });
+    expect((await env.comments.listComments.handler({ userId: env.guest.id }, { workItemId: own.workItemId })).map((row) => row.bodyText)).toEqual(["More detail", "Decision follow-up"]);
   });
 });
 

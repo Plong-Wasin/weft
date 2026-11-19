@@ -1,6 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
-import { aiRequests, collectionMembers, collections, comments, confirmations, notifications, projectMembers, projects, recurrences, sessions, users, wikiPageShares, workItems, wikiPages, workspaceInvites, workspaceMembers, type Database } from "@weft/db";
+import { aiRequests, collectionMembers, collections, comments, confirmations, intakeItems, notifications, projectMembers, projects, recurrences, sessions, users, wikiPageShares, workItems, workItemAssignees, wikiPages, workspaceInvites, workspaceMembers, type Database } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 import { enqueueJob, type JobHandlers } from "./jobs";
@@ -75,6 +75,28 @@ async function fanOut(database: Database, payload: NotifyPayload, job: { id: str
   const [item] = payload.workItemId ? await database.select().from(workItems).where(and(eq(workItems.id, payload.workItemId), isNull(workItems.deletedAt))) : [];
   const [page] = payload.wikiPageId ? await database.select().from(wikiPages).where(and(eq(wikiPages.id, payload.wikiPageId), isNull(wikiPages.deletedAt))) : [];
   if (!item && !page) return;
+  let allowedRecipients = payload.recipientIds;
+  if (item) {
+    const [intake] = await database.select().from(intakeItems).where(and(eq(intakeItems.workItemId, item.id), sql`${intakeItems.outcome} <> 'accepted'`));
+    if (intake) {
+      const [project] = await database.select().from(projects).where(eq(projects.id, item.projectId));
+      if (!project) return;
+      const [projectRows, workspaceRows, assigneeRows] = await Promise.all([
+        database.select({ userId: projectMembers.userId }).from(projectMembers).where(eq(projectMembers.projectId, project.id)),
+        database.select({ userId: workspaceMembers.userId, role: workspaceMembers.role }).from(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, item.workspaceId), inArray(workspaceMembers.userId, payload.recipientIds), isNull(workspaceMembers.suspendedAt))),
+        database.select({ userId: workItemAssignees.userId }).from(workItemAssignees).where(eq(workItemAssignees.workItemId, item.id)),
+      ]);
+      const projectIds = new Set(projectRows.map((row) => row.userId));
+      const roles = new Map(workspaceRows.map((row) => [row.userId, row.role]));
+      const participants = new Set([intake.createdBy, ...assigneeRows.map((row) => row.userId)]);
+      allowedRecipients = payload.recipientIds.filter((id) => {
+        const role = roles.get(id);
+        if (!role || (project.visibility === "private" && role !== "Admin" && !projectIds.has(id))) return false;
+        if (role === "Guest") return id === intake.createdBy;
+        return participants.has(id) || (payload.kind === "mention" && payload.commentId !== undefined);
+      });
+    }
+  }
   if (payload.commentId) {
     const [comment] = await database.select({ id: comments.id, parentId: comments.parentId }).from(comments).where(and(eq(comments.id, payload.commentId), isNull(comments.deletedAt)));
     if (!comment) return;
@@ -85,7 +107,6 @@ async function fanOut(database: Database, payload: NotifyPayload, job: { id: str
     }
   }
   const workspaceId = item?.workspaceId ?? page!.workspaceId;
-  let allowedRecipients = payload.recipientIds;
   if (page) {
     const shares = (await database.select({ userId: wikiPageShares.userId }).from(wikiPageShares).where(eq(wikiPageShares.pageId, page.id))).map((row) => row.userId);
     if (page.access === "private") allowedRecipients = allowedRecipients.filter((id) => id === page.ownerId || shares.includes(id));

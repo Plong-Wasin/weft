@@ -82,6 +82,9 @@ try {
   await page.getByTestId("intake-MOB-1").waitFor();
   await detail.getByLabel(translate("intake.titleField")).waitFor();
   check(await detail.getByLabel(translate("intake.titleField")).inputValue() === "Dark mode please", "created title was not available for inline editing");
+  await detail.getByTestId("comment-editor").locator('[contenteditable="true"]').fill("Review discussion before acceptance");
+  await detail.getByRole("button", { name: translate("comments.add"), exact: true }).click();
+  await detail.getByText("Review discussion before acceptance", { exact: true }).waitFor();
   await detail.getByTestId("description-editor").locator("strong").getByText("Users want a dark theme").waitFor();
   await submit("Secondary draft");
   await detail.locator("header").getByText("MOB-2", { exact: true }).waitFor();
@@ -92,9 +95,9 @@ try {
   const editing = detail.getByTestId("description-editor").locator('[contenteditable="true"]');
   await editing.fill("Updated request");
   check(await page.evaluate(() => Object.values(sessionStorage).some((value) => value.includes("Updated request"))), "rich-text changes were not retained as a draft");
-  await detail.getByRole("toolbar").getByRole("button", { name: translate("editor.sourceMode") }).click();
+  await detail.getByTestId("description-toolbar").getByRole("button", { name: translate("editor.sourceMode") }).click();
   await detail.getByTestId("editor-source-text").fill("**Updated request**");
-  await detail.getByRole("toolbar").getByRole("button", { name: translate("editor.sourceMode") }).click();
+  await detail.getByTestId("description-toolbar").getByRole("button", { name: translate("editor.sourceMode") }).click();
   await page.getByTestId("intake-MOB-2").click();
   await detail.locator("header").getByText("MOB-2", { exact: true }).waitFor();
   await page.getByTestId("intake-MOB-1").click();
@@ -159,6 +162,10 @@ try {
   await page.getByTestId("intake-MOB-3").getByTestId("intake-status").getByText(translate("intake.status.pending")).waitFor();
   // Mark MOB-4 as duplicate of the accepted MOB-1.
   await page.getByTestId("intake-MOB-4").click();
+  await detail.locator("header").getByText("MOB-4", { exact: true }).waitFor();
+  await detail.getByTestId("comment-editor").locator('[contenteditable="true"]').fill("Keep the duplicate decision discussion");
+  await detail.getByRole("button", { name: translate("comments.add"), exact: true }).click();
+  await detail.getByText("Keep the duplicate decision discussion", { exact: true }).waitFor();
   await detail.getByRole("button", { name: translate("intake.more") }).click();
   await page.getByRole("menuitem", { name: translate("intake.markDuplicate"), exact: true }).click();
   await page.getByRole("dialog").getByLabel(translate("intake.duplicateTo")).fill("MOB-9");
@@ -176,6 +183,7 @@ try {
   }
   check(await page.getByTestId("intake-MOB-3").count() === 0, "snoozed item showed in Closed");
   await page.getByTestId("intake-MOB-4").click();
+  await detail.locator("header").getByText("MOB-4", { exact: true }).waitFor();
   await detail.getByText(translate("intake.duplicateOf").replace("{id}", "MOB-1")).waitFor();
   check(await detail.getByRole("button", { name: translate("intake.accept"), exact: true }).count() === 0, "decided item still offers Accept");
   await page.screenshot({ path: `${shots}/intake-closed-1440-light.png` });

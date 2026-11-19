@@ -9,6 +9,9 @@ import { Avatar } from "./avatar";
 import { useWorkspace } from "./layouts/workspace-layout";
 import { markdownToDoc } from "../../../packages/actions/src/markdown-doc";
 import { DescriptionEditor } from "./description-editor";
+import { TimelinePanel } from "./comments-panel";
+import { actionResult } from "./api";
+import { paths } from "./routes";
 
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 const outcomes = ["pending", "snoozed", "accepted", "rejected", "duplicate"] as const;
@@ -146,8 +149,8 @@ function ListRow({ item, selected, onSelect }: { item: IntakeItem; selected: boo
 
 type Dialog = "snooze" | "duplicate" | null;
 
-function Detail({ action, workspaceId, item, index, count, canDecide, canEdit, draft, onDraftChange, onMove, onDecided, onChanged, onUpdated }: {
-  action: Call; workspaceId: string; item: IntakeItem; index: number; count: number; canDecide: boolean; canEdit: boolean; draft?: IntakeDraft; onDraftChange: (patch: Partial<IntakeDraft>) => void; onMove: (delta: number) => void; onDecided: () => void; onChanged: () => void; onUpdated: () => void;
+function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, selfId, item, index, count, canDecide, canEdit, draft, onDraftChange, onMove, onDecided, onChanged, onUpdated }: {
+  action: Call; workspaceId: string; workspaceSlug: string; projectKey: string; projectId: string; selfId: string; item: IntakeItem; index: number; count: number; canDecide: boolean; canEdit: boolean; draft?: IntakeDraft; onDraftChange: (patch: Partial<IntakeDraft>) => void; onMove: (delta: number) => void; onDecided: () => void; onChanged: () => void; onUpdated: () => void;
 }) {
   const [dialog, setDialog] = React.useState<Dialog>(null);
   const [note, setNote] = React.useState<string | null>(null);
@@ -226,6 +229,7 @@ function Detail({ action, workspaceId, item, index, count, canDecide, canEdit, d
         {item.outcome === "snoozed" && item.snoozedTill && <><dt className="text-secondary">{t("intake.status.snoozed")}</dt><dd className="m-0 text-primary">{t("intake.snoozedTill").replace("{date}", formatDate(item.snoozedTill))}</dd></>}
         {item.outcome === "duplicate" && item.duplicateToDisplayId && <><dt className="text-secondary">{t("intake.status.duplicate")}</dt><dd className="m-0 text-primary">{t("intake.duplicateOf").replace("{id}", item.duplicateToDisplayId)}</dd></>}
       </dl>
+      <TimelinePanel workspaceId={workspaceId} workItemId={item.workItemId} projectId={projectId} selfId={selfId} canComment={item.outcome === "accepted" ? canDecide : true} linkBase={item.outcome === "accepted" ? paths.workItem(workspaceSlug, item.displayId) : paths.intake(workspaceSlug, projectKey)} action={action as never} actionResult={actionResult} onChange={onUpdated} />
       {note && <p role="alert" className="m-0 text-13 text-danger-text">{note}</p>}
     </div>
     {dialog === "snooze" && <SnoozeModal onClose={() => setDialog(null)} onSnooze={(till) => void run("snooze_intake_item", { snoozedTill: till })} />}
@@ -233,7 +237,7 @@ function Detail({ action, workspaceId, item, index, count, canDecide, canEdit, d
   </section>;
 }
 
-export function IntakePage({ workspaceId, projectId, canDecide, canAdmin, enabled, action }: { workspaceId: string; workspaceSlug?: string; projectKey?: string; projectId: string; canDecide: boolean; canAdmin: boolean; enabled: boolean; action: Call }) {
+export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, canDecide, canAdmin, enabled, action }: { workspaceId: string; workspaceSlug?: string; projectKey?: string; projectId: string; canDecide: boolean; canAdmin: boolean; enabled: boolean; action: Call }) {
   const { selfId } = useWorkspace();
   const [workspaceAdmin, setWorkspaceAdmin] = React.useState(false);
   const [params, setParams] = useSearchParams();
@@ -312,7 +316,7 @@ export function IntakePage({ workspaceId, projectId, canDecide, canAdmin, enable
           {(items ?? []).map((item) => <ListRow key={item.id} item={item} selected={item.id === selectedId} onSelect={() => select(item.id)} />)}
         </ul>
       </div>
-      {current ? <Detail key={current.id} action={action} workspaceId={workspaceId} item={current} index={index} count={items!.length} canDecide={canDecide} canEdit={canAdmin || workspaceAdmin || current.createdBy === selfId} draft={draftsRef.current[current.id] ?? drafts[current.id]} onDraftChange={(patch) => updateDraft(current, patch)}
+      {current ? <Detail key={current.id} action={action} workspaceId={workspaceId} workspaceSlug={workspaceSlug ?? ""} projectKey={projectKey ?? ""} projectId={projectId} selfId={selfId} item={current} index={index} count={items!.length} canDecide={canDecide} canEdit={canAdmin || workspaceAdmin || current.createdBy === selfId} draft={draftsRef.current[current.id] ?? drafts[current.id]} onDraftChange={(patch) => updateDraft(current, patch)}
         onMove={(delta) => select(items![index + delta]!.id)} onDecided={afterDecision} onChanged={afterChange} onUpdated={() => { const { [current.id]: _removed, ...rest } = draftsRef.current; draftsRef.current = rest; setDrafts(rest); void load(); }} />
         : items?.length === 0
           ? <div className="grid min-w-0 flex-1 place-items-center">{tab === "open"

@@ -267,6 +267,7 @@ export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId,
   const [refreshKey, setRefreshKey] = React.useState(0);
   const [others, setOthers] = React.useState<Cycle[]>([]);
   const [target, setTarget] = React.useState("");
+  const [transferSelection, setTransferSelection] = React.useState<string[]>([]);
   const [editing, setEditing] = React.useState(false);
   const [adding, setAdding] = React.useState(false);
   const [candidateQuery, setCandidateQuery] = React.useState("");
@@ -280,8 +281,12 @@ export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId,
     const found = loaded && loaded.projectId === projectId ? loaded : null;
     setCycle(found);
     if (!found) return;
-    setEveryone(await action<Item[]>("list_work_items", { projectId }) ?? []);
-    setStates(await action<State[]>("list_states", { projectId }) ?? []);
+    const loadedItems = await action<Item[]>("list_work_items", { projectId }) ?? [];
+    const loadedStates = await action<State[]>("list_states", { projectId }) ?? [];
+    setEveryone(loadedItems);
+    setStates(loadedStates);
+    const groupByState = new Map(loadedStates.map((state) => [state.id, state.group]));
+    setTransferSelection(loadedItems.filter((item) => found.workItemIds.includes(item.id) && item.stateId && !["completed", "cancelled"].includes(groupByState.get(item.stateId) ?? "")).map((item) => item.id));
     const activeCycles = await action<Cycle[]>("list_cycles", { projectId }) ?? [];
     const archivedCycles = await action<Cycle[]>("list_cycles", { projectId, archived: true }) ?? [];
     const all = [...activeCycles, ...archivedCycles];
@@ -299,8 +304,8 @@ export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId,
   const candidates = everyone.filter((item) => !cycle.workItemIds.includes(item.id) && `${item.displayId} ${item.title}`.toLowerCase().includes(candidateQuery.trim().toLowerCase()));
   const remove = async (workItemId: string) => { setNote((await action("remove_cycle_items", { cycleId, workItemIds: [workItemId] })) === null ? t("cycles.failed") : null); await load(); };
   const transfer = async () => {
-    const result = await action<{ transferred: string[] }>("transfer_cycle_items", { cycleId, targetCycleId: target });
-    setNote(result === null ? t("cycles.failed") : t("cycles.transferred").replace("{count}", count(result.transferred.length)));
+    const result = await action<{ transferred: string[]; conflicts: Array<{ workItemId: string; reason: string }> }>("selective_transfer_cycle_items", { cycleId, targetCycleId: target, workItemIds: transferSelection });
+    setNote(result === null ? t("cycles.failed") : `${t("cycles.transferred").replace("{count}", count(result.transferred.length))}${result.conflicts.length ? ` ${t("cycles.transferConflicts").replace("{count}", count(result.conflicts.length))}` : ""}`);
     await load();
   };
   return <section className="grid gap-3">
@@ -326,11 +331,14 @@ export function CycleDetailPage({ workspaceSlug, projectKey, projectId, cycleId,
         <Breakdown cycle={cycle} items={everyone} states={states} />
         <BurndownChart action={action} name="get_cycle_burndown" body={{ cycleId }} projectId={projectId} refreshKey={refreshKey} />
         {ended && canWrite && !cycle.archived && <div data-testid="cycle-transfer" className="grid gap-2">
+          <h4 className="m-0 text-13 font-semibold">{t("cycles.transferReview")}</h4>
           <select aria-label={t("cycles.transferTarget")} value={target} onChange={(event) => setTarget(event.target.value)}>
             <option value="">{t("cycles.transferTarget")}</option>
             {others.map((other) => <option key={other.id} value={other.id}>{other.name}</option>)}
           </select>
-          <button disabled={!target} onClick={() => void transfer()}>{t("cycles.transfer")}</button>
+          {transferSelection.length === 0 && <p className="m-0 text-12 text-secondary">{t("cycles.noTransferItems")}</p>}
+          <ul className="m-0 grid list-none gap-1 p-0">{everyone.filter((item) => cycle.workItemIds.includes(item.id) && (() => { const group = states.find((state) => state.id === item.stateId)?.group; return group !== "completed" && group !== "cancelled"; })()).map((item) => <li key={item.id} className="flex items-center gap-2 text-13"><input type="checkbox" aria-label={`${t("cycles.selectTransferItem")} ${item.displayId}`} checked={transferSelection.includes(item.id)} onChange={(event) => setTransferSelection((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))} /><span className="truncate">{item.displayId} · {item.title}</span></li>)}</ul>
+          <button disabled={!target || transferSelection.length === 0} onClick={() => void transfer()}>{t("cycles.transfer")}</button>
         </div>}
       </aside>
     </div>

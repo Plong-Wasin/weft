@@ -25,6 +25,7 @@ export const actionNotes: Record<string, string> = {
   add_cycle_items: "A work item belongs to at most one Cycle: items already in another Cycle are skipped and reported. Adding to a Cycle that has ended is refused. `cycleId` and `workItemIds` are UUIDs; get work item ids from get_work_item by displayId.",
   create_cycle: "Creates a Cycle in a project. `startDate` and `endDate` are calendar dates (YYYY-MM-DD) and both days belong to the Cycle, so a Cycle from 2026-11-13 to 2026-11-27 lasts 15 days. `projectId` is a UUID from list_projects or get_project.",
   transfer_cycle_items: "Moves the unfinished work items of a finished Cycle into another Cycle of the same project.",
+  selective_transfer_cycle_items: "Transfers only the selected unfinished items that still belong to the completed source Cycle. Returns stale or newly ineligible selections in conflicts; items omitted from workItemIds stay in the source.",
   get_estimate: "Reads a project's Estimate: its type (points or categories) and its 2 to 6 ordered points, or null when the project has none.",
   get_estimate_usage: "Counts the work items that hold an Estimate point (project Admin only). Read it before proposing switch_estimate_type or delete_estimate and tell the user the number.",
   switch_estimate_type: "Switches the Estimate to the other system (points or categories) with a new list of 2 to 6 values and CLEARS the Estimate point of every work item in the project. Always state the affected count first (get_estimate_usage).",

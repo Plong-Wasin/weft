@@ -357,6 +357,53 @@ export function createCycleActions(db: Database) {
         });
       },
     },
+    /** Reviewable closeout: only selected items that are still unfinished members of the source move. */
+    selectiveTransferCycleItems: {
+      name: "selective_transfer_cycle_items", kind: "write" as const,
+      input: Type.Object({ cycleId: uuid(), targetCycleId: uuid(), workItemIds: Type.Array(uuid(), { minItems: 1, maxItems: 500 }) }),
+      output: Type.Object({ transferred: Type.Array(Type.String()), conflicts: Type.Array(Type.Object({ workItemId: Type.String(), reason: Type.Union([Type.Literal("not_in_source"), Type.Literal("ineligible")]) })) }),
+      handler: async (context: Context, input: { cycleId: string; targetCycleId: string; workItemIds: string[] }) => {
+        const { cycle, project } = await cycleAccess(context, input.cycleId, "write");
+        if (cycle.archivedAt) throw new ActionError("Cycle is archived", 400);
+        if (cycleStatus(cycle.startDate, cycle.endDate) !== "completed") throw new ActionError("Only a completed Cycle can transfer its work items", 400);
+        if (input.targetCycleId === cycle.id) throw new ActionError("Choose a different Cycle", 400);
+        const [target] = await db.select().from(cycles).where(and(eq(cycles.id, input.targetCycleId), eq(cycles.projectId, project.id), isNull(cycles.deletedAt)));
+        if (!target) throw new ActionError("Cycle not found", 404);
+        if (target.archivedAt || cycleStatus(target.startDate, target.endDate) === "completed") throw new ActionError("Cannot transfer work items to a Cycle that has ended", 400);
+        const ids = [...new Set(input.workItemIds)];
+        return db.transaction(async (transaction) => {
+          const database = tx(transaction);
+          const lockedCycles = await database.select().from(cycles).where(inArray(cycles.id, [cycle.id, target.id])).orderBy(asc(cycles.id)).for("update");
+          const sourceNow = lockedCycles.find((row) => row.id === cycle.id);
+          const targetNow = lockedCycles.find((row) => row.id === target.id);
+          if (!sourceNow || sourceNow.deletedAt || sourceNow.projectId !== project.id) throw new ActionError("Cycle not found", 404);
+          if (sourceNow.archivedAt) throw new ActionError("Cycle is archived", 400);
+          if (cycleStatus(sourceNow.startDate, sourceNow.endDate) !== "completed") throw new ActionError("Only a completed Cycle can transfer its work items", 400);
+          if (!targetNow || targetNow.deletedAt || targetNow.projectId !== project.id) throw new ActionError("Cycle not found", 404);
+          if (targetNow.archivedAt || cycleStatus(targetNow.startDate, targetNow.endDate) === "completed") throw new ActionError("Cannot transfer work items to a Cycle that has ended", 400);
+          // Serialize against state and membership changes before deciding eligibility.
+          await database.select({ id: workItems.id }).from(workItems).where(inArray(workItems.id, ids)).for("update");
+          const current = await database.select({ id: cycleItems.workItemId, group: workItemStates.group }).from(cycleItems)
+            .innerJoin(workItems, and(eq(workItems.id, cycleItems.workItemId), isNull(workItems.deletedAt)))
+            .innerJoin(workItemStates, eq(workItemStates.id, workItems.stateId))
+            .where(and(eq(cycleItems.cycleId, cycle.id), inArray(cycleItems.workItemId, ids)));
+          const byId = new Map(current.map((row) => [row.id, row.group]));
+          const transferred: string[] = [], conflicts: Array<{ workItemId: string; reason: "not_in_source" | "ineligible" }> = [];
+          for (const id of ids) {
+            const group = byId.get(id);
+            if (group === undefined) { conflicts.push({ workItemId: id, reason: "not_in_source" }); continue; }
+            if (group === "completed" || group === "cancelled") { conflicts.push({ workItemId: id, reason: "ineligible" }); continue; }
+            const [moved] = await database.update(cycleItems).set({ cycleId: target.id })
+              .where(and(eq(cycleItems.workItemId, id), eq(cycleItems.cycleId, cycle.id))).returning({ workItemId: cycleItems.workItemId });
+            if (moved) {
+              await logCycleChange(database, context, project, id, cycle.id, target.id);
+              transferred.push(id);
+            } else conflicts.push({ workItemId: id, reason: "not_in_source" });
+          }
+          return { transferred, conflicts };
+        });
+      },
+    },
     /** Admin only, and only once the Cycle has ended. Membership stays; the Cycle leaves the default list. */
     archiveCycle: {
       name: "archive_cycle", kind: "write" as const,

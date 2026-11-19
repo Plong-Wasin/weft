@@ -146,6 +146,11 @@ try {
   await page.getByTestId("cycle-burndown").getByText(/Reporting dates changed/).waitFor();
   await page.getByTestId("cycle-burndown").getByText(translate("cycles.history.noCoverage")).waitFor();
   await page.getByTestId("cycle-transfer").waitFor();
+  const transferItem = page.getByLabel(`${translate("cycles.selectTransferItem")} MOB-1`);
+  check(await transferItem.isChecked(), "eligible unfinished work must start selected in the closeout preview");
+  await transferItem.uncheck();
+  check(!(await page.getByRole("button", { name: translate("cycles.transfer"), exact: true }).isEnabled()), "closeout must require at least one selected item");
+  await transferItem.check();
   await page.getByLabel(translate("cycles.transferTarget")).selectOption({ label: "Sprint 2" });
   await page.getByRole("button", { name: translate("cycles.transfer"), exact: true }).click();
   await page.getByText(translate("cycles.transferred").replace("{count}", "1")).waitFor();

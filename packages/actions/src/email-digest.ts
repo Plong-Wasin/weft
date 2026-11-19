@@ -116,7 +116,7 @@ export async function canViewNotificationItem(database: Database, userId: string
   try {
     const { workspaceRole, projectRole } = await requireProjectAccess(database, userId, projectId, "read");
     const [intake] = await database.select({ outcome: intakeItems.outcome, createdBy: intakeItems.createdBy }).from(intakeItems).where(eq(intakeItems.workItemId, workItemId));
-    return !intake || intake.outcome === "accepted" || (workspaceRole !== "Guest" && projectRole !== "Guest") || intake.createdBy === userId;
+    return !intake || intake.outcome === "accepted" || workspaceRole === "Admin" || (workspaceRole !== "Guest" && projectRole !== "Guest") || intake.createdBy === userId;
   } catch {
     return false;
   }

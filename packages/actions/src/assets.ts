@@ -70,7 +70,7 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
         assertFeatureEnabled(project, "intake");
         const admin = workspaceRole === "Admin" || projectRole === "Admin";
         if (level === "read") {
-          if ((workspaceRole === "Guest" || projectRole === "Guest") && intake.createdBy !== userId) throw new ActionError("Asset not found", 404);
+          if (workspaceRole !== "Admin" && (workspaceRole === "Guest" || projectRole === "Guest") && intake.createdBy !== userId) throw new ActionError("Asset not found", 404);
           return;
         }
         if (intake.outcome !== "pending" && intake.outcome !== "snoozed") throw new ActionError("Intake item is read-only", 400);

@@ -93,7 +93,7 @@ async function fanOut(database: Database, payload: NotifyPayload, job: { id: str
       allowedRecipients = payload.recipientIds.filter((id) => {
         const role = roles.get(id);
         if (!role || (project.visibility === "private" && role !== "Admin" && !projectIds.has(id))) return false;
-        if (role === "Guest" || projectRoles.get(id) === "Guest") return id === intake.createdBy;
+        if (role !== "Admin" && (role === "Guest" || projectRoles.get(id) === "Guest")) return id === intake.createdBy;
         return participants.has(id) || (payload.kind === "mention" && payload.commentId !== undefined);
       });
     }

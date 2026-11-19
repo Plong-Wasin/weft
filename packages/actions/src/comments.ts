@@ -155,7 +155,7 @@ export function createCommentActions(db: Database) {
     if (intake && intake.outcome !== "accepted") {
       assertFeatureEnabled(access.project, "intake");
       if (requirement === "write" && access.project.archivedAt) throw new ActionError("Project is archived", 400);
-      const guest = access.workspaceRole === "Guest" || access.projectRole === "Guest";
+      const guest = access.workspaceRole !== "Admin" && (access.workspaceRole === "Guest" || access.projectRole === "Guest");
       if (guest && intake.createdBy !== context.userId) throw new ActionError("Forbidden", 403);
     } else if (requirement === "write") await requireProjectAccess(db, context.userId, item.projectId, "write");
     return { project: access.project, intake: intake && intake.outcome !== "accepted" ? intake : null };

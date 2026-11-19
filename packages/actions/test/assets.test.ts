@@ -106,6 +106,20 @@ test.concurrent("Intake assets allow the Guest submitter and Admin, preserve Gue
   });
 });
 
+test.concurrent("workspace Admin retains Intake asset, discussion and Activity access with a project Guest role", async () => {
+  await withRollback(db, async (transaction) => {
+    const env = await setup(transaction);
+    await createProjectActions(transaction).addProjectMember.handler({ userId: env.admin.id }, { projectId: env.project.id, userId: env.admin.id, role: "Guest" });
+    const intake = await createIntakeActions(transaction).submitIntakeItem.handler({ userId: env.guest.id }, { projectId: env.project.id, title: "Guest request" });
+    const asset = await upload(env, env.guest.id, { filename: "proof.png", contentType: "image/png", size: 10 }, { ownerType: "work_item", ownerId: intake.workItemId });
+    expect((await env.assets.listAssets.handler({ userId: env.admin.id }, { ownerType: "work_item", ownerId: intake.workItemId })).map((row) => row.id)).toEqual([asset.id]);
+    expect((await env.assets.getAssetDownloadUrl.handler({ userId: env.admin.id }, { assetId: asset.id })).filename).toBe("proof.png");
+    await env.comments.createComment.handler({ userId: env.admin.id }, { workItemId: intake.workItemId, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Review" }] }] } });
+    expect(await env.comments.listComments.handler({ userId: env.admin.id }, { workItemId: intake.workItemId })).toHaveLength(1);
+    expect((await createWorkItemActions(transaction).listWorkItemActivities.handler({ userId: env.admin.id }, { workItemId: intake.workItemId })).length).toBeGreaterThan(0);
+  });
+});
+
 test.concurrent("failed upload cancellation removes the pending row and stored object", async () => {
   await withRollback(db, async (transaction) => {
     const env = await setup(transaction);

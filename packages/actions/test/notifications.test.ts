@@ -98,6 +98,20 @@ test.concurrent("Intake notifications and queued email respect project Guest acc
   });
 });
 
+test.concurrent("workspace Admin with project Guest role receives Intake mentions", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, admin, author, project, comments, inbox } = await setup(transaction);
+    await createProjectActions(transaction).addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: admin.id, role: "Guest" });
+    const item = await createIntakeActions(transaction).submitIntakeItem.handler({ userId: author.id }, { projectId: project.id, title: "Request" });
+    await comments.createComment.handler({ userId: author.id }, { workItemId: item.workItemId, body: doc({ mention: admin.id }) });
+    await drain(transaction);
+    expect((await inbox.listNotifications.handler({ userId: admin.id }, { workspaceId: workspace.id })).notifications).toMatchObject([{ workItemId: item.workItemId }]);
+    const delivered: unknown[] = [];
+    await sendNotificationDigests(transaction, { mailer: { send: async (message) => { delivered.push(message); } }, webOrigin: "https://weft.test", defaultLocale: null });
+    expect(delivered).toHaveLength(1);
+  });
+});
+
 test.concurrent("mentioning an Agent on Intake does not start a Run", async () => {
   await withRollback(db, async (transaction) => {
     const { workspace, admin, author, project, comments } = await setup(transaction);

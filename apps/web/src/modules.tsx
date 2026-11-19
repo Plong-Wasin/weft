@@ -150,10 +150,21 @@ export function ModulesPage({ workspaceSlug, projectKey, projectId, canWrite, ca
   const [modules, setModules] = React.useState<Module[] | null>(null);
   const [people, setPeople] = React.useState<Person[]>([]);
   const [archived, setArchived] = React.useState(false);
+  const [search, setSearch] = React.useState("");
+  const [statusFilter, setStatusFilter] = React.useState("");
+  const [leadFilter, setLeadFilter] = React.useState("");
+  const [memberFilter, setMemberFilter] = React.useState("");
+  const [dateFrom, setDateFrom] = React.useState("");
+  const [dateTo, setDateTo] = React.useState("");
   const [display, setDisplay] = useDisplay();
   const [form, setForm] = React.useState<{ module?: Module } | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
-  const load = React.useCallback(async () => setModules(enabled ? await action<Module[]>("list_modules", { projectId, archived }) : null), [action, projectId, enabled, archived]);
+  const requestId = React.useRef(0);
+  const load = React.useCallback(async () => {
+    const currentRequest = ++requestId.current;
+    const result = enabled ? await action<Module[]>("list_modules", { projectId, archived, search, ...(statusFilter ? { status: statusFilter } : {}), ...(leadFilter ? { leadId: leadFilter } : {}), ...(memberFilter ? { memberId: memberFilter } : {}), ...(dateFrom ? { dateFrom } : {}), ...(dateTo ? { dateTo } : {}) }) : null;
+    if (currentRequest === requestId.current) setModules(result);
+  }, [action, projectId, enabled, archived, search, statusFilter, leadFilter, memberFilter, dateFrom, dateTo]);
   React.useEffect(() => { void load(); }, [load]);
   React.useEffect(() => { if (enabled) void action<Person[]>("list_project_members", { projectId }).then((rows) => setPeople(rows ?? [])); }, [action, projectId, enabled]);
   if (!enabled) return <section><p role="status">{t("modules.off")}</p></section>;
@@ -176,9 +187,18 @@ export function ModulesPage({ workspaceSlug, projectKey, projectId, canWrite, ca
         {canWrite && !archived && <button type="button" className={primaryButton} onClick={() => setForm({})}><Plus aria-hidden size={14} />{t("modules.addNew")}</button>}
       </div>
     </header>
+    <div className="flex flex-wrap items-center gap-2 border-b border-subtle px-4 py-2">
+      <input type="search" aria-label={t("modules.searchModules")} placeholder={t("modules.searchModules")} value={search} onChange={(event) => setSearch(event.target.value)} className="w-48" />
+      <select aria-label={t("modules.statusFilter")} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">{t("modules.anyStatus")}</option>{statuses.map((value) => <option key={value} value={value}>{t(`modules.status.${value}`)}</option>)}</select>
+      <select aria-label={t("modules.leadFilter")} value={leadFilter} onChange={(event) => setLeadFilter(event.target.value)}><option value="">{t("modules.anyLead")}</option>{people.filter((person) => !person.isAgent).map((person) => <option key={person.userId} value={person.userId}>{person.name}</option>)}</select>
+      <select aria-label={t("modules.memberFilter")} value={memberFilter} onChange={(event) => setMemberFilter(event.target.value)}><option value="">{t("modules.anyMember")}</option>{people.map((person) => <option key={person.userId} value={person.userId}>{person.name}</option>)}</select>
+      <label className="flex items-center gap-1 text-12 text-secondary">{t("modules.dateFrom")}<input aria-label={t("modules.dateFrom")} type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /></label>
+      <label className="flex items-center gap-1 text-12 text-secondary">{t("modules.dateTo")}<input aria-label={t("modules.dateTo")} type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /></label>
+      {(search || statusFilter || leadFilter || memberFilter || dateFrom || dateTo) && <button type="button" className={primaryButton} onClick={() => { setSearch(""); setStatusFilter(""); setLeadFilter(""); setMemberFilter(""); setDateFrom(""); setDateTo(""); }}>{t("modules.clearFilters")}</button>}
+    </div>
     {note && <p role="alert" className="m-0 px-4 py-2 text-danger-text">{note}</p>}
-    {modules?.length === 0 && (archived
-      ? <EmptyState title={t("modules.empty")} />
+    {modules?.length === 0 && (archived || search || statusFilter || leadFilter || memberFilter || dateFrom || dateTo
+      ? <EmptyState title={search || statusFilter || leadFilter || memberFilter || dateFrom || dateTo ? t("modules.noMatches") : t("modules.empty")} />
       : <EmptyState title={t("modules.empty")} description={t("modules.emptyHint")} action={canWrite ? <button type="button" className={primaryButton} onClick={() => setForm({})}><Plus aria-hidden size={14} />{t("modules.createFirst")}</button> : undefined} />)}
     {display === "list"
       ? <ul aria-label={t("modules.title")} className="m-0 list-none p-0">{(modules ?? []).map((module) => <li key={module.id} data-testid={`module-row-${module.name}`} className="flex flex-wrap items-center gap-3 border-b border-subtle px-4 py-3 hover:bg-layer-transparent-hover">

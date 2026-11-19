@@ -45,6 +45,22 @@ test.concurrent("Module descriptions are optional Written form Markdown and can 
   });
 });
 
+test.concurrent("Module discovery combines text, status, lead, member and overlapping dates in the chosen archive set", async () => {
+  await withRollback(db, async (transaction) => {
+    const { modules, member, admin, project } = await setup(transaction);
+    const match = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Authentication refresh", status: "in-progress", leadId: member.id, memberIds: [admin.id], startDate: "2030-01-01", endDate: "2030-03-01" });
+    await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Authentication legacy", status: "completed", leadId: member.id, memberIds: [admin.id], startDate: "2029-01-01", endDate: "2029-03-01" });
+    await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Payments", status: "in-progress", leadId: member.id, memberIds: [admin.id], startDate: "2030-01-01", endDate: "2030-03-01" });
+    const result = await modules.listModules.handler({ userId: admin.id }, { projectId: project.id, search: "AUTH", status: "in-progress", leadId: member.id, memberId: admin.id, dateFrom: "2030-02-01", dateTo: "2030-02-28" });
+    expect(result.map((row) => row.id)).toEqual([match.id]);
+    await modules.updateModule.handler({ userId: member.id }, { moduleId: match.id, status: "completed" });
+    await modules.archiveModule.handler({ userId: admin.id }, { moduleId: match.id });
+    expect(await modules.listModules.handler({ userId: admin.id }, { projectId: project.id, search: "Authentication", archived: false })).toHaveLength(1);
+    expect((await modules.listModules.handler({ userId: admin.id }, { projectId: project.id, search: "Authentication", archived: true })).map((row) => row.id)).toEqual([match.id]);
+    await expect(modules.listModules.handler({ userId: admin.id }, { projectId: project.id, dateFrom: "2030-03-01", dateTo: "2030-02-01" })).rejects.toMatchObject({ status: 400 });
+  });
+});
+
 test.concurrent("validation: dates, status, lead outside the project", async () => {
   await withRollback(db, async (transaction) => {
     const { modules, member, outsider, project } = await setup(transaction);

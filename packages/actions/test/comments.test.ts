@@ -87,8 +87,14 @@ test.concurrent("a Guest can discuss their own Triage item through Activity, but
     await expect(env.comments.listComments.handler({ userId: env.guest.id }, { workItemId: other.workItemId })).rejects.toMatchObject({ status: 403 });
     await expect(createTimelineActions(transaction).listTimeline.handler({ userId: env.guest.id }, { workItemId: other.workItemId })).rejects.toMatchObject({ status: 403 });
     await intake.rejectIntakeItem.handler({ userId: env.member.id }, { intakeItemId: own.id });
-    await env.comments.createComment.handler({ userId: env.member.id }, { workItemId: own.workItemId, body: doc("Decision follow-up") });
-    expect((await env.comments.listComments.handler({ userId: env.guest.id }, { workItemId: own.workItemId })).map((row) => row.bodyText)).toEqual(["More detail", "Decision follow-up"]);
+    await env.comments.updateComment.handler({ userId: env.guest.id }, { commentId: created.id, body: doc("Corrected detail") });
+    const decisionComment = await env.comments.createComment.handler({ userId: env.member.id }, { workItemId: own.workItemId, body: doc("Decision follow-up") });
+    await env.comments.createComment.handler({ userId: env.guest.id }, { workItemId: own.workItemId, parentId: decisionComment.id, body: doc("Guest reply") });
+    const decidedComments = await env.comments.listComments.handler({ userId: env.guest.id }, { workItemId: own.workItemId });
+    expect(decidedComments.map((row) => row.bodyText)).toEqual(["Corrected detail", "Decision follow-up", "Guest reply"]);
+    const removable = await env.comments.createComment.handler({ userId: env.guest.id }, { workItemId: own.workItemId, body: doc("Remove this") });
+    await env.comments.deleteComment.handler({ userId: env.guest.id }, { commentId: removable.id });
+    expect((await env.comments.listComments.handler({ userId: env.guest.id }, { workItemId: own.workItemId })).map((row) => row.bodyText)).toEqual(["Corrected detail", "Decision follow-up", "Guest reply"]);
     const duplicate = await intake.submitIntakeItem.handler({ userId: env.guest.id }, { projectId: env.project.id, title: "Duplicate request" });
     const target = await env.items.createWorkItem.handler({ userId: env.member.id }, { projectId: env.project.id, title: "Existing work" });
     await intake.duplicateIntakeItem.handler({ userId: env.member.id }, { intakeItemId: duplicate.id, duplicateTo: target.id });

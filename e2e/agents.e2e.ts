@@ -169,7 +169,7 @@ try {
   await panel2.getByText(translate("runs.status.waiting_confirmation"), { exact: true }).waitFor({ timeout: 30_000 });
   await panel2.getByRole("button", { name: translate("runs.cancel") }).click();
   await panel2.getByText(translate("runs.status.cancelled"), { exact: true }).waitFor();
-  await panel2.getByRole("button", { name: translate("runs.rerun") }).click();
+  await panel2.getByRole("button", { name: translate("runs.rerun"), exact: true }).click();
   await panel2.getByText(translate("runs.status.waiting_confirmation"), { exact: true }).waitFor({ timeout: 30_000 });
   if ((await panel2.locator("[data-run-status]").count()) !== 2) throw new Error("expected the cancelled Run and its rerun");
   console.log("agents: cancel and rerun work from the work item");

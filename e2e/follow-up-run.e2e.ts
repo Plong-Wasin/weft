@@ -78,17 +78,35 @@ try {
   const item = await call<{ id: string }>("create_work_item", { projectId: project.id, title: "Login page" });
   const mention = { type: "doc", content: [{ type: "paragraph", content: [{ type: "mention", attrs: { id: agent.userId, label: "Helper Bot" } }, { type: "text", text: " please check the redirect" }] }] };
 
+  // A second person (a Member of the workspace and project who may use the Agent) asks it again. The same person who started the Run would steer it (ADR 0013), so the request would not wait.
+  const invite = await call<{ token: string }>("create_invite", { workspaceId, role: "Member" });
+  const memberContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  const memberPage = await memberContext.newPage();
+  await memberPage.goto(`${web}/invite/${invite.token}`);
+  await memberPage.getByLabel(translate("auth.name")).fill("Second Asker");
+  await memberPage.getByLabel(translate("auth.email")).fill(`${slug}-asker@example.test`);
+  await memberPage.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
+  await memberPage.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
+  await memberPage.getByRole("button", { name: translate("auth.signUp") }).click();
+  await memberPage.waitForURL(`${web}/${slug}`, { waitUntil: "domcontentloaded" });
+  const memberId = (await (await memberPage.request.get(`${api}/api/me`)).json() as { user: { id: string } }).user.id;
+  await call("add_project_member", { projectId: project.id, userId: memberId, role: "Member" });
+  await call("set_agent_access", { agentId: agent.id, userIds: [me.user.id, memberId] });
+  const callAsMember = async <T>(name: string, body: unknown) => await (await memberPage.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
+
   // Assigning the Agent starts its first Run; the Run waits in the model until this flow releases it.
   const assigned = await call<{ wakeOutcomes: Array<{ status: string }> }>("update_work_item", { workItemId: item.id, assigneeIds: [agent.userId] });
   if (assigned.wakeOutcomes[0]?.status !== "started") throw new Error("the assignment did not start the first Run");
-  // A person asks the busy Agent again: the request waits in one Follow-up Run.
-  const asked = await call<{ wakeOutcomes: Array<{ status: string }> }>("create_comment", { workItemId: item.id, body: mention });
+  // A second person asks the busy Agent again: the request waits in one Follow-up Run.
+  const asked = await callAsMember<{ wakeOutcomes: Array<{ status: string }> }>("create_comment", { workItemId: item.id, body: mention });
   if (asked.wakeOutcomes[0]?.status !== "waiting") throw new Error("the request during the active Run did not wait");
   await call("create_comment", { workItemId: item.id, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Reviewer note: the redirect loops on Safari." }] }] } });
   console.log("follow-up: the busy Agent's request waits; a note is written meanwhile");
 
   await page.goto(`${web}/${slug}/browse/MOB-1`);
   const panel = page.getByTestId("runs-panel");
+  // The timeline opens on Comments; the waiting Activity is under All.
+  await page.getByRole("combobox", { name: translate("timeline.filter"), exact: true }).selectOption("all");
   await panel.getByText(translate("runs.status.follow_up"), { exact: true }).waitFor({ timeout: 30_000 });
   await page.getByText(translate("workItems.activity.run_waiting"), { exact: false }).first().waitFor({ timeout: 30_000 });
   if (await page.getByText(translate("runs.status.skipped"), { exact: true }).count() > 0) throw new Error("a skipped Run is shown for a request that waits");

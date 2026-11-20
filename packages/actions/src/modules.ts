@@ -273,7 +273,7 @@ export function createModuleActions(db: Database) {
       name: "get_module_burndown", kind: "read" as const,
       input: Type.Object({ moduleId: uuid(), unit: Type.Optional(burndownUnitSchema) }),
       output: Type.Object({
-        moduleId: Type.String(), unit: burndownUnitSchema, startDate: Type.Union([Type.String(), Type.Null()]), endDate: Type.Union([Type.String(), Type.Null()]), total: Type.Number(),
+        moduleId: Type.String(), unit: burndownUnitSchema, startDate: Type.Union([Type.String(), Type.Null()]), endDate: Type.Union([Type.String(), Type.Null()]), total: Type.Union([Type.Number(), Type.Null()]),
         reason: Type.Union([Type.Literal("missing_start_date"), Type.Literal("missing_target_date"), Type.Literal("no_work_items"), Type.Null()]),
         coverageStart: Type.String(), unestimated: Type.Union([Type.Number(), Type.Null()]),
         days: Type.Array(Type.Object({ date: Type.String(), open: Type.Union([Type.Number(), Type.Null()]), completed: Type.Union([Type.Number(), Type.Null()]), cancelled: Type.Union([Type.Number(), Type.Null()]), pointsOpen: Type.Union([Type.Number(), Type.Null()]), pointsCompleted: Type.Union([Type.Number(), Type.Null()]), pointsCancelled: Type.Union([Type.Number(), Type.Null()]), unestimatedOpen: Type.Union([Type.Number(), Type.Null()]), ideal: Type.Union([Type.Number(), Type.Null()]), idealPoints: Type.Union([Type.Number(), Type.Null()]), unknown: Type.Boolean() })),
@@ -284,7 +284,7 @@ export function createModuleActions(db: Database) {
         if (unit === "points") await requirePointsEstimate(db, found.projectId);
         const events = await db.select().from(moduleHistory).where(eq(moduleHistory.moduleId, found.id)).orderBy(asc(moduleHistory.occurredAt), asc(moduleHistory.sequence));
         const coverageStart = found.historyStartedAt.toISOString();
-        const base = { moduleId: found.id, unit, startDate: found.startDate, endDate: found.endDate, total: 0, coverageStart, unestimated: null as number | null };
+        const base = { moduleId: found.id, unit, startDate: found.startDate, endDate: found.endDate, total: 0 as number | null, coverageStart, unestimated: null as number | null };
         if (!found.startDate) return { ...base, reason: "missing_start_date" as const, days: [] };
         if (!found.endDate) return { ...base, reason: "missing_target_date" as const, days: [] };
         if (events.length === 0) return { ...base, reason: "no_work_items" as const, days: [] };
@@ -325,8 +325,7 @@ export function createModuleActions(db: Database) {
             idealPoints: initialPoints === null ? null : Math.round((initialPoints * (span - offset) / (span || 1)) * 100) / 100, unknown });
         }
         const lastKnown = [...days].reverse().find((day) => day.unestimatedOpen !== null);
-        const total = Math.max(0, ...days.flatMap((day) => [day.open, day.completed, day.cancelled].filter((value): value is number => value !== null)));
-        return { ...base, total: initialScope ?? total, unestimated: lastKnown?.unestimatedOpen ?? null, reason: null, days };
+        return { ...base, total: unit === "points" ? initialPoints : initialScope, unestimated: lastKnown?.unestimatedOpen ?? null, reason: null, days };
       },
     },
     addModuleItems: {

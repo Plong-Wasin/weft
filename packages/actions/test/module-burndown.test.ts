@@ -119,6 +119,7 @@ test.concurrent("Module start-day coverage after UTC midnight leaves the initial
     for (const event of events) await transaction.update(moduleHistory).set({ occurredAt: at(day(-4), "13:00:00") }).where(eq(moduleHistory.id, event.id));
 
     const report = await modules.getModuleBurndown.handler(as, { moduleId: module.id });
+    expect(report.total).toBeNull();
     expect(report.days[0]).toMatchObject({ unknown: false, open: 1, ideal: null });
     expect(report.days[1]).toMatchObject({ unknown: false, open: 1 });
   });

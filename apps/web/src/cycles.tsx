@@ -195,7 +195,7 @@ function Breakdown({ cycle, items, states }: { cycle: CycleDetail; items: Item[]
   </div>;
 }
 
-type Burndown = { total: number; reason?: string | null; days: Array<{ date: string; open: number | null; ideal: number | null; pointsOpen?: number | null; idealPoints?: number | null; unknown?: boolean; unestimatedOpen?: number | null }> } & Partial<{
+type Burndown = { total: number | null; reason?: string | null; days: Array<{ date: string; open: number | null; ideal: number | null; pointsOpen?: number | null; idealPoints?: number | null; unknown?: boolean; unestimatedOpen?: number | null }> } & Partial<{
   initialScope: number | null; finalOutcome: { completed: number | null; open: number | null; cancelled: number | null; completedPoints?: number | null; openPoints?: number | null; cancelledPoints?: number | null } | null; outcomeDate: string | null;
   unestimated: number | null; coverageStart: string; dateChanges: Array<{ at: string; previousStartDate: string; previousEndDate: string; startDate: string; endDate: string }>;
   scopeChanges: Array<{ date: string; added: number; removed: number }>;
@@ -222,7 +222,7 @@ export function BurndownChart({ action, name, body, projectId, refreshKey, testI
   if (!data) return null;
   const w = 320, h = 160, pad = { l: 28, r: 8, t: 8, b: 20 };
   const values = data.days.map((day) => mode === "points" ? (day.pointsOpen ?? day.open) : day.open);
-  const max = Math.max(data.total, ...values.filter((value): value is number => value !== null), 1), last = Math.max(data.days.length - 1, 1);
+  const max = Math.max(data.total ?? 0, ...values.filter((value): value is number => value !== null), 1), last = Math.max(data.days.length - 1, 1);
   const x = (index: number) => pad.l + (index / last) * (w - pad.l - pad.r);
   const y = (value: number) => pad.t + (1 - value / max) * (h - pad.t - pad.b);
   const lineSegments = (points: Array<number | null>) => {
@@ -252,7 +252,7 @@ export function BurndownChart({ action, name, body, projectId, refreshKey, testI
     {data.reason ? <p className="m-0 text-13 text-secondary" role="status">{t(`cycles.burndownReason.${data.reason}`)}</p> : !values.some((value) => value !== null) ? <p className="m-0 text-13 text-secondary" role="status">{data.days.some((day) => day.unknown) ? t("cycles.history.noCoverage") : t("cycles.burndownEmpty")}</p> : <>
       <svg viewBox={`0 0 ${w} ${h}`} role="img" aria-label={t(mode === "points" ? "cycles.burndownLabelPoints" : "cycles.burndownLabel")} className="h-auto w-full max-w-full">
         <line x1={pad.l} y1={y(0)} x2={w - pad.r} y2={y(0)} stroke="var(--border-subtle)" />
-        <text x={pad.l - 4} y={y(max) + 4} textAnchor="end" fontSize="10" fill="var(--text-secondary)">{count(data.total)}</text>
+        <text x={pad.l - 4} y={y(max) + 4} textAnchor="end" fontSize="10" fill="var(--text-secondary)">{data.total === null ? t("cycles.history.unknown") : count(data.total)}</text>
         <text x={pad.l - 4} y={y(0) + 4} textAnchor="end" fontSize="10" fill="var(--text-secondary)">0</text>
         {lineSegments(data.days.map((day) => mode === "points" ? (day.idealPoints ?? day.ideal) : day.ideal)).map((points, index) => <polyline key={`ideal-${index}`} fill="none" stroke="var(--border-strong)" strokeDasharray="4 3" strokeWidth="1.5" points={points} />)}
         {lineSegments(values).map((points, index) => <polyline key={`actual-${index}`} fill="none" stroke="var(--bg-accent-strong)" strokeWidth="2" points={points} />)}

@@ -1,8 +1,8 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
-import { activities, createDatabase, cycleItems, intakeItems, notifications, outboundWebhookDeliveries, workItemPropertyValues, workItemStates, workItems, workItemRelations, type Database } from "@weft/db";
+import { activities, createDatabase, cycleItems, intakeItems, notifications, outboundWebhookDeliveries, runs, workItemAssignees, workItemLabels, workItemPropertyValues, workItemStates, workItems, workItemRelations, workspaces, type Database } from "@weft/db";
 import {
-  createCommentActions, createCycleActions, createIntakeActions, createOutboundWebhookActions, createWorkItemTypeActions, createJobHandlers, createNotificationActions, createProjectActions, createRelationActions,
+  createAgentActions, createCommentActions, createCycleActions, createIntakeActions, createOutboundWebhookActions, createWorkItemTypeActions, createJobHandlers, createNotificationActions, createProjectActions, createRelationActions, createTriggerActions,
   createSearchActions, createWorkItemActions, effectiveOutcome,
 } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
@@ -27,6 +27,82 @@ async function setup(transaction: Database, visibility: "public" | "private" = "
 }
 
 const triageStates = (transaction: Database, projectId: string) => transaction.select().from(workItemStates).where(and(eq(workItemStates.projectId, projectId), eq(workItemStates.group, "triage")));
+
+test("a concurrent Intake edit compares against the current item after locking", async () => {
+  const env = await setup(db);
+  try {
+    const item = await env.submit(env.guest.id, "Original");
+    let release!: () => void;
+    let signal!: () => void;
+    const locked = new Promise<void>((resolve) => { signal = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const first = db.transaction(async (transaction) => {
+      await transaction.select().from(intakeItems).where(eq(intakeItems.id, item.id)).for("update");
+      await transaction.update(workItems).set({ title: "Changed" }).where(eq(workItems.id, item.workItemId));
+      signal(); await gate;
+    });
+    await locked;
+    const second = env.intake.updateIntakeItem.handler({ userId: env.guest.id }, { intakeItemId: item.id, title: "Original" });
+    await Bun.sleep(100);
+    release(); await first;
+    expect((await second).title).toBe("Original");
+    const log = await db.select().from(activities).where(and(eq(activities.entityId, item.workItemId), eq(activities.field, "title")));
+    expect(log).toMatchObject([{ oldValue: "Changed", newValue: "Original" }]);
+  } finally { await db.delete(workspaces).where(eq(workspaces.id, env.workspace.id)); }
+});
+
+test.concurrent("Intake submission and edits persist assignees, labels, and due date with Activity", async () => {
+  await withRollback(db, async (transaction) => {
+    const { admin, member, guest, intake, project } = await setup(transaction);
+    const label = await createWorkItemActions(transaction).createLabel.handler({ userId: admin.id }, { projectId: project.id, name: "Customer" });
+    const dueDate = "2030-05-06";
+    const created = await intake.submitIntakeItem.handler({ userId: guest.id }, { projectId: project.id, title: "Properties on submit", assigneeIds: [member.id], labelIds: [label.id], dueDate });
+    expect(created).toMatchObject({ assigneeIds: [member.id], labelIds: [label.id], dueDate });
+    expect(await transaction.select().from(workItemAssignees).where(eq(workItemAssignees.workItemId, created.workItemId))).toMatchObject([{ userId: member.id }]);
+    expect(await transaction.select().from(workItemLabels).where(eq(workItemLabels.workItemId, created.workItemId))).toMatchObject([{ labelId: label.id }]);
+    expect((await transaction.select().from(workItems).where(eq(workItems.id, created.workItemId)))[0]?.dueDate).toBe(dueDate);
+
+    const updated = await intake.updateIntakeItem.handler({ userId: guest.id }, { intakeItemId: created.id, assigneeIds: [admin.id], labelIds: [], dueDate: null });
+    expect(updated).toMatchObject({ title: "Properties on submit", assigneeIds: [admin.id], labelIds: [], dueDate: null });
+    expect(await transaction.select().from(workItemAssignees).where(eq(workItemAssignees.workItemId, created.workItemId))).toMatchObject([{ userId: admin.id }]);
+    expect(await transaction.select().from(workItemLabels).where(eq(workItemLabels.workItemId, created.workItemId))).toHaveLength(0);
+    expect((await transaction.select().from(workItems).where(eq(workItems.id, created.workItemId)))[0]?.dueDate).toBeNull();
+    const fields = (await transaction.select({ field: activities.field }).from(activities).where(eq(activities.entityId, created.workItemId))).map((row) => row.field);
+    expect(fields).toEqual(expect.arrayContaining(["assignees", "labels", "dueDate"]));
+    await expect(intake.updateIntakeItem.handler({ userId: guest.id }, { intakeItemId: created.id, dueDate: "2030-02-31" })).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+test.concurrent("an Agent assigned to Intake waits for acceptance, then gets one Run", async () => {
+  await withRollback(db, async (transaction) => {
+    const { admin, member, workspace, project, intake } = await setup(transaction);
+    const agents = createAgentActions(transaction);
+    const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Intake Agent", instructions: "Review approved requests", model: "default" });
+    await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id] });
+    await createTriggerActions(transaction).createTrigger.handler({ userId: admin.id }, { agentId: agent.id, projectId: project.id, eventType: "work_item_created" });
+    const label = await createWorkItemActions(transaction).createLabel.handler({ userId: admin.id }, { projectId: project.id, name: "Approved context" });
+    const created = await intake.submitIntakeItem.handler({ userId: member.id }, { projectId: project.id, title: "Not approved yet", assigneeIds: [agent.userId], labelIds: [label.id], dueDate: "2030-05-06" });
+    expect(await transaction.select().from(runs).where(eq(runs.workItemId, created.workItemId))).toHaveLength(0);
+    const accepted = await intake.acceptIntakeItem.handler({ userId: member.id }, { intakeItemId: created.id });
+    expect(accepted).toMatchObject({ outcome: "accepted", assigneeIds: [agent.userId], labelIds: [label.id], dueDate: "2030-05-06" });
+    expect(await transaction.select().from(runs).where(eq(runs.workItemId, created.workItemId))).toHaveLength(1);
+  });
+});
+
+test.concurrent("Intake property validation rejects foreign labels, non-members, and Agents outside the actor's access", async () => {
+  await withRollback(db, async (transaction) => {
+    const { admin, member, guest, workspace, project, intake } = await setup(transaction);
+    const foreignProject = await createProjectActions(transaction).createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Other", key: "OTH", visibility: "public" });
+    const foreignLabel = await createWorkItemActions(transaction).createLabel.handler({ userId: admin.id }, { projectId: foreignProject.id, name: "Private label" });
+    const agents = createAgentActions(transaction);
+    const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Restricted Agent", instructions: "Review requests", model: "default" });
+    await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id] });
+    await agents.setAgentAccess.handler({ userId: admin.id }, { agentId: agent.id, userIds: [admin.id] });
+    await expect(intake.submitIntakeItem.handler({ userId: guest.id }, { projectId: project.id, title: "Bad label", labelIds: [foreignLabel.id] })).rejects.toMatchObject({ status: 400 });
+    await expect(intake.submitIntakeItem.handler({ userId: guest.id }, { projectId: project.id, title: "Not a member", assigneeIds: [workspace.id] })).rejects.toMatchObject({ status: 400 });
+    await expect(intake.submitIntakeItem.handler({ userId: member.id }, { projectId: project.id, title: "No Agent access", assigneeIds: [agent.userId] })).rejects.toMatchObject({ status: 403 });
+  });
+});
 
 test.concurrent("a new project has exactly one Triage state, hidden from list_states", async () => {
   await withRollback(db, async (transaction) => {
@@ -74,6 +150,32 @@ test.concurrent("Intake stores submitted descriptions in Written form", async ()
   });
 });
 
+test.concurrent("Intake content edits are limited to creators and Admins on pending or snoozed items", async () => {
+  await withRollback(db, async (transaction) => {
+    const { admin, member, guest, workspace, submit, intake, project } = await setup(transaction);
+    const workspaceAdmin = await createMemberFactory(transaction, workspace.id, "Admin");
+    const created = await submit(guest.id, "Original");
+    const changed = await intake.updateIntakeItem.handler({ userId: guest.id }, { intakeItemId: created.id, title: "Corrected", descriptionMarkdown: "**More detail**", priority: "high" });
+    expect(changed).toMatchObject({ title: "Corrected", descriptionMarkdown: "**More detail**", priority: "high" });
+    await expect(intake.updateIntakeItem.handler({ userId: member.id }, { intakeItemId: created.id, title: "Other member" })).rejects.toMatchObject({ status: 403 });
+    expect((await intake.updateIntakeItem.handler({ userId: admin.id }, { intakeItemId: created.id, title: "Admin edit" })).title).toBe("Admin edit");
+    expect((await intake.updateIntakeItem.handler({ userId: workspaceAdmin.id }, { intakeItemId: created.id, title: "Workspace admin edit" })).title).toBe("Workspace admin edit");
+    const snoozed = await intake.snoozeIntakeItem.handler({ userId: member.id }, { intakeItemId: created.id, snoozedTill: new Date(Date.now() + 3_600_000).toISOString() });
+    expect((await intake.updateIntakeItem.handler({ userId: guest.id }, { intakeItemId: snoozed.id, title: "Snoozed edit" })).title).toBe("Snoozed edit");
+    for (const action of [intake.rejectIntakeItem, intake.duplicateIntakeItem]) {
+      // Reject and duplicate are checked below after each item is decided.
+      const item = await submit(guest.id, "Frozen");
+      if (action === intake.rejectIntakeItem) await action.handler({ userId: member.id }, { intakeItemId: item.id });
+      else {
+        const normal = await createWorkItemActions(transaction).createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "Existing" });
+        await action.handler({ userId: member.id }, { intakeItemId: item.id, duplicateTo: normal.id });
+      }
+      await expect(intake.updateIntakeItem.handler({ userId: guest.id }, { intakeItemId: item.id, title: "Should be frozen" })).rejects.toMatchObject({ status: 400 });
+    }
+    expect(await transaction.select().from(activities).where(and(eq(activities.entityType, "work_item"), eq(activities.projectId, project.id), eq(activities.field, "title")))).toHaveLength(4);
+  });
+});
+
 test.concurrent("a person who cannot see a private project cannot submit or list", async () => {
   await withRollback(db, async (transaction) => {
     const { outsider, project, intake } = await setup(transaction, "private");
@@ -97,6 +199,57 @@ test.concurrent("accept moves the item to the first Backlog state, notifies the 
     const jobs = await transaction.execute<{ payload: { kind: string; recipientIds: string[] } }>(sql`select payload from jobs where type = 'notify'`);
     expect([...jobs].map((job) => [job.payload.kind, job.payload.recipientIds])).toEqual([["intake_accepted", [guest.id]]]);
   });
+});
+
+test.concurrent("accept can target any normal state in this project and preserves the submitted work item", async () => {
+  await withRollback(db, async (transaction) => {
+    const { admin, member, submit, intake, work, project, workspace } = await setup(transaction);
+    const label = await work.createLabel.handler({ userId: admin.id }, { projectId: project.id, name: "Keep context" });
+    const created = await intake.submitIntakeItem.handler({ userId: member.id }, { projectId: project.id, title: "Approved request", descriptionMarkdown: "Keep this description", labelIds: [label.id], dueDate: "2030-05-06" });
+    const states = await work.listStates.handler({ userId: member.id }, { projectId: project.id });
+    const done = states.find((state) => state.group === "completed")!;
+    const accepted = await intake.acceptIntakeItem.handler({ userId: member.id }, { intakeItemId: created.id, stateId: done.id });
+    expect(accepted).toMatchObject({ id: created.id, workItemId: created.workItemId, outcome: "accepted", title: "Approved request", descriptionMarkdown: "Keep this description", labelIds: [label.id], dueDate: "2030-05-06" });
+    const fetched = await work.getWorkItem.handler({ userId: member.id }, { workspaceId: workspace.id, displayId: created.displayId });
+    expect(fetched).toMatchObject({ id: created.workItemId, stateId: done.id, title: "Approved request", descriptionMarkdown: "Keep this description" });
+    expect(await transaction.select().from(activities).where(and(eq(activities.entityId, created.workItemId), eq(activities.field, "intake_accepted")))).toMatchObject([{ newValue: done.id }]);
+    const cancelled = states.find((state) => state.group === "cancelled")!;
+    const other = await submit(member.id, "Cancelled request");
+    expect((await intake.acceptIntakeItem.handler({ userId: member.id }, { intakeItemId: other.id, stateId: cancelled.id })).outcome).toBe("accepted");
+    expect((await work.getWorkItem.handler({ userId: member.id }, { workspaceId: workspace.id, displayId: other.displayId })).stateId).toBe(cancelled.id);
+  });
+});
+
+test.concurrent("accept refuses Triage and States belonging to another project", async () => {
+  await withRollback(db, async (transaction) => {
+    const { admin, member, submit, intake, work, projects, project, workspace } = await setup(transaction);
+    const created = await submit(member.id);
+    const [triage] = await triageStates(transaction, project.id);
+    const other = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Other", key: "OTH", visibility: "public" });
+    const [foreign] = await work.listStates.handler({ userId: admin.id }, { projectId: other.id });
+    for (const stateId of [triage!.id, foreign!.id]) {
+      await expect(intake.acceptIntakeItem.handler({ userId: member.id }, { intakeItemId: created.id, stateId })).rejects.toMatchObject({ status: 400 });
+    }
+    expect((await intake.listIntakeItems.handler({ userId: member.id }, { projectId: project.id, outcome: "pending" }))[0]).toMatchObject({ id: created.id, outcome: "pending" });
+  });
+});
+
+test.concurrent("concurrent Intake decisions allow only one outcome", async () => {
+  const { workspace, member, submit, intake } = await setup(db);
+  try {
+    const created = await submit(member.id, "Only one decision");
+    const decisions = await Promise.allSettled([
+      intake.acceptIntakeItem.handler({ userId: member.id }, { intakeItemId: created.id }),
+      intake.rejectIntakeItem.handler({ userId: member.id }, { intakeItemId: created.id }),
+    ]);
+    expect(decisions.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(decisions.filter((result) => result.status === "rejected")).toHaveLength(1);
+    const [row] = await db.select().from(intakeItems).where(eq(intakeItems.id, created.id));
+    expect(row!.outcome).toBe((decisions.find((result) => result.status === "fulfilled") as PromiseFulfilledResult<{ outcome: string }>).value.outcome);
+    expect(await db.select().from(activities).where(and(eq(activities.entityId, created.workItemId), sql`${activities.field} in ('intake_accepted', 'intake_rejected')`))).toHaveLength(1);
+  } finally {
+    await db.delete(workspaces).where(eq(workspaces.id, workspace.id));
+  }
 });
 
 test.concurrent("accept refuses an Intake item missing a required property", async () => {
@@ -158,6 +311,43 @@ test.concurrent("a snoozed item leaves the pending list until snoozed_till, then
     expect(effectiveOutcome({ outcome: "snoozed", snoozedTill: new Date(0) })).toBe("pending");
     // A woken item can be decided again.
     expect((await intake.acceptIntakeItem.handler({ userId: member.id }, { intakeItemId: created.id })).outcome).toBe("accepted");
+  });
+});
+
+test.concurrent("a project writer can unsnooze an item early and return it to pending", async () => {
+  await withRollback(db, async (transaction) => {
+    const { admin, member, guest, submit, intake, project, projects, workspace } = await setup(transaction);
+    const created = await submit(guest.id);
+    const till = new Date(Date.now() + 3_600_000).toISOString();
+    await intake.snoozeIntakeItem.handler({ userId: member.id }, { intakeItemId: created.id, snoozedTill: till });
+
+    const restored = await intake.unsnoozeIntakeItem.handler({ userId: member.id }, { intakeItemId: created.id });
+    expect(restored).toMatchObject({ id: created.id, outcome: "pending", snoozedTill: null });
+    expect(await intake.listIntakeItems.handler({ userId: member.id }, { projectId: project.id, outcome: "pending" })).toHaveLength(1);
+    expect(await intake.listIntakeItems.handler({ userId: member.id }, { projectId: project.id, outcome: "snoozed" })).toHaveLength(0);
+    expect(await transaction.select().from(activities).where(and(eq(activities.entityId, created.workItemId), eq(activities.field, "intake_unsnoozed")))).toHaveLength(1);
+
+    const adminItem = await submit(member.id, "Admin unsnoozes");
+    await intake.snoozeIntakeItem.handler({ userId: member.id }, { intakeItemId: adminItem.id, snoozedTill: till });
+    expect((await intake.unsnoozeIntakeItem.handler({ userId: admin.id }, { intakeItemId: adminItem.id })).outcome).toBe("pending");
+
+    await expect(intake.unsnoozeIntakeItem.handler({ userId: member.id }, { intakeItemId: created.id })).rejects.toMatchObject({ status: 400 });
+    await intake.snoozeIntakeItem.handler({ userId: member.id }, { intakeItemId: created.id, snoozedTill: till });
+    await expect(intake.unsnoozeIntakeItem.handler({ userId: guest.id }, { intakeItemId: created.id })).rejects.toMatchObject({ status: 403 });
+    await transaction.update(intakeItems).set({ snoozedTill: new Date(Date.now() - 1000) }).where(eq(intakeItems.id, created.id));
+    await expect(intake.unsnoozeIntakeItem.handler({ userId: member.id }, { intakeItemId: created.id })).rejects.toMatchObject({ status: 400 });
+    await transaction.update(intakeItems).set({ snoozedTill: new Date(Date.now() + 3_600_000) }).where(eq(intakeItems.id, created.id));
+    await projects.archiveProject.handler({ userId: admin.id }, { projectId: project.id });
+    await expect(intake.unsnoozeIntakeItem.handler({ userId: admin.id }, { intakeItemId: created.id })).rejects.toMatchObject({ status: 400, message: "Project is archived" });
+    await projects.unarchiveProject.handler({ userId: admin.id }, { projectId: project.id });
+
+    const otherProject = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Other", key: "OTH", visibility: "public" });
+    const elsewhere = await intake.submitIntakeItem.handler({ userId: admin.id }, { projectId: otherProject.id, title: "Other project item" });
+    await intake.snoozeIntakeItem.handler({ userId: admin.id }, { intakeItemId: elsewhere.id, snoozedTill: till });
+    await expect(intake.unsnoozeIntakeItem.handler({ userId: member.id }, { intakeItemId: elsewhere.id })).rejects.toMatchObject({ status: 403 });
+
+    await projects.setProjectFeatures.handler({ userId: admin.id }, { projectId: project.id, features: { intake: false } });
+    await expect(intake.unsnoozeIntakeItem.handler({ userId: admin.id }, { intakeItemId: created.id })).rejects.toMatchObject({ status: 400 });
   });
 });
 
@@ -235,7 +425,7 @@ test.concurrent("the Triage state cannot be added, renamed, reordered, removed, 
   });
 });
 
-test.concurrent("leak: a Triage work item is absent from every read, for every role", async () => {
+test.concurrent("leak: a Triage item stays out of normal reads while its Intake Activity remains visible", async () => {
   await withRollback(db, async (transaction) => {
     const { admin, member, guest, submit, work, project, workspace } = await setup(transaction);
     const normal = await work.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Needle normal" });
@@ -253,6 +443,9 @@ test.concurrent("leak: a Triage work item is absent from every read, for every r
     const comments = createCommentActions(transaction);
     const search = createSearchActions(transaction);
     for (const user of [admin, member, guest]) {
+      await expect(work.listWorkItemActivities.handler({ userId: user.id }, { workItemId: hidden.workItemId })).resolves.toHaveLength(1);
+    }
+    for (const user of [admin, member, guest]) {
       const as = { userId: user.id };
       const listed = await work.listWorkItems.handler(as, { projectId: project.id });
       expect(listed.map((row) => row.id).sort()).toEqual([normal.id, parent.id].sort());
@@ -265,10 +458,10 @@ test.concurrent("leak: a Triage work item is absent from every read, for every r
       expect((await work.listSubWorkItems.handler(as, { workItemId: parent.id }))).toHaveLength(0);
       for (const read of [
         () => work.getWorkItem.handler(as, { workspaceId: workspace.id, displayId: "MOB-2" }),
-        () => work.listWorkItemActivities.handler(as, { workItemId: hidden.workItemId }),
         () => relations.listWorkItemRelations.handler(as, { workItemId: hidden.workItemId }),
-        () => comments.listComments.handler(as, { workItemId: hidden.workItemId }),
       ]) await expect(read()).rejects.toMatchObject({ status: 404 });
+      expect(await work.listWorkItemActivities.handler(as, { workItemId: hidden.workItemId })).toBeArray();
+      expect(await comments.listComments.handler(as, { workItemId: hidden.workItemId })).toBeArray();
     }
   });
 });

@@ -66,7 +66,7 @@ try {
     [`/${slug}/projects/MOB/views`, () => page.getByRole("heading", { name: translate("views.title") }).waitFor()],
     [`/${slug}/projects/MOB/pages`, () => page.getByRole("heading", { name: translate("projectNav.pages") }).waitFor()],
     [`/${slug}/projects/MOB/intake`, () => page.getByRole("button", { name: translate("intake.add"), exact: true }).waitFor()],
-    [`/${slug}/settings/projects/MOB`, () => page.getByRole("heading", { name: translate("settings.general") }).waitFor()],
+    [`/${slug}/settings/projects/MOB`, () => page.getByRole("heading", { name: translate("settings.general"), exact: true }).waitFor()],
     [`/${slug}/settings/projects/MOB/members`, () => page.getByRole("heading", { name: translate("projects.members") }).waitFor()],
     [`/${slug}/settings/projects/MOB/labels`, () => page.getByRole("heading", { name: translate("labels.title") }).waitFor()],
     [`/${slug}/settings/projects/MOB/states`, () => page.getByRole("heading", { name: translate("states.title"), exact: true }).waitFor()],

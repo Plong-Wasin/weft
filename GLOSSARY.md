@@ -57,7 +57,7 @@ A project-scoped group of work items around one topic or feature, with a lead, m
 _Avoid_: Epic, feature group
 
 **Intake**:
-The inbox of a project where work items are submitted before the project accepts them. Each submission is an intake item with an outcome: pending, accepted, rejected, snoozed, or duplicate.
+The inbox of a project where work items are submitted before the project accepts them. Each submission is an intake item with an outcome: pending, accepted, rejected, snoozed, or duplicate. The submitter, a project Admin, or a workspace Admin with access to the project may edit an intake item while it is pending or snoozed. Once rejected or marked duplicate it is read-only; once accepted it is edited as a work item. On acceptance, the reviewer chooses any normal project State, defaulting to the first backlog State. Access then follows the normal work item rules. A project Admin or Member with write access may accept, reject, snooze, or mark it duplicate. Before a decision, a person who can edit the intake item may add attachments and remove their own; an Admin may remove any attachment. Anyone who can see an intake item may comment, including after rejection or marking it duplicate; after acceptance, the conversation continues on the work item. Comments and assignments on intake items do not start Agent Runs; an assigned Agent may be woken when the item is accepted, under the normal Agent access and wake rules.
 _Avoid_: Inbox, backlog, requests
 
 **Triage state**:

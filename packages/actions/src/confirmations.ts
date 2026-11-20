@@ -28,7 +28,7 @@ export const aiWriteActions = [
   "archive_work_item", "bulk_archive_work_items", "restore_work_item",
   "create_module", "update_module", "add_module_items", "remove_module_items", "archive_module", "unarchive_module", "delete_module",
   "create_estimate", "update_estimate", "delete_estimate_point", "switch_estimate_type", "delete_estimate",
-  "submit_intake_item", "update_intake_item", "accept_intake_item", "reject_intake_item", "snooze_intake_item", "duplicate_intake_item",
+  "submit_intake_item", "update_intake_item", "accept_intake_item", "reject_intake_item", "snooze_intake_item", "unsnooze_intake_item", "duplicate_intake_item",
   "create_work_item_relation", "remove_work_item_relation",
   "create_web_link", "update_web_link", "delete_web_link",
   "create_view", "update_view", "delete_view",

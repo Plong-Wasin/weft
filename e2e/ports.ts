@@ -1,8 +1,10 @@
 // Port rules for the browser flows, shared by run-all.ts and ports.test.ts.
-// A flow's API port is the base plus twice its worker number; its web port is that plus 20000. Nothing here kills a process.
+// A flow's API port is the base plus twice its worker number; its web port is that plus 20000 and its live (Wiki collaboration) port that plus 10000. Nothing here kills a process.
 
 /** The web port is the API port plus this offset. */
 export const webPortOffset = 20_000;
+/** The live server port is the API port plus this offset: the Wiki flows start their own live server, and two on one fixed port made the second one talk to the first one's server. */
+export const livePortOffset = 10_000;
 /** Lowest base accepted: ports below 1024 need root. */
 export const minPortBase = 1024;
 /** Highest base accepted: the web port (base + 20000) must stay below 65535, so the base is at most 45534. */
@@ -23,9 +25,9 @@ export function resolvePortBase(value: string | undefined, directoryName: string
   return base;
 }
 
-/** The API and web ports of the flow that runs on one worker. */
-export function workerPorts(base: number, worker: number): { api: number; web: number } {
-  return { api: base + worker * 2, web: base + webPortOffset + worker * 2 };
+/** The API, web and live ports of the flow that runs on one worker. */
+export function workerPorts(base: number, worker: number): { api: number; web: number; live: number } {
+  return { api: base + worker * 2, web: base + webPortOffset + worker * 2, live: base + livePortOffset + worker * 2 };
 }
 
 /** The process listening on a TCP port, as `command (pid N)`, or undefined when the port is free. Read-only: it never signals anything. */

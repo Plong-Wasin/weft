@@ -236,7 +236,14 @@ try {
   await wikiEditor.getByText("Wiki anchor", { exact: true }).click({ clickCount: 3 });
   await page.keyboard.press("Control+k");
   await wikiBubble.getByLabel(translate("wiki.linkUrl"), { exact: true }).waitFor();
-  check(await wikiBubble.getByLabel(translate("wiki.linkUrl"), { exact: true }).evaluate((input) => input === document.activeElement), "Ctrl/Cmd+K did not focus the bubble's Link field");
+  // The field takes focus in an effect after it renders, so poll briefly instead of reading once.
+  const linkField = wikiBubble.getByLabel(translate("wiki.linkUrl"), { exact: true });
+  let linkFocused = false;
+  for (let attempt = 0; attempt < 30 && !linkFocused; attempt += 1) {
+    linkFocused = await linkField.evaluate((input) => input === document.activeElement);
+    if (!linkFocused) await page.waitForTimeout(100);
+  }
+  check(linkFocused, "Ctrl/Cmd+K did not focus the bubble's Link field");
   console.log("PASS Ctrl/Cmd+K opens the bubble's Link field and focuses it");
 
   await wikiEditor.getByText("Wiki anchor", { exact: true }).click({ clickCount: 3 });

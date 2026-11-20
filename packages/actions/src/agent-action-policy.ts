@@ -31,7 +31,7 @@ const destructivePattern = /(^|_)(delete|purge|destroy|wipe|truncate|erase|drop|
  * Autopilot, Runs, recurrences, sharing and publishing. Only people use these, never an Agent, whatever its grants.
  */
 const peopleOnlyPattern = /work_item_types?|custom_propert(y|ies)|api_token|security_notice|session|password|invite|sign_out|suspend|email_preference|integration|webhook|secret|credential|authorized_app|publish|share|visibility|access|revoke_|reactivate_|audit_log|member_accounts|merged_pr|auto_rule|usage|model_price|project_preference|project_order|rebuild_(outlinks|page_markdown)|list_(outlinks|backlinks)|(^|_)(agent|agents|skill|skills|trigger|triggers|runtime|runtimes|daemon|autopilot|recurrence|recurrences|run|runs|run_limits)(_|$)/;
-const featureVerbs = ["create_", "update_", "archive_", "unarchive_", "move_", "add_", "remove_", "transfer_", "selective_transfer_", "switch_", "restore_", "set_", "reorder_", "lock_", "unlock_", "favorite_", "accept_", "reject_", "snooze_", "submit_", "duplicate_", "mark_", "complete_", "request_", "rename_", "pause_", "resume_"];
+const featureVerbs = ["create_", "update_", "archive_", "unarchive_", "move_", "add_", "remove_", "transfer_", "selective_transfer_", "switch_", "restore_", "set_", "reorder_", "lock_", "unlock_", "favorite_", "accept_", "reject_", "snooze_", "unsnooze_", "submit_", "duplicate_", "mark_", "complete_", "request_", "rename_", "pause_", "resume_"];
 
 /** The group of an action, or undefined when no rule names it. An undefined action is refused (fail closed); a test over the whole Action list keeps this empty. */
 export function classifyAgentAction(action: string): AgentActionGroup | undefined {
@@ -43,6 +43,7 @@ export function classifyAgentAction(action: string): AgentActionGroup | undefine
   if (memberActions.has(action) || action.includes("member")) return "member";
   if (projectActions.has(action) || action.includes("project")) return "project";
   if (exportActions.has(action) || action.includes("export")) return "export";
+  if (action === "cancel_asset_upload") return "feature";
   // Actions that alter workspace/project features (Cycles, Modules, Intake, Views, states, labels, wiki pages, estimates
   // and notifications) and the read actions on them need an explicit grant.
   if (featureVerbs.some((verb) => action.startsWith(verb)) || /^(list|get|search|check)_/.test(action)) return "feature";

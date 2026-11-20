@@ -3,7 +3,7 @@ import { plainTextWrittenForm } from "./rich-markdown";
 import { writtenFormOf } from "./written-form-pool";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, agentAccess, agents, collections, collectionMembers, commentMentions, commentVersions, comments, outlinks, projectKeyAliases, projectMembers, projects, runtimes, users, wikiPageShares, wikiPages, workItems, workspaceMembers } from "@weft/db";
+import { activities, agentAccess, agents, collections, collectionMembers, commentMentions, commentVersions, comments, intakeItems, outlinks, projectKeyAliases, projectMembers, projects, runtimes, users, wikiPageShares, wikiPages, workItems, workItemAssignees, workspaceMembers } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { assertNotArchived, liveWorkItems } from "./triage";
 import { enqueueNotification } from "./notifications";
@@ -19,7 +19,7 @@ import { prepareRichTextGuarded, inlineStoredDocument, PAGE_MARKDOWN_BUDGET, rea
 import { markdownToDoc, storedMarkdownToDoc, markdownToDocWithWarnings, resolverFromReferences } from "./markdown-doc";
 import { WRITTEN_FORM_MAX_INPUT_LENGTH, type MarkdownOptions, type ResolvedReference } from "./markdown-doc";
 import { clearOutlinkPart, commentPart, existingStableReferences, makeUnavailableReferencesPlainText, setOutlinksFromDocument } from "./outlinks";
-import { featuresOf } from "./features";
+import { assertFeatureEnabled, featuresOf } from "./features";
 import { validateRichTextAssets } from "./rich-text-validation";
 
 type Context = ActivityContext;
@@ -139,9 +139,32 @@ export function createCommentActions(db: Database) {
   const tx = (transaction: unknown) => transaction as Database;
 
   async function loadItem(workItemId: string) {
-    const [item] = await db.select().from(workItems).where(and(eq(workItems.id, workItemId), liveWorkItems));
+    const [normalItem] = await db.select().from(workItems).where(and(eq(workItems.id, workItemId), liveWorkItems));
+    if (normalItem) return normalItem;
+    // Only Intake conversations may bypass the normal Triage exclusion.
+    const [item] = await db.select().from(workItems).where(and(eq(workItems.id, workItemId), isNull(workItems.deletedAt)));
     if (!item) throw new ActionError("Work item not found", 404);
+    const [intake] = await db.select({ id: intakeItems.id }).from(intakeItems).where(eq(intakeItems.workItemId, item.id));
+    if (!intake) throw new ActionError("Work item not found", 404);
     return item;
+  }
+
+  async function accessForComment(context: Context, item: typeof workItems.$inferSelect, requirement: "read" | "write", database: Database = db) {
+    const [intake] = await database.select().from(intakeItems).where(eq(intakeItems.workItemId, item.id));
+    const access = await requireProjectAccess(database, context.userId, item.projectId, "read");
+    if (intake && intake.outcome !== "accepted") {
+      assertFeatureEnabled(access.project, "intake");
+      if (requirement === "write" && access.project.archivedAt) throw new ActionError("Project is archived", 400);
+      const guest = access.workspaceRole !== "Admin" && (access.workspaceRole === "Guest" || access.projectRole === "Guest");
+      if (guest && intake.createdBy !== context.userId) throw new ActionError("Forbidden", 403);
+    } else if (requirement === "write") await requireProjectAccess(database, context.userId, item.projectId, "write");
+    return { project: access.project, intake: intake && intake.outcome !== "accepted" ? intake : null };
+  }
+
+  async function lockCommentAccess(database: Database, context: Context, item: typeof workItems.$inferSelect) {
+    // Match Intake decisions' lock order before deciding which permission and wake rules apply.
+    await database.select({ id: intakeItems.id }).from(intakeItems).where(eq(intakeItems.workItemId, item.id)).for("update");
+    return accessForComment(context, item, "write", database);
   }
 
   async function loadComment(commentId: string) {
@@ -270,7 +293,7 @@ export function createCommentActions(db: Database) {
       input: Type.Object({ workItemId: uuid() }), output: Type.Array(commentOutput),
       handler: async (context: Context, input: { workItemId: string }) => {
         const item = await loadItem(input.workItemId);
-        await requireProjectAccess(db, context.userId, item.projectId, "read");
+        await accessForComment(context, item, "read");
         const all = await db.select().from(comments).where(and(eq(comments.workItemId, item.id), isNull(comments.deletedAt))).orderBy(asc(comments.createdAt), asc(comments.id));
         // A reply is shown only while its parent is: deleting the parent hides the whole thread.
         const live = new Set(all.filter((row) => row.parentId === null).map((row) => row.id));
@@ -311,7 +334,8 @@ export function createCommentActions(db: Database) {
       input: Type.Object({ commentId: uuid(), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })), after: Type.Optional(uuid()) }), output: Type.Array(versionOutput),
       handler: async (context: Context, input: { commentId: string; limit?: number; after?: string }) => {
         const comment = await loadComment(input.commentId);
-        const { project } = await requireProjectAccess(db, context.userId, comment.projectId!, "read");
+        const item = await loadItem(comment.workItemId!);
+        const { project } = await accessForComment(context, item, "read");
         if (comment.authorId !== context.userId) {
           const role = await requireWorkspaceRole(db, context.userId, project.workspaceId, "read");
           if (role !== "Admin") throw new ActionError("Only the author and workspace Admins can read comment versions", 403);
@@ -344,7 +368,7 @@ export function createCommentActions(db: Database) {
       input: Type.Object({ workItemId: uuid(), body: Type.Optional(bodyInput), bodyMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH, description: "Markdown comment text. Use this instead of body; for example, **bold** or | A | B |. Mention a person or Agent with @{exact name}; a plain @Name is only text." })), parentId: Type.Optional(uuid()) }), output: Type.Intersect([commentOutput, Type.Object({ wakeOutcomes: Type.Array(wakeOutcomeOutput) })]),
       handler: async (context: Context, input: { workItemId: string; body?: unknown; bodyMarkdown?: string; parentId?: string }) => {
         const item = await loadItem(input.workItemId);
-        const { project } = await requireProjectAccess(db, context.userId, item.projectId, "write");
+        const { project } = await accessForComment(context, item, "write");
         const prepared = await commentBody(context, { id: item.id, projectId: item.projectId, workspaceId: project.workspaceId }, input.body, input.bodyMarkdown);
         input.body = prepared.document;
         if (input.bodyMarkdown !== undefined) input.body = resolveMarkdownMentions(input.body, await mentionable(project));
@@ -357,21 +381,27 @@ export function createCommentActions(db: Database) {
         const mentionIds = await validatedMentions(project, context.userId, mentions);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
+          const { intake } = await lockCommentAccess(database, context, item);
           // Archiving takes the item row FOR UPDATE, so this share lock makes a comment and an archive wait for each other.
-          const [locked] = await database.select().from(workItems).where(and(eq(workItems.id, item.id), liveWorkItems)).for("share");
+          const [locked] = await database.select().from(workItems).where(and(eq(workItems.id, item.id), isNull(workItems.deletedAt))).for("share");
           if (!locked) throw new ActionError("Work item not found", 404);
           assertNotArchived(locked);
           const [row] = await database.insert(comments).values({ workspaceId: project.workspaceId, projectId: project.id, workItemId: item.id, authorId: context.userId, runId: context.source === "agent" ? context.agent?.runId ?? null : null, parentId: parent?.id ?? null, body: input.body, bodyMarkdown: written, bodyText: text, createdAt: sql`clock_timestamp()` }).returning();
           await setOutlinksFromDocument(database, "work-item", item.id, commentPart(row!.id), input.body);
           await replaceMentions(database, row!.id, mentionIds);
-          await enqueueNotification(database, { kind: "mention", workItemId: item.id, commentId: row!.id, actorId: context.userId, recipientIds: mentionIds });
+          const assignees = (await database.select({ userId: workItemAssignees.userId }).from(workItemAssignees).where(eq(workItemAssignees.workItemId, item.id))).map((entry) => entry.userId);
+          const intakeRecipients = intake ? [intake.createdBy, ...assignees, ...mentionIds] : [];
+          const recipients = intake ? intakeRecipients : mentionIds;
+          await enqueueNotification(database, { kind: "mention", workItemId: item.id, commentId: row!.id, actorId: context.userId, recipientIds: recipients });
           // A mention wakes an enabled Agent. An Agent-authored or Autopilot comment is decided per Agent by the wake decision: it wakes only when that Agent's Run may wake Agents (ADR 0013).
-          const wakeOutcomes = await queueRunsForAssignees(database, { originatorId: context.userId, waker: wakerOf(context.source), wakingRunId: context.agent?.runId ?? null, project, workItemId: item.id, assigneeUserIds: mentionIds, commentId: row!.id });
-          // A parent author who is also mentioned gets the mention, not a second notification.
-          if (parent) await enqueueNotification(database, { kind: "reply", workItemId: item.id, commentId: row!.id, actorId: context.userId, recipientIds: mentionIds.includes(parent.authorId) ? [] : [parent.authorId] });
+          const wakeOutcomes = intake ? [] : await queueRunsForAssignees(database, { originatorId: context.userId, waker: wakerOf(context.source), wakingRunId: context.agent?.runId ?? null, project, workItemId: item.id, assigneeUserIds: mentionIds, commentId: row!.id });
+          // A parent author who already receives the comment notification gets no duplicate reply.
+          if (parent) await enqueueNotification(database, { kind: "reply", workItemId: item.id, commentId: row!.id, actorId: context.userId, recipientIds: recipients.includes(parent.authorId) ? [] : [parent.authorId] });
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, workItemId: item.id }, "comment_added", { commentId: row!.id });
-          await fireEventTriggers(database, { eventType: "comment_added", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
-          await emitOutboundEvent(database, { workspaceId: project.workspaceId, projectId: project.id, type: "comment.created", build: async (database) => ({ comment: { id: row!.id, text: row!.bodyText, authorName: (await authorNames([context.userId])).get(context.userId) ?? null, createdAt: row!.createdAt.toISOString() }, workItem: await workItemSnapshot(database, item.id) }) });
+          if (!intake) {
+            await fireEventTriggers(database, { eventType: "comment_added", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
+            await emitOutboundEvent(database, { workspaceId: project.workspaceId, projectId: project.id, type: "comment.created", build: async (database) => ({ comment: { id: row!.id, text: row!.bodyText, authorName: (await authorNames([context.userId])).get(context.userId) ?? null, createdAt: row!.createdAt.toISOString() }, workItem: await workItemSnapshot(database, item.id) }) });
+          }
           const authorAgent = (await agentUserIds(database, [context.userId])).has(context.userId);
           const authorCodeCapable = authorAgent && (await database.select({ userId: agents.userId }).from(agents).where(and(eq(agents.userId, context.userId), sql`${agents.runtimeId} is not null`))).length > 0;
           return { ...out(row!, (await authorNames([context.userId])).get(context.userId) ?? "", authorAgent, authorCodeCapable, mentionIds, [], 0, prepared.warnings, prepared.warningDetails), wakeOutcomes };
@@ -383,7 +413,8 @@ export function createCommentActions(db: Database) {
       input: Type.Object({ commentId: uuid(), bodyMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH, description: "Markdown comment text, for example **fixed**. Use this instead of body." })), body: Type.Optional(bodyInput) }), output: Type.Intersect([commentOutput, Type.Object({ wakeOutcomes: Type.Array(wakeOutcomeOutput) })]),
       handler: async (context: Context, input: { commentId: string; body?: unknown; bodyMarkdown?: string }) => {
         const existing = await loadComment(input.commentId);
-        const { project } = await requireProjectAccess(db, context.userId, existing.projectId!, "write");
+        const item = await loadItem(existing.workItemId!);
+        const { project } = await accessForComment(context, item, "write");
         const prepared = await commentBody(context, { id: existing.workItemId!, projectId: project.id, workspaceId: project.workspaceId }, input.body, input.bodyMarkdown, await existingStableReferences(db, "work-item", existing.workItemId!, commentPart(existing.id), existing.bodyMarkdown));
         input.body = prepared.document;
         if (input.bodyMarkdown !== undefined) input.body = resolveMarkdownMentions(input.body, await mentionable(project));
@@ -394,13 +425,15 @@ export function createCommentActions(db: Database) {
         const mentionIds = await validatedMentions(project, context.userId, mentions);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
+          const { intake } = await lockCommentAccess(database, context, item);
           await database.insert(commentVersions).values({ commentId: existing.id, body: existing.body, bodyMarkdown: existing.bodyMarkdown ?? await writtenFormOf(existing.body), bodyText: existing.bodyText, writtenAt: existing.editedAt ?? existing.createdAt, createdAt: sql`clock_timestamp()` });
           const [row] = await database.update(comments).set({ body: input.body, bodyMarkdown: written, bodyText: text, editedAt: new Date() }).where(eq(comments.id, existing.id)).returning();
           await setOutlinksFromDocument(database, "work-item", existing.workItemId!, commentPart(existing.id), input.body);
           const already = (await mentionsOf(database, [existing.id])).get(existing.id)!;
           await replaceMentions(database, existing.id, mentionIds);
-          await enqueueNotification(database, { kind: "mention", workItemId: existing.workItemId!, commentId: existing.id, actorId: context.userId, recipientIds: mentionIds.filter((id) => !already.includes(id)) });
-          const wakeOutcomes = await queueRunsForAssignees(database, { originatorId: context.userId, waker: wakerOf(context.source), wakingRunId: context.agent?.runId ?? null, project, workItemId: existing.workItemId!, assigneeUserIds: mentionIds.filter((id) => !already.includes(id)), commentId: existing.id });
+          const newMentions = mentionIds.filter((id) => !already.includes(id));
+          await enqueueNotification(database, { kind: "mention", workItemId: existing.workItemId!, commentId: existing.id, actorId: context.userId, recipientIds: newMentions });
+          const wakeOutcomes = intake ? [] : await queueRunsForAssignees(database, { originatorId: context.userId, waker: wakerOf(context.source), wakingRunId: context.agent?.runId ?? null, project, workItemId: existing.workItemId!, assigneeUserIds: newMentions, commentId: existing.id });
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, workItemId: existing.workItemId! }, "comment_edited", { commentId: existing.id });
           const replies = await database.select().from(comments).where(and(eq(comments.parentId, existing.id), isNull(comments.deletedAt)));
           const names = await authorNames([context.userId, ...new Set(replies.map((reply) => reply.authorId))]);
@@ -416,11 +449,13 @@ export function createCommentActions(db: Database) {
       input: Type.Object({ commentId: uuid() }), output: Type.Object({ removed: Type.Boolean() }),
       handler: async (context: Context, input: { commentId: string }) => {
         const existing = await loadComment(input.commentId);
-        const { project } = await requireProjectAccess(db, context.userId, existing.projectId!, "write");
+        const item = await loadItem(existing.workItemId!);
+        const { project } = await accessForComment(context, item, "write");
         if (existing.authorId !== context.userId) throw new ActionError("Only the author can delete a comment", 403);
         assertNotArchived(await loadItem(existing.workItemId!));
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
+          await lockCommentAccess(database, context, item);
           await database.update(comments).set({ deletedAt: new Date() }).where(eq(comments.id, existing.id));
           // The deleted text must not survive in any earlier version, nor in the hidden replies' versions.
           const replyIds = (await database.select({ id: comments.id }).from(comments).where(eq(comments.parentId, existing.id))).map((row) => row.id);

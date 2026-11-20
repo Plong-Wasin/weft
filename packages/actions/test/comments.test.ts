@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import { assets, commentMentions, commentVersions, comments as commentsTable, createDatabase, outlinks, type Database } from "@weft/db";
+import { assets, commentMentions, commentVersions, comments as commentsTable, createDatabase, intakeItems, outlinks, workspaces, type Database } from "@weft/db";
 import { backfillCommentWrittenForms } from "../src/migrations/comment-written-form";
-import { commentMarkdownOptions, createAgentActions, createApiTokenActions, createCommentActions, createProjectActions, createRuntimeActions, createTimelineActions, createWikiActions, createWorkItemActions } from "../src";
+import { commentMarkdownOptions, createAgentActions, createApiTokenActions, createCommentActions, createIntakeActions, createProjectActions, createRuntimeActions, createTimelineActions, createWikiActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -15,6 +15,31 @@ afterAll(async () => client.end());
 const doc = (...parts: Array<string | { mention: string }>) => ({
   type: "doc",
   content: [{ type: "paragraph", content: parts.map((part) => typeof part === "string" ? { type: "text", text: part } : { type: "mention", attrs: { id: part.mention, label: "x" } }) }],
+});
+
+test.concurrent("disabling Intake blocks discussion and Activity of undecided items, while accepted work remains accessible", async () => {
+  await withRollback(db, async (transaction) => {
+    const { comments, member, admin, project, items } = await setup(transaction);
+    const intake = createIntakeActions(transaction);
+    const pending = await intake.submitIntakeItem.handler({ userId: member.id }, { projectId: project.id, title: "Pending" });
+    const accepted = await intake.submitIntakeItem.handler({ userId: member.id }, { projectId: project.id, title: "Accepted" });
+    const comment = await comments.createComment.handler({ userId: member.id }, { workItemId: pending.workItemId, body: doc("before") });
+    await intake.acceptIntakeItem.handler({ userId: admin.id }, { intakeItemId: accepted.id });
+    await createProjectActions(transaction).setProjectFeatures.handler({ userId: admin.id }, { projectId: project.id, features: { intake: false } });
+    const actor = { userId: member.id };
+    const denied = [
+      () => comments.listComments.handler(actor, { workItemId: pending.workItemId }),
+      () => comments.createComment.handler(actor, { workItemId: pending.workItemId, body: doc("after") }),
+      () => comments.updateComment.handler(actor, { commentId: comment.id, body: doc("after") }),
+      () => comments.deleteComment.handler(actor, { commentId: comment.id }),
+      () => comments.listCommentVersions.handler(actor, { commentId: comment.id }),
+      () => items.listWorkItemActivities.handler(actor, { workItemId: pending.workItemId }),
+      () => createTimelineActions(transaction).listTimeline.handler(actor, { workItemId: pending.workItemId }),
+    ];
+    for (const call of denied) await expect(call()).rejects.toMatchObject({ status: 400 });
+    await expect(comments.listComments.handler(actor, { workItemId: accepted.workItemId })).resolves.toEqual([]);
+    await expect(items.listWorkItemActivities.handler(actor, { workItemId: accepted.workItemId })).resolves.toBeArray();
+  });
 });
 
 async function setup(transaction: Database, visibility: "public" | "private" = "public") {
@@ -31,6 +56,34 @@ async function setup(transaction: Database, visibility: "public" | "private" = "
   const item = await items.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Item" });
   return { workspace, admin, member, other, bystander, guest, items, item, project, comments: createCommentActions(transaction) };
 }
+
+test("a pending Intake comment write rechecks permissions after a concurrent acceptance", async () => {
+  const env = await setup(db);
+  try {
+    const intake = createIntakeActions(db);
+    for (const operation of ["create", "update", "delete"] as const) {
+      const item = await intake.submitIntakeItem.handler({ userId: env.guest.id }, { projectId: env.project.id, title: operation });
+      const comment = await env.comments.createComment.handler({ userId: env.guest.id }, { workItemId: item.workItemId, body: doc("Before") });
+      let release!: () => void;
+      let locked!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const entered = new Promise<void>((resolve) => { locked = resolve; });
+      const decision = db.transaction(async (transaction) => {
+        await transaction.update(intakeItems).set({ outcome: "accepted" }).where(eq(intakeItems.id, item.id));
+        locked(); await gate;
+      });
+      await entered;
+      const actor = { userId: env.guest.id };
+      const writing = (operation === "create" ? env.comments.createComment.handler(actor, { workItemId: item.workItemId, body: doc("After") }) : operation === "update" ? env.comments.updateComment.handler(actor, { commentId: comment.id, body: doc("After") }) : env.comments.deleteComment.handler(actor, { commentId: comment.id })).then(() => null, (error) => error);
+      await Bun.sleep(100);
+      release(); await decision;
+      expect(await writing).toMatchObject({ status: 403 });
+      const [stored] = await db.select().from(commentsTable).where(eq(commentsTable.id, comment.id));
+      expect(stored?.bodyText).toBe("Before");
+      expect(stored?.deletedAt).toBeNull();
+    }
+  } finally { await db.delete(workspaces).where(eq(workspaces.id, env.workspace.id)); }
+});
 
 test("comment reference lookup skips plain text and uses a bounded number of queries", async () => {
   await withRollback(db, async (transaction) => {
@@ -72,6 +125,41 @@ test.concurrent("comment create and update save legacy alignment with the same w
     expect(created.markdownWarningDetails).toContainEqual(expect.objectContaining({ code: "attribute-not-persisted", message: expect.stringContaining("text alignment") }));
     const updated = await comments.updateComment.handler({ userId: member.id }, { commentId: created.id, body });
     expect(updated.markdownWarningDetails).toContainEqual(expect.objectContaining({ code: "attribute-not-persisted" }));
+  });
+});
+
+test.concurrent("a Guest can discuss their own Triage item through Activity, but cannot read another Guest's item", async () => {
+  await withRollback(db, async (transaction) => {
+    const env = await setup(transaction);
+    const intake = createIntakeActions(transaction);
+    const own = await intake.submitIntakeItem.handler({ userId: env.guest.id }, { projectId: env.project.id, title: "Guest request" });
+    const other = await intake.submitIntakeItem.handler({ userId: env.bystander.id }, { projectId: env.project.id, title: "Private request" });
+    const created = await env.comments.createComment.handler({ userId: env.guest.id }, { workItemId: own.workItemId, body: doc("More detail") });
+    expect((await env.comments.listComments.handler({ userId: env.guest.id }, { workItemId: own.workItemId })).map((row) => row.bodyText)).toEqual(["More detail"]);
+    expect((await createTimelineActions(transaction).listTimeline.handler({ userId: env.guest.id }, { workItemId: own.workItemId })).some((entry) => entry.kind === "comment" && entry.comment?.id === created.id)).toBe(true);
+    await expect(env.comments.listComments.handler({ userId: env.guest.id }, { workItemId: other.workItemId })).rejects.toMatchObject({ status: 403 });
+    await expect(createTimelineActions(transaction).listTimeline.handler({ userId: env.guest.id }, { workItemId: other.workItemId })).rejects.toMatchObject({ status: 403 });
+    await intake.rejectIntakeItem.handler({ userId: env.member.id }, { intakeItemId: own.id });
+    await env.comments.updateComment.handler({ userId: env.guest.id }, { commentId: created.id, body: doc("Corrected detail") });
+    const decisionComment = await env.comments.createComment.handler({ userId: env.member.id }, { workItemId: own.workItemId, body: doc("Decision follow-up") });
+    await env.comments.createComment.handler({ userId: env.guest.id }, { workItemId: own.workItemId, parentId: decisionComment.id, body: doc("Guest reply") });
+    const decidedComments = await env.comments.listComments.handler({ userId: env.guest.id }, { workItemId: own.workItemId });
+    expect(decidedComments.map((row) => row.bodyText)).toEqual(["Corrected detail", "Decision follow-up", "Guest reply"]);
+    const removable = await env.comments.createComment.handler({ userId: env.guest.id }, { workItemId: own.workItemId, body: doc("Remove this") });
+    await env.comments.deleteComment.handler({ userId: env.guest.id }, { commentId: removable.id });
+    expect((await env.comments.listComments.handler({ userId: env.guest.id }, { workItemId: own.workItemId })).map((row) => row.bodyText)).toEqual(["Corrected detail", "Decision follow-up", "Guest reply"]);
+    const duplicate = await intake.submitIntakeItem.handler({ userId: env.guest.id }, { projectId: env.project.id, title: "Duplicate request" });
+    const target = await env.items.createWorkItem.handler({ userId: env.member.id }, { projectId: env.project.id, title: "Existing work" });
+    await intake.duplicateIntakeItem.handler({ userId: env.member.id }, { intakeItemId: duplicate.id, duplicateTo: target.id });
+    await env.comments.createComment.handler({ userId: env.member.id }, { workItemId: duplicate.workItemId, body: doc("Duplicate follow-up") });
+    expect((await env.comments.listComments.handler({ userId: env.guest.id }, { workItemId: duplicate.workItemId })).map((row) => row.bodyText)).toEqual(["Duplicate follow-up"]);
+    const accepted = await intake.submitIntakeItem.handler({ userId: env.guest.id }, { projectId: env.project.id, title: "Accepted request" });
+    await env.comments.createComment.handler({ userId: env.guest.id }, { workItemId: accepted.workItemId, body: doc("Before acceptance") });
+    await intake.acceptIntakeItem.handler({ userId: env.member.id }, { intakeItemId: accepted.id });
+    expect((await env.comments.listComments.handler({ userId: env.guest.id }, { workItemId: accepted.workItemId })).map((row) => row.bodyText)).toEqual(["Before acceptance"]);
+    await expect(env.comments.createComment.handler({ userId: env.guest.id }, { workItemId: accepted.workItemId, body: doc("Normal permission check") })).rejects.toMatchObject({ status: 403 });
+    await env.comments.createComment.handler({ userId: env.member.id }, { workItemId: accepted.workItemId, body: doc("After acceptance") });
+    expect((await env.comments.listComments.handler({ userId: env.guest.id }, { workItemId: accepted.workItemId })).map((row) => row.bodyText)).toEqual(["Before acceptance", "After acceptance"]);
   });
 });
 

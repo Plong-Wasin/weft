@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
-import { and, eq } from "drizzle-orm";
-import { activities, createDatabase, workItems, type Database } from "@weft/db";
-import { createCycleActions, createIntakeActions, createModuleActions, createProjectActions, createWorkItemActions } from "../src";
+import { and, eq, sql } from "drizzle-orm";
+import { activities, assets, createDatabase, moduleItems, modules as moduleRows, workItems, workItemStates, workspaces, type Database } from "@weft/db";
+import { createCycleActions, createIntakeActions, createModuleActions, createProjectActions, createRelationActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -32,6 +32,57 @@ test.concurrent("a Member creates, updates, lists and gets a Module; status is s
     for (const status of ["planned", "paused", "completed", "cancelled", "backlog"] as const) expect((await modules.updateModule.handler({ userId: member.id }, { moduleId: created.id, status })).status).toBe(status);
     expect((await modules.listModules.handler({ userId: guest.id }, { projectId: project.id })).map((row) => row.name)).toEqual(["Auth"]);
     expect(await modules.getModule.handler({ userId: guest.id }, { moduleId: created.id })).toMatchObject({ id: created.id, workItemIds: [] });
+  });
+});
+
+test.concurrent("Module descriptions are optional Written form Markdown and can be edited and cleared", async () => {
+  await withRollback(db, async (transaction) => {
+    const { modules, member, project, item } = await setup(transaction);
+    const workItem = await item();
+    const markdown = `## Goal\n\nA **clear** goal with [[MOB-1|work-item:${workItem.id}]] and @{Member|${member.id}}.`;
+    const created = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Scope", descriptionMarkdown: markdown });
+    expect(created.descriptionMarkdown).toBe(markdown);
+    expect((await modules.getModule.handler({ userId: member.id }, { moduleId: created.id })).descriptionMarkdown).toBe(created.descriptionMarkdown);
+    expect((await modules.updateModule.handler({ userId: member.id }, { moduleId: created.id, descriptionMarkdown: "" })).descriptionMarkdown).toBe("");
+  });
+});
+
+test.concurrent("Module rich descriptions round-trip formatting, stable references, mentions, and owned images", async () => {
+  await withRollback(db, async (transaction) => {
+    const { modules, member, project, workspace, item } = await setup(transaction);
+    const workItem = await item();
+    const module = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Rich" });
+    const assetId = crypto.randomUUID();
+    await transaction.insert(assets).values({ id: assetId, workspaceId: workspace.id, projectId: project.id, ownerType: "module", ownerId: module.id, uploaderId: member.id, storageKey: `test/${assetId}`, filename: "plan.png", contentType: "image/png", size: 10, status: "uploaded", uploadedAt: new Date() });
+    const description = { type: "doc", content: [
+      { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Goal" }] },
+      { type: "paragraph", content: [{ type: "text", text: "bold", marks: [{ type: "bold" }] }, { type: "text", text: " " }, { type: "mention", attrs: { id: member.id, label: "Member" } }, { type: "text", text: " " }, { type: "text", text: "Alpha", marks: [{ type: "link", attrs: { href: `weft://work-item/${workItem.id}`, kind: "work-item", targetId: workItem.id, target: "MOB-1" } }] }] },
+      { type: "assetImage", attrs: { assetId, alt: "Plan" } },
+    ] };
+    const saved = await modules.updateModule.handler({ userId: member.id }, { moduleId: module.id, description });
+    expect(saved.descriptionMarkdown).toContain("**bold**");
+    expect(saved.descriptionMarkdown).toContain(`@{Member|${member.id}}`);
+    expect(saved.descriptionMarkdown).toContain(`work-item:${workItem.id}`);
+    expect(saved.descriptionMarkdown).toContain(`![[asset:${assetId}|Plan]]`);
+    const loaded = await modules.getModule.handler({ userId: member.id }, { moduleId: module.id });
+    expect(JSON.stringify(loaded.description)).toContain('"type":"assetImage"');
+    expect(JSON.stringify(loaded.description)).toContain(`"id":"${member.id}"`);
+  });
+});
+
+test.concurrent("Module discovery combines text, status, lead, member and overlapping dates in the chosen archive set", async () => {
+  await withRollback(db, async (transaction) => {
+    const { modules, member, admin, project } = await setup(transaction);
+    const match = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Authentication refresh", status: "in-progress", leadId: member.id, memberIds: [admin.id], startDate: "2030-01-01", endDate: "2030-03-01" });
+    await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Authentication legacy", status: "completed", leadId: member.id, memberIds: [admin.id], startDate: "2029-01-01", endDate: "2029-03-01" });
+    await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Payments", status: "in-progress", leadId: member.id, memberIds: [admin.id], startDate: "2030-01-01", endDate: "2030-03-01" });
+    const result = await modules.listModules.handler({ userId: admin.id }, { projectId: project.id, search: "AUTH", status: "in-progress", leadId: member.id, memberId: admin.id, dateFrom: "2030-02-01", dateTo: "2030-02-28" });
+    expect(result.map((row) => row.id)).toEqual([match.id]);
+    await modules.updateModule.handler({ userId: member.id }, { moduleId: match.id, status: "completed" });
+    await modules.archiveModule.handler({ userId: admin.id }, { moduleId: match.id });
+    expect(await modules.listModules.handler({ userId: admin.id }, { projectId: project.id, search: "Authentication", archived: false })).toHaveLength(1);
+    expect((await modules.listModules.handler({ userId: admin.id }, { projectId: project.id, search: "Authentication", archived: true })).map((row) => row.id)).toEqual([match.id]);
+    await expect(modules.listModules.handler({ userId: admin.id }, { projectId: project.id, dateFrom: "2030-03-01", dateTo: "2030-02-01" })).rejects.toMatchObject({ status: 400 });
   });
 });
 
@@ -122,12 +173,50 @@ test.concurrent("archive is Admin only and needs completed or cancelled; archive
     // An archived Module is read-only.
     const one = await item();
     expect(await modules.addModuleItems.handler({ userId: member.id }, { moduleId: mod.id, workItemIds: [one.id] }).then(() => 200, (error: { status: number }) => error.status)).toBe(400);
+    expect(await modules.removeModuleItems.handler({ userId: member.id }, { moduleId: mod.id, workItemIds: [one.id] }).then(() => 200, (error: { status: number }) => error.status)).toBe(400);
     expect(await modules.updateModule.handler({ userId: member.id }, { moduleId: mod.id, name: "B" }).then(() => 200, (error: { status: number }) => error.status)).toBe(400);
+    await expect(modules.updateModule.handler({ userId: member.id }, { moduleId: mod.id, descriptionMarkdown: "Changed" })).rejects.toMatchObject({ status: 400 });
     expect(await status(member.id, "unarchiveModule")).toBe(403);
     expect((await modules.unarchiveModule.handler({ userId: admin.id }, { moduleId: mod.id })).archived).toBe(false);
+    expect((await modules.updateModule.handler({ userId: member.id }, { moduleId: mod.id, name: "Restored" })).name).toBe("Restored");
     await modules.updateModule.handler({ userId: member.id }, { moduleId: mod.id, status: "cancelled" });
     expect((await modules.archiveModule.handler({ userId: admin.id }, { moduleId: mod.id })).archived).toBe(true);
   });
+});
+
+test("a Module property or membership write that waits behind archive rechecks the locked archived state", async () => {
+  const { workspace, admin, member, project, item, modules } = await setup(db);
+  const module = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Race", status: "completed" });
+  const workItem = await item("Keep me");
+  await modules.addModuleItems.handler({ userId: member.id }, { moduleId: module.id, workItemIds: [workItem.id] });
+  const race = async (write: () => Promise<unknown>) => {
+    let release!: () => void, locked!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const held = new Promise<void>((resolve) => { locked = resolve; });
+    const blocker = db.transaction(async (transaction) => {
+      await transaction.select().from(moduleRows).where(eq(moduleRows.id, module.id)).for("update");
+      locked(); await gate;
+      await transaction.update(moduleRows).set({ archivedAt: new Date() }).where(eq(moduleRows.id, module.id));
+    });
+    try {
+      await held;
+      const pending = write();
+      const deadline = Date.now() + 5_000;
+      let blocked = false;
+      while (!blocked && Date.now() < deadline) {
+        blocked = (await db.execute(sql`select 1 from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock' and query like '%"modules"%' and query ilike '%for update%'`)).length > 0;
+        if (!blocked) await Bun.sleep(20);
+      }
+      expect(blocked).toBe(true);
+      release(); await blocker;
+      await expect(pending).rejects.toMatchObject({ status: 400 });
+    } finally { release(); await blocker.catch(() => undefined); }
+  };
+  await race(() => modules.updateModule.handler({ userId: member.id }, { moduleId: module.id, name: "Must not save", descriptionMarkdown: "Must not save" }));
+  await modules.unarchiveModule.handler({ userId: admin.id }, { moduleId: module.id });
+  await race(() => modules.removeModuleItems.handler({ userId: member.id }, { moduleId: module.id, workItemIds: [workItem.id] }));
+  expect((await modules.getModule.handler({ userId: member.id }, { moduleId: module.id })).workItemIds).toContain(workItem.id);
+  await db.delete(workspaces).where(eq(workspaces.id, workspace.id));
 });
 
 test.concurrent("delete is Admin only, soft, and removes membership but never work items", async () => {
@@ -186,5 +275,35 @@ test.concurrent("a work item still in Intake cannot join a Module and never coun
     const listed = await work.listWorkItems.handler({ userId: admin.id }, { projectId: project.id, moduleId: module.id });
     expect(listed.map((row) => row.id)).toEqual([live.id]);
     expect((await modules.getModule.handler({ userId: admin.id }, { moduleId: module.id })).progress.total).toBe(1);
+  });
+});
+
+test.concurrent("Module insights count an externally blocked item once, find overdue work and group empty values", async () => {
+  await withRollback(db, async (transaction) => {
+    const { member, project, workspace, item, modules, work } = await setup(transaction);
+    const mod = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Insights" });
+    const first = await item("First"), second = await item("Second"), resolvedOnly = await item("Only resolved blocker"), outside = await item("Outside blocker"), outsideTwo = await item("Second blocker"), closed = await item("Closed"), closedBlocker = await item("Resolved blocker");
+    const archived = await item("Archived"), triage = await item("Triage");
+    await modules.addModuleItems.handler({ userId: member.id }, { moduleId: mod.id, workItemIds: [first.id, second.id, resolvedOnly.id, closed.id] });
+    await work.updateWorkItem.handler({ userId: member.id }, { workItemId: first.id, dueDate: "2020-01-01" });
+    const relations = createRelationActions(transaction);
+    await relations.createWorkItemRelation.handler({ userId: member.id }, { workItemId: first.id, relatedWorkItemId: outside.id, type: "blocked_by" });
+    await relations.createWorkItemRelation.handler({ userId: member.id }, { workItemId: first.id, relatedWorkItemId: outsideTwo.id, type: "blocked_by" });
+    const completedState = (await transaction.select().from(workItemStates).where(eq(workItemStates.projectId, project.id))).find((state) => state.group === "completed")!;
+    const triageState = (await transaction.select().from(workItemStates).where(eq(workItemStates.projectId, project.id))).find((state) => state.group === "triage")!;
+    await transaction.update(workItems).set({ stateId: completedState.id, dueDate: "2020-01-01" }).where(eq(workItems.id, closed.id));
+    await transaction.update(workItems).set({ stateId: completedState.id }).where(eq(workItems.id, closedBlocker.id));
+    await relations.createWorkItemRelation.handler({ userId: member.id }, { workItemId: resolvedOnly.id, relatedWorkItemId: closedBlocker.id, type: "blocked_by" });
+    await transaction.update(workItems).set({ archivedAt: new Date(), dueDate: "2020-01-01" }).where(eq(workItems.id, archived.id));
+    await transaction.update(workItems).set({ stateId: triageState.id, dueDate: "2020-01-01" }).where(eq(workItems.id, triage.id));
+    await transaction.insert(moduleItems).values([archived, triage].map((workItem) => ({ moduleId: mod.id, workItemId: workItem.id, workspaceId: workspace.id, projectId: project.id })));
+    const result = await modules.getModuleInsights.handler({ userId: member.id }, { moduleId: mod.id });
+    expect(result.blocked.map((row) => row.id)).toEqual([first.id]);
+    expect(result.overdue.map((row) => row.id)).toEqual([first.id]);
+    expect(result.breakdowns.state.reduce((sum, group) => sum + group.items.length, 0)).toBe(4);
+    expect(result.breakdowns.assignee.find((group) => group.key === "none")?.items).toHaveLength(4);
+    expect(result.breakdowns.label.find((group) => group.key === "none")?.items).toHaveLength(4);
+    expect(result.breakdowns.priority.find((group) => group.key === "none")?.items).toHaveLength(4);
+    expect([...result.blocked, ...result.overdue].some((row) => row.id === closed.id || row.id === archived.id || row.id === triage.id || row.id === resolvedOnly.id)).toBe(false);
   });
 });

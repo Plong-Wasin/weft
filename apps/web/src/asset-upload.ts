@@ -1,6 +1,6 @@
 import type { MessageKey } from "@weft/shared";
 
-export type OwnerType = "work_item" | "comment" | "wiki_page";
+export type OwnerType = "work_item" | "comment" | "wiki_page" | "cycle" | "module";
 export type OwnerRef = { ownerType: OwnerType; ownerId: string };
 export type AssetRow = { id: string; ownerType: OwnerType; ownerId: string; uploaderId: string; filename: string; contentType: string; size: number; inline: boolean; createdAt: string };
 

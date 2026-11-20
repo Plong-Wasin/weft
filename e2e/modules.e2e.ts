@@ -65,6 +65,9 @@ try {
   const modal = page.getByRole("dialog", { name: t("modules.addTitleModal") });
   check(await modal.evaluate((element) => element.scrollHeight <= element.clientHeight), "Create Module dialog should fit without a scrollbar at 1080p");
   await modal.getByLabel(t("modules.name")).fill("Auth");
+  await modal.getByRole("toolbar", { name: t("wiki.toolbar") }).getByRole("button", { name: t("editor.sourceMode") }).click();
+  await modal.getByRole("textbox", { name: t("editor.sourceText") }).fill("**Initial module purpose**");
+  await modal.getByRole("toolbar", { name: t("wiki.toolbar") }).getByRole("button", { name: t("editor.sourceMode") }).click();
   const status = modal.getByRole("button", { name: new RegExp(`^${t("modules.status")}:`) });
   await status.click();
   const dates = await modal.getByLabel(t("modules.start")).evaluate((element) => {
@@ -88,6 +91,8 @@ try {
   await row.waitFor();
   check((await row.innerText()).includes(t("modules.status.in-progress")), "status badge missing in list");
   check((await row.innerText()).includes("0"), "progress missing");
+  const createdModule = (await call<Array<{ id: string; name: string; descriptionMarkdown: string }>>("list_modules", { projectId: project!.id })).find(({ name }) => name === "Auth")!;
+  check(createdModule.descriptionMarkdown.includes("**Initial module purpose**"), "Module description formatting was not written as Markdown");
   await page.screenshot({ path: `${shots}/modules-list-1440.png` });
 
   // Grid display.
@@ -105,20 +110,53 @@ try {
   await edit.getByRole("button", { name: t("modules.save"), exact: true }).click();
   await edit.waitFor({ state: "detached" });
   await page.getByTestId("module-row-Authentication").waitFor();
+  // Search and combined filters produce the same result in list and grid.
+  await page.getByRole("searchbox", { name: t("modules.searchModules") }).fill("auth");
+  await page.getByLabel(t("modules.statusFilter")).selectOption("in-progress");
+  await page.getByLabel(t("modules.leadFilter")).selectOption({ label: "Modules Tester" });
+  await page.getByLabel(t("modules.memberFilter")).selectOption({ label: "Modules Tester" });
+  await page.locator('input[type="date"]').nth(0).fill("2026-02-01");
+  await page.locator('input[type="date"]').nth(1).fill("2026-02-28");
+  await page.getByTestId("module-row-Authentication").waitFor();
+  await page.getByRole("button", { name: t("modules.display.grid"), exact: true }).click();
+  await page.getByTestId("module-card-Authentication").waitFor();
+  await page.getByRole("searchbox", { name: t("modules.searchModules") }).fill("nothing matches");
+  await page.getByText(t("modules.noMatches")).waitFor();
+  await page.getByRole("searchbox", { name: t("modules.searchModules") }).fill("auth");
+  await page.getByRole("button", { name: t("modules.display.list"), exact: true }).click();
+  await page.getByRole("button", { name: t("modules.clearFilters") }).click();
   console.log("modules: create, grid/list, edit");
 
   // Detail: add work items from the module page.
   await page.getByRole("link", { name: "Authentication" }).click();
   await page.getByRole("heading", { name: "Authentication" }).waitFor();
+  const moduleDescriptionEditor = page.locator('[data-testid="description-editor"] [contenteditable="true"]');
+  await page.getByRole("toolbar", { name: t("wiki.toolbar") }).getByRole("button", { name: t("editor.sourceMode") }).click();
+  const itemsForDescription = await call<Array<{ id: string; displayId: string }>>("list_work_items", { projectId: project!.id });
+  const modulePeople = await call<Array<{ userId: string; name: string }>>("list_project_members", { projectId: project!.id });
+  const moduleDescriptionMarkdown = `**Module scope and goal** with [[MOB-1|work-item:${itemsForDescription[0]!.id}]] and @{Modules Tester|${modulePeople.find(({ name }) => name === "Modules Tester")!.userId}}.`;
+  await page.getByRole("textbox", { name: t("editor.sourceText") }).fill(moduleDescriptionMarkdown);
+  await page.getByRole("toolbar", { name: t("wiki.toolbar") }).getByRole("button", { name: t("editor.sourceMode") }).click();
+  await page.getByRole("heading", { name: "Authentication" }).click();
+  await page.getByTestId("entity-description-save-status").getByText(t("workItems.descriptionSave.saving")).waitFor();
+  await page.getByTestId("entity-description-save-status").getByText(t("workItems.descriptionSave.saved")).waitFor();
+  const savedModule = await call<{ descriptionMarkdown: string }>("get_module", { moduleId: createdModule.id });
+  check(savedModule.descriptionMarkdown.includes(`work-item:${itemsForDescription[0]!.id}`) && savedModule.descriptionMarkdown.includes(`@{Modules Tester|${modulePeople.find(({ name }) => name === "Modules Tester")!.userId}}`), "Module description references did not round-trip");
+  check(await moduleDescriptionEditor.locator("strong").filter({ hasText: "Module scope and goal" }).count() === 1, "Module rich formatting did not render safely");
   await page.getByRole("button", { name: t("modules.addWorkItems") }).click();
   const add = page.getByRole("dialog", { name: t("modules.addItemsTitle") });
   await add.getByLabel(/Alpha/).check();
   await add.getByLabel(/Beta/).check();
   await add.getByRole("button", { name: t("modules.add"), exact: true }).click();
   await add.waitFor({ state: "detached" });
-  await page.getByRole("link", { name: /Alpha/ }).waitFor();
-  await page.getByRole("link", { name: /Beta/ }).waitFor();
+  await page.getByTestId("row-MOB-1").getByRole("link", { name: "Alpha" }).waitFor();
+  await page.getByTestId("row-MOB-2").getByRole("link", { name: "Beta" }).waitFor();
   check((await page.getByTestId("module-items-count").innerText()) === "0/2", "count should be 0/2");
+  await page.getByText(`${t("modules.blocked")} · 0`, { exact: true }).waitFor();
+  await page.getByText(`${t("modules.overdue")} · 0`, { exact: true }).waitFor();
+  await page.getByLabel(t("modules.breakdown"), { exact: true }).selectOption("assignee");
+  await page.getByText("Unassigned", { exact: true }).waitFor();
+  await page.getByLabel(t("modules.breakdown"), { exact: true }).selectOption("state");
 
   // Properties sidebar: status, dates, lead, members are editable inline.
   const side = page.getByRole("complementary", { name: t("modules.properties") });
@@ -148,6 +186,10 @@ try {
   await page.getByRole("menuitem", { name: t("modules.archive") }).click();
   await page.getByText(t("modules.archivedNote")).waitFor();
   check(await page.getByRole("button", { name: t("modules.remove") }).count() === 0, "archived module must be read-only");
+  check(await page.getByRole("complementary", { name: t("modules.properties") }).locator('[data-testid="description-editor"] [contenteditable="true"]').count() === 0, "archived Module description must be read-only");
+  await page.getByRole("button", { name: t("modules.actions") }).click();
+  check(await page.getByRole("menuitem", { name: t("modules.edit") }).count() === 0, "archived Module still offers Edit");
+  await page.keyboard.press("Escape");
   await page.goto(`${base}/modules`);
   await page.getByText(t("modules.empty")).waitFor();
   await page.getByLabel(t("modules.showArchived")).check();

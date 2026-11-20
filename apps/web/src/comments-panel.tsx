@@ -1,4 +1,3 @@
-import { accessReasonText } from "./access-reason";
 import React from "react";
 import { Bot, Code2 } from "lucide-react";
 import { formatDate, translate, translateDynamic } from "@weft/shared";
@@ -6,7 +5,7 @@ import { EditorContent, useEditor } from "@tiptap/react";
 import { Extension } from "@tiptap/core";
 import Mention from "@tiptap/extension-mention";
 import { Avatar } from "./avatar";
-import { mentionRender } from "./suggest-list";
+import { mentionExtension } from "./mention-extension";
 import { readOnlyImages, useAssetImages } from "./asset-images";
 import { AssistMenu } from "./assist-menu";
 import { AiAssist } from "./editor-assist";
@@ -35,17 +34,6 @@ type Filter = "all" | "comments" | "updates";
 type Sort = "newest" | "oldest";
 type Action = <T>(name: string, body: unknown) => Promise<T | null>;
 type ActionResult = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string; code?: string }>;
-
-function mentionExtension(people: React.RefObject<Person[]>) {
-  return Mention.configure({
-    HTMLAttributes: { class: "mention" },
-    suggestion: {
-      char: "@",
-      items: ({ query }: { query: string }) => (people.current ?? []).filter((person) => person.name.toLowerCase().includes(query.toLowerCase())).sort((a, b) => Number(!!a.isAgent) - Number(!!b.isAgent) || a.name.localeCompare(b.name)).slice(0, 8).map((person) => ({ id: person.userId, label: person.name, isAgent: person.isAgent, codeCapable: person.codeCapable, unavailable: !!person.isAgent && person.hasAccess === false, unavailableReason: accessReasonText(person) })),
-      render: mentionRender("wiki.mentionMembers"),
-    },
-  });
-}
 
 /** Ctrl/⌘+Enter submits (a new comment, an edited comment or a reply); Escape cancels an edit or a reply. Priority beats the editor's own Mod-Enter, which would insert a line break. */
 const CommentKeys = Extension.create<{ submit: React.RefObject<() => Promise<void>>; cancel: React.RefObject<(() => void) | undefined> }>({

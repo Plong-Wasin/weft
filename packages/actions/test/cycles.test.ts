@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
-import { and, eq } from "drizzle-orm";
-import { activities, createDatabase, workItems, type Database } from "@weft/db";
+import { and, eq, sql } from "drizzle-orm";
+import { activities, createDatabase, cycles as cycleRows, workItemStates, workItems, workspaces, type Database } from "@weft/db";
 import { createCycleActions, createProjectActions, createWorkItemActions, cycleStatus, todayIso, aiWriteActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -48,6 +48,18 @@ test.concurrent("a Member creates, updates, lists and gets a Cycle with computed
   });
 });
 
+test.concurrent("Cycle descriptions are optional Written form Markdown and can be edited and cleared", async () => {
+  await withRollback(db, async (transaction) => {
+    const { cycles, member, project, item } = await setup(transaction);
+    const workItem = await item();
+    const markdown = `## Purpose\n\nUse **rich text**, [[MOB-1|work-item:${workItem.id}]] and @{Member|${member.id}}.`;
+    const created = await cycles.createCycle.handler({ userId: member.id }, { projectId: project.id, name: "Docs", startDate: day(0), endDate: day(3), descriptionMarkdown: markdown });
+    expect(created.descriptionMarkdown).toBe(markdown);
+    expect((await cycles.getCycle.handler({ userId: member.id }, { cycleId: created.id })).descriptionMarkdown).toBe(created.descriptionMarkdown);
+    expect((await cycles.updateCycle.handler({ userId: member.id }, { cycleId: created.id, descriptionMarkdown: "" })).descriptionMarkdown).toBe("");
+  });
+});
+
 test.concurrent("invalid dates are refused", async () => {
   await withRollback(db, async (transaction) => {
     const { cycles, member, project } = await setup(transaction);
@@ -90,6 +102,30 @@ test.concurrent("adding items: at most one Cycle, skipped items are reported, Ac
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ oldValue: null, newValue: one.id, source: "cli", entityType: "work_item", actorId: member.id });
     expect(await transaction.select().from(activities).where(and(eq(activities.entityId, b.id), eq(activities.field, "cycle")))).toHaveLength(1);
+  });
+});
+
+test.concurrent("adding Cycle candidates moves only when the selected source membership still matches", async () => {
+  await withRollback(db, async (transaction) => {
+    const { cycles, member, project, item } = await setup(transaction);
+    const source = await cycles.createCycle.handler({ userId: member.id }, { projectId: project.id, name: "Source", startDate: day(0), endDate: day(2) });
+    const target = await cycles.createCycle.handler({ userId: member.id }, { projectId: project.id, name: "Target", startDate: day(3), endDate: day(5) });
+    const first = await item("First");
+    const second = await item("Second");
+    await cycles.addCycleItems.handler({ userId: member.id }, { cycleId: source.id, workItemIds: [first.id, second.id] });
+
+    const moved = await cycles.addCycleItems.handler({ userId: member.id }, {
+      cycleId: target.id, workItemIds: [first.id, second.id], move: true,
+      expectedCycleIds: { [first.id]: source.id, [second.id]: source.id },
+    });
+    expect(moved).toEqual({ added: [first.id, second.id], skipped: [] });
+    expect((await cycles.getCycle.handler({ userId: member.id }, { cycleId: source.id })).workItemIds).toEqual([]);
+    expect((await cycles.getCycle.handler({ userId: member.id }, { cycleId: target.id })).workItemIds.sort()).toEqual([first.id, second.id].sort());
+
+    const stale = await cycles.addCycleItems.handler({ userId: member.id }, {
+      cycleId: source.id, workItemIds: [first.id], move: true, expectedCycleIds: { [first.id]: source.id },
+    });
+    expect(stale).toEqual({ added: [], skipped: [{ workItemId: first.id, cycleId: target.id }] });
   });
 });
 
@@ -243,6 +279,26 @@ test.concurrent("transfer moves only unfinished items, writes Activity, and noth
   });
 });
 
+test.concurrent("selective transfer moves only selected current unfinished items and reports stale selections", async () => {
+  await withRollback(db, async (transaction) => {
+    const { cycles, member, cycle, next, made } = await endedCycle(transaction);
+    const completedState = (await transaction.select().from(workItemStates).where(and(eq(workItemStates.projectId, cycle.projectId), eq(workItemStates.group, "completed"))))[0]!;
+    // The preview saw Todo as eligible, then another writer completes it before the transfer Action runs.
+    await transaction.update(workItems).set({ stateId: completedState.id }).where(eq(workItems.id, made["Todo"]!));
+    const result = await cycles.selectiveTransferCycleItems.handler({ userId: member.id, source: "ui" }, {
+      cycleId: cycle.id, targetCycleId: next.id, workItemIds: [made["Todo"]!, made["In Progress"]!, made["Cancelled"]!, "00000000-0000-4000-8000-000000000001"],
+    });
+    expect(result.transferred).toEqual([made["In Progress"]!]);
+    expect(result.conflicts).toEqual([
+      { workItemId: made["Todo"]!, reason: "ineligible" },
+      { workItemId: made["Cancelled"]!, reason: "ineligible" },
+      { workItemId: "00000000-0000-4000-8000-000000000001", reason: "not_in_source" },
+    ]);
+    expect((await cycles.getCycle.handler({ userId: member.id }, { cycleId: cycle.id })).workItemIds.sort()).toEqual([made["Done"]!, made["Cancelled"]!, made["Todo"]!].sort());
+    expect((await cycles.getCycle.handler({ userId: member.id }, { cycleId: next.id })).workItemIds).toEqual([made["In Progress"]!]);
+  });
+});
+
 test.concurrent("transfer is refused from a running Cycle, to an ended or other-project Cycle, and to a Guest", async () => {
   await withRollback(db, async (transaction) => {
     const { cycles, member, guest, admin, cycle, next, projects, workspace } = await endedCycle(transaction);
@@ -267,7 +323,57 @@ test.concurrent("archive is Admin only and only for a completed Cycle; archived 
     expect((await cycles.listCycles.handler({ userId: member.id }, { projectId: project.id, archived: true })).map((row) => row.name)).toEqual(["Sprint 1"]);
     expect((await cycles.getCycle.handler({ userId: member.id }, { cycleId: cycle.id })).workItemIds).toHaveLength(4);
     await expect(cycles.transferCycleItems.handler({ userId: member.id }, { cycleId: next.id, targetCycleId: cycle.id })).rejects.toMatchObject({ status: 400 });
+    const itemId = (await cycles.getCycle.handler({ userId: member.id }, { cycleId: cycle.id })).workItemIds[0]!;
+    await expect(cycles.updateCycle.handler({ userId: member.id }, { cycleId: cycle.id, name: "Changed" })).rejects.toMatchObject({ status: 400 });
+    await expect(cycles.updateCycle.handler({ userId: member.id }, { cycleId: cycle.id, descriptionMarkdown: "Changed" })).rejects.toMatchObject({ status: 400 });
+    await expect(cycles.addCycleItems.handler({ userId: member.id }, { cycleId: cycle.id, workItemIds: [itemId] })).rejects.toMatchObject({ status: 400 });
+    await expect(cycles.removeCycleItems.handler({ userId: member.id }, { cycleId: cycle.id, workItemIds: [itemId] })).rejects.toMatchObject({ status: 400 });
+    await expect(cycles.transferCycleItems.handler({ userId: member.id }, { cycleId: cycle.id, targetCycleId: next.id })).rejects.toMatchObject({ status: 400 });
+    await expect(cycles.selectiveTransferCycleItems.handler({ userId: member.id }, { cycleId: cycle.id, targetCycleId: next.id, workItemIds: [itemId] })).rejects.toMatchObject({ status: 400 });
+    await cycles.unarchiveCycle.handler({ userId: admin.id }, { cycleId: cycle.id });
+    expect((await cycles.updateCycle.handler({ userId: member.id }, { cycleId: cycle.id, name: "Restored" })).name).toBe("Restored");
   });
+});
+
+test("a Cycle property or membership write that waits behind archive rechecks the locked archived state", async () => {
+  const { workspace, admin, member, project, item, cycles } = await setup(db);
+  const cycle = await cycles.createCycle.handler({ userId: member.id }, { projectId: project.id, name: "Race", startDate: day(-5), endDate: day(5) });
+  const workItem = await item("Keep me");
+  await cycles.addCycleItems.handler({ userId: member.id }, { cycleId: cycle.id, workItemIds: [workItem.id] });
+  await cycles.updateCycle.handler({ userId: member.id }, { cycleId: cycle.id, endDate: day(-1) });
+  const target = await cycles.createCycle.handler({ userId: member.id }, { projectId: project.id, name: "Target", startDate: day(0), endDate: day(5) });
+  const race = async (write: () => Promise<unknown>) => {
+    let release!: () => void, locked!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const held = new Promise<void>((resolve) => { locked = resolve; });
+    const blocker = db.transaction(async (transaction) => {
+      await transaction.select().from(cycleRows).where(eq(cycleRows.id, cycle.id)).for("update");
+      locked(); await gate;
+      await transaction.update(cycleRows).set({ archivedAt: new Date() }).where(eq(cycleRows.id, cycle.id));
+    });
+    try {
+      await held;
+      const pending = write();
+      const deadline = Date.now() + 5_000;
+      let blocked = false;
+      while (!blocked && Date.now() < deadline) {
+        blocked = (await db.execute(sql`select 1 from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock' and query like '%"cycles"%' and query ilike '%for update%'`)).length > 0;
+        if (!blocked) await Bun.sleep(20);
+      }
+      expect(blocked).toBe(true);
+      release(); await blocker;
+      await expect(pending).rejects.toMatchObject({ status: 400 });
+    } finally { release(); await blocker.catch(() => undefined); }
+  };
+  await race(() => cycles.updateCycle.handler({ userId: member.id }, { cycleId: cycle.id, name: "Must not save", descriptionMarkdown: "Must not save" }));
+  await cycles.unarchiveCycle.handler({ userId: admin.id }, { cycleId: cycle.id });
+  await race(() => cycles.selectiveTransferCycleItems.handler({ userId: member.id }, { cycleId: cycle.id, targetCycleId: target.id, workItemIds: [workItem.id] }));
+  await cycles.unarchiveCycle.handler({ userId: admin.id }, { cycleId: cycle.id });
+  await race(() => cycles.transferCycleItems.handler({ userId: member.id }, { cycleId: cycle.id, targetCycleId: target.id }));
+  await cycles.unarchiveCycle.handler({ userId: admin.id }, { cycleId: cycle.id });
+  await race(() => cycles.removeCycleItems.handler({ userId: member.id }, { cycleId: cycle.id, workItemIds: [workItem.id] }));
+  expect((await cycles.getCycle.handler({ userId: member.id }, { cycleId: cycle.id })).workItemIds).toContain(workItem.id);
+  await db.delete(workspaces).where(eq(workspaces.id, workspace.id));
 });
 
 test.concurrent("unarchive restores a Cycle for an Admin only, refuses a Member, a Guest and an outsider, and is a Write action needing Confirmation", async () => {

@@ -49,11 +49,11 @@ A value a project defines once and a work item of one or more Work item types ho
 _Avoid_: Field, attribute, metadata
 
 **Cycle**:
-A time-boxed period of work in one project, with a start date and an end date. A work item belongs to at most one cycle. A cycle is upcoming, active, or completed according to today's date. Unfinished work stays in a completed cycle until someone transfers it.
+A time-boxed period of work in one project, with a start date, an end date, and an optional rich-text description of its purpose. A work item belongs to at most one cycle. A cycle is upcoming, active, or completed according to today's date in UTC; both dates belong to the Cycle. Unfinished work stays in a completed cycle until someone transfers it. A completed Cycle's outcome is measured at the end of its last day, even if its work items change later.
 _Avoid_: Sprint, iteration
 
 **Module**:
-A project-scoped group of work items around one topic or feature, with a lead, members, and a status chosen by hand. A work item can belong to many modules.
+A project-scoped group of work items around one topic or feature, with a lead, members, a status chosen by hand, and an optional rich-text description of its context. A work item can belong to many modules.
 _Avoid_: Epic, feature group
 
 **Intake**:
@@ -75,6 +75,10 @@ _Avoid_: Story point, size, effort
 **Relation**:
 A typed link between two work items of the same project: blocks and blocked by (a pair), duplicate, or relates to.
 _Avoid_: Dependency, link (unqualified; a URL attachment is a Web Link)
+
+**Blocked work item**:
+A work item that is neither completed nor cancelled and has a blocked-by Relation to at least one work item that is also neither completed nor cancelled. The blocking work item need not belong to the same Module.
+_Avoid_: Blocked Relation (the Relation can remain after the blocking work is over)
 
 **Web Link**:
 An http(s) URL, with an optional title, attached to one work item. Shown as "Add link" in the UI.
@@ -137,7 +141,7 @@ The state of a Page or Wiki page that nobody can edit (content, title, or place 
 _Avoid_: Freeze, read-only mode
 
 **Archive**:
-The state of a work item, Cycle, Module, or Project that is over and set aside. It is hidden from lists, boards, search, and queries unless the Archives page asks for it, it cannot be edited, and a restore brings it back unchanged. A work item can be archived only in a completed or cancelled state, outside a Cycle or Module that is still open.
+The state of a work item, Cycle, Module, or Project that is over and set aside. It is hidden from lists, boards, search, and queries unless the Archives page asks for it, it cannot be edited, and a restore brings it back unchanged. Transferring work out of an archived Cycle requires restoring it first. A work item can be archived only in a completed or cancelled state, outside a Cycle or Module that is still open.
 _Avoid_: Soft delete, trash
 
 **Automatic rule**:
@@ -145,7 +149,7 @@ A project setting, off until an admin turns it on, that the daily run applies as
 _Avoid_: Automation, auto-close job, cron
 
 **Burndown**:
-The chart of work still open in a Cycle or Module, day by day, against a straight ideal line. It counts work items or, when the project has a points Estimate, Estimate points. A work item counts as done from the moment it entered a completed state.
+The chart of work still open in a Cycle or Module, day by day, against a straight ideal line. It counts work items or, when the project has a points Estimate, Estimate points, and identifies how many work items have no Estimate when showing points. Historical points reflect the membership, Estimate and state at that time; missing history is identified rather than invented. A work item counts as done while it is in a completed state, counts as open again if reopened, and leaves the open and done counts when cancelled. Later archiving or deletion does not change historical counts; a deleted work item is shown without its name or details. A Cycle's ideal line starts with its scope at the beginning when known; changes to scope are shown separately, and the outcome includes work added during the Cycle.
 _Avoid_: Burn-up, velocity
 
 **Export**:

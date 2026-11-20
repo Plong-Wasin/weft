@@ -8,6 +8,7 @@ import { ProjectPagesPage, WikiPageScreen } from "../wiki";
 import { ModuleDetailPage, ModulesPage } from "../modules";
 import { useParams } from "react-router";
 import { ViewDetailPage, ViewsPage } from "../views";
+import { canDecideIntake } from "../intake-permissions";
 
 /** The props every project feature screen takes: where it lives and what the caller may do there. */
 function useShared(feature: "cycles" | "modules") {
@@ -22,9 +23,18 @@ export function ProjectModulesRoute() { return <ModulesPage {...useShared("modul
 export function ProjectModuleRoute() { const { moduleId = "" } = useParams(); return <ModuleDetailPage {...useShared("modules")} moduleId={moduleId} />; }
 
 export function ProjectIntakeRoute() {
-  const { workspace } = useWorkspace();
+  const { workspace, selfId } = useWorkspace();
   const { project } = useProject();
-  return <IntakePage workspaceId={workspace.id} workspaceSlug={workspace.slug} projectKey={project.key} projectId={project.id} canDecide={project.role !== "Guest"} enabled={project.features.intake} action={action} />;
+  const [workspaceRole, setWorkspaceRole] = React.useState<"Admin" | "Member" | "Guest" | null>(null);
+  React.useEffect(() => {
+    let active = true;
+    setWorkspaceRole(null);
+    void action<Array<{ userId: string; role: "Admin" | "Member" | "Guest" }>>("list_members", { workspaceId: workspace.id }).then((members) => {
+      if (active) setWorkspaceRole(members?.find((member) => member.userId === selfId)?.role ?? null);
+    });
+    return () => { active = false; };
+  }, [workspace.id, selfId]);
+  return <IntakePage workspaceId={workspace.id} workspaceSlug={workspace.slug} projectKey={project.key} projectId={project.id} canDecide={canDecideIntake(workspaceRole, project.role)} canAdmin={project.role === "Admin"} enabled={project.features.intake} action={action} />;
 }
 
 export function ProjectPagesRoute() { const { workspace } = useWorkspace(); const { project } = useProject(); return <ProjectPagesPage workspace={workspace} project={project} canWrite={project.role !== "Guest"} />; }

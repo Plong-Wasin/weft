@@ -1,9 +1,9 @@
 import { afterAll, expect, test } from "bun:test";
-import { eq } from "drizzle-orm";
-import { aiRequests, createDatabase, jobs, notifications, sessions, workspaceInvites, type Database } from "@weft/db";
+import { eq, sql } from "drizzle-orm";
+import { aiRequests, createDatabase, jobs, notificationEmails, notifications, projectMembers, sessions, workspaceInvites, type Database } from "@weft/db";
 import {
-  createCommentActions, createJobHandlers, createNotificationActions, createProjectActions, createWorkItemActions,
-  runNextJob, scheduleCleanupJobs,
+  createAgentActions, createCommentActions, createIntakeActions, createJobHandlers, createNotificationActions, createProjectActions, createWorkItemActions,
+  runNextJob, scheduleCleanupJobs, sendNotificationDigests,
 } from "../src";
 import { createMemberFactory, createUserFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -45,6 +45,137 @@ test.concurrent("a mention notifies the mentioned member, not the author, and sh
     expect(list.unreadCount).toBe(1);
     expect(list.notifications[0]).toMatchObject({ kind: "mention", workItemId: item.id, displayId: "MOB-1", workItemTitle: "Item", actorId: author.id, readAt: null });
     expect((await inbox.listNotifications.handler({ userId: author.id }, { workspaceId: workspace.id })).notifications).toHaveLength(0);
+  });
+});
+
+test.concurrent("an Intake comment notifies its Guest creator and mentioned members, not its actor", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, admin, author, other, third, project, comments, inbox } = await setup(transaction);
+    const guest = await createMemberFactory(transaction, workspace.id, "Guest");
+    await createProjectActions(transaction).addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: guest.id, role: "Guest" });
+    const submitted = await createIntakeActions(transaction).submitIntakeItem.handler({ userId: guest.id }, { projectId: project.id, title: "Guest request", assigneeIds: [other.id] });
+    const added = await comments.createComment.handler({ userId: author.id }, { workItemId: submitted.workItemId, body: doc("Review ", { mention: other.id }, " and ", { mention: third.id }) });
+    expect(added.wakeOutcomes).toEqual([]);
+    await drain(transaction);
+    expect((await inbox.listNotifications.handler({ userId: guest.id }, { workspaceId: workspace.id })).notifications).toMatchObject([{ kind: "mention", workItemId: submitted.workItemId, actorId: author.id }]);
+    expect((await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).notifications).toMatchObject([{ kind: "mention", workItemId: submitted.workItemId, actorId: author.id }]);
+    expect((await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).notifications).toHaveLength(1);
+    expect((await inbox.listNotifications.handler({ userId: third.id }, { workspaceId: workspace.id })).notifications).toMatchObject([{ kind: "mention", workItemId: submitted.workItemId, actorId: author.id }]);
+    expect((await inbox.listNotifications.handler({ userId: author.id }, { workspaceId: workspace.id })).notifications).toHaveLength(0);
+  });
+});
+
+test.concurrent("Intake notifications and email retain the current destination through decisions", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, admin, author, other, project, comments, inbox } = await setup(transaction);
+    const actions = createIntakeActions(transaction);
+    for (const outcome of ["pending", "rejected", "accepted"] as const) {
+      const item = await actions.submitIntakeItem.handler({ userId: author.id }, { projectId: project.id, title: outcome });
+      await comments.createComment.handler({ userId: author.id }, { workItemId: item.workItemId, body: doc({ mention: other.id }) });
+      await drain(transaction);
+      if (outcome === "rejected") await actions.rejectIntakeItem.handler({ userId: admin.id }, { intakeItemId: item.id });
+      if (outcome === "accepted") await actions.acceptIntakeItem.handler({ userId: admin.id }, { intakeItemId: item.id });
+      const notice = (await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).notifications.find((row) => row.workItemId === item.workItemId)!;
+      expect(notice).toMatchObject({ intakeId: item.id, intakeOutcome: outcome });
+      const messages: Array<{ text: string }> = [];
+      await sendNotificationDigests(transaction, { mailer: { send: async (message) => { messages.push(message); } }, webOrigin: "https://weft.test", defaultLocale: null });
+      const target = outcome === "accepted" ? `/browse/${item.displayId}` : `/projects/MOB/intake?currentTab=${outcome === "pending" ? "open" : "closed"}&inboxIssueId=${item.id}`;
+      expect(messages.some((message) => message.text.includes(target))).toBe(true);
+    }
+  });
+});
+
+test.concurrent("Intake replies notify the parent author once, including overlap with mentions", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, author, other, third, project, comments, inbox } = await setup(transaction);
+    const item = await createIntakeActions(transaction).submitIntakeItem.handler({ userId: author.id }, { projectId: project.id, title: "Request" });
+    const parent = await comments.createComment.handler({ userId: other.id }, { workItemId: item.workItemId, body: doc("Question") });
+    await drain(transaction);
+    await comments.createComment.handler({ userId: third.id }, { workItemId: item.workItemId, parentId: parent.id, body: doc("Answer") });
+    await drain(transaction);
+    expect((await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).notifications).toMatchObject([{ kind: "reply", workItemId: item.workItemId }]);
+    await comments.createComment.handler({ userId: third.id }, { workItemId: item.workItemId, parentId: parent.id, body: doc("Follow-up ", { mention: other.id }) });
+    await drain(transaction);
+    const notices = (await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).notifications;
+    expect(notices).toHaveLength(2);
+    expect(notices.map((notice) => notice.kind).sort()).toEqual(["mention", "reply"]);
+  });
+});
+
+test.concurrent("an Intake mention queued before access revocation is dropped at notification fan-out", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, admin, author, other, project, comments, inbox } = await setup(transaction, "private");
+    const guest = await createMemberFactory(transaction, workspace.id, "Guest");
+    await createProjectActions(transaction).addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: guest.id, role: "Guest" });
+    const submitted = await createIntakeActions(transaction).submitIntakeItem.handler({ userId: guest.id }, { projectId: project.id, title: "Private request" });
+    await comments.createComment.handler({ userId: author.id }, { workItemId: submitted.workItemId, body: doc("Review ", { mention: other.id }) });
+    await createProjectActions(transaction).removeProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: other.id });
+    await drain(transaction);
+    expect((await inbox.listNotifications.handler({ userId: guest.id }, { workspaceId: workspace.id })).notifications).toMatchObject([{ kind: "mention", workItemId: submitted.workItemId }]);
+    expect((await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).notifications).toHaveLength(0);
+  });
+});
+
+test.concurrent("Intake notifications and queued email respect project Guest access at fan-out and after demotion", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, author, other, third, project, comments, inbox } = await setup(transaction);
+    const intake = await createIntakeActions(transaction).submitIntakeItem.handler({ userId: author.id }, { projectId: project.id, title: "Private request" });
+    await comments.createComment.handler({ userId: author.id }, { workItemId: intake.workItemId, body: doc({ mention: other.id }, { mention: third.id }) });
+    await transaction.update(projectMembers).set({ role: "Guest" }).where(sql`${projectMembers.projectId} = ${project.id} AND ${projectMembers.userId} = ${other.id}`);
+    await drain(transaction);
+    expect(await transaction.select().from(notifications).where(eq(notifications.userId, other.id))).toHaveLength(0);
+    expect(await transaction.select().from(notificationEmails).where(eq(notificationEmails.userId, other.id))).toHaveLength(0);
+    expect((await inbox.listNotifications.handler({ userId: third.id }, { workspaceId: workspace.id })).notifications).toHaveLength(1);
+    expect(await transaction.select().from(notificationEmails).where(eq(notificationEmails.userId, third.id))).toHaveLength(1);
+    await transaction.update(projectMembers).set({ role: "Guest" }).where(sql`${projectMembers.projectId} = ${project.id} AND ${projectMembers.userId} = ${third.id}`);
+    expect((await inbox.listNotifications.handler({ userId: third.id }, { workspaceId: workspace.id })).notifications).toHaveLength(0);
+    const delivered: unknown[] = [];
+    await sendNotificationDigests(transaction, { mailer: { send: async (message) => { delivered.push(message); } }, webOrigin: "https://weft.test", defaultLocale: null });
+    expect(delivered).toHaveLength(0);
+  });
+});
+
+test.concurrent("disabled Intake hides existing notifications and drops queued deliveries", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, admin, author, other, third, project, comments, inbox } = await setup(transaction);
+    const intake = await createIntakeActions(transaction).submitIntakeItem.handler({ userId: author.id }, { projectId: project.id, title: "Request" });
+    await comments.createComment.handler({ userId: author.id }, { workItemId: intake.workItemId, body: doc({ mention: other.id }) });
+    await drain(transaction);
+    expect((await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).notifications).toHaveLength(1);
+    await comments.createComment.handler({ userId: author.id }, { workItemId: intake.workItemId, body: doc({ mention: third.id }) });
+    await createProjectActions(transaction).setProjectFeatures.handler({ userId: admin.id }, { projectId: project.id, features: { intake: false } });
+    await drain(transaction);
+    expect((await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).notifications).toHaveLength(0);
+    expect(await transaction.select().from(notifications).where(eq(notifications.userId, third.id))).toHaveLength(0);
+    const delivered: unknown[] = [];
+    await sendNotificationDigests(transaction, { mailer: { send: async (message) => { delivered.push(message); } }, webOrigin: "https://weft.test", defaultLocale: null });
+    expect(delivered).toHaveLength(0);
+  });
+});
+
+test.concurrent("workspace Admin with project Guest role receives Intake mentions", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, admin, author, project, comments, inbox } = await setup(transaction);
+    await createProjectActions(transaction).addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: admin.id, role: "Guest" });
+    const item = await createIntakeActions(transaction).submitIntakeItem.handler({ userId: author.id }, { projectId: project.id, title: "Request" });
+    await comments.createComment.handler({ userId: author.id }, { workItemId: item.workItemId, body: doc({ mention: admin.id }) });
+    await drain(transaction);
+    expect((await inbox.listNotifications.handler({ userId: admin.id }, { workspaceId: workspace.id })).notifications).toMatchObject([{ workItemId: item.workItemId }]);
+    const delivered: unknown[] = [];
+    await sendNotificationDigests(transaction, { mailer: { send: async (message) => { delivered.push(message); } }, webOrigin: "https://weft.test", defaultLocale: null });
+    expect(delivered).toHaveLength(1);
+  });
+});
+
+test.concurrent("mentioning an Agent on Intake does not start a Run", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, admin, author, project, comments } = await setup(transaction);
+    const agent = await createAgentActions(transaction).createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Triage helper", model: "default" });
+    await createAgentActions(transaction).setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: true, projectIds: [] });
+    const intake = await createIntakeActions(transaction).submitIntakeItem.handler({ userId: author.id }, { projectId: project.id, title: "Unapproved request" });
+    const comment = await comments.createComment.handler({ userId: author.id }, { workItemId: intake.workItemId, body: doc("Please look ", { mention: agent.userId }) });
+    expect(comment.wakeOutcomes).toEqual([]);
+    expect(await transaction.execute(sql`select id from runs where work_item_id = ${intake.workItemId}::uuid`)).toHaveLength(0);
   });
 });
 

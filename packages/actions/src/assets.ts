@@ -1,12 +1,13 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, assets, comments, wikiPages, workItems } from "@weft/db";
-import { assertNotArchived, liveWorkItems } from "./triage";
+import { activities, assets, comments, intakeItems, wikiPages, workItems } from "@weft/db";
+import { assertNotArchived } from "./triage";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 import { activityActor, type ActivityContext } from "./work-items";
 import { createS3Storage, inlineImageTypes, maxAssetBytes, type AssetStorage } from "./storage";
+import { assertFeatureEnabled } from "./features";
 import { requireWikiPageAccess } from "./wiki";
 
 type Context = ActivityContext;
@@ -43,7 +44,9 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
 
   async function resolveOwner(type: OwnerType, id: string): Promise<Owner> {
     if (type === "work_item") {
-      const [item] = await db.select().from(workItems).where(and(eq(workItems.id, id), liveWorkItems));
+      // Intake work items deliberately stay out of normal reads, but their assets
+      // must resolve through this owner path while they are in Triage.
+      const [item] = await db.select().from(workItems).where(and(eq(workItems.id, id), isNull(workItems.deletedAt)));
       if (!item) throw new ActionError("Owner not found", 404);
       return { workspaceId: item.workspaceId, projectId: item.projectId, workItemId: item.id, wikiPageId: null };
     }
@@ -58,17 +61,37 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
   }
 
   /** Project owners follow project access; wiki pages follow the wiki rule: public to every member, private to the page owner (others see it missing). */
-  async function requireOwnerAccess(owner: Owner, userId: string, level: "read" | "write" | "admin") {
-    if (owner.wikiPageId) return requireWikiPageAccess(db, userId, owner.wikiPageId, level === "read" ? "read" : "write");
-    if (owner.projectId) return requireProjectAccess(db, userId, owner.projectId, level);
-    await requireWorkspaceRole(db, userId, owner.workspaceId, "read");
-    if (level !== "read") await requireWorkspaceRole(db, userId, owner.workspaceId, level);
+  async function requireOwnerAccess(owner: Owner, userId: string, level: "read" | "write" | "admin", database: Database = db) {
+    if (owner.wikiPageId) return requireWikiPageAccess(database, userId, owner.wikiPageId, level === "read" ? "read" : "write");
+    if (owner.projectId) {
+      const intake = owner.workItemId ? (await database.select().from(intakeItems).where(eq(intakeItems.workItemId, owner.workItemId)))[0] : undefined;
+      if (intake && intake.outcome !== "accepted") {
+        const { project, workspaceRole, projectRole } = await requireProjectAccess(database, userId, owner.projectId, "read");
+        assertFeatureEnabled(project, "intake");
+        const admin = workspaceRole === "Admin" || projectRole === "Admin";
+        if (level === "read") {
+          if (workspaceRole !== "Admin" && (workspaceRole === "Guest" || projectRole === "Guest") && intake.createdBy !== userId) throw new ActionError("Asset not found", 404);
+          return;
+        }
+        if (intake.outcome !== "pending" && intake.outcome !== "snoozed") throw new ActionError("Intake item is read-only", 400);
+        if (project.archivedAt) throw new ActionError("Project is archived", 400);
+        if (level === "admin") {
+          if (!admin) throw new ActionError("Forbidden", 403);
+          return;
+        }
+        if (!admin && intake.createdBy !== userId) throw new ActionError("Forbidden", 403);
+        return;
+      }
+      return requireProjectAccess(database, userId, owner.projectId, level);
+    }
+    await requireWorkspaceRole(database, userId, owner.workspaceId, "read");
+    if (level !== "read") await requireWorkspaceRole(database, userId, owner.workspaceId, level);
   }
 
   /** An archived work item is read-only, and so are the files on it and on its comments. */
-  async function assertOwnerOpen(owner: Owner | null) {
+  async function assertOwnerOpen(owner: Owner | null, database: Database = db) {
     if (!owner?.workItemId) return;
-    const [item] = await db.select({ archivedAt: workItems.archivedAt }).from(workItems).where(eq(workItems.id, owner.workItemId));
+    const [item] = await database.select({ archivedAt: workItems.archivedAt }).from(workItems).where(eq(workItems.id, owner.workItemId));
     if (item) assertNotArchived(item);
   }
 
@@ -77,8 +100,9 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
     if (row.ownerType === "comment") {
       // A comment on a wiki page follows the page, not just the project the page lives in.
       const owner = await resolveOwner("comment", row.ownerId);
-      if (owner.wikiPageId) return requireOwnerAccess(owner, userId, level);
+      if (owner.wikiPageId || owner.workItemId) return requireOwnerAccess(owner, userId, level);
     }
+    if (row.ownerType === "work_item") return requireOwnerAccess(await resolveOwner("work_item", row.ownerId), userId, level);
     if (row.projectId) return requireProjectAccess(db, userId, row.projectId, level);
     await requireOwnerAccess(await resolveOwner(row.ownerType as OwnerType, row.ownerId), userId, level);
   }
@@ -123,17 +147,27 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
         const row = await loadAsset(input.assetId);
         await requireRowAccess(row, context.userId, "write");
         if (row.uploaderId !== context.userId) throw new ActionError("Only the uploader can complete an upload", 403);
-        if (row.status === "uploaded") return out(row);
-        const stored = await store().head(row.storageKey);
-        if (!stored) throw new ActionError("File was not uploaded", 400);
-        if (stored.size < 1 || stored.size > limitBytes()) {
-          await store().remove(row.storageKey);
-          await db.delete(assets).where(eq(assets.id, row.id));
-          throw new ActionError("File exceeds the size limit", 413);
-        }
         const owner = await resolveOwner(row.ownerType as OwnerType, row.ownerId);
-        return db.transaction(async (transaction) => {
+        const result = await db.transaction(async (transaction) => {
           const database = transaction as unknown as Database;
+          // Intake decisions take this lock first. Recheck access after it, so
+          // a rejection or acceptance cannot race a previously authorized upload.
+          if (owner.workItemId) {
+            await database.select({ id: intakeItems.id }).from(intakeItems).where(eq(intakeItems.workItemId, owner.workItemId)).for("update");
+            await requireOwnerAccess(owner, context.userId, "write", database);
+          }
+          // Completion and cancellation must serialize before touching storage;
+          // otherwise cancellation can remove bytes belonging to an uploaded row.
+          const [locked] = await database.select().from(assets).where(eq(assets.id, row.id)).for("update");
+          if (!locked) throw new ActionError("Asset not found", 404);
+          if (locked.status === "uploaded") return { asset: out(locked) };
+          const stored = await store().head(locked.storageKey);
+          if (!stored) throw new ActionError("File was not uploaded", 400);
+          if (stored.size < 1 || stored.size > limitBytes()) {
+            await store().remove(locked.storageKey);
+            await database.delete(assets).where(eq(assets.id, locked.id));
+            return { oversize: true as const };
+          }
           const [updated] = await database.update(assets).set({ status: "uploaded", size: stored.size, uploadedAt: new Date() }).where(eq(assets.id, row.id)).returning();
           if (owner.workItemId && owner.projectId) {
             await database.insert(activities).values({
@@ -141,7 +175,24 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
               newValue: { assetId: row.id, filename: row.filename, ownerType: row.ownerType }, ...activityActor(context),
             });
           }
-          return out(updated!);
+          return { asset: out(updated!) };
+        });
+        if (result.oversize) throw new ActionError("File exceeds the size limit", 413);
+        return result.asset!;
+      },
+    },
+    cancelAssetUpload: {
+      name: "cancel_asset_upload", kind: "write" as const,
+      input: Type.Object({ assetId: uuid() }), output: Type.Object({ ok: Type.Boolean() }),
+      handler: async (context: Context, input: { assetId: string }) => {
+        return db.transaction(async (transaction) => {
+          const database = transaction as unknown as Database;
+          const [row] = await database.select().from(assets).where(eq(assets.id, input.assetId)).for("update");
+          if (!row || row.uploaderId !== context.userId || row.status !== "pending") throw new ActionError("Pending upload not found", 404);
+          // The uploader may discard their unfinished upload after losing access.
+          await store().remove(row.storageKey);
+          await database.delete(assets).where(eq(assets.id, row.id));
+          return { ok: true };
         });
       },
     },
@@ -176,9 +227,17 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
         await requireRowAccess(row, context.userId, row.uploaderId === context.userId ? "write" : "admin");
         const owner = await resolveOwner(row.ownerType as OwnerType, row.ownerId).catch(() => null);
         await assertOwnerOpen(owner);
-        await store().remove(row.storageKey);
         await db.transaction(async (transaction) => {
           const database = transaction as unknown as Database;
+          if (owner?.workItemId) {
+            // Decisions and uploads take the Intake lock before the asset lock.
+            await database.select({ id: intakeItems.id }).from(intakeItems).where(eq(intakeItems.workItemId, owner.workItemId)).for("update");
+            await requireOwnerAccess(owner, context.userId, row.uploaderId === context.userId ? "write" : "admin", database);
+            await assertOwnerOpen(owner, database);
+          }
+          const [locked] = await database.select().from(assets).where(eq(assets.id, row.id)).for("update");
+          if (!locked) throw new ActionError("Asset not found", 404);
+          await store().remove(locked.storageKey);
           await database.delete(assets).where(eq(assets.id, row.id));
           if (owner?.workItemId && owner.projectId) {
             await database.insert(activities).values({

@@ -1,6 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
-import { aiRequests, collectionMembers, collections, comments, confirmations, notifications, projectMembers, projects, recurrences, sessions, users, wikiPageShares, workItems, wikiPages, workspaceInvites, workspaceMembers, type Database } from "@weft/db";
+import { aiRequests, collectionMembers, collections, comments, confirmations, intakeItems, notifications, projectMembers, projects, recurrences, sessions, users, wikiPageShares, workItems, workItemAssignees, wikiPages, workspaceInvites, workspaceMembers, type Database } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 import { enqueueJob, type JobHandlers } from "./jobs";
@@ -13,7 +13,7 @@ import { fireScheduleRecurrence } from "./recurrences";
 import { purgeIntegrationDeliveries } from "./integration-deliveries";
 import { purgeStaleRuntimes } from "./runtimes";
 import { applyAutoRules, autoRulesJobType } from "./auto-rules";
-import { purgeNotificationEmails, queueNotificationEmails, sendNotificationDigests } from "./email-digest";
+import { canViewNotificationItem, purgeNotificationEmails, queueNotificationEmails, sendNotificationDigests } from "./email-digest";
 import type { MailLocale } from "./email-templates";
 import { webOriginFromEnv, type Mailer } from "./mail";
 import { outboundDeliveryJobHandler, outboundJobType, purgeOutboundDeliveries } from "./outbound-webhooks";
@@ -75,6 +75,37 @@ async function fanOut(database: Database, payload: NotifyPayload, job: { id: str
   const [item] = payload.workItemId ? await database.select().from(workItems).where(and(eq(workItems.id, payload.workItemId), isNull(workItems.deletedAt))) : [];
   const [page] = payload.wikiPageId ? await database.select().from(wikiPages).where(and(eq(wikiPages.id, payload.wikiPageId), isNull(wikiPages.deletedAt))) : [];
   if (!item && !page) return;
+  let allowedRecipients = payload.recipientIds;
+  if (item) {
+    const [intake] = await database.select().from(intakeItems).where(and(eq(intakeItems.workItemId, item.id), sql`${intakeItems.outcome} <> 'accepted'`));
+    if (intake) {
+      const [project] = await database.select().from(projects).where(eq(projects.id, item.projectId));
+      if (!project || !project.intakeEnabled) return;
+      const [projectRows, workspaceRows, assigneeRows] = await Promise.all([
+        database.select({ userId: projectMembers.userId, role: projectMembers.role }).from(projectMembers).where(eq(projectMembers.projectId, project.id)),
+        database.select({ userId: workspaceMembers.userId, role: workspaceMembers.role }).from(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, item.workspaceId), inArray(workspaceMembers.userId, payload.recipientIds), isNull(workspaceMembers.suspendedAt))),
+        database.select({ userId: workItemAssignees.userId }).from(workItemAssignees).where(eq(workItemAssignees.workItemId, item.id)),
+      ]);
+      const projectIds = new Set(projectRows.map((row) => row.userId));
+      const projectRoles = new Map(projectRows.map((row) => [row.userId, row.role]));
+      const roles = new Map(workspaceRows.map((row) => [row.userId, row.role]));
+      const participants = new Set([intake.createdBy, ...assigneeRows.map((row) => row.userId)]);
+      let replyAuthor: string | undefined;
+      if (payload.kind === "reply" && payload.commentId) {
+        const [reply] = await database.select({ parentId: comments.parentId }).from(comments).where(and(eq(comments.id, payload.commentId), isNull(comments.deletedAt)));
+        if (reply?.parentId) {
+          const [parent] = await database.select({ authorId: comments.authorId }).from(comments).where(and(eq(comments.id, reply.parentId), isNull(comments.deletedAt)));
+          replyAuthor = parent?.authorId;
+        }
+      }
+      allowedRecipients = payload.recipientIds.filter((id) => {
+        const role = roles.get(id);
+        if (!role || (project.visibility === "private" && role !== "Admin" && !projectIds.has(id))) return false;
+        if (role !== "Admin" && (role === "Guest" || projectRoles.get(id) === "Guest")) return id === intake.createdBy;
+        return participants.has(id) || (payload.kind === "mention" && payload.commentId !== undefined) || id === replyAuthor;
+      });
+    }
+  }
   if (payload.commentId) {
     const [comment] = await database.select({ id: comments.id, parentId: comments.parentId }).from(comments).where(and(eq(comments.id, payload.commentId), isNull(comments.deletedAt)));
     if (!comment) return;
@@ -85,7 +116,6 @@ async function fanOut(database: Database, payload: NotifyPayload, job: { id: str
     }
   }
   const workspaceId = item?.workspaceId ?? page!.workspaceId;
-  let allowedRecipients = payload.recipientIds;
   if (page) {
     const shares = (await database.select({ userId: wikiPageShares.userId }).from(wikiPageShares).where(eq(wikiPageShares.pageId, page.id))).map((row) => row.userId);
     if (page.access === "private") allowedRecipients = allowedRecipients.filter((id) => id === page.ownerId || shares.includes(id));
@@ -178,6 +208,7 @@ const uuid = () => Type.String({ format: "uuid" });
 const notificationOutput = Type.Object({
   id: Type.String(), kind: Type.Union((["mention", "assignment", "reply", "intake_accepted", "intake_rejected", "intake_duplicate", "run_confirmation", "run_skipped", "wake_skipped", "recurrence_paused", "auto_rule"] as const).map((kind) => Type.Literal(kind))), workItemId: Type.Union([Type.String(), Type.Null()]), wikiPageId: Type.Union([Type.String(), Type.Null()]), pageTitle: Type.Union([Type.String(), Type.Null()]), projectId: Type.Union([Type.String(), Type.Null()]), recurrenceId: Type.Union([Type.String(), Type.Null()]), detail: Type.Union([Type.String(), Type.Null()]),
   displayId: Type.String(), projectKey: Type.Union([Type.String(), Type.Null()]), workItemTitle: Type.String(), commentId: Type.Union([Type.String(), Type.Null()]),
+  intakeId: Type.Union([Type.String(), Type.Null()]), intakeOutcome: Type.Union([Type.String(), Type.Null()]),
   actorId: Type.String(), actorName: Type.String(), readAt: Type.Union([Type.String(), Type.Null()]), createdAt: Type.String(),
 });
 
@@ -188,18 +219,23 @@ export function createNotificationActions(db: Database) {
     const rows = await db.select({
       id: notifications.id, kind: notifications.kind, workItemId: notifications.workItemId, wikiPageId: notifications.wikiPageId, recurrenceId: notifications.recurrenceId, detail: notifications.detail,
       projectId: workItems.projectId, projectKey: projects.key, sequence: workItems.sequence, title: workItems.title, deletedAt: workItems.deletedAt,
+      intakeId: intakeItems.id, intakeOutcome: intakeItems.outcome,
       recurrenceProjectId: recurrences.projectId,
       pageTitle: wikiPages.title, pageDeletedAt: wikiPages.deletedAt, pageAccess: wikiPages.access, pageOwnerId: wikiPages.ownerId, pageProjectId: wikiPages.projectId,
       commentId: notifications.commentId, actorId: notifications.actorId,
       actorName: users.name, readAt: notifications.readAt, createdAt: notifications.createdAt,
     }).from(notifications)
-      .leftJoin(workItems, eq(workItems.id, notifications.workItemId)).leftJoin(wikiPages, eq(wikiPages.id, notifications.wikiPageId)).leftJoin(recurrences, eq(recurrences.id, notifications.recurrenceId))
+      .leftJoin(workItems, eq(workItems.id, notifications.workItemId)).leftJoin(intakeItems, eq(intakeItems.workItemId, workItems.id)).leftJoin(wikiPages, eq(wikiPages.id, notifications.wikiPageId)).leftJoin(recurrences, eq(recurrences.id, notifications.recurrenceId))
       .leftJoin(projects, sql`${projects.id} = coalesce(${workItems.projectId}, ${wikiPages.projectId})`).innerJoin(users, eq(users.id, notifications.actorId))
       .where(and(eq(notifications.userId, userId), eq(notifications.workspaceId, workspaceId), ...(unreadOnly ? [isNull(notifications.readAt)] : [])))
       .orderBy(desc(notifications.createdAt), desc(notifications.id));
     const visibleProjects = new Map<string, boolean>();
     for (const projectId of new Set(rows.flatMap((row) => row.projectId ? [row.projectId] : row.recurrenceProjectId ? [row.recurrenceProjectId] : []))) {
       visibleProjects.set(projectId, await requireProjectAccess(db, userId, projectId, "read").then(() => true, () => false));
+    }
+    const visibleItems = new Map<string, boolean>();
+    for (const row of rows) if (row.workItemId && row.projectId && !visibleItems.has(row.workItemId)) {
+      visibleItems.set(row.workItemId, await canViewNotificationItem(db, userId, row.workItemId, row.projectId));
     }
     const visiblePages = new Map<string, boolean>();
     for (const row of rows) if (row.wikiPageId) {
@@ -214,7 +250,7 @@ export function createNotificationActions(db: Database) {
       }
     }
     return rows.filter((row) => row.recurrenceId !== null ? visibleProjects.get(row.recurrenceProjectId!) : (row.workItemId
-      ? row.deletedAt === null && visibleProjects.get(row.projectId!)
+      ? row.deletedAt === null && visibleItems.get(row.workItemId)
       : row.wikiPageId !== null && visiblePages.get(row.wikiPageId)));
   }
 
@@ -231,7 +267,7 @@ export function createNotificationActions(db: Database) {
           notifications: shown.map((row) => ({
             id: row.id, kind: row.kind as NotificationKind, workItemId: row.workItemId, wikiPageId: row.wikiPageId, pageTitle: row.pageTitle,
             projectId: row.projectId ?? row.pageProjectId ?? row.recurrenceProjectId, projectKey: row.projectKey, recurrenceId: row.recurrenceId, detail: row.detail, displayId: row.projectKey && row.sequence ? `${row.projectKey}-${row.sequence}` : "",
-            workItemTitle: row.title ?? "", commentId: row.commentId, actorId: row.actorId, actorName: row.actorName,
+            workItemTitle: row.title ?? "", commentId: row.commentId, intakeId: row.intakeId, intakeOutcome: row.intakeOutcome, actorId: row.actorId, actorName: row.actorName,
             readAt: row.readAt ? row.readAt.toISOString() : null, createdAt: row.createdAt.toISOString(),
           })),
         };

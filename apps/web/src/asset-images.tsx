@@ -134,22 +134,29 @@ export const readOnlyImages = AssetImage.configure({ upload: null });
 
 type Action = <T>(name: string, body: unknown) => Promise<T | null>;
 
-export function AttachmentsPanel({ workItemId, canWrite, action, onChange, showForm, onCount, pickerRef }: { workItemId: string; canWrite: boolean; action: Action; onChange?: () => void; showForm: boolean; onCount: (count: number) => void; pickerRef?: React.RefObject<HTMLInputElement | null> }) {
+export function AttachmentsPanel({ workItemId, canWrite, action, onChange, showForm, onCount, pickerRef, failedFiles, onFailedFilesChange }: { workItemId: string; canWrite: boolean; action: Action; onChange?: () => void; showForm: boolean; onCount: (count: number) => void; pickerRef?: React.RefObject<HTMLInputElement | null>; failedFiles?: File[]; onFailedFilesChange?: (files: File[]) => void }) {
   const owner: OwnerRef = { ownerType: "work_item", ownerId: workItemId };
+  const localPickerRef = React.useRef<HTMLInputElement>(null);
+  const filePickerRef = pickerRef ?? localPickerRef;
   const [rows, setRows] = React.useState<AssetRow[]>([]);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [dragging, setDragging] = React.useState(false);
+  const [localFailedFiles, setLocalFailedFiles] = React.useState<File[]>([]);
+  const retryFiles = failedFiles ?? localFailedFiles;
+  const updateFailedFiles = (files: File[]) => { setLocalFailedFiles(files); onFailedFilesChange?.(files); };
   const load = React.useCallback(async () => setRows(await action<AssetRow[]>("list_assets", { ownerType: "work_item", ownerId: workItemId }) ?? []), [action, workItemId]);
   React.useEffect(() => { void load(); }, [load]);
   React.useEffect(() => { onCount(rows.length); }, [onCount, rows.length]);
 
   async function attach(files: File[]) {
-    if (!files.length) return;
+    if (!files.length && retryFiles.length === 0) return;
     setBusy(true); setError(null);
-    for (const file of files) {
-      try { await uploadAsset(deps, owner, file); } catch (failure) { setError(translate(failure instanceof UploadError ? failure.key : "assets.uploadFailed")); }
+    const failures: File[] = [];
+    for (const file of [...retryFiles, ...files]) {
+      try { await uploadAsset(deps, owner, file); } catch (failure) { failures.push(file); setError(translate(failure instanceof UploadError ? failure.key : "assets.uploadFailed")); }
     }
+    updateFailedFiles(failures);
     setBusy(false); await load(); onChange?.();
   }
   async function download(row: AssetRow) {
@@ -179,15 +186,16 @@ export function AttachmentsPanel({ workItemId, canWrite, action, onChange, showF
         {canWrite && <button type="button" className="grid size-7 place-items-center rounded-md !bg-transparent !p-0 text-secondary hover:!bg-layer-transparent-hover hover:!text-danger-text" aria-label={`${translate("assets.delete")} ${row.filename}`} title={translate("assets.delete")} onClick={() => void remove(row)}><Trash2 aria-hidden size={13} /></button>}
       </span>
     </li>)}</ul>
-    {canWrite && <input ref={pickerRef} hidden type="file" multiple data-testid="attach-input" onChange={(event) => { void attach([...(event.target.files ?? [])]); event.target.value = ""; }} />}
+    {canWrite && <input ref={filePickerRef} hidden type="file" multiple data-testid="attach-input" onChange={(event) => { void attach([...(event.target.files ?? [])]); event.target.value = ""; }} />}
     {canWrite && showForm && <div data-testid="attachment-dropzone" role="button" tabIndex={0}
       aria-label={translate("assets.dropHint")}
       className={`my-3 grid min-h-20 cursor-pointer place-items-center rounded border border-dashed p-4 text-center text-13 text-secondary ${dragging ? "border-accent bg-accent/10" : "border-subtle"}`}
-      onClick={() => pickerRef?.current?.click()}
-      onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); pickerRef?.current?.click(); } }}>
+      onClick={() => filePickerRef.current?.click()}
+      onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); filePickerRef.current?.click(); } }}>
       {translate("assets.dropHint")}
     </div>}
     {busy && <p role="status">{translate("assets.uploading")}</p>}
+    {canWrite && retryFiles.length > 0 && <div role="alert" className="grid gap-1 text-13 text-danger-text"><p className="m-0">{translate("assets.uploadFailed")}</p><ul className="m-0 list-disc pl-5">{retryFiles.map((file, index) => <li key={`${file.name}-${index}`}>{file.name}</li>)}</ul><button type="button" className="w-fit rounded-md border border-subtle bg-surface-1 px-2 py-1 text-primary" disabled={busy} onClick={() => void attach([])}>{translate("assets.retryFailed")}</button></div>}
     {error && <p role="alert">{error}</p>}
   </section>;
 }

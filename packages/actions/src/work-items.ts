@@ -4,7 +4,7 @@ import { writtenFormOf } from "./written-form-pool";
 import { and, asc, desc, eq, exists, inArray, isNotNull, isNull, lt, max, ne, not, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { Database } from "@weft/db";
-import { activities, agents, comments, cycleItems, cycles, estimatePoints, estimates, moduleItems, modules, labels, projectKeyAliases, projectMembers, projects, runs, users, workItemAssignees, workItemDescriptionVersions, workItemLabels, workItemPropertyValues, workItemStates, workItemTypes, workItems } from "@weft/db";
+import { activities, agents, comments, cycleItems, cycles, estimatePoints, estimates, intakeItems, moduleItems, modules, labels, projectKeyAliases, projectMembers, projects, runs, users, workItemAssignees, workItemDescriptionVersions, workItemLabels, workItemPropertyValues, workItemStates, workItemTypes, workItems } from "@weft/db";
 import { assertNotArchived, liveWorkItems, triageGroup, unarchivedWorkItems } from "./triage";
 import { assertFeatureEnabled, featureOffMessage } from "./features";
 import { assertRequiredFilled, coerceValue, defaultTypeOf, hasValue, loadProperties, loadPropertyValues, loadTypeRow, parsePropertyActivityField, propertyActivityField, publicActivityField, type PropertyDef } from "./work-item-properties";
@@ -1128,8 +1128,17 @@ export function createWorkItemActions(db: Database) {
       name: "list_work_item_activities", kind: "read" as const,
       input: Type.Object({ workItemId: uuid() }), output: Type.Array(activityOutput),
       handler: async (context: Context, input: { workItemId: string }) => {
-        const item = await loadItem(input.workItemId);
+        let [item] = await db.select().from(workItems).where(and(eq(workItems.id, input.workItemId), liveWorkItems));
+        let intake: typeof intakeItems.$inferSelect | undefined;
+        if (!item) {
+          [item] = await db.select().from(workItems).where(and(eq(workItems.id, input.workItemId), isNull(workItems.deletedAt)));
+          if (!item) throw new ActionError("Work item not found", 404);
+          [intake] = await db.select().from(intakeItems).where(eq(intakeItems.workItemId, item.id));
+          if (!intake) throw new ActionError("Work item not found", 404);
+        }
         const access = await requireProjectAccess(db, context.userId, item.projectId, "read");
+        if (intake && intake.outcome !== "accepted") assertFeatureEnabled(access.project, "intake");
+        if (intake && intake.outcome !== "accepted" && access.workspaceRole !== "Admin" && (access.workspaceRole === "Guest" || access.projectRole === "Guest") && intake.createdBy !== context.userId) throw new ActionError("Forbidden", 403);
         const originator = alias(users, "originator");
         const rows = (await db.select({ activity: activities, actorName: users.name, actorIsAgent: users.isAgent, originatorName: originator.name }).from(activities).innerJoin(users, eq(users.id, activities.actorId)).leftJoin(originator, eq(originator.id, activities.originatorId))
           .where(and(eq(activities.entityType, "work_item"), eq(activities.entityId, item.id))).orderBy(asc(activities.seq))).map((row) => ({ ...row.activity, actorName: row.actorName, actorIsAgent: row.actorIsAgent, originatorName: row.originatorName }));

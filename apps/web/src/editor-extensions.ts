@@ -1,5 +1,5 @@
 import { Extension, type AnyExtension, type Range } from "@tiptap/core";
-import { Plugin, PluginKey, TextSelection, type EditorState } from "@tiptap/pm/state";
+import { AllSelection, Plugin, PluginKey, TextSelection, type EditorState } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import { sinkListItem, liftListItem } from "@tiptap/pm/schema-list";
 import { Suggestion, type SuggestionProps } from "@tiptap/suggestion";
@@ -14,13 +14,14 @@ import { revealOption, suggestRender } from "./suggest-list";
 import { isAllowedLinkScheme } from "../../../packages/actions/src/written-form-attributes";
 
 /**
- * When ProseMirror still holds a text range but the DOM selection has already collapsed (an arrow key moved it), collapse ProseMirror to the DOM caret before the key acts.
- * ProseMirror reads the DOM selection only on the async selectionchange, so an Enter sent right after ArrowRight would otherwise replace the old triple-click range.
- * Only a text range is adopted: a node or cell selection keeps its own state.
+ * When ProseMirror still holds a text range or a select-all but the DOM selection has already collapsed (an arrow key or a click moved it), collapse ProseMirror to the DOM caret before the key acts.
+ * ProseMirror reads the DOM selection only on the async selectionchange, so an Enter sent right after ArrowRight would otherwise replace the old triple-click range,
+ * and an Enter sent right after a click into a task item would replace the whole document while ProseMirror still held the old select-all.
+ * A real select-all has a DOM selection that is not collapsed, so it is never adopted away. A node or cell selection keeps its own state.
  */
 export function syncSelectionFromDom(view: EditorView) {
   const { selection: current } = view.state;
-  if (current.empty || !(current instanceof TextSelection)) return;
+  if (current.empty || !(current instanceof TextSelection || current instanceof AllSelection)) return;
   const selection = view.dom.ownerDocument.getSelection();
   if (!selection?.anchorNode || !selection.isCollapsed || !view.dom.contains(selection.anchorNode)) return;
   const caret = view.posAtDOM(selection.anchorNode, selection.anchorOffset);

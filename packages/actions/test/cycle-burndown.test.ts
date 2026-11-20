@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { createDatabase, cycleHistory, cycleItems, cycles as cycleRows, workItemStates, workItems, workspaces, type Database } from "@weft/db";
-import { burndownSeries, createCycleActions, createProjectActions, createWorkItemActions, createActionList } from "../src";
+import { burndownSeries, createCycleActions, createEstimateActions, createProjectActions, createWorkItemActions, createActionList } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -67,8 +67,14 @@ test.concurrent("Cycle start-day coverage after UTC midnight leaves the initial 
 
     const report = await cycles.getCycleBurndown.handler(as, { cycleId: cycle.id });
     expect(report.initialScope).toBeNull();
+    expect(report.total).toBeNull();
     expect(report.days[0]).toMatchObject({ unknown: false, open: 1, ideal: null });
     expect(report.days[1]).toMatchObject({ unknown: false, open: 1 });
+
+    await createEstimateActions(tx).createEstimate.handler(as, { projectId: cycle.projectId, type: "points", values: ["1", "2"] });
+    const points = await cycles.getCycleBurndown.handler(as, { cycleId: cycle.id, unit: "points" });
+    expect(points.initialPoints).toBeNull();
+    expect(points.total).toBeNull();
   });
 });
 

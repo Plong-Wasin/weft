@@ -214,7 +214,7 @@ export function createCycleActions(db: Database) {
       name: "get_cycle_burndown", kind: "read" as const,
       input: Type.Object({ cycleId: uuid(), unit: Type.Optional(burndownUnitSchema) }),
       output: Type.Object({
-        cycleId: Type.String(), unit: burndownUnitSchema, startDate: Type.String(), endDate: Type.String(), total: Type.Number(),
+        cycleId: Type.String(), unit: burndownUnitSchema, startDate: Type.String(), endDate: Type.String(), total: Type.Union([Type.Number(), Type.Null()]),
         initialScope: Type.Union([Type.Number(), Type.Null()]), finalOutcome: Type.Union([Type.Object({ completed: Type.Union([Type.Number(), Type.Null()]), open: Type.Union([Type.Number(), Type.Null()]), cancelled: Type.Union([Type.Number(), Type.Null()]), completedPoints: Type.Union([Type.Number(), Type.Null()]), openPoints: Type.Union([Type.Number(), Type.Null()]), cancelledPoints: Type.Union([Type.Number(), Type.Null()]) }), Type.Null()]),
         outcomeDate: Type.Union([Type.String(), Type.Null()]), initialPoints: Type.Union([Type.Number(), Type.Null()]), unestimated: Type.Union([Type.Number(), Type.Null()]), coverageStart: Type.String(), dateChanges: Type.Array(Type.Object({ at: Type.String(), previousStartDate: Type.String(), previousEndDate: Type.String(), startDate: Type.String(), endDate: Type.String() })),
         scopeChanges: Type.Array(Type.Object({ date: Type.String(), added: Type.Number(), removed: Type.Number() })),
@@ -270,7 +270,7 @@ export function createCycleActions(db: Database) {
         // The inclusive end date is only an outcome after its UTC calendar day has closed.
         const cycleEnded = cycle.endDate < today;
         const finalDay = cycleEnded ? days.find((day) => day.date === cycle.endDate) : undefined;
-        return { cycleId: cycle.id, unit, startDate: cycle.startDate, endDate: cycle.endDate, total: unit === "points" ? (initialPoints ?? 0) : (initialScope ?? 0),
+        return { cycleId: cycle.id, unit, startDate: cycle.startDate, endDate: cycle.endDate, total: unit === "points" ? initialPoints : initialScope,
           initialScope,
           initialPoints,
           finalOutcome: finalDay ? { completed: finalDay.completed, open: finalDay.open, cancelled: finalDay.cancelled, completedPoints: finalDay.pointsCompleted, openPoints: finalDay.pointsOpen, cancelledPoints: finalDay.pointsCancelled } : null,

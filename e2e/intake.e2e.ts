@@ -2,7 +2,7 @@
 // Run with `bun run e2e` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
 import { chromium, type Locator, type Page } from "playwright";
 import { eq, like } from "drizzle-orm";
-import { createDatabase, projects as dbProjects, users, workspaces } from "../packages/db/src";
+import { createDatabase, projectMembers, projects as dbProjects, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
 
@@ -142,6 +142,15 @@ try {
   const chooser = page.waitForEvent("filechooser");
   await detail.getByTestId("attachment-dropzone").click();
   await chooser;
+  // Workspace Admin access overrides a project Guest role for decisions.
+  await e2eDatabase.db.update(projectMembers).set({ role: "Guest" }).where(eq(projectMembers.userId, userRow!.id));
+  await page.reload();
+  await page.getByTestId("intake-MOB-1").click();
+  await detail.getByRole("button", { name: translate("intake.accept"), exact: true }).waitFor();
+  await e2eDatabase.db.update(projectMembers).set({ role: "Admin" }).where(eq(projectMembers.userId, userRow!.id));
+  await page.reload();
+  await page.getByTestId("intake-MOB-1").click();
+  await detail.getByLabel(translate("intake.titleField")).waitFor();
   await submit("Secondary draft");
   await detail.locator("header").getByText("MOB-2", { exact: true }).waitFor();
   await page.getByTestId("intake-MOB-1").click();
@@ -315,6 +324,7 @@ try {
   await guestDialog.getByRole("button", { name: translate("intake.submit"), exact: true }).click();
   await firstGuest.page.getByText("Guest private request", { exact: true }).waitFor();
   const guestDetail = firstGuest.page.getByRole("region", { name: translate("intake.detail") });
+  check(await guestDetail.getByRole("button", { name: translate("intake.accept"), exact: true }).count() === 0, "a Guest saw decision controls");
   await guestDetail.getByTestId("comment-editor").locator('[contenteditable="true"]').fill("Guest discussion");
   await guestDetail.getByRole("button", { name: translate("comments.add"), exact: true }).click();
   await guestDetail.getByText("Guest discussion", { exact: true }).waitFor();

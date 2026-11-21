@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Project } from "../src/types";
-import { dropWithinGroup, moveWithinGroup, orderAsPreferences, sortProjects, type ProjectPreference } from "../src/shell/project-preferences";
+import { dropWithinGroup, filterProjectGroups, moveWithinGroup, orderAsPreferences, sortProjects, type ProjectPreference } from "../src/shell/project-preferences";
 
 const project = (key: string, name: string): Project => ({ id: `id-${key}`, key, name, visibility: "public", archived: false, role: "Member", features: { cycles: true, modules: true, intake: true } as Project["features"] });
 const alpha = project("ALP", "Alpha");
@@ -46,4 +46,16 @@ test("a saved order gives every listed project its index and clears the rest", (
     { projectId: alpha.id, starred: false, position: 0, expanded: false },
     { projectId: beta.id, starred: false, position: 1, expanded: false },
   ]);
+});
+
+test("project search finds by name or key across starred and ordered projects", () => {
+  const prefs = [pref(gamma.id, { starred: true, position: 0 }), pref(beta.id, { position: 0 })];
+  const { starred, others } = filterProjectGroups(projects, prefs, "gam");
+  expect(starred.map((project) => project.key)).toEqual(["GAM"]);
+  expect(others).toEqual([]);
+});
+
+test("project search matches all words in either name or key and leaves empty query unchanged", () => {
+  expect(filterProjectGroups(projects, [], "bet beta").others.map((project) => project.key)).toEqual(["BET"]);
+  expect(filterProjectGroups(projects, [], "").others.map((project) => project.key)).toEqual(["ALP", "BET", "GAM"]);
 });

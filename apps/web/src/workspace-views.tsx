@@ -28,6 +28,7 @@ export const builtinViews = [
 ] as const;
 
 type Item = { id: string; displayId: string; title: string; projectId: string; projectKey: string; projectName: string; stateId: string; priority: string; assigneeIds: string[]; labelIds: string[]; startDate: string | null; dueDate: string | null };
+type WorkspaceItems = { items: Item[]; truncated: boolean };
 type State = { id: string; name: string; group: StateGroup };
 type Label = { id: string; name: string };
 /** Workspace views are always the spreadsheet Layout: the columns the viewer may choose. */
@@ -80,6 +81,7 @@ export function WorkspaceViewPage({ workspace, selfId, viewId }: { workspace: Wo
   const [params, setParams] = React.useState<LayoutParams>(() => asWorkspace(parseLayoutParams(window.location.search)));
   const [ready, setReady] = React.useState(!!builtin);
   const [items, setItems] = React.useState<Item[] | null>(null);
+  const [truncated, setTruncated] = React.useState(false);
   const [projects, setProjects] = React.useState<Project[]>([]);
   const [states, setStates] = React.useState<State[]>([]);
   const [labels, setLabels] = React.useState<Label[]>([]);
@@ -123,10 +125,10 @@ export function WorkspaceViewPage({ workspace, selfId, viewId }: { workspace: Wo
   React.useEffect(() => {
     if (!ready) return;
     let live = true;
-    void actionResult<Item[]>("list_workspace_work_items", { workspaceId: workspace.id, ...(builtin ? { builtin: builtin.kind } : {}), ...(params.q.trim() ? { query: params.q } : {}), sort: params.sort, direction: params.dir }).then((result) => {
+    void actionResult<WorkspaceItems>("list_workspace_work_items_with_metadata", { workspaceId: workspace.id, ...(builtin ? { builtin: builtin.kind } : {}), ...(params.q.trim() ? { query: params.q } : {}), sort: params.sort, direction: params.dir }).then((result) => {
       if (!live) return;
       if ("error" in result) { setQueryError(params.q.trim() ? result.error : null); return; }
-      setQueryError(null); setItems(result.data);
+      setQueryError(null); setItems(result.data.items); setTruncated(result.data.truncated);
     });
     return () => { live = false; };
   }, [ready, workspace.id, builtin, params.q, params.sort, params.dir]);
@@ -140,18 +142,19 @@ export function WorkspaceViewPage({ workspace, selfId, viewId }: { workspace: Wo
   const link = `${window.location.origin}${paths.workspaceView(workspace.slug, builtin ? builtin.slug : viewId)}`;
   const entries = [...builtinViews.map((entry) => ({ slug: entry.slug as string, name: t(entry.label), isPrivate: false })), ...(saved ?? []).map((entry) => ({ slug: entry.id, name: entry.name, isPrivate: entry.access === "private" }))];
   return <section className="grid gap-3">
-    <header className="flex flex-wrap items-center gap-2 border-b border-subtle pb-3">
-      <nav aria-label={t("views.breadcrumb")} className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 text-14 text-secondary">
+    <header data-testid="workspace-view-header" className="grid gap-2 border-b border-subtle pb-3 sm:flex sm:flex-wrap sm:items-center">
+      <nav aria-label={t("views.breadcrumb")} className="flex min-w-0 flex-wrap items-center gap-1.5 text-14 text-secondary sm:flex-1">
         <Layers aria-hidden size={14} /><span>{t("views.title")}</span><ChevronRight aria-hidden size={14} />
         {/* The h1 sits beside the trigger: a heading inside a button is not exposed as a heading. */}
         <h1 className="sr-only">{title}</h1>
-        <Popover label={t("workspaceViews.switch")} className="text-14 font-medium text-primary" panelClassName="max-h-80 w-64 overflow-auto" trigger={<><span aria-hidden>{title}</span><ChevronDown aria-hidden size={14} /></>}>
+        <Popover label={t("workspaceViews.switch")} className="max-w-full whitespace-nowrap text-14 font-medium text-primary" panelClassName="max-h-80 w-64 overflow-auto" trigger={<><span aria-hidden className="max-w-[min(60vw,20rem)] truncate">{title}</span><ChevronDown aria-hidden size={14} /></>}>
           {(close) => entries.map((entry) => <button key={entry.slug} type="button" role="menuitemradio" aria-checked={entry.slug === viewId} className={menuItemClass}
             onClick={() => { close(); navigate(paths.workspaceView(workspace.slug, entry.slug)); }}>
             <Layers aria-hidden size={14} className="text-secondary" /><span className="flex-1 truncate">{entry.name}</span>{entry.isPrivate && <Lock aria-hidden size={12} className="text-tertiary" />}{entry.slug === viewId && <Check aria-hidden size={14} />}</button>)}
         </Popover>
         {view && <span title={t(`views.access.${view.access}`)} className="text-12 text-tertiary">{t(`views.access.${view.access}`)}</span>}
       </nav>
+      <div data-testid="workspace-view-controls" className="flex min-w-0 flex-wrap items-center gap-2 sm:ml-auto">
       <FilterQueryToggle open={filterQueryOpen || queryError !== null} onToggle={() => setFilterQueryOpen(!filterQueryOpen)} />
       <Popover label={t("layout.display")} className={ghost} panelRole="dialog" panelClassName="grid w-72 max-w-[calc(100vw-2rem)] max-h-[70vh] gap-3 overflow-auto p-3" trigger={<><SlidersHorizontal aria-hidden size={14} /><span>{t("layout.display")}</span></>}>
         {() => <>
@@ -178,10 +181,12 @@ export function WorkspaceViewPage({ workspace, selfId, viewId }: { workspace: Wo
           </>}
         </>}
       </Popover>
+      </div>
     </header>
     {view?.description && <p className="m-0 text-13 text-secondary">{view.description}</p>}
     {status && <p role="status" className="m-0 text-13 text-secondary">{status}</p>}
     {(filterQueryOpen || queryError !== null) && <FilterQueryEditor text={params.q} error={queryError} onApply={(text) => update({ q: text })} generate={{ workspaceId: workspace.id }} />}
+    {truncated && <p role="status" className="m-0 rounded-md border-l-4 border-warning-strong bg-warning-subtle px-3 py-2 text-13 text-warning-text">{t("workspaceViews.truncated")}</p>}
     {items !== null && <WorkspaceSheet items={items} projects={projects} states={states} labels={labels} people={people} workspaceSlug={workspace.slug} props={params.props} empty={t(params.q.trim() ? "layout.noMatch" : "workspaceViews.empty")} />}
     {form === "save" && <ViewFormModal mode="save" target={{ workspaceId: workspace.id }} settings={paramsToSettings(params)} onClose={() => setForm(null)} onSaved={(next) => { setForm(null); void reloadList(); navigate(paths.workspaceView(workspace.slug, next.id)); }} />}
     {form === "edit" && view && <ViewFormModal mode="edit" view={view} target={{ workspaceId: workspace.id }} onClose={() => setForm(null)} onSaved={(next) => { setForm(null); setView(next); void reloadList(); }} />}

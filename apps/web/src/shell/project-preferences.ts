@@ -25,6 +25,22 @@ export function sortProjects(projects: Project[], prefs: ProjectPreference[]) {
   return { starred, others };
 }
 
+export function matchesProjectSearch(project: Project, query: string): boolean {
+  const words = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  const matches = (project: Project) => {
+    const text = `${project.name} ${project.key}`.toLocaleLowerCase();
+    return words.every((word) => text.includes(word));
+  };
+  return matches(project);
+}
+
+/** Filters each existing navigation group without changing its saved order or starred status. */
+export function filterProjectGroups(projects: Project[], prefs: ProjectPreference[], query: string) {
+  const groups = sortProjects(projects, prefs);
+  const matches = (project: Project) => matchesProjectSearch(project, query);
+  return { starred: groups.starred.filter(matches), others: groups.others.filter(matches) };
+}
+
 /** The whole order as project ids, Starred first, as the server stores it. */
 export function fullOrder(starred: Project[], others: Project[]) {
   return [...starred, ...others].map((project) => project.id);

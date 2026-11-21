@@ -2,6 +2,7 @@ import React from "react";
 import { Link } from "react-router";
 import { formatDate, formatNumber, translate } from "@weft/shared";
 import { action, actionResult } from "../../api";
+import { matchesProjectSearch } from "../../shell/project-preferences";
 import { Avatar } from "../../avatar";
 import { capitalize, profileSummary, runtimeParts } from "../../agent-labels";
 import { useWorkspace } from "../../layouts/workspace-layout";
@@ -63,6 +64,8 @@ function AccessEditor({ agent, projects, onSaved, onFailed }: { agent: AgentReco
   const [draft, setDraft] = React.useState({ allProjects: agent.allProjects, projectIds: agent.projectIds });
   const [base, setBase] = React.useState({ allProjects: agent.allProjects, projectIds: agent.projectIds });
   const [saving, setSaving] = React.useState(false);
+  const [projectQuery, setProjectQuery] = React.useState("");
+  const visibleProjects = projects.filter((project) => matchesProjectSearch(project, projectQuery));
   const dirty = draft.allProjects !== base.allProjects || [...draft.projectIds].sort().join() !== [...base.projectIds].sort().join();
   const save = async () => {
     setSaving(true);
@@ -76,8 +79,14 @@ function AccessEditor({ agent, projects, onSaved, onFailed }: { agent: AgentReco
   };
   return <fieldset className="grid gap-1 border-0 p-0"><legend className="text-13 font-medium text-secondary">{translate("agents.access")}</legend>
     <label className="flex items-center gap-2"><input type="checkbox" checked={draft.allProjects} onChange={(event) => setDraft({ ...draft, allProjects: event.target.checked, projectIds: event.target.checked ? [] : draft.projectIds })} />{translate("agents.allProjects")}</label>
-    {!draft.allProjects && projects.map((project) => <label key={project.id} className="flex items-center gap-2">
-      <input type="checkbox" checked={draft.projectIds.includes(project.id)} onChange={(event) => setDraft({ ...draft, projectIds: event.target.checked ? [...draft.projectIds, project.id] : draft.projectIds.filter((entry) => entry !== project.id) })} />{project.key} · {project.name}</label>)}
+    {!draft.allProjects && <>
+      <label className="grid gap-1 text-12 font-medium text-secondary">{translate("projects.find")}
+        <input type="search" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder={translate("projects.searchPlaceholder")} className="px-2 py-1 text-13" />
+      </label>
+      {visibleProjects.map((project) => <label key={project.id} className="flex items-center gap-2">
+        <input type="checkbox" checked={draft.projectIds.includes(project.id)} onChange={(event) => setDraft({ ...draft, projectIds: event.target.checked ? [...draft.projectIds, project.id] : draft.projectIds.filter((entry) => entry !== project.id) })} />{project.key} · {project.name}</label>)}
+      {visibleProjects.length === 0 && projectQuery.trim() && <p role="status" className="m-0 text-12 text-secondary">{translate("projects.noSearchResults")}</p>}
+    </>}
     <button type="button" disabled={!dirty || saving} onClick={() => void save()}>{translate("agents.save")}</button>
   </fieldset>;
 }

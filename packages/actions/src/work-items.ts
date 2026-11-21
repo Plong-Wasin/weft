@@ -108,6 +108,15 @@ const listInput = {
   archived: Type.Optional(Type.Boolean({ description: "true lists only archived work items; the default lists only work items that are not archived" })),
 };
 type ListInput = { projectId: string; stateIds?: string[]; priorities?: Priority[]; assigneeIds?: string[]; labelIds?: string[]; typeIds?: string[]; cycleId?: string; moduleId?: string; sort?: (typeof sortFields)[number]; direction?: "asc" | "desc"; query?: string; archived?: boolean };
+const workspaceListInput = {
+  workspaceId: uuid(),
+  /** One of Plane's built-in views: all, assigned to me, created by me, subscribed (created by, assigned to, or commented on by me). */
+  builtin: Type.Optional(Type.Union(builtinViewKinds.map((kind) => Type.Literal(kind)))),
+  sort: Type.Optional(Type.Union(sortFields.map((field) => Type.Literal(field)))), direction: Type.Optional(Type.Union([Type.Literal("asc"), Type.Literal("desc")])),
+  /** A Weft filter query, compiled in each project (names such as states and labels are per project); a project where it does not apply contributes nothing. */
+  query: Type.Optional(Type.String({ maxLength: filterQueryLimits.maxLength, description: filterQuerySyntaxHelp })),
+};
+type WorkspaceListInput = { workspaceId: string; builtin?: (typeof builtinViewKinds)[number]; sort?: (typeof sortFields)[number]; direction?: "asc" | "desc"; query?: string };
 /** Distance between neighbours: new work items append 65536 apart, so a midpoint split has ~40 halvings before the gap collapses. */
 const sortGap = 65536;
 /** A property value as a timeline reads it: the option label, the member's name, or the labels of a list joined by commas. */
@@ -275,6 +284,48 @@ export function createWorkItemActions(db: Database) {
   async function projectKey(projectId: string) {
     const [project] = await db.select({ key: projects.key }).from(projects).where(eq(projects.id, projectId));
     return project!.key;
+  }
+
+  /** Shared implementation for the legacy array Action and the Workspace View metadata Action. */
+  async function listWorkspaceWorkItems(context: Context, input: WorkspaceListInput) {
+    const accessible = await accessibleProjects(db, context.userId, input.workspaceId);
+    if (accessible.length === 0) return { items: [], truncated: false };
+    const markdownOptions = await workItemMarkdownOptions(db, context.userId, input.workspaceId);
+    const conditions = [inArray(workItems.projectId, accessible.map((project) => project.id)), listableWorkItem()];
+    const me = context.userId;
+    const assigned = exists(db.select({ one: sql`1` }).from(workItemAssignees).where(and(eq(workItemAssignees.workItemId, workItems.id), eq(workItemAssignees.userId, me))));
+    if (input.builtin === "assigned") conditions.push(assigned);
+    if (input.builtin === "created") conditions.push(eq(workItems.createdBy, me));
+    if (input.builtin === "subscribed") {
+      const commented = exists(db.select({ one: sql`1` }).from(comments).where(and(eq(comments.workItemId, workItems.id), eq(comments.authorId, me), isNull(comments.deletedAt))));
+      conditions.push(or(eq(workItems.createdBy, me), assigned, commented)!);
+    }
+    if (input.query?.trim()) {
+      const parts: ReturnType<typeof and>[] = [];
+      let firstError: unknown = null;
+      for (const project of accessible) {
+        try {
+          const compiled = await compileFilterQuery(db, { workspaceId: input.workspaceId, projectId: project.id, projectKey: project.key, userId: me }, input.query, { registry: weftFilterQueryRegistry });
+          parts.push(compiled.where ? and(eq(workItems.projectId, project.id), compiled.where) : eq(workItems.projectId, project.id));
+        } catch (error) { firstError ??= error; }
+      }
+      if (parts.length === 0) throw firstError;
+      conditions.push(or(...parts)!);
+    }
+    const direction = input.direction === "desc" ? desc : asc;
+    const priorityRank = sql`case ${workItems.priority} when 'urgent' then 0 when 'high' then 1 when 'medium' then 2 when 'low' then 3 else 4 end`;
+    const order = {
+      manual: [direction(workItems.createdAt)], priority: [direction(priorityRank), asc(workItems.createdAt)], title: [direction(sql`lower(${workItems.title})`)],
+      created: [direction(workItems.createdAt)], updated: [direction(workItems.updatedAt)], dueDate: [sql`${workItems.dueDate} is null`, direction(workItems.dueDate)],
+    }[input.sort ?? "manual"];
+    const rows = await db.select().from(workItems).where(and(...conditions)).orderBy(...order, asc(workItems.projectId), asc(workItems.sequence)).limit(2001);
+    const relations = await relationsOf(db, rows.map((row) => row.id));
+    const byProject = new Map(accessible.map((project) => [project.id, project]));
+    const truncated = rows.length > 2000;
+    return {
+      items: rows.slice(0, 2000).map((row) => ({ ...itemOut(row, byProject.get(row.projectId)!.key, relations.get(row.id), markdownOptions, [], [], true), projectKey: byProject.get(row.projectId)!.key, projectName: byProject.get(row.projectId)!.name })),
+      truncated,
+    };
   }
 
   async function relationsOf(database: Database, itemIds: string[]) {
@@ -774,51 +825,14 @@ export function createWorkItemActions(db: Database) {
     /** Work items across every project the caller can access in the workspace; a private project the caller is not in never contributes a row. */
     listWorkspaceWorkItems: {
       name: "list_workspace_work_items", kind: "read" as const,
-      input: Type.Object({
-        workspaceId: uuid(),
-        /** One of Plane's built-in views: all, assigned to me, created by me, subscribed (created by, assigned to, or commented on by me). */
-        builtin: Type.Optional(Type.Union(builtinViewKinds.map((kind) => Type.Literal(kind)))),
-        sort: Type.Optional(Type.Union(sortFields.map((field) => Type.Literal(field)))), direction: Type.Optional(Type.Union([Type.Literal("asc"), Type.Literal("desc")])),
-        /** A Weft filter query, compiled in each project (names such as states and labels are per project); a project where it does not apply contributes nothing. */
-        query: Type.Optional(Type.String({ maxLength: filterQueryLimits.maxLength, description: filterQuerySyntaxHelp })),
-      }),
-      output: Type.Array(Type.Intersect([workItemOutput, Type.Object({ projectKey: Type.String(), projectName: Type.String() })])),
-      handler: async (context: Context, input: { workspaceId: string; builtin?: (typeof builtinViewKinds)[number]; sort?: (typeof sortFields)[number]; direction?: "asc" | "desc"; query?: string }) => {
-        const accessible = await accessibleProjects(db, context.userId, input.workspaceId);
-        if (accessible.length === 0) return [];
-        const markdownOptions = await workItemMarkdownOptions(db, context.userId, input.workspaceId);
-        const conditions = [inArray(workItems.projectId, accessible.map((project) => project.id)), listableWorkItem()];
-        const me = context.userId;
-        const assigned = exists(db.select({ one: sql`1` }).from(workItemAssignees).where(and(eq(workItemAssignees.workItemId, workItems.id), eq(workItemAssignees.userId, me))));
-        if (input.builtin === "assigned") conditions.push(assigned);
-        if (input.builtin === "created") conditions.push(eq(workItems.createdBy, me));
-        if (input.builtin === "subscribed") {
-          const commented = exists(db.select({ one: sql`1` }).from(comments).where(and(eq(comments.workItemId, workItems.id), eq(comments.authorId, me), isNull(comments.deletedAt))));
-          conditions.push(or(eq(workItems.createdBy, me), assigned, commented)!);
-        }
-        if (input.query?.trim()) {
-          const parts: ReturnType<typeof and>[] = [];
-          let firstError: unknown = null;
-          for (const project of accessible) {
-            try {
-              const compiled = await compileFilterQuery(db, { workspaceId: input.workspaceId, projectId: project.id, projectKey: project.key, userId: me }, input.query, { registry: weftFilterQueryRegistry });
-              parts.push(compiled.where ? and(eq(workItems.projectId, project.id), compiled.where) : eq(workItems.projectId, project.id));
-            } catch (error) { firstError ??= error; }
-          }
-          if (parts.length === 0) throw firstError;
-          conditions.push(or(...parts)!);
-        }
-        const direction = input.direction === "desc" ? desc : asc;
-        const priorityRank = sql`case ${workItems.priority} when 'urgent' then 0 when 'high' then 1 when 'medium' then 2 when 'low' then 3 else 4 end`;
-        const order = {
-          manual: [direction(workItems.createdAt)], priority: [direction(priorityRank), asc(workItems.createdAt)], title: [direction(sql`lower(${workItems.title})`)],
-          created: [direction(workItems.createdAt)], updated: [direction(workItems.updatedAt)], dueDate: [sql`${workItems.dueDate} is null`, direction(workItems.dueDate)],
-        }[input.sort ?? "manual"];
-        const rows = await db.select().from(workItems).where(and(...conditions)).orderBy(...order, asc(workItems.projectId), asc(workItems.sequence)).limit(2000);
-        const relations = await relationsOf(db, rows.map((row) => row.id));
-        const byProject = new Map(accessible.map((project) => [project.id, project]));
-        return rows.map((row) => ({ ...itemOut(row, byProject.get(row.projectId)!.key, relations.get(row.id), markdownOptions, [], [], true), projectKey: byProject.get(row.projectId)!.key, projectName: byProject.get(row.projectId)!.name }));
-      },
+      input: Type.Object(workspaceListInput), output: Type.Array(Type.Intersect([workItemOutput, Type.Object({ projectKey: Type.String(), projectName: Type.String() })])),
+      handler: async (context: Context, input: WorkspaceListInput) => (await listWorkspaceWorkItems(context, input)).items,
+    },
+    /** Additive Workspace View contract: same bounded results plus an explicit indication of additional matches. */
+    listWorkspaceWorkItemsWithMetadata: {
+      name: "list_workspace_work_items_with_metadata", kind: "read" as const,
+      input: Type.Object(workspaceListInput), output: Type.Object({ items: Type.Array(Type.Intersect([workItemOutput, Type.Object({ projectKey: Type.String(), projectName: Type.String() })])), truncated: Type.Boolean() }),
+      handler: async (context: Context, input: WorkspaceListInput) => listWorkspaceWorkItems(context, input),
     },
     moveWorkItem: {
       name: "move_work_item", kind: "write" as const,

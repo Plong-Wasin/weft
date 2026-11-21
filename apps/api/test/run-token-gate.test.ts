@@ -55,7 +55,7 @@ test.concurrent("a Runtime Run token refuses deletes with a clear message", asyn
 test.concurrent("Runtime Run credentials and completion comments identify the Agent and retain Originator authorization", async () => {
   await withRollback(db, async (transaction) => {
     const { post, claim, owner, workspace, project, agent } = await scenario(transaction);
-    const member = await createMemberFactory(transaction, workspace.id, "Originator");
+    const member = await createMemberFactory(transaction, workspace.id, "Member");
     await createProjectActions(transaction).addProjectMember.handler({ userId: owner.id }, { projectId: project.id, userId: member.id, role: "Member" });
     await createAgentActions(transaction).setAgentAccess.handler({ userId: owner.id }, { agentId: agent.id, userIds: [owner.id, member.id] });
     const work = createWorkItemActions(transaction);

@@ -782,10 +782,10 @@ export function createWorkItemActions(db: Database) {
         /** A Weft filter query, compiled in each project (names such as states and labels are per project); a project where it does not apply contributes nothing. */
         query: Type.Optional(Type.String({ maxLength: filterQueryLimits.maxLength, description: filterQuerySyntaxHelp })),
       }),
-      output: Type.Array(Type.Intersect([workItemOutput, Type.Object({ projectKey: Type.String(), projectName: Type.String() })])),
+      output: Type.Object({ items: Type.Array(Type.Intersect([workItemOutput, Type.Object({ projectKey: Type.String(), projectName: Type.String() })])), truncated: Type.Boolean() }),
       handler: async (context: Context, input: { workspaceId: string; builtin?: (typeof builtinViewKinds)[number]; sort?: (typeof sortFields)[number]; direction?: "asc" | "desc"; query?: string }) => {
         const accessible = await accessibleProjects(db, context.userId, input.workspaceId);
-        if (accessible.length === 0) return [];
+        if (accessible.length === 0) return { items: [], truncated: false };
         const markdownOptions = await workItemMarkdownOptions(db, context.userId, input.workspaceId);
         const conditions = [inArray(workItems.projectId, accessible.map((project) => project.id)), listableWorkItem()];
         const me = context.userId;
@@ -814,10 +814,14 @@ export function createWorkItemActions(db: Database) {
           manual: [direction(workItems.createdAt)], priority: [direction(priorityRank), asc(workItems.createdAt)], title: [direction(sql`lower(${workItems.title})`)],
           created: [direction(workItems.createdAt)], updated: [direction(workItems.updatedAt)], dueDate: [sql`${workItems.dueDate} is null`, direction(workItems.dueDate)],
         }[input.sort ?? "manual"];
-        const rows = await db.select().from(workItems).where(and(...conditions)).orderBy(...order, asc(workItems.projectId), asc(workItems.sequence)).limit(2000);
+        const rows = await db.select().from(workItems).where(and(...conditions)).orderBy(...order, asc(workItems.projectId), asc(workItems.sequence)).limit(2001);
         const relations = await relationsOf(db, rows.map((row) => row.id));
         const byProject = new Map(accessible.map((project) => [project.id, project]));
-        return rows.map((row) => ({ ...itemOut(row, byProject.get(row.projectId)!.key, relations.get(row.id), markdownOptions, [], [], true), projectKey: byProject.get(row.projectId)!.key, projectName: byProject.get(row.projectId)!.name }));
+        const truncated = rows.length > 2000;
+        return {
+          items: rows.slice(0, 2000).map((row) => ({ ...itemOut(row, byProject.get(row.projectId)!.key, relations.get(row.id), markdownOptions, [], [], true), projectKey: byProject.get(row.projectId)!.key, projectName: byProject.get(row.projectId)!.name })),
+          truncated,
+        };
       },
     },
     moveWorkItem: {

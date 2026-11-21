@@ -1,5 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
-import { createDatabase, type Database } from "@weft/db";
+import { eq } from "drizzle-orm";
+import { createDatabase, workItemStates, workItems, type Database } from "@weft/db";
 import { builtinViewId, createCommentActions, createProjectActions, createViewActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -28,7 +29,7 @@ test.concurrent("workspace work items never include a private project the caller
     const { workspace, admin, member, other, guest, open, secret, work } = await setup(transaction);
     await work.createWorkItem.handler({ userId: admin.id }, { projectId: open.id, title: "Public one" });
     await work.createWorkItem.handler({ userId: admin.id }, { projectId: secret.id, title: "Hidden one" });
-    const list = async (userId: string, extra: Record<string, unknown> = {}) => titles(await work.listWorkspaceWorkItems.handler({ userId }, { workspaceId: workspace.id, ...extra }));
+    const list = async (userId: string, extra: Record<string, unknown> = {}) => titles((await work.listWorkspaceWorkItems.handler({ userId }, { workspaceId: workspace.id, ...extra })).items);
     expect(await list(admin.id)).toEqual(["Hidden one", "Public one"]);
     expect(await list(member.id)).toEqual(["Hidden one", "Public one"]);
     expect(await list(other.id)).toEqual(["Public one"]);
@@ -36,6 +37,26 @@ test.concurrent("workspace work items never include a private project the caller
     // A filter query and every built-in view stay inside the same boundary.
     expect(await list(other.id, { query: "priority = none" })).toEqual(["Public one"]);
     for (const builtin of ["all", "assigned", "created", "subscribed"]) expect(await list(other.id, { builtin })).not.toContain("Hidden one");
+  });
+});
+
+test.concurrent("workspace Views return 2,000 work items at the limit and disclose additional matches", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, admin, open, work } = await setup(transaction);
+    const [state] = await transaction.select().from(workItemStates).where(eq(workItemStates.projectId, open.id)).limit(1);
+    const rows = Array.from({ length: 2001 }, (_, index) => ({
+      workspaceId: workspace.id, projectId: open.id, sequence: index + 1, title: `Scale item ${index + 1}`,
+      stateId: state!.id, sortOrder: index, createdBy: admin.id,
+    }));
+    for (let offset = 0; offset < 2000; offset += 500) await transaction.insert(workItems).values(rows.slice(offset, offset + 500));
+    const atLimit = await work.listWorkspaceWorkItems.handler({ userId: admin.id }, { workspaceId: workspace.id });
+    expect(atLimit.items).toHaveLength(2000);
+    expect(atLimit.truncated).toBe(false);
+
+    await transaction.insert(workItems).values(rows[2000]!);
+    const aboveLimit = await work.listWorkspaceWorkItems.handler({ userId: admin.id }, { workspaceId: workspace.id });
+    expect(aboveLimit.items).toHaveLength(2000);
+    expect(aboveLimit.truncated).toBe(true);
   });
 });
 
@@ -58,7 +79,7 @@ test.concurrent("built-in views: all, assigned, created, subscribed select the r
     const watched = await work.createWorkItem.handler({ userId: admin.id }, { projectId: open.id, title: "I commented" });
     await work.createWorkItem.handler({ userId: admin.id }, { projectId: open.id, title: "Unrelated" });
     await comments.createComment.handler({ userId: member.id }, { workItemId: watched.id, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hi" }] }] } } as never);
-    const list = async (userId: string, builtin: string) => titles(await work.listWorkspaceWorkItems.handler({ userId }, { workspaceId: workspace.id, builtin: builtin as "all" }));
+    const list = async (userId: string, builtin: string) => titles((await work.listWorkspaceWorkItems.handler({ userId }, { workspaceId: workspace.id, builtin: builtin as "all" })).items);
     expect(await list(member.id, "all")).toEqual(["Assigned to me", "I commented", "Mine created", "Unrelated"]);
     expect(await list(member.id, "assigned")).toEqual(["Assigned to me"]);
     expect(await list(member.id, "created")).toEqual(["Mine created"]);
@@ -75,7 +96,7 @@ test.concurrent("a workspace View spans projects, orders and filters work items,
     await work.createWorkItem.handler({ userId: member.id }, { projectId: secret.id, title: "Low secret", priority: "low" });
     const view = await views.createWorkspaceView.handler({ userId: member.id }, { workspaceId: workspace.id, name: "Urgent everywhere", query: "priority = urgent" });
     expect(view).toMatchObject({ scope: "workspace", projectId: null, workspaceId: workspace.id, layout: "spreadsheet", ownerId: member.id });
-    const rows = await work.listWorkspaceWorkItems.handler({ userId: member.id }, { workspaceId: workspace.id, query: view.query, sort: "title" });
+    const rows = (await work.listWorkspaceWorkItems.handler({ userId: member.id }, { workspaceId: workspace.id, query: view.query, sort: "title" })).items;
     expect(rows.map((row) => [row.displayId, row.projectKey])).toEqual([["MOB-1", "MOB"], ["SEC-1", "SEC"]]);
     expect(await status(views.createWorkspaceView.handler({ userId: member.id }, { workspaceId: workspace.id, name: "Bad", query: "nonsense ===" }))).toBe(400);
     expect(await status(views.createWorkspaceView.handler({ userId: member.id }, { workspaceId: workspace.id, name: "Bad", layout: "gantt" as never }))).toBe(400);

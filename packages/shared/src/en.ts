@@ -1824,6 +1824,7 @@ export const en = {
   "workspaceViews.project": "Project",
   "workspaceViews.switch": "Switch view",
   "workspaceViews.empty": "No work items in this view.",
+  "workspaceViews.truncated": "Showing the first 2,000 work items. More match this view; add a filter to narrow the results.",
   "workspaceViews.sort.manual": "Oldest first",
   "theme.label": "Theme",
   "theme.system": "System",

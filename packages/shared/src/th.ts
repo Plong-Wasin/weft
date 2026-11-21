@@ -1826,6 +1826,7 @@ export const th: Record<keyof typeof en, string> = {
   "workspaceViews.project": "โปรเจกต์",
   "workspaceViews.switch": "สลับมุมมอง",
   "workspaceViews.empty": "ไม่มีงานในมุมมองนี้",
+  "workspaceViews.truncated": "แสดงงาน 2,000 รายการแรก ยังมีรายการอื่นที่ตรงกับมุมมองนี้ เพิ่มตัวกรองเพื่อจำกัดผลลัพธ์",
   "workspaceViews.sort.manual": "เก่าสุดก่อน",
   "theme.label": "ธีม",
   "theme.system": "ตามระบบ",

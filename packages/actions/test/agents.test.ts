@@ -64,6 +64,23 @@ test.concurrent("Agent extra action grants default off, are configurable by an A
   });
 });
 
+test.concurrent("concurrent Agent access edits preserve grants added from the same snapshot", async () => {
+  await withRollback(db, async (transaction) => {
+    const { agents, admin, member, guest, workspace, alpha, beta } = await setup(transaction);
+    const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput });
+    const initial = await agents.getAgent.handler({ userId: admin.id }, { agentId: agent.id });
+    const basePeople = initial.accessUserIds;
+    const baseProjects = initial.projectIds;
+    await agents.setAgentAccess.handler({ userId: admin.id }, { agentId: agent.id, baseUserIds: basePeople, userIds: [...basePeople, member.id] });
+    await agents.setAgentAccess.handler({ userId: admin.id }, { agentId: agent.id, baseUserIds: basePeople, userIds: [...basePeople, guest.id] });
+    await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: false, baseAllProjects: false, baseProjectIds: baseProjects, projectIds: [alpha.id] });
+    await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: false, baseAllProjects: false, baseProjectIds: baseProjects, projectIds: [beta.id] });
+    const saved = await agents.getAgent.handler({ userId: admin.id }, { agentId: agent.id });
+    expect(saved.accessUserIds.sort()).toEqual([...new Set([...basePeople, member.id, guest.id])].sort());
+    expect(saved.projectIds.sort()).toEqual([...new Set([...baseProjects, alpha.id, beta.id])].sort());
+  });
+});
+
 test.concurrent("Agent administration changes for access, Runtime, Trigger, Skill and Autopilot record their actor", async () => {
   await withRollback(db, async (transaction) => {
     const { agents, admin, member, workspace, alpha } = await setup(transaction);

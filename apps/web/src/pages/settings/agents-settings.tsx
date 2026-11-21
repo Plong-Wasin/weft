@@ -60,23 +60,49 @@ function AgentForm({ draft, onChange, onSubmit, onCancel, runtimes, allowAutopil
 
 /** Choose which projects an Agent is open to: opening a project makes the Agent a Member of it. */
 function AccessEditor({ agent, projects, onSaved, onFailed }: { agent: AgentRecord; projects: Project[]; onSaved: () => void; onFailed: () => void }) {
-  const save = async (allProjects: boolean, projectIds: string[]) => { (await action("set_agent_project_access", { agentId: agent.id, allProjects, projectIds })) === null ? onFailed() : onSaved(); };
-  const toggle = (id: string, on: boolean) => save(false, on ? [...agent.projectIds, id] : agent.projectIds.filter((entry) => entry !== id));
+  const [draft, setDraft] = React.useState({ allProjects: agent.allProjects, projectIds: agent.projectIds });
+  const [base, setBase] = React.useState({ allProjects: agent.allProjects, projectIds: agent.projectIds });
+  const [saving, setSaving] = React.useState(false);
+  const dirty = draft.allProjects !== base.allProjects || [...draft.projectIds].sort().join() !== [...base.projectIds].sort().join();
+  const save = async () => {
+    setSaving(true);
+    const result = await action<{ allProjects: boolean; projectIds: string[] }>("set_agent_project_access", { agentId: agent.id, ...draft, baseAllProjects: base.allProjects, baseProjectIds: base.projectIds });
+    setSaving(false);
+    if (result === null) return onFailed();
+    const saved = { allProjects: result.allProjects, projectIds: result.projectIds };
+    setDraft(saved);
+    setBase(saved);
+    onSaved();
+  };
   return <fieldset className="grid gap-1 border-0 p-0"><legend className="text-13 font-medium text-secondary">{translate("agents.access")}</legend>
-    <label className="flex items-center gap-2"><input type="checkbox" checked={agent.allProjects} onChange={(event) => void save(event.target.checked, [])} />{translate("agents.allProjects")}</label>
-    {!agent.allProjects && projects.map((project) => <label key={project.id} className="flex items-center gap-2">
-      <input type="checkbox" checked={agent.projectIds.includes(project.id)} onChange={(event) => void toggle(project.id, event.target.checked)} />{project.key} · {project.name}</label>)}
+    <label className="flex items-center gap-2"><input type="checkbox" checked={draft.allProjects} onChange={(event) => setDraft({ ...draft, allProjects: event.target.checked, projectIds: event.target.checked ? [] : draft.projectIds })} />{translate("agents.allProjects")}</label>
+    {!draft.allProjects && projects.map((project) => <label key={project.id} className="flex items-center gap-2">
+      <input type="checkbox" checked={draft.projectIds.includes(project.id)} onChange={(event) => setDraft({ ...draft, projectIds: event.target.checked ? [...draft.projectIds, project.id] : draft.projectIds.filter((entry) => entry !== project.id) })} />{project.key} · {project.name}</label>)}
+    <button type="button" disabled={!dirty || saving} onClick={() => void save()}>{translate("agents.save")}</button>
   </fieldset>;
 }
 
 function AgentPeopleAccess({ agent, members, onSaved, onFailed }: { agent: Pick<AgentRecord, "id" | "runtimeId" | "accessUserIds">; members: Member[]; onSaved: () => void; onFailed: () => void }) {
-  const save = async (userIds: string[]) => (await action("set_agent_access", { agentId: agent.id, userIds })) === null ? onFailed() : onSaved();
+  const [draft, setDraft] = React.useState(agent.accessUserIds);
+  const [base, setBase] = React.useState(agent.accessUserIds);
+  const [saving, setSaving] = React.useState(false);
+  const dirty = [...draft].sort().join() !== [...base].sort().join();
+  const save = async () => {
+    setSaving(true);
+    const result = await action<{ accessUserIds: string[] }>("set_agent_access", { agentId: agent.id, userIds: draft, baseUserIds: base });
+    setSaving(false);
+    if (result === null) return onFailed();
+    setDraft(result.accessUserIds);
+    setBase(result.accessUserIds);
+    onSaved();
+  };
   return <fieldset className="grid gap-1 border-0 p-0"><legend className="text-13 font-medium text-secondary">{translate("agents.peopleAccess")}</legend>
     <p className="text-12 text-secondary">{translate(agent.runtimeId ? "agents.runtimeOwnerAccess" : "agents.adminAccess")}</p>
     {members.filter((member) => !member.isAgent).map((member) => <label key={member.userId} className="flex items-center gap-2">
-      <input type="checkbox" aria-label={`${translate("agents.mayUse")} ${member.name}`} checked={agent.accessUserIds.includes(member.userId)} onChange={(event) => void save(event.target.checked ? [...agent.accessUserIds, member.userId] : agent.accessUserIds.filter((id) => id !== member.userId))} />
+      <input type="checkbox" aria-label={`${translate("agents.mayUse")} ${member.name}`} checked={draft.includes(member.userId)} onChange={(event) => setDraft(event.target.checked ? [...draft, member.userId] : draft.filter((id) => id !== member.userId))} />
       <Avatar name={member.name} id={member.userId} />{member.name}
     </label>)}
+    <button type="button" disabled={!dirty || saving} onClick={() => void save()}>{translate("agents.save")}</button>
   </fieldset>;
 }
 

@@ -234,7 +234,6 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
       name: "list_assets", kind: "read" as const,
       input: Type.Object({ ownerType, ownerId: uuid() }), output: Type.Array(assetOutput),
       handler: async (context: Context, input: { ownerType: OwnerType; ownerId: string }) => {
-        await assertRunAssetOwner(context, input.ownerType, input.ownerId);
         const owner = await resolveOwner(input.ownerType, input.ownerId);
         await requireOwnerAccess(owner, context.userId, "read");
         const rows = await db.select().from(assets)
@@ -247,7 +246,6 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
       input: Type.Object({ assetId: uuid(), download: Type.Optional(Type.Boolean()) }), output: downloadOutput,
       handler: async (context: Context, input: { assetId: string; download?: boolean }) => {
         const row = await loadAsset(input.assetId);
-        await assertRunAssetOwner(context, row.ownerType as OwnerType, row.ownerId);
         await requireRowAccess(row, context.userId, "read");
         if (row.status !== "uploaded") throw new ActionError("Asset not found", 404);
         const inline = !input.download && isInlineImage(row.contentType);

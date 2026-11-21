@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { comments as commentRows, createDatabase, runs, type Database } from "@weft/db";
+import { assets as assetRows, comments as commentRows, createDatabase, runs, type Database } from "@weft/db";
 import { createAgentActions, createCommentActions, createProjectActions, createRuntimeActions, createTriggerActions, createWikiActions, createWorkItemActions } from "@weft/actions";
 import { withRollback } from "../../../packages/db/src/test-helpers";
 import { createApp } from "../src/app";
@@ -204,7 +204,27 @@ test.concurrent("a Runtime Run can create a Wiki page and deliver image and file
     }, { token })).status).toBe(409);
 
     const unrelated = await createWorkItemActions(transaction).createWorkItem.handler({ userId: owner.id }, { projectId: project.id, title: "Outside Run" });
-    expect((await post("/actions/list_assets", { ownerType: "work_item", ownerId: unrelated.id }, { token })).status).toBe(403);
+    const [otherItemAsset] = await transaction.insert(assetRows).values({
+      workspaceId: workspace.id, projectId: project.id, ownerType: "work_item", ownerId: unrelated.id, uploaderId: owner.id,
+      storageKey: `test/${crypto.randomUUID()}`, filename: "other-item.txt", contentType: "text/plain", size: 5, status: "uploaded", uploadedAt: new Date(),
+    }).returning();
+    expect((await post("/actions/list_assets", { ownerType: "work_item", ownerId: unrelated.id }, { token })).status).toBe(200);
+    expect(await (await post("/actions/list_assets", { ownerType: "work_item", ownerId: unrelated.id }, { token })).json()).toMatchObject([{ id: otherItemAsset!.id }]);
+    expect((await post("/actions/get_asset_download_url", { assetId: otherItemAsset!.id }, { token })).status).toBe(200);
+    expect((await post("/actions/request_asset_upload", {
+      ownerType: "work_item", ownerId: unrelated.id, filename: "forbidden.txt", contentType: "text/plain", size: 5,
+    }, { token })).status).toBe(403);
+
+    const projectPage = await createWikiActions(transaction).createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, projectId: project.id, title: "Project notes" });
+    const [projectPageAsset] = await transaction.insert(assetRows).values({
+      workspaceId: workspace.id, projectId: project.id, ownerType: "wiki_page", ownerId: projectPage.id, uploaderId: owner.id,
+      storageKey: `test/${crypto.randomUUID()}`, filename: "project-page.txt", contentType: "text/plain", size: 7, status: "uploaded", uploadedAt: new Date(),
+    }).returning();
+    expect((await post("/actions/list_assets", { ownerType: "wiki_page", ownerId: projectPage.id }, { token })).status).toBe(200);
+    expect((await post("/actions/get_asset_download_url", { assetId: projectPageAsset!.id, download: true }, { token })).status).toBe(200);
+    expect((await post("/actions/request_asset_upload", {
+      ownerType: "wiki_page", ownerId: projectPage.id, filename: "forbidden.txt", contentType: "text/plain", size: 5,
+    }, { token })).status).toBe(403);
 
     const outsiderId = `wiki-outsider-${crypto.randomUUID()}`;
     const { users, workspaceMembers } = await import("@weft/db");
@@ -212,11 +232,16 @@ test.concurrent("a Runtime Run can create a Wiki page and deliver image and file
     await transaction.insert(workspaceMembers).values({ workspaceId: workspace.id, userId: outsiderId, role: "Member" });
     const privateCollection = await createWikiActions(transaction).createCollection.handler({ userId: outsiderId }, { workspaceId: workspace.id, name: "Private", visibility: "private" });
     const hiddenPage = await createWikiActions(transaction).createWikiPage.handler({ userId: outsiderId }, { workspaceId: workspace.id, collectionId: privateCollection.id, title: "Hidden" });
+    const [hiddenAsset] = await transaction.insert(assetRows).values({
+      workspaceId: workspace.id, projectId: null, ownerType: "wiki_page", ownerId: hiddenPage.id, uploaderId: outsiderId,
+      storageKey: `test/${crypto.randomUUID()}`, filename: "hidden.txt", contentType: "text/plain", size: 6, status: "uploaded", uploadedAt: new Date(),
+    }).returning();
     const denied = await post("/actions/request_asset_upload", {
       ownerType: "wiki_page", ownerId: hiddenPage.id, filename: "blocked.txt", contentType: "text/plain", size: 4,
     }, { token });
     expect(denied.status).toBe(404);
     expect((await post("/actions/list_assets", { ownerType: "wiki_page", ownerId: hiddenPage.id }, { token })).status).toBe(404);
+    expect((await post("/actions/get_asset_download_url", { assetId: hiddenAsset!.id }, { token })).status).toBe(404);
   });
 });
 

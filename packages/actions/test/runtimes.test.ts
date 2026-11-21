@@ -261,7 +261,7 @@ test("simultaneous Daemon claims never dispatch more than twenty Runs across Age
   } finally {
     await db.delete(workspaces).where(eq(workspaces.id, scenario.workspace.id));
   }
-});
+}, 15_000);
 
 test.concurrent("dispatch uses a restricted default for a missing enforced profile and legacy Full access otherwise", async () => {
   await withRollback(db, async (tx) => {

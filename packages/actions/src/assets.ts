@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, assets, comments, cycles, modules, wikiPages, workItems } from "@weft/db";
+import { activities, assets, comments, cycles, modules, runs, wikiPages, workItems } from "@weft/db";
 import { assertNotArchived, liveWorkItems } from "./triage";
 import { intakeItems } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
@@ -11,7 +11,7 @@ import { createS3Storage, inlineImageTypes, maxAssetBytes, type AssetStorage } f
 import { assertFeatureEnabled } from "./features";
 import { requireWikiPageAccess } from "./wiki";
 
-type Context = ActivityContext;
+type Context = ActivityContext & { agent?: ActivityContext["agent"] & { workspaceId?: string } };
 type AssetRow = typeof assets.$inferSelect;
 
 const uuid = () => Type.String({ format: "uuid" });
@@ -122,6 +122,16 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
     return row;
   }
 
+  /** A Runtime Run may deliver files only to the Work item it is executing. */
+  async function assertRunWorkItem(context: Context, ownerType: OwnerType, ownerId: string) {
+    if (!context.agent) return;
+    if (ownerType !== "work_item") throw new ActionError("An Agent can attach files only to its Run's Work item", 403);
+    const [run] = await db.select({ workItemId: runs.workItemId, workspaceId: runs.workspaceId }).from(runs).where(eq(runs.id, context.agent.runId));
+    if (!run || !run.workItemId || run.workItemId !== ownerId || (context.agent.workspaceId && run.workspaceId !== context.agent.workspaceId)) {
+      throw new ActionError("An Agent can attach files only to its Run's Work item", 403);
+    }
+  }
+
   const out = (row: AssetRow) => ({
     id: row.id, ownerType: row.ownerType as OwnerType, ownerId: row.ownerId, uploaderId: row.uploaderId, filename: row.filename,
     contentType: row.contentType, size: row.size, inline: isInlineImage(row.contentType), createdAt: row.createdAt.toISOString(),
@@ -133,6 +143,7 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
       input: Type.Object({ ownerType, ownerId: uuid(), filename: Type.String({ minLength: 1, maxLength: 255 }), contentType: Type.String({ minLength: 1, maxLength: 255 }), size: Type.Integer({ minimum: 1 }) }),
       output: uploadOutput,
       handler: async (context: Context, input: { ownerType: OwnerType; ownerId: string; filename: string; contentType: string; size: number }) => {
+        await assertRunWorkItem(context, input.ownerType, input.ownerId);
         const owner = await resolveOwner(input.ownerType, input.ownerId);
         await requireOwnerAccess(owner, context.userId, "write");
         await assertOwnerOpen(owner);
@@ -154,6 +165,7 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
       input: Type.Object({ assetId: uuid() }), output: assetOutput,
       handler: async (context: Context, input: { assetId: string }) => {
         const row = await loadAsset(input.assetId);
+        await assertRunWorkItem(context, row.ownerType as OwnerType, row.ownerId);
         await requireRowAccess(row, context.userId, "write");
         if (row.uploaderId !== context.userId) throw new ActionError("Only the uploader can complete an upload", 403);
         const owner = await resolveOwner(row.ownerType as OwnerType, row.ownerId);

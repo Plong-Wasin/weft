@@ -116,6 +116,38 @@ test.concurrent("a Runtime Run token gets only the baseline writes until an Admi
   });
 });
 
+test.concurrent("a Runtime Run can upload and retrieve a deliverable on its Work item only with the file action grant", async () => {
+  await withRollback(db, async (transaction) => {
+    const { post, claim, owner, project, item, agent, agents } = await scenario(transaction);
+    const [claimed] = await (await claim()).json() as Array<{ token: string }>;
+    const token = claimed!.token;
+    const input = { ownerType: "work_item", ownerId: item.id, filename: "diagram.html", contentType: "text/html", size: 32 };
+    expect((await post("/actions/request_asset_upload", input, { token })).status).toBe(403);
+
+    await agents.updateAgent.handler({ userId: owner.id }, { agentId: agent.id, allowFeatureActions: true });
+    const unrelated = await createWorkItemActions(transaction).createWorkItem.handler({ userId: owner.id }, { projectId: project.id, title: "Another item" });
+    expect((await post("/actions/request_asset_upload", { ...input, ownerId: unrelated.id }, { token })).status).toBe(403);
+    expect((await post("/actions/request_asset_upload", { ...input, size: 100_000_000 }, { token })).status).toBe(413);
+
+    const requested = await post("/actions/request_asset_upload", input, { token });
+    expect(requested.status).toBe(200);
+    const upload = await requested.json() as { assetId: string; url: string; fields: Record<string, string> };
+    const form = new FormData();
+    for (const [key, value] of Object.entries(upload.fields)) form.append(key, value);
+    form.append("file", new Blob(["<!doctype html><title>deliverable</title>"], { type: "text/html" }), "diagram.html");
+    const stored = await fetch(upload.url, { method: "POST", body: form });
+    expect(stored.status).toBe(204);
+    expect((await post("/actions/complete_asset_upload", { assetId: upload.assetId }, { token })).status).toBe(200);
+    const listed = await post("/actions/list_assets", { ownerType: "work_item", ownerId: item.id }, { token });
+    expect(await listed.json()).toMatchObject([{ id: upload.assetId, filename: "diagram.html", contentType: "text/html" }]);
+    const url = await post("/actions/get_asset_download_url", { assetId: upload.assetId, download: true }, { token });
+    const download = await url.json() as { url: string; filename: string; contentType: string; inline: boolean };
+    expect(download).toMatchObject({ filename: "diagram.html", contentType: "text/html", inline: false });
+    expect(await (await fetch(download.url)).text()).toBe("<!doctype html><title>deliverable</title>");
+    expect((await post("/actions/get_asset_download_url", { assetId: upload.assetId }, { token })).status).toBe(200);
+  });
+});
+
 test.concurrent("changes made through a Run token fire no Trigger, for create, update and comment alike", async () => {
   await withRollback(db, async (transaction) => {
     const { post, claim, owner, project, agent, item, agents } = await scenario(transaction);

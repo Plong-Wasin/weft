@@ -14,10 +14,10 @@ import { AttachmentsPanel, useAssetImages } from "./asset-images";
 import { AssistMenu } from "./assist-menu";
 import { AiAssist } from "./editor-assist";
 import { BlockKeyboardShortcuts, CodeBlockCopy, EditorPlaceholder, EmojiSuggestions, ListIndent, MarkdownPaste, SafeLinkClick, SlashMenu, surfaceEditorExtensions, wikiCommands } from "./editor-extensions";
-import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { MoreHorizontal, FileText, Heart, Globe, ChevronRight, Plus, Lock, PanelRight, X, Download, Upload, FileDown, Maximize2, Code, Clock, FilePlus, Archive, Trash2, Pencil, EyeOff } from "lucide-react";
 import { paths } from "./routes";
-import { markNotificationReadAfterDestinationLoaded } from "./inbox";
+import { useInboxNotificationOpen } from "./inbox";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { pageMarkdown, readableReferenceLabels, splitPageMarkdown, toMarkdown } from "./wiki-export";
 import { MenuItem, Popover } from "./shell/popover";
@@ -692,10 +692,8 @@ type ProjectOption = { id: string; key: string; name: string; role?: string | nu
 
 /** The wiki page screen: breadcrumb, editor with toolbar, and the page's settings (access, parent, scope). `projectKey` means it was opened from that project's Pages. */
 export function WikiPageScreen({ workspace, self, pageId, projectKey }: { workspace: { id: string; slug: string }; self: string; pageId: string; projectKey?: string }) {
-  const location = useLocation();
   const navigate = useNavigate();
-  const inboxNotificationId = (location.state as { inboxNotificationId?: unknown } | null)?.inboxNotificationId;
-  const markedInboxNotification = React.useRef<string | null>(null);
+  const inboxOpen = useInboxNotificationOpen();
   const client = useQueryClient();
   const [pages, setPages] = React.useState<Summary[]>([]);
   const [page, setPage] = React.useState<Page | null | undefined>(undefined);
@@ -722,18 +720,16 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
   }, [pageId, reload]);
   React.useEffect(() => { void reload(); }, [reload]);
   React.useEffect(() => { setPage(undefined); void call<Page>("get_wiki_page", { pageId }).then(async (loaded) => {
+    if (!loaded) { inboxOpen.markUnavailable(); setPage(loaded); return; }
     // Another workspace's page is missing here; under a project route the page must be linked to that project.
-    if (loaded && (loaded as Page & { workspaceId?: string }).workspaceId !== undefined && (loaded as Page & { workspaceId?: string }).workspaceId !== workspace.id) return setPage(null);
-    if (loaded && projectKey) {
+    if ((loaded as Page & { workspaceId?: string }).workspaceId !== undefined && (loaded as Page & { workspaceId?: string }).workspaceId !== workspace.id) { inboxOpen.markUnavailable(); return setPage(null); }
+    if (projectKey) {
       const projects = await call<ProjectOption[]>("list_projects", { workspaceId: workspace.id, archived: false }) ?? [];
-      if (!projects.some((project) => project.key === projectKey && project.id === loaded.projectId)) return setPage(null);
+      if (!projects.some((project) => project.key === projectKey && project.id === loaded.projectId)) { inboxOpen.markUnavailable(); return setPage(null); }
     }
-    if (loaded && typeof inboxNotificationId === "string" && markedInboxNotification.current !== inboxNotificationId) {
-      markedInboxNotification.current = inboxNotificationId;
-      void markNotificationReadAfterDestinationLoaded(inboxNotificationId);
-    }
+    inboxOpen.markLoaded();
     setPage(loaded);
-  }); }, [pageId, workspace.id, projectKey, inboxNotificationId]);
+  }); }, [pageId, workspace.id, projectKey, inboxOpen.markLoaded, inboxOpen.markUnavailable]);
   React.useEffect(() => {
     setShares([]); setShareMembers([]); setShareTarget("");
     if (!page || page.ownerId !== self || page.projectId) return;

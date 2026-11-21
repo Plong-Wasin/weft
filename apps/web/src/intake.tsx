@@ -14,7 +14,7 @@ import { AttachmentsPanel } from "./asset-images";
 import { uploadAsset } from "./asset-upload";
 import { actionResult, api } from "./api";
 import { paths } from "./routes";
-import { markNotificationReadAfterDestinationLoaded } from "./inbox";
+import { useInboxNotificationOpen } from "./inbox";
 
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 const outcomes = ["pending", "snoozed", "accepted", "rejected", "duplicate"] as const;
@@ -395,9 +395,8 @@ export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, 
   const location = useLocation();
   const [workspaceAdmin, setWorkspaceAdmin] = React.useState(false);
   const [params, setParams] = useSearchParams();
-  const inboxNotificationId = (location.state as { inboxNotificationId?: unknown } | null)?.inboxNotificationId;
+  const inboxOpen = useInboxNotificationOpen();
   const initialInboxTargetId = React.useRef(new URLSearchParams(location.search).get("inboxIssueId"));
-  const markedInboxNotification = React.useRef<string | null>(null);
   const tab: Tab = params.get("currentTab") === "closed" ? "closed" : "open";
   const selectedId = params.get("inboxIssueId");
   const [items, setItems] = React.useState<IntakeItem[] | null>(null);
@@ -439,10 +438,12 @@ export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, 
   }, [items, selectedId, select]);
   React.useEffect(() => {
     const targetId = initialInboxTargetId.current;
-    if (typeof inboxNotificationId !== "string" || !targetId || selectedId !== targetId || !items?.some((item) => item.id === targetId) || markedInboxNotification.current === inboxNotificationId) return;
-    markedInboxNotification.current = inboxNotificationId;
-    void markNotificationReadAfterDestinationLoaded(inboxNotificationId);
-  }, [items, selectedId, inboxNotificationId]);
+    if (!inboxOpen.notificationId) return;
+    if (!enabled) { inboxOpen.markUnavailable(); return; }
+    if (!items) return;
+    if (targetId && selectedId === targetId && items.some((item) => item.id === targetId)) inboxOpen.markLoaded();
+    else inboxOpen.markUnavailable();
+  }, [items, selectedId, enabled, inboxOpen.notificationId, inboxOpen.markLoaded, inboxOpen.markUnavailable]);
   if (!enabled) return <section><p role="status">{t("intake.off")}</p></section>;
   /** The Open tab has nothing in it: the empty state carries the one Submit action, so the header button steps aside. */
   const emptyOpen = tab === "open" && items?.length === 0;

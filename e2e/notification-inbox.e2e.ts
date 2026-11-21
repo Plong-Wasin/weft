@@ -58,6 +58,7 @@ try {
   await database.client.end();
   const fixtureInbox = await call<{ unreadCount: number; notifications: Array<{ id: string }> }>("list_notifications", { workspaceId: workspace.id });
   check(fixtureInbox.unreadCount === 1, `notification fixture was not visible to the member: ${JSON.stringify(fixtureInbox)}`);
+  const notificationId = fixtureInbox.notifications[0]!.id;
 
   await page.goto(`${web}/${slug}/notifications`);
   const inboxNav = page.locator(`a[href="/${slug}/notifications"]`).first();
@@ -90,6 +91,7 @@ try {
     check(current.unreadCount === expected, `${context}: expected ${expected} unread, found ${current.unreadCount}`);
   };
   await page.route(`${api}/actions/get_work_item`, (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "temporary failure" }) }));
+  check((await targetLink().getAttribute("href"))?.includes(`inboxNotificationId=${notificationId}`) ?? false, "notification link does not carry its id in the destination URL");
   await targetLink().click();
   await page.waitForURL(`${web}/${slug}/browse/MOB-1`);
   await page.getByText(translate("workItems.notFound"), { exact: true }).waitFor();
@@ -108,13 +110,43 @@ try {
   let readRequests = 0;
   page.on("request", (request) => { if (request.url().includes("/actions/mark_notification_read")) readRequests += 1; });
   const [openedInNewTab] = await Promise.all([context.waitForEvent("page"), targetLink().click({ modifiers: ["Control"] })]);
+  let openedTabReadResponses = 0;
+  openedInNewTab.on("response", (response) => { if (response.url().includes("/actions/mark_notification_read")) openedTabReadResponses += 1; });
+  const newTabRead = openedInNewTab.waitForResponse((response) => response.url().includes("/actions/mark_notification_read"));
   await openedInNewTab.getByRole("heading", { name: "MOB-1" }).waitFor();
+  check((await newTabRead).ok(), "successfully loaded new tab could not mark its notification read");
+  check(openedTabReadResponses === 1, `new tab made ${openedTabReadResponses} read updates for one destination load`);
+  await openedInNewTab.waitForURL((url) => !url.searchParams.has("inboxNotificationId"));
   check(readRequests === 0, "modified click fired the current-page auto-read handler");
-  await assertUnread(1, "modified click in new tab");
+  await assertUnread(0, "successfully loaded new tab");
+  await openedInNewTab.goto(`${web}/${slug}`);
+  await openedInNewTab.getByRole("heading", { name: translate("projects.title") }).waitFor();
+  check(!new URL(openedInNewTab.url()).searchParams.has("inboxNotificationId"), "notification id leaked into unrelated navigation");
+  check(openedTabReadResponses === 1, "new tab repeated the read update on unrelated navigation");
+  check(readRequests === 0, "new-tab read handler fired on unrelated navigation");
+  await assertUnread(0, "unrelated navigation after new-tab open");
   await openedInNewTab.close();
+
+  await call("mark_notification_unread", { notificationId });
+  await assertUnread(1, "reset before failed new-tab load");
+  await context.route(`${api}/actions/get_work_item`, (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "temporary failure" }) }));
+  const [failedInNewTab] = await Promise.all([context.waitForEvent("page"), targetLink().click({ modifiers: ["Control"] })]);
+  let failedTabReadRequests = 0;
+  failedInNewTab.on("request", (request) => { if (request.url().includes("/actions/mark_notification_read")) failedTabReadRequests += 1; });
+  await failedInNewTab.getByText(translate("workItems.notFound"), { exact: true }).waitFor();
+  await failedInNewTab.waitForURL((url) => !url.searchParams.has("inboxNotificationId"));
+  await assertUnread(1, "failed new-tab destination");
+  await failedInNewTab.goto(`${web}/${slug}`);
+  await failedInNewTab.getByRole("heading", { name: translate("projects.title") }).waitFor();
+  check(failedTabReadRequests === 0, "failed new tab attempted to mark its notification read");
+  check(readRequests === 0, "failed new-tab load fired an auto-read request on the originating page");
+  await assertUnread(1, "unrelated navigation after failed new-tab load");
+  await failedInNewTab.close();
+  await context.unroute(`${api}/actions/get_work_item`);
 
   await page.getByRole("link", { name: /MOB-1 Inbox destination/ }).click();
   await page.getByRole("heading", { name: "MOB-1" }).waitFor();
+  await page.waitForURL((url) => !url.searchParams.has("inboxNotificationId"));
   await page.waitForFunction(() => [...document.querySelectorAll('a[href$="/notifications"]')].some((link) => link.textContent?.includes("Inbox") && link.getAttribute("aria-label") === "Inbox"));
   await assertUnread(0, "successfully loaded destination");
   await page.goto(`${web}/${slug}/notifications`);

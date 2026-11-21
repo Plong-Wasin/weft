@@ -2,10 +2,10 @@ import { api } from "./api";
 import React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDate, formatNumber, translate } from "@weft/shared";
-import { Link } from "react-router";
+import { Link, useLocation, useNavigate } from "react-router";
 import { Bell } from "lucide-react";
 import { paths } from "./routes";
-import { notificationTarget } from "./notification-target";
+import { inboxNotificationIdFromSearch, notificationTarget, notificationTargetWithInboxId, withoutInboxNotificationId } from "./notification-target";
 import { autoRuleReasonText } from "./auto-rule-reason";
 
 
@@ -29,6 +29,27 @@ async function call<T>(name: string, body: unknown): Promise<T> {
 /** Called by a destination after its primary content loads successfully. */
 export async function markNotificationReadAfterDestinationLoaded(notificationId: string) {
   try { await call("mark_notification_read", { notificationId }); } catch { /* Keep it unread when the read update cannot be saved. */ }
+}
+
+/** Each destination consumes the URL token once, after success or a definitive failed load. */
+export function useInboxNotificationOpen() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const notificationId = inboxNotificationIdFromSearch(location.search);
+  const handledLocation = React.useRef<string | null>(null);
+  const finish = React.useCallback((loaded: boolean) => {
+    if (!notificationId || handledLocation.current === location.key) return;
+    handledLocation.current = location.key;
+    if (loaded && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(notificationId)) {
+      void markNotificationReadAfterDestinationLoaded(notificationId);
+    }
+    navigate({ pathname: location.pathname, search: withoutInboxNotificationId(location.search), hash: location.hash }, { replace: true, state: null });
+  }, [location.hash, location.key, location.pathname, location.search, navigate, notificationId]);
+  return {
+    notificationId,
+    markLoaded: React.useCallback(() => finish(true), [finish]),
+    markUnavailable: React.useCallback(() => finish(false), [finish]),
+  };
 }
 
 const inboxKey = (workspaceId: string) => ["inbox", workspaceId] as const;
@@ -78,7 +99,7 @@ export function InboxPanel({ workspace }: { workspace: Workspace }) {
     <ul style={{ listStyle: "none", paddingLeft: 0 }}>
       {shown.map((item) => <li key={item.id} className={`mb-2 grid min-w-0 gap-2 rounded-md border border-subtle p-3 sm:grid-cols-[minmax(0,1fr)_auto] ${item.readAt ? "" : "bg-layer-1"}`}>
         {item.kind === "recurrence_paused" ? `${translate(inboxMessage[item.kind])}: ${item.detail ?? ""}` : <>{translate(item.kind === "wake_skipped" ? `inbox.wakeSkipped.${item.detail ?? "no_agent_access"}` as never : inboxMessage[item.kind]).replace("{actor}", item.actorName)}{" "}
-        {item.workItemId || item.wikiPageId ? <Link state={!item.readAt ? { inboxNotificationId: item.id } : undefined} to={notificationTarget(workspace.slug, item)}>{item.wikiPageId ? item.pageTitle : `${item.displayId} ${item.workItemTitle}`}</Link> : <span>{item.detail}</span>}{item.kind === "auto_rule" && item.detail && <>{": "}{autoRuleReasonText(item.detail, translate)}</>}</>}{" "}
+        {item.workItemId || item.wikiPageId ? <Link to={item.readAt ? notificationTarget(workspace.slug, item) : notificationTargetWithInboxId(workspace.slug, item, item.id)}>{item.wikiPageId ? item.pageTitle : `${item.displayId} ${item.workItemTitle}`}</Link> : <span>{item.detail}</span>}{item.kind === "auto_rule" && item.detail && <>{": "}{autoRuleReasonText(item.detail, translate)}</>}</>}{" "}
         <small>{formatDate(item.createdAt)}</small>{" "}
         <button type="button" className="secondary justify-self-start sm:justify-self-end" disabled={markRead.isPending || markUnread.isPending} onClick={() => item.readAt ? markUnread.mutate(item.id) : markRead.mutate(item.id)}>{translate(item.readAt ? "inbox.markUnread" : "inbox.markRead")}</button>
       </li>)}

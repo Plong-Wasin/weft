@@ -102,7 +102,7 @@ try {
   for (let offset = 0; offset < fixture.length; offset += 500) await db.insert(workItems).values(fixture.slice(offset, offset + 500));
 
   const started = performance.now();
-  const measured = await call<{ items: Array<{ displayId: string }>; truncated: boolean }>("list_workspace_work_items", { workspaceId });
+  const measured = await call<{ items: Array<{ displayId: string }>; truncated: boolean }>("list_workspace_work_items_with_metadata", { workspaceId });
   const apiMs = Math.round(performance.now() - started);
   const payloadBytes = Buffer.byteLength(JSON.stringify(measured));
   check(measured.items.length === 2000 && measured.truncated, `expected a disclosed 2,000-row cap, got ${measured.items.length} rows and truncated=${measured.truncated}`);

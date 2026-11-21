@@ -27,8 +27,7 @@ test("list endpoints parse no Markdown: a 100-row list does zero parses, the sin
     const intake = await createIntakeActions(transaction).listIntakeItems?.handler({ userId: member.id }, { projectId: project.id, status: "pending" } as never).catch(() => []);
     expect({ parses: markdownParseStats.parses - before }).toEqual({ parses: 0 });
     expect(listed.length).toBe(100);
-    expect(everywhere.items.length).toBe(100);
-    expect(everywhere.truncated).toBe(false);
+    expect(everywhere.length).toBe(100);
     expect(subs.length).toBe(1);
     expect(intake ?? []).toEqual(expect.any(Array));
     for (const row of listed) {

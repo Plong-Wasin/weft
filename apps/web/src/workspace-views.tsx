@@ -125,7 +125,7 @@ export function WorkspaceViewPage({ workspace, selfId, viewId }: { workspace: Wo
   React.useEffect(() => {
     if (!ready) return;
     let live = true;
-    void actionResult<WorkspaceItems>("list_workspace_work_items", { workspaceId: workspace.id, ...(builtin ? { builtin: builtin.kind } : {}), ...(params.q.trim() ? { query: params.q } : {}), sort: params.sort, direction: params.dir }).then((result) => {
+    void actionResult<WorkspaceItems>("list_workspace_work_items_with_metadata", { workspaceId: workspace.id, ...(builtin ? { builtin: builtin.kind } : {}), ...(params.q.trim() ? { query: params.q } : {}), sort: params.sort, direction: params.dir }).then((result) => {
       if (!live) return;
       if ("error" in result) { setQueryError(params.q.trim() ? result.error : null); return; }
       setQueryError(null); setItems(result.data.items); setTruncated(result.data.truncated);

@@ -133,7 +133,7 @@ test.concurrent("archived items are hidden from lists, search, filter query, Cyc
     expect(ids(await work.listWorkItems.handler(as, { projectId: project.id, query: "title ~ Needle" }))).toEqual([keep.id]);
     expect(ids(await work.listWorkItems.handler(as, { projectId: project.id, cycleId: cycle.id }))).toEqual([keep.id]);
     expect(ids(await work.listWorkItems.handler(as, { projectId: project.id, moduleId: module.id }))).toEqual([keep.id]);
-    expect(ids((await work.listWorkspaceWorkItems.handler(as, { workspaceId: workspace.id })).items)).toEqual([keep.id]);
+    expect(ids(await work.listWorkspaceWorkItems.handler(as, { workspaceId: workspace.id }))).toEqual([keep.id]);
     expect(ids(await search.searchWorkItems.handler(as, { workspaceId: workspace.id, query: "Needle" }))).toEqual([keep.id]);
     expect(ids(await search.searchWorkItems.handler(as, { workspaceId: workspace.id, projectId: project.id, filter: "title ~ Needle" } as never))).toEqual([keep.id]);
     expect((await cycles.getCycle.handler(as, { cycleId: cycle.id })).workItemIds).toEqual([keep.id]);

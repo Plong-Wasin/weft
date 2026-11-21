@@ -2,6 +2,7 @@ import React from "react";
 import { formatDate, translate } from "@weft/shared";
 import { ProposalSet } from "./ai-chat";
 import { runFailureText } from "./run-failure";
+import { runFocusHref } from "./routes";
 import { canCancelRun, canRerunRun, isActiveRun, runStatusKey } from "./run-status";
 import { formatDuration, formatUsd, tokensOf } from "./usage-format";
 
@@ -56,7 +57,7 @@ function RunWokenBy({ run }: { run: Run }) {
   if (!run.wokenBy) return null;
   const { runId, agentName, depth } = run.wokenBy;
   return <span className="flex flex-wrap items-baseline gap-x-1 text-12 text-tertiary" data-testid="run-woken-by">
-    {runId ? <a href={`?run=${runId}`}>{translate("runs.wokenBy").replace("{agent}", () => agentName)}</a> : <span>{translate("runs.wokenBy").replace("{agent}", () => agentName)}</span>}
+    {runId ? <a href={runFocusHref(runId)}>{translate("runs.wokenBy").replace("{agent}", () => agentName)}</a> : <span>{translate("runs.wokenBy").replace("{agent}", () => agentName)}</span>}
     <span>· {translate("runs.wokenByDepth").replace("{depth}", String(depth))}</span>
   </span>;
 }

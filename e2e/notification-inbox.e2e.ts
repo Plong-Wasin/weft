@@ -47,6 +47,7 @@ try {
   await page.getByLabel(translate("projects.name")).fill("Mobile");
   await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOB");
   await page.getByRole("button", { name: translate("projects.create") }).click();
+  await page.getByRole("link", { name: /MOB · Mobile/ }).waitFor();
 
   const me = await (await page.request.get(`${api}/api/me`)).json() as { user: { id: string }; workspaces: Array<{ id: string; slug: string }> };
   const workspace = me.workspaces.find((item) => item.slug === slug)!;
@@ -54,6 +55,7 @@ try {
   const item = await call<{ id: string; sequence: number }>("create_work_item", { projectId: project.id, title: "Inbox destination" });
   const database = createDatabase();
   await database.db.insert(notifications).values({ workspaceId: workspace.id, userId: me.user.id, actorId: me.user.id, kind: "mention", workItemId: item.id, jobId: crypto.randomUUID() });
+  await database.client.end();
   const fixtureInbox = await call<{ unreadCount: number; notifications: Array<{ id: string }> }>("list_notifications", { workspaceId: workspace.id });
   check(fixtureInbox.unreadCount === 1, `notification fixture was not visible to the member: ${JSON.stringify(fixtureInbox)}`);
 
@@ -82,16 +84,51 @@ try {
   await drawer.waitFor({ state: "detached" });
   check(await drawer.count() === 0, "mobile navigation drawer did not close after route change");
 
+  const targetLink = () => page.getByRole("link", { name: /MOB-1 Inbox destination/ });
+  const assertUnread = async (expected: number, context: string) => {
+    const current = await call<{ unreadCount: number }>("list_notifications", { workspaceId: workspace.id });
+    check(current.unreadCount === expected, `${context}: expected ${expected} unread, found ${current.unreadCount}`);
+  };
+  await page.route(`${api}/actions/get_work_item`, (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "temporary failure" }) }));
+  await targetLink().click();
+  await page.waitForURL(`${web}/${slug}/browse/MOB-1`);
+  await page.getByText(translate("workItems.notFound"), { exact: true }).waitFor();
+  await assertUnread(1, "failed destination load");
+  await page.unroute(`${api}/actions/get_work_item`);
+  await page.goto(`${web}/${slug}/notifications`);
+
+  await page.route(`${api}/actions/get_work_item`, (route) => route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ error: "forbidden" }) }));
+  await targetLink().click();
+  await page.waitForURL(`${web}/${slug}/browse/MOB-1`);
+  await page.getByText(translate("workItems.notFound"), { exact: true }).waitFor();
+  await assertUnread(1, "inaccessible destination");
+  await page.unroute(`${api}/actions/get_work_item`);
+  await page.goto(`${web}/${slug}/notifications`);
+
+  let readRequests = 0;
+  page.on("request", (request) => { if (request.url().includes("/actions/mark_notification_read")) readRequests += 1; });
+  const [openedInNewTab] = await Promise.all([context.waitForEvent("page"), targetLink().click({ modifiers: ["Control"] })]);
+  await openedInNewTab.getByRole("heading", { name: "MOB-1" }).waitFor();
+  check(readRequests === 0, "modified click fired the current-page auto-read handler");
+  await assertUnread(1, "modified click in new tab");
+  await openedInNewTab.close();
+
   await page.getByRole("link", { name: /MOB-1 Inbox destination/ }).click();
   await page.getByRole("heading", { name: "MOB-1" }).waitFor();
-  const read = await call<{ unreadCount: number }>("list_notifications", { workspaceId: workspace.id });
-  check(read.unreadCount === 0, "opening a reachable destination did not mark its notification read");
+  await page.waitForFunction(() => [...document.querySelectorAll('a[href$="/notifications"]')].some((link) => link.textContent?.includes("Inbox") && link.getAttribute("aria-label") === "Inbox"));
+  await assertUnread(0, "successfully loaded destination");
   await page.goto(`${web}/${slug}/notifications`);
   await page.getByRole("link", { name: /MOB-1 Inbox destination/ }).waitFor();
   await page.getByRole("button", { name: translate("inbox.markUnread") }).click();
+  await page.getByRole("button", { name: translate("inbox.markRead") }).waitFor();
+  await assertUnread(1, "manual mark unread");
+  await page.getByRole("button", { name: translate("inbox.markRead") }).click();
+  await page.getByRole("button", { name: translate("inbox.markUnread") }).waitFor();
+  await assertUnread(0, "manual mark read");
+  await page.getByRole("button", { name: translate("inbox.markUnread") }).click();
+  await page.getByRole("button", { name: translate("inbox.markRead") }).waitFor();
+  await assertUnread(1, "second manual mark unread");
   await page.waitForFunction((countLabel) => [...document.querySelectorAll('a[href$="/notifications"]')].some((link) => link.textContent?.includes("Inbox") && link.getAttribute("aria-label")?.includes(countLabel)), translate("inbox.unread").replace("{count}", "1"));
-  const unread = await call<{ unreadCount: number }>("list_notifications", { workspaceId: workspace.id });
-  check(unread.unreadCount === 1, "mark unread did not restore the unread count");
   await page.getByRole("button", { name: new RegExp(translate("inbox.unreadTab")) }).click();
   await page.getByRole("link", { name: /MOB-1 Inbox destination/ }).waitFor();
   await page.getByRole("button", { name: translate("inbox.markAllRead") }).click();
@@ -100,7 +137,6 @@ try {
   check(allRead.unreadCount === 0, "mark all read did not update the live unread count");
   console.log("e2e notification Inbox: navigation, responsive layout, read and unread updates ok");
   await browser.close();
-  await database.client.end();
 } catch (error) {
   failed = true;
   console.error(error);

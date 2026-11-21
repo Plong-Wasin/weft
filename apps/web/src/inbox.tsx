@@ -26,6 +26,11 @@ async function call<T>(name: string, body: unknown): Promise<T> {
   return await response.json() as T;
 }
 
+/** Called by a destination after its primary content loads successfully. */
+export async function markNotificationReadAfterDestinationLoaded(notificationId: string) {
+  try { await call("mark_notification_read", { notificationId }); } catch { /* Keep it unread when the read update cannot be saved. */ }
+}
+
 const inboxKey = (workspaceId: string) => ["inbox", workspaceId] as const;
 const fetchInbox = (workspaceId: string) => call<Inbox>("list_notifications", { workspaceId });
 
@@ -73,7 +78,7 @@ export function InboxPanel({ workspace }: { workspace: Workspace }) {
     <ul style={{ listStyle: "none", paddingLeft: 0 }}>
       {shown.map((item) => <li key={item.id} className={`mb-2 grid min-w-0 gap-2 rounded-md border border-subtle p-3 sm:grid-cols-[minmax(0,1fr)_auto] ${item.readAt ? "" : "bg-layer-1"}`}>
         {item.kind === "recurrence_paused" ? `${translate(inboxMessage[item.kind])}: ${item.detail ?? ""}` : <>{translate(item.kind === "wake_skipped" ? `inbox.wakeSkipped.${item.detail ?? "no_agent_access"}` as never : inboxMessage[item.kind]).replace("{actor}", item.actorName)}{" "}
-        {item.workItemId || item.wikiPageId ? <Link onClick={() => { if (!item.readAt) markRead.mutate(item.id); }} to={notificationTarget(workspace.slug, item)}>{item.wikiPageId ? item.pageTitle : `${item.displayId} ${item.workItemTitle}`}</Link> : <span>{item.detail}</span>}{item.kind === "auto_rule" && item.detail && <>{": "}{autoRuleReasonText(item.detail, translate)}</>}</>}{" "}
+        {item.workItemId || item.wikiPageId ? <Link state={!item.readAt ? { inboxNotificationId: item.id } : undefined} to={notificationTarget(workspace.slug, item)}>{item.wikiPageId ? item.pageTitle : `${item.displayId} ${item.workItemTitle}`}</Link> : <span>{item.detail}</span>}{item.kind === "auto_rule" && item.detail && <>{": "}{autoRuleReasonText(item.detail, translate)}</>}</>}{" "}
         <small>{formatDate(item.createdAt)}</small>{" "}
         <button type="button" className="secondary justify-self-start sm:justify-self-end" disabled={markRead.isPending || markUnread.isPending} onClick={() => item.readAt ? markUnread.mutate(item.id) : markRead.mutate(item.id)}>{translate(item.readAt ? "inbox.markUnread" : "inbox.markRead")}</button>
       </li>)}

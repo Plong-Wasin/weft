@@ -1,6 +1,7 @@
 // Browser end-to-end flow: attach a file to a work item, paste an inline image into the description, a comment and a wiki page.
 // Run with `bun run e2e` (needs the shared weft-postgres and weft-minio containers; `docker compose up -d minio`).
 import { chromium, type Page } from "playwright";
+import { mkdir } from "node:fs/promises";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -212,6 +213,36 @@ try {
   await page.locator(".ProseMirror").waitFor();
   await pasteFile(page, ".ProseMirror", { name: "w.png", type: "image/png", base64: png });
   await page.waitForFunction(() => (document.querySelector('.ProseMirror img[data-testid="inline-image"]') as HTMLImageElement | null)?.naturalWidth);
+  const wikiAttachments = page.getByTestId("wiki-attachments");
+  await wikiAttachments.waitFor({ state: "visible" });
+  await page.waitForFunction(() => document.querySelector('[data-testid="wiki-attachments"]')?.getAttribute("aria-busy") === "false");
+  check(await wikiAttachments.getByText("w.png").count() === 0, "an image embedded in the Wiki page must not also appear as a downloadable attachment");
+  check(await wikiAttachments.getByText(translate("assets.empty")).isVisible(), "Wiki page should explain when it has no downloadable attachments");
+  const embeddedImageCount = await page.locator('.ProseMirror img[data-testid="inline-image"]').count();
+  const wikiFile = wikiAttachments.locator('input[type="file"]');
+  await wikiFile.setInputFiles([
+    { name: "reference.html", mimeType: "text/html", buffer: Buffer.from("<h1>Wiki attachment</h1>") },
+    { name: "guide.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buffer: Buffer.from("word document") },
+  ]);
+  await wikiAttachments.getByText("reference.html").waitFor();
+  await wikiAttachments.getByText("guide.docx").waitFor();
+  check(await wikiAttachments.getByText("w.png").count() === 0, "an image embedded in the Wiki page must not also appear as a downloadable attachment");
+  check(await page.locator('.ProseMirror img[data-testid="inline-image"]').count() === embeddedImageCount, "a general file attachment must remain separate from embedded images");
+  const wikiDownload = wikiAttachments.getByRole("button", { name: `${translate("assets.download")} reference.html` });
+  check(await wikiDownload.isVisible(), "Wiki attachment download control is missing");
+  const [wikiFileDownload] = await Promise.all([page.waitForEvent("download"), wikiDownload.click()]);
+  check(wikiFileDownload.suggestedFilename() === "reference.html", "Wiki attachment download did not preserve its filename");
+  const screenshotDir = "/home/plong/workspace/weft/.local/ai-ux-reliability/02-wiki-page-attachments";
+  await mkdir(screenshotDir, { recursive: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.screenshot({ path: `${screenshotDir}/wiki-attachments-desktop.png`, fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: `${screenshotDir}/wiki-attachments-mobile.png`, fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole("button", { name: translate("wiki.exports") }).click();
+  await page.getByTestId("wiki-page-lock").click();
+  await wikiAttachments.locator('input[type="file"]').waitFor({ state: "detached" });
+  check(await wikiAttachments.getByText("reference.html").isVisible(), "locking the page should preserve readable attachments");
   await pickImage(page, '[data-testid="inline-image-input"]', '.ProseMirror', 2);
   await dropImage(page, '.ProseMirror', 3);
   // The Wiki editor keeps the resize and alignment controls.

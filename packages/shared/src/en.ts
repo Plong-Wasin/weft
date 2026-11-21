@@ -1022,6 +1022,7 @@ export const en = {
     "assets.attach": "Attach files",
     "assets.title": "Attachments",
     "assets.empty": "No attachments yet.",
+    "assets.loading": "Loading attachments…",
     "assets.dropHint": "Drop files here to attach them.",
     "assets.download": "Download",
     "assets.delete": "Delete",

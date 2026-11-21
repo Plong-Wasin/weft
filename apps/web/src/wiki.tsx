@@ -10,7 +10,7 @@ import { Mention } from "../../../packages/actions/src/wiki-editor-extensions";
 import { OutlinksPanel } from "./outlinks-panel";
 import { mentionRender } from "./suggest-list";
 import { formatDate, translate, translateDynamic, type MessageKey } from "@weft/shared";
-import { useAssetImages } from "./asset-images";
+import { AttachmentsPanel, useAssetImages } from "./asset-images";
 import { AssistMenu } from "./assist-menu";
 import { AiAssist } from "./editor-assist";
 import { BlockKeyboardShortcuts, CodeBlockCopy, EditorPlaceholder, EmojiSuggestions, ListIndent, MarkdownPaste, SafeLinkClick, SlashMenu, surfaceEditorExtensions, wikiCommands } from "./editor-extensions";
@@ -208,6 +208,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
   const [pdfIncludeImages, setPdfIncludeImages] = React.useState(true);
   const [pdfExporting, setPdfExporting] = React.useState(false);
   const [pdfError, setPdfError] = React.useState("");
+  const [inlineAssetIds, setInlineAssetIds] = React.useState<string[]>([]);
   const limitWarnings = React.useMemo(() => editorLimitWarnings(page.content), [page.content]);
   const imageInput = React.useRef<HTMLInputElement>(null);
   const dirtyTitle = React.useRef<string | undefined>(undefined);
@@ -271,8 +272,13 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
     if (!editor) return;
     const refresh = () => {
       const next: Array<{ text: string; level: number; pos: number }> = [];
-      editor.state.doc.descendants((node, pos) => { if (node.type.name === "heading") next.push({ text: node.textContent, level: Number(node.attrs.level), pos }); });
+      const assetIds: string[] = [];
+      editor.state.doc.descendants((node, pos) => {
+        if (node.type.name === "heading") next.push({ text: node.textContent, level: Number(node.attrs.level), pos });
+        if (node.type.name === "assetImage" && typeof node.attrs.assetId === "string") assetIds.push(node.attrs.assetId);
+      });
       setHeadings(next);
+      setInlineAssetIds((current) => current.length === assetIds.length && current.every((id, index) => id === assetIds[index]) ? current : assetIds);
     };
     refresh(); editor.on("transaction", refresh);
     return () => { editor.off("transaction", refresh); };
@@ -459,6 +465,10 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
     <div className="wiki-editor relative min-h-40" data-testid="wiki-editor"><EditorSourceMode editor={page.canEdit ? editor : null} initialWarnings={limitWarnings} onSourceDraftChange={(hasDraft) => { if (hasDraft) setStatus("not-saved"); }} toggleRef={sourceToggle} onModeChange={setSourceActive} /><CalloutControls editor={editor} editable={page.canEdit} /><CodeBlockControls editor={editor} editable={page.canEdit} /><TableControls editor={editor} editable={page.canEdit} /><EditorContent editor={editor} /><WikiBlockControls editor={editor} editable={page.canEdit} /><WikiBubbleMenu editor={page.canEdit ? editor : null} />{page.canEdit && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>
     </div>
     </div>
+    <section aria-label={translate("assets.title")} className="mt-5 border-t border-subtle pt-4">
+      <h2 className="mb-2 mt-0 text-16 font-semibold text-primary">{translate("assets.title")}</h2>
+      <AttachmentsPanel workItemId={page.id} ownerType="wiki_page" canWrite={page.canEdit} action={call} showForm={page.canEdit} onCount={() => {}} testId="wiki-attachments" excludeAssetIds={inlineAssetIds} />
+    </section>
     {imageError && <p role="alert">{imageError}</p>}
     </div>
     </section>

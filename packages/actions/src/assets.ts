@@ -54,7 +54,7 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
     if (type === "wiki_page") {
       const [page] = await db.select().from(wikiPages).where(and(eq(wikiPages.id, id), isNull(wikiPages.deletedAt)));
       if (!page) throw new ActionError("Owner not found", 404);
-      return { workspaceId: page.workspaceId, projectId: page.projectId, workItemId: null, wikiPageId: page.id };
+      return { workspaceId: page.workspaceId, projectId: page.projectId, workItemId: null, wikiPageId: page.id, archivedAt: page.archivedAt };
     }
     if (type === "cycle" || type === "module") {
       const table = type === "cycle" ? cycles : modules;
@@ -96,9 +96,14 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
   }
 
   /** An archived work item is read-only, and so are the files on it and on its comments. */
-  async function assertOwnerOpen(owner: Owner | null, database: Database = db) {
+  async function assertOwnerOpen(owner: Owner | null, database: Database = db, lockPage = false) {
     if (!owner) return;
     if (owner.archivedAt) throw new ActionError("This archived item is read-only", 400);
+    if (owner.wikiPageId) {
+      const query = database.select({ lockedAt: wikiPages.lockedAt }).from(wikiPages).where(eq(wikiPages.id, owner.wikiPageId));
+      const [page] = lockPage ? await query.for("update") : await query;
+      if (page?.lockedAt) throw new ActionError("This page is locked", 409);
+    }
     if (!owner.workItemId) return;
     const [item] = await database.select({ archivedAt: workItems.archivedAt }).from(workItems).where(eq(workItems.id, owner.workItemId));
     if (item) assertNotArchived(item);
@@ -122,13 +127,18 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
     return row;
   }
 
-  /** A Runtime Run may deliver files only to the Work item it is executing. */
-  async function assertRunWorkItem(context: Context, ownerType: OwnerType, ownerId: string) {
+  /** A Runtime Run may deliver files to its Work item or an editable Wiki page in its workspace. */
+  async function assertRunAssetOwner(context: Context, ownerType: OwnerType, ownerId: string) {
     if (!context.agent) return;
-    if (ownerType !== "work_item") throw new ActionError("An Agent can attach files only to its Run's Work item", 403);
+    if (ownerType !== "work_item" && ownerType !== "wiki_page") throw new ActionError("An Agent can attach files only to its Run's Work item or an authorized Wiki page", 403);
     const [run] = await db.select({ workItemId: runs.workItemId, workspaceId: runs.workspaceId }).from(runs).where(eq(runs.id, context.agent.runId));
-    if (!run || !run.workItemId || run.workItemId !== ownerId || (context.agent.workspaceId && run.workspaceId !== context.agent.workspaceId)) {
-      throw new ActionError("An Agent can attach files only to its Run's Work item", 403);
+    if (!run || (context.agent.workspaceId && run.workspaceId !== context.agent.workspaceId)) {
+      throw new ActionError("Asset owner is outside this Run's scope", 403);
+    }
+    if (ownerType === "work_item" && (!run.workItemId || run.workItemId !== ownerId)) throw new ActionError("An Agent can attach files only to its Run's Work item", 403);
+    if (ownerType === "wiki_page") {
+      const owner = await resolveOwner("wiki_page", ownerId);
+      if (owner.projectId || owner.workspaceId !== run.workspaceId) throw new ActionError("An Agent can attach files only to an authorized Wiki page in its workspace", 403);
     }
   }
 
@@ -143,7 +153,7 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
       input: Type.Object({ ownerType, ownerId: uuid(), filename: Type.String({ minLength: 1, maxLength: 255 }), contentType: Type.String({ minLength: 1, maxLength: 255 }), size: Type.Integer({ minimum: 1 }) }),
       output: uploadOutput,
       handler: async (context: Context, input: { ownerType: OwnerType; ownerId: string; filename: string; contentType: string; size: number }) => {
-        await assertRunWorkItem(context, input.ownerType, input.ownerId);
+        await assertRunAssetOwner(context, input.ownerType, input.ownerId);
         const owner = await resolveOwner(input.ownerType, input.ownerId);
         await requireOwnerAccess(owner, context.userId, "write");
         await assertOwnerOpen(owner);
@@ -165,10 +175,11 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
       input: Type.Object({ assetId: uuid() }), output: assetOutput,
       handler: async (context: Context, input: { assetId: string }) => {
         const row = await loadAsset(input.assetId);
-        await assertRunWorkItem(context, row.ownerType as OwnerType, row.ownerId);
+        await assertRunAssetOwner(context, row.ownerType as OwnerType, row.ownerId);
         await requireRowAccess(row, context.userId, "write");
         if (row.uploaderId !== context.userId) throw new ActionError("Only the uploader can complete an upload", 403);
         const owner = await resolveOwner(row.ownerType as OwnerType, row.ownerId);
+        await assertOwnerOpen(owner);
         const result = await db.transaction(async (transaction) => {
           const database = transaction as unknown as Database;
           // Intake decisions take this lock first. Recheck access after it, so
@@ -182,6 +193,7 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
           const [locked] = await database.select().from(assets).where(eq(assets.id, row.id)).for("update");
           if (!locked) throw new ActionError("Asset not found", 404);
           if (locked.status === "uploaded") return { asset: out(locked) };
+          await assertOwnerOpen(owner, database, true);
           const stored = await store().head(locked.storageKey);
           if (!stored) throw new ActionError("File was not uploaded", 400);
           if (stored.size < 1 || stored.size > limitBytes()) {
@@ -210,6 +222,7 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
           const database = transaction as unknown as Database;
           const [row] = await database.select().from(assets).where(eq(assets.id, input.assetId)).for("update");
           if (!row || row.uploaderId !== context.userId || row.status !== "pending") throw new ActionError("Pending upload not found", 404);
+          await assertRunAssetOwner(context, row.ownerType as OwnerType, row.ownerId);
           // The uploader may discard their unfinished upload after losing access.
           await store().remove(row.storageKey);
           await database.delete(assets).where(eq(assets.id, row.id));
@@ -221,6 +234,7 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
       name: "list_assets", kind: "read" as const,
       input: Type.Object({ ownerType, ownerId: uuid() }), output: Type.Array(assetOutput),
       handler: async (context: Context, input: { ownerType: OwnerType; ownerId: string }) => {
+        await assertRunAssetOwner(context, input.ownerType, input.ownerId);
         const owner = await resolveOwner(input.ownerType, input.ownerId);
         await requireOwnerAccess(owner, context.userId, "read");
         const rows = await db.select().from(assets)
@@ -233,6 +247,7 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
       input: Type.Object({ assetId: uuid(), download: Type.Optional(Type.Boolean()) }), output: downloadOutput,
       handler: async (context: Context, input: { assetId: string; download?: boolean }) => {
         const row = await loadAsset(input.assetId);
+        await assertRunAssetOwner(context, row.ownerType as OwnerType, row.ownerId);
         await requireRowAccess(row, context.userId, "read");
         if (row.status !== "uploaded") throw new ActionError("Asset not found", 404);
         const inline = !input.download && isInlineImage(row.contentType);
@@ -258,6 +273,7 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
           }
           const [locked] = await database.select().from(assets).where(eq(assets.id, row.id)).for("update");
           if (!locked) throw new ActionError("Asset not found", 404);
+          await assertOwnerOpen(owner, database, true);
           await store().remove(locked.storageKey);
           await database.delete(assets).where(eq(assets.id, row.id));
           if (owner?.workItemId && owner.projectId) {

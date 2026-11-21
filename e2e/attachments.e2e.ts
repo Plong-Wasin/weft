@@ -8,11 +8,14 @@ import { translate } from "../packages/shared/src";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3108);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5208);
+const livePort = Number(Bun.env.E2E_LIVE_PORT ?? apiPort + 10_000);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
+const live = `http://localhost:${livePort}`;
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  Bun.spawn(["bun", "apps/live/src/index.ts"], { env: { ...Bun.env, LIVE_PORT: String(livePort), WEB_ORIGIN: web }, stdout: "inherit", stderr: "inherit" }),
+  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api, VITE_LIVE_URL: `ws://localhost:${livePort}` }, stdout: "ignore", stderr: "inherit" }),
 ];
 
 async function waitFor(url: string) {
@@ -71,7 +74,7 @@ async function pickImage(page: Page, inputSelector: string, editorSelector: stri
 
 let failed = false;
 try {
-  await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
+  await Promise.all([waitFor(`${api}/api/me`), waitFor(web), waitFor(live)]);
   const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
   const page = await browser.newPage();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
@@ -213,6 +216,11 @@ try {
   await page.locator(".ProseMirror").waitFor();
   await pasteFile(page, ".ProseMirror", { name: "w.png", type: "image/png", base64: png });
   await page.waitForFunction(() => (document.querySelector('.ProseMirror img[data-testid="inline-image"]') as HTMLImageElement | null)?.naturalWidth);
+  await page.getByText(translate("wiki.saved")).waitFor({ timeout: 10_000 });
+  await page.reload();
+  await page.locator('.ProseMirror img[data-testid="inline-image"]').waitFor();
+  await page.waitForFunction(() => (document.querySelector('.ProseMirror img[data-testid="inline-image"]') as HTMLImageElement | null)?.naturalWidth);
+  check(await loadedImages(page, ".ProseMirror") === 1, "Wiki image did not render after reload");
   const wikiAttachments = page.getByTestId("wiki-attachments");
   await wikiAttachments.waitFor({ state: "visible" });
   await page.waitForFunction(() => document.querySelector('[data-testid="wiki-attachments"]')?.getAttribute("aria-busy") === "false");
@@ -265,6 +273,9 @@ try {
   await page.getByTestId("wiki-page-lock").click();
   await wikiAttachments.locator('input[type="file"]').waitFor({ state: "detached" });
   check(await wikiAttachments.getByText("reference.html").isVisible(), "locking the page should preserve readable attachments");
+  await page.getByRole("button", { name: translate("wiki.exports") }).click();
+  await page.getByTestId("wiki-page-lock").click();
+  await wikiAttachments.locator('input[type="file"]').waitFor({ state: "attached" });
   await pickImage(page, '[data-testid="inline-image-input"]', '.ProseMirror', 2);
   await dropImage(page, '.ProseMirror', 3);
   // The Wiki editor keeps the resize and alignment controls.

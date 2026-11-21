@@ -2,7 +2,7 @@
 // Run with `bun e2e/run-all.ts large-workspace` against a dedicated migrated test database.
 import { chromium } from "playwright";
 import { asc, eq, like } from "drizzle-orm";
-import { createDatabase, projects, workItemStates, workItems, users, workspaces, workspaceMembers } from "../packages/db/src";
+import { createDatabase, labels, projects, workItemLabels, workItemStates, workItems, users, workspaces, workspaceMembers } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { mkdir } from "node:fs/promises";
 
@@ -10,7 +10,7 @@ const apiPort = Number(Bun.env.E2E_API_PORT ?? 3129);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5229);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
-const shots = "/home/plong/workspace/weft/.local/ai-ux-reliability/15";
+const shots = "/home/plong/workspace/weft/.local/ai-ux-follow-up/10";
 const { client, db } = createDatabase();
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
@@ -100,6 +100,12 @@ try {
     stateId: stateByProject.get(project.id)!, sortOrder: itemIndex, createdBy: me.user.id,
   })));
   for (let offset = 0; offset < fixture.length; offset += 500) await db.insert(workItems).values(fixture.slice(offset, offset + 500));
+  const fixtureLabels = allProjects.map((project, index) => ({ id: crypto.randomUUID(), workspaceId, projectId: project.id, name: `Scale Label ${index}`, color: "#4488cc" }));
+  await db.insert(labels).values(fixtureLabels);
+  const fixtureItems = await db.select({ id: workItems.id, projectId: workItems.projectId }).from(workItems).where(eq(workItems.workspaceId, workspaceId));
+  const firstItemPerProject = new Map<string, string>();
+  for (const item of fixtureItems) if (!firstItemPerProject.has(item.projectId)) firstItemPerProject.set(item.projectId, item.id);
+  await db.insert(workItemLabels).values(fixtureLabels.map((label) => ({ workItemId: firstItemPerProject.get(label.projectId)!, labelId: label.id })));
 
   // The last of 250 Projects is discoverable from the navigation by key and name, on desktop and phone.
   await page.goto(`${web}/${slug}`);
@@ -164,12 +170,34 @@ try {
   console.log(`action observation: returned=${measured.items.length}, truncated=${measured.truncated}, responseMs=${apiMs}, payloadBytes=${payloadBytes}`);
 
   const renderStarted = performance.now();
+  const actionRequests: string[] = [];
+  let metadataResponseMs: number | null = null;
+  const actionStarted = new Map<string, number>();
+  page.on("request", (request) => {
+    const match = new URL(request.url()).pathname.match(/^\/actions\/([^/]+)$/);
+    if (match) {
+      actionRequests.push(match[1]!);
+      actionStarted.set(request.url(), performance.now());
+    }
+  });
+  page.on("response", (response) => {
+    if (new URL(response.url()).pathname === "/actions/list_workspace_view_metadata") metadataResponseMs = Math.round(performance.now() - (actionStarted.get(response.url()) ?? performance.now()));
+  });
   await page.goto(`${web}/${slug}/workspace-views/all-issues`);
   await page.getByRole("status").filter({ hasText: "Showing the first 2,000" }).waitFor();
   await page.getByTestId("row-SCL000-1").waitFor().catch(() => undefined);
   await page.waitForFunction(() => document.querySelectorAll('[data-testid^="row-"]').length === 2000, null, { timeout: 120_000 });
   const renderMs = Math.round(performance.now() - renderStarted);
+  const stateLabelRequests = actionRequests.filter((name) => name === "list_states" || name === "list_labels").length;
+  if (Bun.env.EXPECT_OPTIMIZED === "true") {
+    check(stateLabelRequests === 0, `Workspace View made ${stateLabelRequests} per-Project state/label requests`);
+    check(actionRequests.filter((name) => name === "list_workspace_view_metadata").length === 1, `expected one workspace metadata request, got ${actionRequests.join(", ")}`);
+  }
+  console.log(`Workspace View request observation: actions=${actionRequests.length}, perProjectStateLabelRequests=${stateLabelRequests}, metadataResponseMs=${metadataResponseMs ?? "missing"}, responseAndRenderMs=${renderMs}`);
   const renderedRows = await page.locator('[data-testid^="row-"]').count();
+  const firstRow = page.getByTestId("row-SCL000-1");
+  await firstRow.getByText("Scale Label 0", { exact: true }).waitFor();
+  await firstRow.getByText("Backlog", { exact: true }).waitFor();
   await page.screenshot({ path: `${shots}/workspace-view-1440.png`, fullPage: false });
   console.log(`browser observation desktop: rows=${renderedRows}, renderMs=${renderMs}, screenshot=${shots}/workspace-view-1440.png`);
 

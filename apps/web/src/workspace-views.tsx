@@ -95,10 +95,10 @@ export function WorkspaceViewPage({ workspace, selfId, viewId }: { workspace: Wo
     void reloadList();
     void action<Member[]>("list_members", { workspaceId: workspace.id }).then((rows) => setPeople(rows ?? []));
     void (async () => {
-      const found = await action<Project[]>("list_projects", { workspaceId: workspace.id }) ?? [];
-      setProjects(found);
-      const lists = await Promise.all(found.map(async (project) => ({ states: await action<State[]>("list_states", { projectId: project.id }) ?? [], labels: await action<Label[]>("list_labels", { projectId: project.id }) ?? [] })));
-      setStates(lists.flatMap((entry) => entry.states)); setLabels(lists.flatMap((entry) => entry.labels));
+      const metadata = await action<{ projects: Project[]; states: State[]; labels: Label[] }>("list_workspace_view_metadata", { workspaceId: workspace.id });
+      setProjects(metadata?.projects ?? []);
+      setStates(metadata?.states ?? []);
+      setLabels(metadata?.labels ?? []);
     })();
   }, [workspace.id, reloadList]);
   React.useEffect(() => {

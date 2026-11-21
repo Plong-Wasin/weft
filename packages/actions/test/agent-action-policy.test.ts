@@ -67,7 +67,7 @@ test("account, security and Agent-configuring actions are never available to an 
 });
 
 test("the lookups an Agent needs to work with work items and comments stay open with no grants", () => {
-  for (const action of ["list_states", "list_labels", "list_projects", "get_project", "list_members", "list_mentionable_members", "list_timeline", "get_skill"]) {
+  for (const action of ["list_states", "list_labels", "list_projects", "list_workspace_view_metadata", "get_project", "list_members", "list_mentionable_members", "list_timeline", "get_skill"]) {
     expect(agentMayUseAction(action, noGrants)).toBe(true);
   }
 });

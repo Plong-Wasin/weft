@@ -17,7 +17,7 @@ const baseActions = new Set([
   "list_assets", "list_comment_versions", "list_comments", "list_labels", "list_members", "list_mentionable_members", "list_project_members",
   "list_custom_properties", "list_projects", "list_states", "list_work_item_types", "list_work_item_type_suggestions", "list_sub_work_items", "list_timeline", "list_web_links", "list_wiki_page_comments", "list_wiki_page_work_items",
   "list_work_item_activities", "list_work_item_description_versions", "list_work_item_pages", "list_work_item_pull_requests", "list_work_item_relations", "list_work_items",
-  "list_workspace_work_items", "list_workspace_work_items_with_metadata", "move_work_item", "remove_work_item_relation", "reply_wiki_page_comment", "resolve_wiki_page_comment",
+  "list_workspace_view_metadata", "list_workspace_work_items", "list_workspace_work_items_with_metadata", "move_work_item", "remove_work_item_relation", "reply_wiki_page_comment", "resolve_wiki_page_comment",
   "restore_work_item", "restore_work_item_description_version", "search_work_items", "unlink_work_item_page", "update_comment", "update_web_link",
   "update_wiki_page_comment", "update_work_item",
 ]);

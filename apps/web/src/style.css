@@ -282,8 +282,11 @@
 .asset-image-node[data-alignment="right"] { text-align: right; }
 .ProseMirror a[data-unavailable-reference] { border: 1px solid var(--border-subtle); border-radius: 999px; background: var(--bg-surface-2); color: var(--txt-secondary); padding: 0 .35em; text-decoration: none; cursor: not-allowed; }
 .asset-image-node > img { display: inline-block; height: auto; }
-.asset-image-controls { display: flex; justify-content: center; gap: .25rem; margin-top: .25rem; }
-.asset-image-controls button, .asset-image-resize { border: 1px solid var(--border-strong); border-radius: .25rem; background: var(--bg-layer-1); color: var(--txt-secondary); padding: .15rem .4rem; font-size: .75rem; cursor: pointer; }
+.asset-image-controls { display: flex; flex-wrap: wrap; justify-content: center; gap: .375rem; width: 100%; max-width: 100%; margin-top: .375rem; }
+.asset-image-unverified { align-self: center; border-radius: .25rem; background: var(--bg-warning-subtle); color: var(--txt-warning-primary); padding: .25rem .5rem; font-size: .75rem; font-weight: 600; }
+.asset-image-controls button, .asset-image-resize { box-sizing: border-box; min-width: 2.75rem; min-height: 2.75rem; border: 1px solid var(--border-strong); border-radius: .375rem; background: var(--bg-layer-1); color: var(--txt-secondary); padding: .375rem .625rem; font-size: .75rem; line-height: 1.2; cursor: pointer; touch-action: manipulation; }
+.asset-image-controls button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.asset-image-resize { flex: none; width: 2.75rem; padding: .25rem; cursor: ew-resize; touch-action: none; }
 .asset-image-controls button:hover, .asset-image-controls button:focus-visible { color: var(--txt-primary); outline-color: var(--border-accent-strong); }
 .asset-image-viewer { width: 100vw; height: 100vh; max-width: none; max-height: none; inset: 0; border: 0; padding: 1rem; background: var(--bg-surface-1); color: var(--txt-primary); overflow: auto; }
 .asset-image-viewer::backdrop { background: rgb(0 0 0 / .88); }

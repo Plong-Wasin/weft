@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import { aiRequests, createDatabase, jobs, notificationEmails, notifications, projectMembers, sessions, workspaceInvites, type Database } from "@weft/db";
+import { aiRequests, createDatabase, jobs, notificationEmails, notifications, projectMembers, sessions, workItems, workspaceInvites, type Database } from "@weft/db";
 import {
   createAgentActions, createCommentActions, createIntakeActions, createJobHandlers, createNotificationActions, createProjectActions, createWorkItemActions,
   runNextJob, scheduleCleanupJobs, sendNotificationDigests,
@@ -269,6 +269,14 @@ test.concurrent("a member marks one notification read, then all; others cannot t
     expect((await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id, unreadOnly: true })).notifications).toHaveLength(1);
     await inbox.markAllNotificationsRead.handler({ userId: other.id }, { workspaceId: workspace.id });
     expect((await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).unreadCount).toBe(0);
+    await inbox.markNotificationUnread.handler({ userId: other.id }, { notificationId: list.notifications[0]!.id });
+    const restored = await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id });
+    expect(restored.unreadCount).toBe(1);
+    expect(restored.notifications.find((n) => n.id === list.notifications[0]!.id)!.readAt).toBeNull();
+    await expect(inbox.markNotificationUnread.handler({ userId: third.id }, { notificationId: list.notifications[0]!.id })).rejects.toMatchObject({ status: 404 });
+    await transaction.update(workItems).set({ deletedAt: new Date() }).where(eq(workItems.id, item.id));
+    await expect(inbox.markNotificationRead.handler({ userId: other.id }, { notificationId: list.notifications[0]!.id })).rejects.toMatchObject({ status: 404 });
+    await expect(inbox.markNotificationUnread.handler({ userId: other.id }, { notificationId: list.notifications[0]!.id })).rejects.toMatchObject({ status: 404 });
   });
 });
 

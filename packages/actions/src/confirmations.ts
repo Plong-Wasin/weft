@@ -40,7 +40,7 @@ export const aiWriteActions = [
   "create_state", "update_state", "reorder_states", "create_label", "update_label",
   "update_comment", "delete_comment",
   "move_page_scope", "restore_wiki_page_version", "restore_work_item_description_version",
-  "mark_notification_read", "mark_all_notifications_read",
+  "mark_notification_read", "mark_notification_unread", "mark_all_notifications_read",
   "create_workspace_view",
   "create_skill", "update_skill", "delete_skill",
   "create_recurrence", "update_recurrence", "pause_recurrence", "resume_recurrence", "delete_recurrence", "run_recurrence_now",

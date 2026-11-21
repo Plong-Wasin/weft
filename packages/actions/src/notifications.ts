@@ -254,6 +254,15 @@ export function createNotificationActions(db: Database) {
       : row.wikiPageId !== null && visiblePages.get(row.wikiPageId)));
   }
 
+  async function requireVisibleNotification(userId: string, notificationId: string) {
+    const [row] = await db.select({ workspaceId: notifications.workspaceId }).from(notifications)
+      .where(and(eq(notifications.id, notificationId), eq(notifications.userId, userId))).limit(1);
+    if (!row || !(await visibleRows(userId, row.workspaceId, false)).some((notification) => notification.id === notificationId)) {
+      throw new ActionError("Notification not found", 404);
+    }
+    return row.workspaceId;
+  }
+
   return {
     listNotifications: {
       name: "list_notifications", kind: "read" as const,
@@ -277,9 +286,23 @@ export function createNotificationActions(db: Database) {
       name: "mark_notification_read", kind: "write" as const,
       input: Type.Object({ notificationId: uuid() }), output: Type.Object({ marked: Type.Boolean() }),
       handler: async (context: { userId: string }, input: { notificationId: string }) => {
+        const workspaceId = await requireVisibleNotification(context.userId, input.notificationId);
         const updated = await db.update(notifications).set({ readAt: sql`coalesce(${notifications.readAt}, now())` })
           .where(and(eq(notifications.id, input.notificationId), eq(notifications.userId, context.userId))).returning({ id: notifications.id });
         if (updated.length === 0) throw new ActionError("Notification not found", 404);
+        await publishSignal(db, { type: "notification", workspaceId, userId: context.userId });
+        return { marked: true };
+      },
+    },
+    markNotificationUnread: {
+      name: "mark_notification_unread", kind: "write" as const,
+      input: Type.Object({ notificationId: uuid() }), output: Type.Object({ marked: Type.Boolean() }),
+      handler: async (context: { userId: string }, input: { notificationId: string }) => {
+        const workspaceId = await requireVisibleNotification(context.userId, input.notificationId);
+        const updated = await db.update(notifications).set({ readAt: null })
+          .where(and(eq(notifications.id, input.notificationId), eq(notifications.userId, context.userId))).returning({ id: notifications.id });
+        if (updated.length === 0) throw new ActionError("Notification not found", 404);
+        await publishSignal(db, { type: "notification", workspaceId, userId: context.userId });
         return { marked: true };
       },
     },
@@ -288,8 +311,12 @@ export function createNotificationActions(db: Database) {
       input: Type.Object({ workspaceId: uuid() }), output: Type.Object({ marked: Type.Integer() }),
       handler: async (context: { userId: string }, input: { workspaceId: string }) => {
         await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
+        const visible = await visibleRows(context.userId, input.workspaceId, false);
+        const visibleIds = visible.map((row) => row.id);
+        if (visibleIds.length === 0) return { marked: 0 };
         const updated = await db.update(notifications).set({ readAt: new Date() })
-          .where(and(eq(notifications.userId, context.userId), eq(notifications.workspaceId, input.workspaceId), isNull(notifications.readAt))).returning({ id: notifications.id });
+          .where(and(eq(notifications.userId, context.userId), eq(notifications.workspaceId, input.workspaceId), inArray(notifications.id, visibleIds), isNull(notifications.readAt))).returning({ id: notifications.id });
+        await publishSignal(db, { type: "notification", workspaceId: input.workspaceId, userId: context.userId });
         return { marked: updated.length };
       },
     },

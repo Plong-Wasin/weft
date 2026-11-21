@@ -56,3 +56,10 @@ export const paths = {
   aiChat: (workspace: string, id: string) => `/${e(workspace)}/ai/${e(id)}`,
   invite: (token: string) => `/invite/${e(token)}`,
 } as const;
+
+/** Selects a Run without discarding the current work item route or peek context. */
+export function runFocusHref(runId: string, currentHref = window.location.href): string {
+  const current = new URL(currentHref);
+  current.searchParams.set("run", runId);
+  return `${current.pathname}${current.search}${current.hash}`;
+}

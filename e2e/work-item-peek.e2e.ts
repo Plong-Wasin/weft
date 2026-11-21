@@ -2,6 +2,7 @@
 // Run with `bun e2e/work-item-peek.e2e.ts` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
 import { chromium } from "playwright";
 import { translate } from "../packages/shared/src";
+import { comments, createDatabase } from "../packages/db/src";
 import { reviewShots } from "../tools/visual/paths";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3107);
@@ -10,6 +11,7 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const shots = reviewShots("07-work-item-peek-and-detail");
 const uxShots = reviewShots("12-work-items-ux");
+const runPeekShots = "/home/plong/workspace/weft/.local/ai-ux-reliability/09";
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
   Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
@@ -25,7 +27,9 @@ async function waitFor(url: string) {
 
 type Item = { id: string; displayId: string; title: string; stateId: string; priority: string; assigneeIds: string[]; labelIds: string[]; parentId: string | null; startDate: string | null; dueDate: string | null; description: unknown };
 let failed = false;
+let fixtureClient: ReturnType<typeof createDatabase>["client"] | undefined;
 try {
+  await Bun.$`mkdir -p ${runPeekShots}`;
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
   const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
@@ -73,7 +77,7 @@ try {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await page.evaluate((nextTheme) => { localStorage.setItem("weft.theme", nextTheme); document.documentElement.dataset.theme = nextTheme; }, theme);
     await page.goto(`${base}/issues`);
-    await page.getByRole("link", { name: "Alpha" }).click();
+    await page.getByTestId("row-MOB-1").getByRole("link").click();
     await peek.waitFor();
     await page.screenshot({ path: `${uxShots}/peek-${width}-${theme}.png` });
     await page.keyboard.press("Escape");
@@ -85,7 +89,7 @@ try {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(() => { localStorage.setItem("weft.theme", "light"); document.documentElement.dataset.theme = "light"; });
   await page.goto(`${base}/issues`);
-  await page.getByRole("link", { name: "Alpha" }).click();
+  await page.getByTestId("row-MOB-1").getByRole("link").click();
   await peek.waitFor();
   check(page.url().includes("peek=MOB-1"), "the peek is not in the URL");
   await peek.getByRole("heading", { name: "MOB-1" }).waitFor();
@@ -93,14 +97,14 @@ try {
   await peek.waitFor({ state: "detached" });
   check(!page.url().includes("peek="), "closing the peek left it in the URL");
   // A reload keeps an open peek; the backdrop closes it too.
-  await page.getByRole("link", { name: "Alpha" }).click();
+  await page.getByTestId("row-MOB-1").getByRole("link").click();
   await peek.waitFor();
   await page.reload();
   await peek.waitFor();
   await page.mouse.click(60, 450);
   await peek.waitFor({ state: "detached" });
   // An open dropdown takes the first Escape; the peek takes the second.
-  await page.getByRole("link", { name: "Alpha" }).click();
+  await page.getByTestId("row-MOB-1").getByRole("link").click();
   await peek.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}:`) }).first().click();
   await page.keyboard.press("Escape");
   await peek.waitFor();
@@ -109,7 +113,7 @@ try {
 
   // Keyboard only: Enter on a list row opens its peek, Enter on a property opens its menu, Escape closes the menu and returns focus to the property, the next Escape closes the peek.
   await page.goto(`${base}/issues`);
-  await page.getByRole("link", { name: "Alpha" }).focus();
+  await page.getByTestId("row-MOB-1").getByRole("link").focus();
   await page.keyboard.press("Enter");
   await peek.waitFor();
   check(page.url().includes("peek=MOB-1"), "Enter on a list row did not open the peek");
@@ -125,7 +129,7 @@ try {
   await peek.waitFor({ state: "detached" });
 
   // A failed save shows a plain message in the peek and leaves the property unchanged.
-  await page.getByRole("link", { name: "Alpha" }).click();
+  await page.getByTestId("row-MOB-1").getByRole("link").click();
   await peek.waitFor();
   await page.route(`${api}/actions/update_work_item`, (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "boom" }) }));
   await peek.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}:`) }).first().click();
@@ -144,7 +148,7 @@ try {
   await peek.waitFor({ state: "detached" });
   for (const where of [`${base}/cycles/${cycle.id}`, `${base}/modules/${module.id}`]) {
     await page.goto(where);
-    await page.getByRole("link", { name: "Alpha" }).click();
+    await page.getByTestId("row-MOB-1").getByRole("link").click();
     await peek.waitFor();
     await page.keyboard.press("Escape");
     await peek.waitFor({ state: "detached" });
@@ -158,7 +162,7 @@ try {
   for (const width of [1920, 1440, 1280, 1024, 768, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await page.goto(`${base}/issues`);
-    await page.getByRole("link", { name: "Alpha" }).click();
+    await page.getByTestId("row-MOB-1").getByRole("link").click();
     await peek.waitFor();
     await peek.getByRole("heading", { name: "MOB-1" }).waitFor();
     const aside = peek.getByRole("complementary", { name: translate("workItems.properties"), exact: true });
@@ -179,8 +183,8 @@ try {
     // Two columns: the key-property chips are hidden (Properties shows the same fields); stacked: they sit under the title.
     const chips = await peek.getByRole("group", { name: translate("workItems.quickProperties"), exact: true }).isVisible();
     check(chips === (width < 1024), `the key-property chips are ${chips ? "shown" : "hidden"} at ${width}px`);
-    const description = await peek.getByTestId("description-editor").boundingBox();
-    const gap = description!.y - (title!.y + title!.height);
+    const descriptionToolbar = await peek.getByTestId("description-toolbar").boundingBox();
+    const gap = descriptionToolbar!.y - (title!.y + title!.height);
     if (width >= 1024) check(gap <= 48, `the description sits ${gap}px under the title at ${width}px; expected the editor toolbar only (48px or less)`);
     check(JSON.stringify(await aside.locator("[data-props-section]").evaluateAll((nodes) => nodes.map((node) => (node as HTMLElement).dataset.propsSection))) === '["primary","more","details"]', `the peek Properties sections are not the page's at ${width}px`);
     const details = await aside.locator('[data-props-section="details"]').boundingBox();
@@ -195,11 +199,54 @@ try {
     check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth) && await peek.evaluate((node) => node.scrollWidth <= node.clientWidth), `the peek scrolls sideways at ${width}px`);
     await page.screenshot({ path: `${uxShots}/peek-layout-${width}-dark.png` });
   }
+
+  // Seed one Run and an Agent-authored comment after the layout assertions. Keeping the Agent assignment out of the matrix
+  // ensures the Run fixture cannot affect the responsive description spacing being asserted above.
+  const runItem = await call<Item>("create_work_item", { projectId, title: "Run context" });
+  const agent = await call<{ id: string; userId: string }>("create_agent", { workspaceId: me.workspaces[0]!.id, name: "Peek Run Agent", instructions: "Wait for a person to inspect this Run.", model: "default" });
+  await call("set_agent_project_access", { agentId: agent.id, allProjects: false, projectIds: [projectId] });
+  const assignment = await call<{ wakeOutcomes: Array<{ status: string }> }>("update_work_item", { workItemId: runItem.id, assigneeIds: [agent.userId] });
+  check(assignment.wakeOutcomes[0]?.status === "started", "the peek regression Run did not start");
+  const runs = await call<Array<{ id: string; status: string }>>("list_runs", { workItemId: runItem.id });
+  const targetRun = runs[0];
+  check(!!targetRun, "the assigned Agent Run was not returned");
+  const fixtureDb = createDatabase();
+  fixtureClient = fixtureDb.client;
+  const runCommentBody = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Run output for peek navigation." }] }] };
+  await fixtureDb.db.insert(comments).values({ workspaceId: me.workspaces[0]!.id, projectId, workItemId: runItem.id, authorId: agent.userId, body: runCommentBody, bodyMarkdown: "Run output for peek navigation.", bodyText: "Run output for peek navigation.", runId: targetRun.id });
+
+  // The actual View run link from a comment in the peek must keep the peek while highlighting its Run.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${base}/issues`);
+  await page.getByRole("link", { name: "Run context", exact: true }).click();
+  await peek.waitFor();
+  await peek.getByRole("heading", { name: runItem.displayId }).waitFor();
+  const actualViewRun = peek.getByRole("link", { name: translate("comments.viewRun"), exact: true });
+  await actualViewRun.waitFor();
+  await actualViewRun.click();
+  await page.waitForURL((url) => url.searchParams.get("peek") === runItem.displayId && url.searchParams.get("run") === targetRun.id);
+  let focusedRun = page.locator(`#run-${targetRun.id}`);
+  await focusedRun.waitFor();
+  check(await focusedRun.getAttribute("data-highlighted") === "true", "clicking View run did not focus the targeted Run");
+  check(new URL(page.url()).searchParams.get("peek") === runItem.displayId, "clicking View run lost the Work item peek context");
+
+  // Direct navigation is a separate check: the target Run and Work item context restore from one URL.
+  await page.goto(`${base}/issues?peek=${encodeURIComponent(runItem.displayId)}&run=${encodeURIComponent(targetRun.id)}`);
+  await peek.waitFor();
+  focusedRun = page.locator(`#run-${targetRun.id}`);
+  await focusedRun.waitFor();
+  check(await focusedRun.getAttribute("data-highlighted") === "true", "direct navigation did not focus the targeted Run");
+  check(new URL(page.url()).searchParams.get("peek") === runItem.displayId, "direct navigation lost the Work item peek context");
+  await Bun.write(`${runPeekShots}/peek-run-1440.png`, await page.screenshot({ fullPage: true }));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await focusedRun.scrollIntoViewIfNeeded();
+  await Bun.write(`${runPeekShots}/peek-run-390.png`, await page.screenshot({ fullPage: true }));
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(() => { localStorage.setItem("weft.theme", "light"); document.documentElement.dataset.theme = "light"; });
   // Two columns: the Properties stay in view while the content scrolls (a 520 px high window makes the content taller than the panel).
   await page.setViewportSize({ width: 1440, height: 520 });
   await page.goto(`${base}/issues`);
-  await page.getByRole("link", { name: "Alpha" }).click();
+  await page.getByTestId("row-MOB-1").getByRole("link").click();
   await peek.waitFor();
   const stickyAside = peek.getByRole("complementary", { name: translate("workItems.properties"), exact: true });
   const stickyTimeline = peek.getByRole("heading", { name: translate("timeline.title"), exact: true });
@@ -216,7 +263,7 @@ try {
 
   // Expand to the full page at the browse-by-key URL, with every section.
   await page.goto(`${base}/issues`);
-  await page.getByRole("link", { name: "Alpha" }).click();
+  await page.getByTestId("row-MOB-1").getByRole("link").click();
   await peek.getByRole("link", { name: translate("workItems.peek.expand") }).click();
   await page.waitForURL(`${web}/${slug}/browse/MOB-1`);
   await page.getByRole("heading", { name: "MOB-1" }).waitFor();
@@ -414,7 +461,7 @@ try {
   await peek.getByRole("button", { name: translate("workItems.delete"), exact: true }).click();
   await peek.waitFor({ state: "detached" });
   await page.goto(`${base}/issues`);
-  await page.getByRole("link", { name: "Alpha" }).waitFor();
+  await page.getByTestId("row-MOB-1").getByRole("link").waitFor();
   check(await page.getByRole("link", { name: "From the modal" }).count() === 0, "accepting the delete confirmation kept the work item");
   void t;
   console.log("e2e work item peek and detail: ok");
@@ -423,6 +470,7 @@ try {
   failed = true;
   console.error(error);
 } finally {
+  await fixtureClient?.end();
   for (const server of servers) server.kill();
 }
 process.exit(failed ? 1 : 0);

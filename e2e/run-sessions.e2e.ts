@@ -5,7 +5,7 @@
 import { chromium, type Page } from "playwright";
 import { eq, inArray, like } from "drizzle-orm";
 import { agents, createDatabase, jobs, users, workspaces } from "../packages/db/src";
-import { createAgentActions, createApiTokenActions, createRuntimeActions, createRuntimeDispatchActions, queueRunsForAssignees } from "../packages/actions/src";
+import { createAgentActions, createAgentRuntimeEnvironmentActions, createApiTokenActions, createRuntimeActions, createRuntimeDispatchActions, queueRunsForAssignees } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31191);
@@ -68,6 +68,8 @@ try {
   const runtime = registered.runtimes[0]!;
   await runtimeActions.shareRuntime.handler({ userId: ownerId }, { runtimeId: runtime.id });
   const coder = await createAgentActions(db).createAgent.handler({ userId: ownerId }, { workspaceId, name: "Coder", model: "default", runtimeId: runtime.id });
+  const runtimeEnvironment = createAgentRuntimeEnvironmentActions(db);
+  await runtimeEnvironment.setAgentRuntimeEnvironment.handler({ userId: ownerId }, { agentId: coder.id, variables: { CLAUDE_CONFIG_DIR: "/claude/account-one" } });
   await createAgentActions(db).setAgentProjectAccess.handler({ userId: ownerId }, { agentId: coder.id, allProjects: true, projectIds: [] });
   const item = await call<{ id: string }>("create_work_item", { projectId: project.id, title: "Add export button" });
   const dispatch = createRuntimeDispatchActions(db);
@@ -109,6 +111,21 @@ try {
   const lines = await panel.getByTestId("run-session").allInnerTexts();
   if (lines.length !== 3 || lines.filter((text) => text.includes(translate("runs.session.reason.rerun_as_new"))).length !== 1) throw new Error(`expected one rerun-as-new line among three: ${JSON.stringify(lines)}`);
   console.log(`run-sessions: rerun as new shows "${lines.find((text) => text.includes(translate("runs.session.reason.rerun_as_new")))}"`);
+
+  // Changing the selected Claude account starts a new Session but retains the same working folder.
+  const folderBeforeAccountChange = round3.session!.folder;
+  await runtimeEnvironment.setAgentRuntimeEnvironment.handler({ userId: ownerId }, { agentId: coder.id, variables: { CLAUDE_CONFIG_DIR: "/claude/account-two" } });
+  await queueRound();
+  const round4 = await claimNext(runtime.id);
+  if (round4.session?.reason !== "runtime_environment_changed" || round4.session.resumeSessionId !== null || round4.session.folder !== folderBeforeAccountChange) {
+    throw new Error(`account change did not retain the folder and start a fresh Session: ${JSON.stringify(round4.session)}`);
+  }
+  await dispatch.finishRun(round4.runId, { status: "completed", finalOutput: "Account two session started.", session: { id: "sess-account-two", mode: "new", reason: "runtime_environment_changed" } });
+  await page.reload();
+  await panel.locator('[data-run-status="completed"]').nth(2).waitFor();
+  const accountChangeLine = panel.getByTestId("run-session").filter({ hasText: translate("runs.session.reason.runtime_environment_changed") });
+  await accountChangeLine.waitFor();
+  if (!(await accountChangeLine.innerText()).includes(translate("runs.session.reason.runtime_environment_changed"))) throw new Error("account change notice missing");
 
   // Layout: each session line sits inside the viewport gutter, and the page does not scroll sideways.
   const fits = async (width: number) => page.evaluate(() => {

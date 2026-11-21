@@ -352,6 +352,7 @@ export const th: Record<keyof typeof en, string> = {
   "runs.session.reason.cli_rejected_resume": "CLI ไม่รับการต่อ session",
   "runs.session.reason.cli_without_resume": "CLI นี้ต่อ session ไม่ได้",
   "runs.session.reason.no_work_item": "Run ไม่มีงานที่ผูกไว้",
+  "runs.session.reason.runtime_environment_changed": "สภาพแวดล้อม Runtime หรือบัญชี Claude ของ Agent เปลี่ยนแล้วและเริ่ม Session ใหม่ โดยไฟล์และคำสั่งเดิมยังอยู่",
   "runs.showTranscript": "แสดงบันทึกขั้นตอน",
   "runs.hideTranscript": "ซ่อนบันทึกขั้นตอน",
   "runs.transcript": "บันทึกขั้นตอน",

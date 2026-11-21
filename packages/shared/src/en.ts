@@ -350,6 +350,7 @@ export const en = {
     "runs.session.reason.cli_rejected_resume": "the CLI refused to resume",
     "runs.session.reason.cli_without_resume": "this CLI cannot resume a session",
     "runs.session.reason.no_work_item": "the Run has no work item",
+    "runs.session.reason.runtime_environment_changed": "the Agent's Runtime environment or Claude account changed; a new Session started, and existing files and instructions remain",
     "runs.showTranscript": "Show transcript",
     "runs.hideTranscript": "Hide transcript",
     "runs.transcript": "Transcript",

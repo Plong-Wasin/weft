@@ -1,8 +1,8 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { assets as assetRows, comments as commentRows, createDatabase, runs, type Database } from "@weft/db";
-import { createAgentActions, createCommentActions, createProjectActions, createRuntimeActions, createTriggerActions, createWikiActions, createWorkItemActions } from "@weft/actions";
-import { withRollback } from "../../../packages/db/src/test-helpers";
+import { activities, assets as assetRows, comments as commentRows, createDatabase, runs, type Database } from "@weft/db";
+import { createAgentActions, createCommentActions, createProjectActions, createRuntimeDispatchActions, createRuntimeActions, createTriggerActions, createWikiActions, createWorkItemActions } from "@weft/actions";
+import { createMemberFactory, withRollback } from "../../../packages/db/src/test-helpers";
 import { createApp } from "../src/app";
 
 const { client, db } = createDatabase();
@@ -49,6 +49,35 @@ test.concurrent("a Runtime Run token refuses deletes with a clear message", asyn
     expect((await post("/actions/update_work_item", { workItemId: item.id, title: "Renamed" }, { token })).status).toBe(200);
     const stored = await (await post("/actions/get_work_item", { workspaceId: workspace.id, displayId: item.displayId }, { token })).json() as { title: string };
     expect(stored.title).toBe("Renamed");
+  });
+});
+
+test.concurrent("Runtime Run credentials and completion comments identify the Agent and retain Originator authorization", async () => {
+  await withRollback(db, async (transaction) => {
+    const { post, claim, owner, workspace, project, agent } = await scenario(transaction);
+    const member = await createMemberFactory(transaction, workspace.id, "Originator");
+    await createProjectActions(transaction).addProjectMember.handler({ userId: owner.id }, { projectId: project.id, userId: member.id, role: "Member" });
+    await createAgentActions(transaction).setAgentAccess.handler({ userId: owner.id }, { agentId: agent.id, userIds: [owner.id, member.id] });
+    const work = createWorkItemActions(transaction);
+    const item = await work.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Credential item", assigneeIds: [agent.userId] });
+    const secondItem = await work.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Completion item", assigneeIds: [agent.userId] });
+    const claimed = await (await claim()).json() as Array<{ runId: string; token: string; workItemId: string }>;
+    const credentialRun = claimed.find((run) => run.workItemId === item.id)!;
+    const completionRun = claimed.find((run) => run.workItemId === secondItem.id)!;
+
+    const created = await post("/actions/create_comment", { workItemId: item.id, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Written with the Run credential" }] }] } }, { token: credentialRun.token });
+    expect(created.status).toBe(200);
+    const comment = await created.json() as { authorId: string; runId: string };
+    expect(comment).toMatchObject({ authorId: agent.userId, runId: credentialRun.runId });
+    expect(await transaction.select({ actorId: activities.actorId, originatorId: activities.originatorId }).from(activities).where(eq(activities.runId, credentialRun.runId))).toContainEqual({ actorId: agent.userId, originatorId: member.id });
+
+    await createRuntimeDispatchActions(transaction).finishRun(completionRun.runId, { status: "completed", finalOutput: "Completed by Runtime" });
+    const [completionComment] = await transaction.select().from(commentRows).where(eq(commentRows.runId, completionRun.runId));
+    expect(completionComment).toMatchObject({ authorId: agent.userId, bodyText: "Completed by Runtime" });
+
+    const otherProject = await createProjectActions(transaction).createProject.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Outside", key: `OU${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private" });
+    const outsideItem = await work.createWorkItem.handler({ userId: owner.id }, { projectId: otherProject.id, title: "Outside" });
+    expect((await post("/actions/create_comment", { workItemId: outsideItem.id, bodyMarkdown: "Must be refused" }, { token: credentialRun.token })).status).not.toBe(200);
   });
 });
 

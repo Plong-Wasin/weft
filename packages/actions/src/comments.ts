@@ -368,6 +368,9 @@ export function createCommentActions(db: Database) {
       input: Type.Object({ workItemId: uuid(), body: Type.Optional(bodyInput), bodyMarkdown: Type.Optional(Type.String({ maxLength: WRITTEN_FORM_MAX_INPUT_LENGTH, description: "Markdown comment text. Use this instead of body; for example, **bold** or | A | B |. Mention a person or Agent with @{exact name}; a plain @Name is only text." })), parentId: Type.Optional(uuid()) }), output: Type.Intersect([commentOutput, Type.Object({ wakeOutcomes: Type.Array(wakeOutcomeOutput) })]),
       handler: async (context: Context, input: { workItemId: string; body?: unknown; bodyMarkdown?: string; parentId?: string }) => {
         const item = await loadItem(input.workItemId);
+        // A Runtime Run token acts with the Originator's permissions (`userId`) but speaks as its Agent.
+        const authorId = context.source === "agent" ? context.agent?.agentUserId ?? context.userId : context.userId;
+        const originatorId = context.source === "agent" ? context.agent?.originatorId ?? context.userId : context.userId;
         const { project } = await accessForComment(context, item, "write");
         const prepared = await commentBody(context, { id: item.id, projectId: item.projectId, workspaceId: project.workspaceId }, input.body, input.bodyMarkdown);
         input.body = prepared.document;
@@ -378,7 +381,7 @@ export function createCommentActions(db: Database) {
         if (parent?.parentId) throw new ActionError("Cannot reply to a reply", 400);
         const { text, mentions } = parseBody(input.body);
         const written = input.bodyMarkdown !== undefined ? await writtenFormOf(input.body) : prepared.markdown;
-        const mentionIds = await validatedMentions(project, context.userId, mentions);
+        const mentionIds = await validatedMentions(project, authorId, mentions);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
           const { intake } = await lockCommentAccess(database, context, item);
@@ -386,25 +389,25 @@ export function createCommentActions(db: Database) {
           const [locked] = await database.select().from(workItems).where(and(eq(workItems.id, item.id), isNull(workItems.deletedAt))).for("share");
           if (!locked) throw new ActionError("Work item not found", 404);
           assertNotArchived(locked);
-          const [row] = await database.insert(comments).values({ workspaceId: project.workspaceId, projectId: project.id, workItemId: item.id, authorId: context.userId, runId: context.source === "agent" ? context.agent?.runId ?? null : null, parentId: parent?.id ?? null, body: input.body, bodyMarkdown: written, bodyText: text, createdAt: sql`clock_timestamp()` }).returning();
+          const [row] = await database.insert(comments).values({ workspaceId: project.workspaceId, projectId: project.id, workItemId: item.id, authorId, runId: context.source === "agent" ? context.agent?.runId ?? null : null, parentId: parent?.id ?? null, body: input.body, bodyMarkdown: written, bodyText: text, createdAt: sql`clock_timestamp()` }).returning();
           await setOutlinksFromDocument(database, "work-item", item.id, commentPart(row!.id), input.body);
           await replaceMentions(database, row!.id, mentionIds);
           const assignees = (await database.select({ userId: workItemAssignees.userId }).from(workItemAssignees).where(eq(workItemAssignees.workItemId, item.id))).map((entry) => entry.userId);
           const intakeRecipients = intake ? [intake.createdBy, ...assignees, ...mentionIds] : [];
           const recipients = intake ? intakeRecipients : mentionIds;
-          await enqueueNotification(database, { kind: "mention", workItemId: item.id, commentId: row!.id, actorId: context.userId, recipientIds: recipients });
+          await enqueueNotification(database, { kind: "mention", workItemId: item.id, commentId: row!.id, actorId: authorId, recipientIds: recipients });
           // A mention wakes an enabled Agent. An Agent-authored or Autopilot comment is decided per Agent by the wake decision: it wakes only when that Agent's Run may wake Agents (ADR 0013).
-          const wakeOutcomes = intake ? [] : await queueRunsForAssignees(database, { originatorId: context.userId, waker: wakerOf(context.source), wakingRunId: context.agent?.runId ?? null, project, workItemId: item.id, assigneeUserIds: mentionIds, commentId: row!.id });
+          const wakeOutcomes = intake ? [] : await queueRunsForAssignees(database, { originatorId, waker: wakerOf(context.source), wakingRunId: context.agent?.runId ?? null, project, workItemId: item.id, assigneeUserIds: mentionIds, commentId: row!.id });
           // A parent author who already receives the comment notification gets no duplicate reply.
-          if (parent) await enqueueNotification(database, { kind: "reply", workItemId: item.id, commentId: row!.id, actorId: context.userId, recipientIds: recipients.includes(parent.authorId) ? [] : [parent.authorId] });
+          if (parent) await enqueueNotification(database, { kind: "reply", workItemId: item.id, commentId: row!.id, actorId: authorId, recipientIds: recipients.includes(parent.authorId) ? [] : [parent.authorId] });
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, workItemId: item.id }, "comment_added", { commentId: row!.id });
           if (!intake) {
-            await fireEventTriggers(database, { eventType: "comment_added", projectId: project.id, workItemId: item.id, actorId: context.userId, source: context.source, wakingRunId: context.agent?.runId ?? null });
-            await emitOutboundEvent(database, { workspaceId: project.workspaceId, projectId: project.id, type: "comment.created", build: async (database) => ({ comment: { id: row!.id, text: row!.bodyText, authorName: (await authorNames([context.userId])).get(context.userId) ?? null, createdAt: row!.createdAt.toISOString() }, workItem: await workItemSnapshot(database, item.id) }) });
+            await fireEventTriggers(database, { eventType: "comment_added", projectId: project.id, workItemId: item.id, actorId: authorId, source: context.source, wakingRunId: context.agent?.runId ?? null });
+            await emitOutboundEvent(database, { workspaceId: project.workspaceId, projectId: project.id, type: "comment.created", build: async (database) => ({ comment: { id: row!.id, text: row!.bodyText, authorName: (await authorNames([authorId])).get(authorId) ?? null, createdAt: row!.createdAt.toISOString() }, workItem: await workItemSnapshot(database, item.id) }) });
           }
-          const authorAgent = (await agentUserIds(database, [context.userId])).has(context.userId);
-          const authorCodeCapable = authorAgent && (await database.select({ userId: agents.userId }).from(agents).where(and(eq(agents.userId, context.userId), sql`${agents.runtimeId} is not null`))).length > 0;
-          return { ...out(row!, (await authorNames([context.userId])).get(context.userId) ?? "", authorAgent, authorCodeCapable, mentionIds, [], 0, prepared.warnings, prepared.warningDetails), wakeOutcomes };
+          const authorAgent = (await agentUserIds(database, [authorId])).has(authorId);
+          const authorCodeCapable = authorAgent && (await database.select({ userId: agents.userId }).from(agents).where(and(eq(agents.userId, authorId), sql`${agents.runtimeId} is not null`))).length > 0;
+          return { ...out(row!, (await authorNames([authorId])).get(authorId) ?? "", authorAgent, authorCodeCapable, mentionIds, [], 0, prepared.warnings, prepared.warningDetails), wakeOutcomes };
         });
       },
     },

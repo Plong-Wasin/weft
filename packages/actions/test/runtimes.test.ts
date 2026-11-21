@@ -674,3 +674,29 @@ test.concurrent("changing an Agent Runtime environment starts a new CLI Session 
     expect(third.environment).toEqual({ CLAUDE_CONFIG_DIR: "/profile/two" });
   });
 });
+
+test("a Runtime owner cannot save an Agent environment after a concurrent unbind", async () => {
+  const workspace = await createWorkspaceFactory(db);
+  const owner = await createMemberFactory(db, workspace.id, "Admin");
+  const token = await createApiTokenActions(db).createApiToken.handler({ userId: owner.id }, { name: "concurrent daemon" });
+  const registered = await createRuntimeActions(db).registerDaemon.handler({ userId: owner.id, apiTokenId: token.id }, { hostname: "concurrent-box", version: "1", agentClis: ["claude"] });
+  const runtime = registered.runtimes[0]!;
+  await createRuntimeActions(db).shareRuntime.handler({ userId: owner.id }, { runtimeId: runtime.id });
+  const agent = await createAgentActions(db).createAgent.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Concurrent environment", model: "default", runtimeId: runtime.id });
+  let release!: () => void;
+  let locked!: () => void;
+  const blocked = new Promise<void>((resolve) => { locked = resolve; });
+  const unblock = new Promise<void>((resolve) => { release = resolve; });
+  const move = db.transaction(async (tx) => {
+    await tx.update(agents).set({ runtimeId: null, runtimeEnvironment: null, runtimeProfileId: null }).where(eq(agents.id, agent.id));
+    locked();
+    await unblock;
+  });
+  await blocked;
+  const save = createAgentRuntimeEnvironmentActions(db).setAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id, variables: { CLAUDE_CONFIG_DIR: "/old-owner" } });
+  await Bun.sleep(150);
+  release();
+  await move;
+  await expect(save).rejects.toMatchObject({ status: 409 });
+  expect((await db.select().from(agents).where(eq(agents.id, agent.id)))[0]!.runtimeEnvironment).toBeNull();
+});

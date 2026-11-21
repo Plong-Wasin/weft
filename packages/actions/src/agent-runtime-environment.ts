@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { agents, runtimes } from "@weft/db";
 import { ActionError } from "./members";
@@ -13,7 +13,7 @@ const reserved = (key: string) => key.startsWith("WEFT_") || ["PATH", "HOME", "U
 /** Runtime owner controls for per-Agent environment; only encrypted values are persisted. */
 export function createAgentRuntimeEnvironmentActions(db: Database) {
   async function ownedAgent(userId: string, agentId: string) {
-    const [row] = await db.select({ id: agents.id, runtimeId: agents.runtimeId }).from(agents).where(eq(agents.id, agentId));
+    const [row] = await db.select({ id: agents.id, runtimeId: agents.runtimeId, runtimeEnvironment: agents.runtimeEnvironment }).from(agents).where(eq(agents.id, agentId));
     const [runtime] = row?.runtimeId ? await db.select({ id: runtimes.id, ownerId: runtimes.ownerId }).from(runtimes).where(eq(runtimes.id, row.runtimeId)) : [];
     if (!row || !runtime || runtime.ownerId !== userId) throw new ActionError("Only the Runtime owner can manage this Agent's environment", 403);
     return row;
@@ -24,9 +24,8 @@ export function createAgentRuntimeEnvironmentActions(db: Database) {
       input: Type.Object({ agentId: uuid() }), output: Type.Object({ variables: Type.Array(Type.String()) }),
       handler: async (context: Context, input: { agentId: string }) => {
         const row = await ownedAgent(context.userId, input.agentId);
-        const [stored] = await db.select({ runtimeEnvironment: agents.runtimeEnvironment }).from(agents).where(eq(agents.id, row.id));
-        if (!stored?.runtimeEnvironment) return { variables: [] };
-        return { variables: Object.keys(JSON.parse(openSecret(stored.runtimeEnvironment))).sort() };
+        if (!row.runtimeEnvironment) return { variables: [] };
+        return { variables: Object.keys(JSON.parse(openSecret(row.runtimeEnvironment))).sort() };
       },
     },
     setAgentRuntimeEnvironment: {
@@ -37,7 +36,9 @@ export function createAgentRuntimeEnvironmentActions(db: Database) {
         if (Object.entries(input.variables).some(([key]) => reserved(key))) throw new ActionError("That environment variable is reserved by the Runtime platform", 400);
         const encoded = JSON.stringify(input.variables);
         if (Buffer.byteLength(encoded) > 32_000) throw new ActionError("Environment settings are too large", 400);
-        await db.update(agents).set({ runtimeEnvironment: Object.keys(input.variables).length ? sealSecret(encoded) : null }).where(eq(agents.id, row.id));
+        const updated = await db.update(agents).set({ runtimeEnvironment: Object.keys(input.variables).length ? sealSecret(encoded) : null })
+          .where(and(eq(agents.id, row.id), eq(agents.runtimeId, row.runtimeId!))).returning({ id: agents.id });
+        if (!updated.length) throw new ActionError("The Agent's Runtime changed; reload before saving its environment", 409);
         return { saved: true, variables: Object.keys(input.variables).sort() };
       },
     },

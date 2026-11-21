@@ -84,6 +84,7 @@ export function createApp(
   limits: { settings?: Partial<RateLimitSettings>; now?: () => number } = {},
   /** The clock of the Runtime actions (offline time, freshness, dispatch); injectable for tests. */
   clock: () => Date = () => new Date(),
+  assetStorage?: import("@weft/actions").AssetStorage,
 ) {
   const integrations = features.integrations ?? integrationsEnabled();
   const outboundWebhooks = features.outboundWebhooks ?? outboundWebhooksEnabled();
@@ -117,7 +118,7 @@ export function createApp(
   const microsoft = authOptions.microsoft ?? microsoftAuthSettings();
   const passwordSignInEnabled = authOptions.passwordSignInEnabled ?? (Bun.env.PASSWORD_SIGN_IN_ENABLED ?? "true").toLowerCase() !== "false";
   const cookieSecure = (Bun.env.WEFT_PUBLIC_URL ?? Bun.env.BETTER_AUTH_URL ?? "http://localhost:3000").startsWith("https://");
-  const memberActions = createActionList(db, { integrations, passwordSignInEnabled, outboundWebhooks, clock });
+  const memberActions = createActionList(db, { integrations, passwordSignInEnabled, outboundWebhooks, clock, assetStorage });
   const tokens = createApiTokenActions(db);
   const runtimeActions = createRuntimeActions(db, clock);
   const runtimeDispatch = createRuntimeDispatchActions(db, clock);

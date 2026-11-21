@@ -1,17 +1,21 @@
 // Browser end-to-end flow: attach a file to a work item, paste an inline image into the description, a comment and a wiki page.
 // Run with `bun run e2e` (needs the shared weft-postgres and weft-minio containers; `docker compose up -d minio`).
 import { chromium, type Page } from "playwright";
+import { mkdir } from "node:fs/promises";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3108);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5208);
+const livePort = Number(Bun.env.E2E_LIVE_PORT ?? apiPort + 10_000);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
+const live = `http://localhost:${livePort}`;
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  Bun.spawn(["bun", "apps/live/src/index.ts"], { env: { ...Bun.env, LIVE_PORT: String(livePort), WEB_ORIGIN: web }, stdout: "inherit", stderr: "inherit" }),
+  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api, VITE_LIVE_URL: `ws://localhost:${livePort}` }, stdout: "ignore", stderr: "inherit" }),
 ];
 
 async function waitFor(url: string) {
@@ -70,7 +74,7 @@ async function pickImage(page: Page, inputSelector: string, editorSelector: stri
 
 let failed = false;
 try {
-  await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
+  await Promise.all([waitFor(`${api}/api/me`), waitFor(web), waitFor(live)]);
   const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
   const page = await browser.newPage();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
@@ -212,6 +216,66 @@ try {
   await page.locator(".ProseMirror").waitFor();
   await pasteFile(page, ".ProseMirror", { name: "w.png", type: "image/png", base64: png });
   await page.waitForFunction(() => (document.querySelector('.ProseMirror img[data-testid="inline-image"]') as HTMLImageElement | null)?.naturalWidth);
+  await page.getByText(translate("wiki.saved")).waitFor({ timeout: 10_000 });
+  await page.reload();
+  await page.locator('.ProseMirror img[data-testid="inline-image"]').waitFor();
+  await page.waitForFunction(() => (document.querySelector('.ProseMirror img[data-testid="inline-image"]') as HTMLImageElement | null)?.naturalWidth);
+  check(await loadedImages(page, ".ProseMirror") === 1, "Wiki image did not render after reload");
+  const wikiAttachments = page.getByTestId("wiki-attachments");
+  await wikiAttachments.waitFor({ state: "visible" });
+  await page.waitForFunction(() => document.querySelector('[data-testid="wiki-attachments"]')?.getAttribute("aria-busy") === "false");
+  check(await wikiAttachments.getByText("w.png").count() === 0, "an image embedded in the Wiki page must not also appear as a downloadable attachment");
+  check(await wikiAttachments.getByText(translate("assets.empty")).isVisible(), "Wiki page should explain when it has no downloadable attachments");
+  const embeddedImageCount = await page.locator('.ProseMirror img[data-testid="inline-image"]').count();
+  const wikiFile = wikiAttachments.locator('input[type="file"]');
+  await wikiFile.setInputFiles([
+    { name: "reference.html", mimeType: "text/html", buffer: Buffer.from("<h1>Wiki attachment</h1>") },
+    { name: "guide.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buffer: Buffer.from("word document") },
+  ]);
+  await wikiAttachments.getByText("reference.html").waitFor();
+  await wikiAttachments.getByText("guide.docx").waitFor();
+  const wikiDropzone = page.getByTestId("attachment-dropzone");
+  check(/choose/i.test(translate("assets.dropHint")), "attachment copy must tell people they can choose files");
+  check(await wikiDropzone.getAttribute("aria-label") === translate("assets.dropHint"), "Wiki attachment affordance must have a choose and drop label");
+  await page.setViewportSize({ width: 390, height: 844 });
+  const touchChooserPromise = page.waitForEvent("filechooser");
+  await wikiDropzone.click();
+  const touchChooser = await touchChooserPromise;
+  await touchChooser.setFiles({ name: "chosen-on-touch.txt", mimeType: "text/plain", buffer: Buffer.from("chosen on touch") });
+  await wikiAttachments.getByText("chosen-on-touch.txt").waitFor();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const keyboardChooserPromise = page.waitForEvent("filechooser");
+  await wikiDropzone.focus();
+  await wikiDropzone.press("Enter");
+  const keyboardChooser = await keyboardChooserPromise;
+  await keyboardChooser.setFiles({ name: "chosen-by-keyboard.txt", mimeType: "text/plain", buffer: Buffer.from("chosen by keyboard") });
+  await wikiAttachments.getByText("chosen-by-keyboard.txt").waitFor();
+  const spaceChooserPromise = page.waitForEvent("filechooser");
+  await wikiDropzone.focus();
+  await wikiDropzone.press("Space");
+  const spaceChooser = await spaceChooserPromise;
+  await spaceChooser.setFiles({ name: "chosen-with-space.txt", mimeType: "text/plain", buffer: Buffer.from("chosen with space") });
+  await wikiAttachments.getByText("chosen-with-space.txt").waitFor();
+  check(await wikiAttachments.getByText("w.png").count() === 0, "an image embedded in the Wiki page must not also appear as a downloadable attachment");
+  check(await page.locator('.ProseMirror img[data-testid="inline-image"]').count() === embeddedImageCount, "a general file attachment must remain separate from embedded images");
+  const wikiDownload = wikiAttachments.getByRole("button", { name: `${translate("assets.download")} reference.html` });
+  check(await wikiDownload.isVisible(), "Wiki attachment download control is missing");
+  const [wikiFileDownload] = await Promise.all([page.waitForEvent("download"), wikiDownload.click()]);
+  check(wikiFileDownload.suggestedFilename() === "reference.html", "Wiki attachment download did not preserve its filename");
+  const screenshotDir = "/home/plong/workspace/weft/.local/ai-ux-reliability/02-wiki-page-attachments";
+  await mkdir(screenshotDir, { recursive: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.screenshot({ path: `${screenshotDir}/wiki-attachments-desktop.png`, fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: `${screenshotDir}/wiki-attachments-mobile.png`, fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole("button", { name: translate("wiki.exports") }).click();
+  await page.getByTestId("wiki-page-lock").click();
+  await wikiAttachments.locator('input[type="file"]').waitFor({ state: "detached" });
+  check(await wikiAttachments.getByText("reference.html").isVisible(), "locking the page should preserve readable attachments");
+  await page.getByRole("button", { name: translate("wiki.exports") }).click();
+  await page.getByTestId("wiki-page-lock").click();
+  await wikiAttachments.locator('input[type="file"]').waitFor({ state: "attached" });
   await pickImage(page, '[data-testid="inline-image-input"]', '.ProseMirror', 2);
   await dropImage(page, '.ProseMirror', 3);
   // The Wiki editor keeps the resize and alignment controls.

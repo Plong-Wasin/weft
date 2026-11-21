@@ -15,7 +15,7 @@ import { useWorkspace } from "../layouts/workspace-layout";
 import { AiSidebar } from "../ai-chat";
 import { sectionOf } from "./app-rail";
 import { WikiSidebar } from "./wiki-sidebar";
-import { dropWithinGroup, moveWithinGroup, preferenceOf, sortProjects, useProjectPreferences, type ProjectPreference } from "./project-preferences";
+import { dropWithinGroup, filterProjectGroups, matchesProjectSearch, moveWithinGroup, preferenceOf, sortProjects, useProjectPreferences, type ProjectPreference } from "./project-preferences";
 
 export const projectsKey = (workspaceId: string) => ["projects", workspaceId] as const;
 const favoritesKey = (workspaceId: string) => ["favorite-wiki-pages", workspaceId] as const;
@@ -109,26 +109,34 @@ function SettingsProjectNav({ workspace, projects, projectKey }: { workspace: Wo
 }
 
 /** Outside a project's settings: every project as one link to its settings, starred first. */
-function SettingsProjectList({ workspace, projects }: { workspace: Workspace; projects: Project[] }) {
-  return <ul aria-label={translate("projects.title")} className="grid min-w-0 gap-0.5">{projects.map((project) => <li key={project.id} className="min-w-0">
+function SettingsProjectList({ workspace, projects, query }: { workspace: Workspace; projects: Project[]; query: string }) {
+  const visible = projects.filter((project) => matchesProjectSearch(project, query));
+  return <>{visible.length === 0 && query.trim() ? <p role="status" className="m-0 px-2.5 py-2 text-12 text-secondary">{translate("projects.noSearchResults")}</p> : null}
+  <ul aria-label={translate("projects.title")} className="grid min-w-0 gap-0.5">{visible.map((project) => <li key={project.id} className="min-w-0">
     <NavLink to={paths.projectSettings(workspace.slug, project.key)} className={itemClass}><Folder aria-hidden size={14} className="shrink-0 text-secondary" /><span className="truncate">{project.name}</span></NavLink>
-  </li>)}</ul>;
+  </li>)}</ul></>;
 }
 
 /** The Starred group (hidden when empty), then every other project, with the reset link once any order is saved. */
-function ProjectGroups({ workspace, projects, prefs, projectKey, reorder, drag }: { workspace: Workspace; projects: Project[]; prefs: ProjectPreference[]; projectKey?: string; reorder: Reorder; drag: Drag }) {
-  const { starred, others } = sortProjects(projects, prefs);
+function ProjectGroups({ workspace, projects, prefs, projectKey, reorder, drag, query }: { workspace: Workspace; projects: Project[]; prefs: ProjectPreference[]; projectKey?: string; reorder: Reorder; drag: Drag; query: string }) {
+  const allGroups = sortProjects(projects, prefs);
+  const { starred, others } = filterProjectGroups(projects, prefs, query);
   const expandedOf = (projectId: string) => preferenceOf(prefs, projectId)?.expanded ?? false;
-  const entry = (project: Project, isStarred: boolean, index: number, count: number) => <ProjectEntry key={project.id} workspace={workspace} project={project} current={project.key === projectKey}
-    starred={isStarred} expanded={expandedOf(project.id)} canMoveUp={index > 0} canMoveDown={index < count - 1} reorder={reorder} drag={drag} />;
+  const entry = (project: Project, isStarred: boolean) => {
+    const group = isStarred ? allGroups.starred : allGroups.others;
+    const index = group.findIndex((item) => item.id === project.id);
+    return <ProjectEntry key={project.id} workspace={workspace} project={project} current={project.key === projectKey}
+    starred={isStarred} expanded={expandedOf(project.id)} canMoveUp={index > 0} canMoveDown={index < group.length - 1} reorder={reorder} drag={drag} />;
+  };
   return <>
     {starred.length > 0 && <>
       <p className={heading}>{translate("sidebar.starred")}</p>
-      <ul aria-label={translate("sidebar.starred")} className="grid gap-0.5">{starred.map((project, index) => entry(project, true, index, starred.length))}</ul>
+      <ul aria-label={translate("sidebar.starred")} className="grid gap-0.5">{starred.map((project) => entry(project, true))}</ul>
     </>}
     <div className="flex items-center justify-between"><p className={heading}>{translate("projects.title")}</p>
       <NavLink to={paths.projects(workspace.slug)} end aria-label={translate("sidebar.allProjects")} title={translate("sidebar.allProjects")} className="mt-2 rounded-md p-1 text-secondary hover:bg-layer-transparent-hover"><Plus aria-hidden size={14} /></NavLink></div>
-    <ul aria-label={translate("projects.title")} className="grid gap-0.5">{others.map((project, index) => entry(project, false, index, others.length))}</ul>
+    <ul aria-label={translate("projects.title")} className="grid gap-0.5">{others.map((project) => entry(project, false))}</ul>
+    {query.trim() && starred.length + others.length === 0 && <p role="status" className="m-0 px-2.5 py-2 text-12 text-secondary">{translate("projects.noSearchResults")}</p>}
     {prefs.some((pref) => pref.position !== null) && <button type="button" title={translate("sidebar.resetOrderTip")} onClick={() => void reorder.reset()} className="mx-2.5 mt-1 justify-self-start bg-transparent px-0 py-1 text-12 font-medium text-secondary hover:bg-transparent hover:text-primary">{translate("sidebar.resetOrder")}</button>}
   </>;
 }
@@ -141,6 +149,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
   const section = sectionOf(pathname, workspace.slug);
   const { projectKey } = useParams();
   const { selfId } = useWorkspace();
+  const [projectQuery, setProjectQuery] = React.useState("");
   // Analytics is for workspace Admins and Members; a Guest gets no entry (the Actions refuse a Guest anyway).
   const { data: members } = useQuery({ queryKey: ["workspace-members", workspace.id], queryFn: async () => await action<Member[]>("list_members", { workspaceId: workspace.id }) ?? [], enabled: section === "work" || section === "settings" });
   const canSeeAnalytics = (members ?? []).some((member) => member.userId === selfId && member.role !== "Guest");
@@ -183,7 +192,11 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       <NavLink to={paths.workspaceViews(workspace.slug)} className={itemClass}>{translate("views.title")}</NavLink>
       <NavLink to={paths.activeCycles(workspace.slug)} className={itemClass}>{translate("cycles.activeTitle")}</NavLink>
       {canSeeAnalytics && <NavLink to={paths.analytics(workspace.slug)} className={itemClass}>{translate("analytics.title")}</NavLink>}
-      <ProjectGroups workspace={workspace} projects={projectList} prefs={prefs} projectKey={projectKey} reorder={reorder} drag={drag} />
+      <label className="grid gap-1 px-2.5 pt-1 text-12 font-medium text-secondary">
+        {translate("projects.find")}
+        <input type="search" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder={translate("projects.searchPlaceholder")} className="min-w-0 px-2 py-1 text-13" />
+      </label>
+      <ProjectGroups workspace={workspace} projects={projectList} prefs={prefs} projectKey={projectKey} reorder={reorder} drag={drag} query={projectQuery} />
       {favorites.length > 0 && <>
         <p className={heading}>{translate("sidebar.favorites")}</p>
         <ul className="grid gap-0.5">{favorites.map((page) => <li key={page.id}><NavLink to={page.projectId ? paths.page(workspace.slug, (data ?? []).find((project) => project.id === page.projectId)?.key ?? "", page.id) : paths.wikiPage(workspace.slug, page.id)} className={itemClass}><FileText aria-hidden size={14} /><span className="truncate">{page.title}</span></NavLink></li>)}</ul>
@@ -219,7 +232,11 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       {webhooksOn && <NavLink to={paths.workspaceWebhooks(workspace.slug)} className={itemClass}>{translate("outboundWebhooks.nav")}</NavLink>}
       <NavLink to={paths.workspaceProjectOrder(workspace.slug)} className={itemClass}>{translate("settings.projectOrder")}</NavLink>
       <p className={heading}>{translate("projects.title")}</p>
-      <SettingsProjectList workspace={workspace} projects={[...projectSort.starred, ...projectSort.others]} />
+      <label className="grid gap-1 px-2.5 pt-1 text-12 font-medium text-secondary">
+        {translate("projects.find")}
+        <input type="search" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder={translate("projects.searchPlaceholder")} className="min-w-0 px-2 py-1 text-13" />
+      </label>
+      <SettingsProjectList workspace={workspace} projects={[...projectSort.starred, ...projectSort.others]} query={projectQuery} />
     </>}
   </nav>;
 }

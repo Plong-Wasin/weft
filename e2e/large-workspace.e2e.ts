@@ -10,7 +10,7 @@ const apiPort = Number(Bun.env.E2E_API_PORT ?? 3129);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5229);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
-const shots = "/home/plong/workspace/weft/.local/ai-ux-reliability/14";
+const shots = "/home/plong/workspace/weft/.local/ai-ux-reliability/15";
 const { client, db } = createDatabase();
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
@@ -100,6 +100,60 @@ try {
     stateId: stateByProject.get(project.id)!, sortOrder: itemIndex, createdBy: me.user.id,
   })));
   for (let offset = 0; offset < fixture.length; offset += 500) await db.insert(workItems).values(fixture.slice(offset, offset + 500));
+
+  // The last of 250 Projects is discoverable from the navigation by key and name, on desktop and phone.
+  await page.goto(`${web}/${slug}`);
+  const sidebar = page.getByRole("navigation", { name: translate("shell.sidebar") });
+  const projectSearch = sidebar.getByRole("searchbox", { name: translate("projects.find") });
+  await projectSearch.fill("SCL249");
+  const projectResult = sidebar.getByRole("button", { name: `${translate("sidebar.toggleProject")}: Scale Project 249` });
+  await projectResult.waitFor();
+  check(await sidebar.getByRole("button", { name: new RegExp(`^${translate("sidebar.toggleProject")}:`) }).count() === 1, "Project search did not narrow the 250-project navigation to one result");
+  await projectResult.click();
+  const projectNav = page.getByRole("navigation", { name: `${translate("projectNav.label")} SCL249` });
+  await projectNav.getByRole("link", { name: translate("workItems.title") }).click();
+  await page.waitForURL(new RegExp(`/${slug}/projects/SCL249`));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: translate("shell.openMenu") }).click();
+  const mobileSidebar = page.getByRole("dialog", { name: translate("shell.sidebar") });
+  const mobileProjectSearch = mobileSidebar.getByRole("searchbox", { name: translate("projects.find") });
+  await mobileProjectSearch.fill("SCL249");
+  await mobileSidebar.getByRole("button", { name: `${translate("sidebar.toggleProject")}: Scale Project 249` }).waitFor();
+  check(await page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth), "Project search widened the page on mobile");
+  await mobileSidebar.getByRole("button", { name: translate("shell.closeMenu") }).click();
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  // The full Projects directory has the same name/key search for selection outside the sidebar.
+  await page.goto(`${web}/${slug}/projects`);
+  const directorySearch = page.locator("#main-content").getByRole("searchbox", { name: translate("projects.find") });
+  await directorySearch.fill("SCL249");
+  const directory = page.locator("#main-content").getByRole("list", { name: translate("projects.title") });
+  await directory.getByRole("link", { name: "SCL249 · Scale Project 249" }).waitFor();
+  check(await directory.getByRole("listitem").count() === 1, "Projects directory search did not narrow results to one Project");
+  await page.screenshot({ path: `${shots}/project-search-1440.png`, fullPage: false });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: `${shots}/project-search-390.png`, fullPage: false });
+  check(await page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth), "Projects directory search widened the page on mobile");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await directorySearch.fill("no-such-project");
+  await page.getByRole("status").filter({ hasText: translate("projects.noSearchResults") }).waitFor();
+
+  // Project access is another long selection list: filtering one Project must leave other access choices intact.
+  await page.goto(`${web}/${slug}/settings/agents`);
+  const firstAgent = page.locator('[data-agent="Scale Agent 1"]');
+  await firstAgent.waitFor();
+  const access = firstAgent.getByRole("group", { name: translate("agents.access") });
+  const allProjectToggle = access.getByRole("checkbox", { name: translate("agents.allProjects") });
+  if (await allProjectToggle.isChecked()) await allProjectToggle.click();
+  const accessSearch = access.getByRole("searchbox", { name: translate("projects.find") });
+  await accessSearch.fill("SCL249");
+  const targetProject = access.getByLabel("SCL249 · Scale Project 249");
+  await targetProject.check();
+  await accessSearch.fill("SCL248");
+  await access.getByLabel("SCL248 · Scale Project 248").waitFor();
+  await access.getByRole("button", { name: translate("agents.save"), exact: true }).click();
+  await accessSearch.fill("SCL249");
+  check(await targetProject.isChecked(), "filtering another Project removed the selected Project from Agent access");
 
   const started = performance.now();
   const measured = await call<{ items: Array<{ displayId: string }>; truncated: boolean }>("list_workspace_work_items_with_metadata", { workspaceId });

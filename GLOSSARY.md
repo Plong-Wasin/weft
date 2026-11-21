@@ -188,6 +188,10 @@ _Avoid_: PQL, query language, search
 An uploaded file (attachment, inline image, avatar, cover, logo) tied to one owning entity.
 _Avoid_: Upload, media, file (unqualified)
 
+**Inbox**:
+A person's place to see workspace Notifications and follow them to the related work. Opening a Notification marks it read; the person can mark it unread again. An unread Notification does not necessarily mean work remains to be done.
+_Avoid_: Intake, task list
+
 **Notification email**:
 An email about one notification (assignment, mention, comment reply, or the result of a Run on a work item), sent only to a person who chose that kind. It names the event and the item, never the comment text. Sent by the **Email digest**, not one email per notification.
 _Avoid_: Alert, push

@@ -2,6 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
 import { activities, agentAccess, agents, createDatabase, jobs, runs, runtimeProfiles, runtimes, workspaceMembers, workspaces, type Database } from "@weft/db";
 import { createAgentActions, createApiTokenActions, createCommentActions, createProjectActions, createRuntimeActions, createRuntimeDispatchActions, createWorkItemActions } from "@weft/actions";
+import { createAgentRuntimeEnvironmentActions } from "@weft/actions";
 import { withRollback } from "../../../packages/db/src/test-helpers";
 import { createApp } from "../src/app";
 
@@ -99,6 +100,7 @@ test.concurrent("an Admin moves the Agents to another shared Runtime and deletes
     const h = harness(transaction, "2026-11-18T09:00:00.000Z");
     const { owner, workspace, runtime, codexRuntime, project, daemonId } = await setUp(transaction, h);
     const coder = await bind(transaction, owner, workspace.id, runtime.id, "Coder");
+    await createAgentRuntimeEnvironmentActions(transaction).setAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: coder.id, variables: { CLAUDE_CONFIG_DIR: "/private/old-runtime" } });
     const scout = await bind(transaction, owner, workspace.id, runtime.id, "Scout");
     await createAgentActions(transaction).disableAgent.handler({ userId: owner.id }, { agentId: scout.id });
     // The Agent has an earlier finished Run on the old Runtime with a CLI Session: the next Run must not resume it.
@@ -113,6 +115,7 @@ test.concurrent("an Admin moves the Agents to another shared Runtime and deletes
     const moved = await transaction.select({ id: agents.id, runtimeId: agents.runtimeId, runtimeProfileId: agents.runtimeProfileId, autopilot: agents.autopilot, enabled: agents.enabled }).from(agents).where(eq(agents.workspaceId, workspace.id));
     expect(moved.find((row) => row.id === coder.id)).toEqual({ id: coder.id, runtimeId: codexRuntime.id, runtimeProfileId: fullProfile!.id, autopilot: true, enabled: true });
     expect(moved.find((row) => row.id === scout.id)).toEqual({ id: scout.id, runtimeId: codexRuntime.id, runtimeProfileId: fullProfile!.id, autopilot: true, enabled: false });
+    expect((await transaction.select({ runtimeEnvironment: agents.runtimeEnvironment }).from(agents).where(eq(agents.id, coder.id)))[0]!.runtimeEnvironment).toBeNull();
     for (const agent of [coder, scout]) {
       const entries = await transaction.select().from(activities).where(and(eq(activities.entityType, "agent"), eq(activities.entityId, agent.id), eq(activities.field, "runtime")));
       expect(entries.map((entry) => [entry.oldValue, entry.newValue])).toEqual([[runtime.id, codexRuntime.id]]);

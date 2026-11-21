@@ -3,7 +3,7 @@
 // at 1440 and 390 px. No Run calls a model. Run with `bun e2e/sub-items-closed.e2e.ts`.
 import { chromium } from "playwright";
 import { eq, inArray, like } from "drizzle-orm";
-import { agents, createDatabase, jobs, runs, users, workspaces } from "../packages/db/src";
+import { agents, createDatabase, jobs, runs, triggers, users, workspaces } from "../packages/db/src";
 import { createAgentActions, createJobHandlers, createWorkItemActions, runNextJob } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
 
@@ -66,10 +66,33 @@ try {
   const owner = await agentActions.createAgent.handler({ userId: me.user.id }, { workspaceId, name: "Summary Bot", instructions: "Summarise the finished split.", model: "default" });
   await agentActions.setAgentProjectAccess.handler({ userId: me.user.id }, { agentId: owner.id, allProjects: true, projectIds: [] });
   await agentActions.setAgentAccess.handler({ userId: me.user.id }, { agentId: owner.id, userIds: [me.user.id] });
+  const noProjectAccess = await agentActions.createAgent.handler({ userId: me.user.id }, { workspaceId, name: "No Project Access Bot", instructions: "No access yet.", model: "default" });
+  await agentActions.setAgentProjectAccess.handler({ userId: me.user.id }, { agentId: noProjectAccess.id, allProjects: false, projectIds: [] });
+  await agentActions.setAgentAccess.handler({ userId: me.user.id }, { agentId: noProjectAccess.id, userIds: [me.user.id] });
+  let releaseProjects!: () => void;
+  let projectRequestSeen!: () => void;
+  const projectsBlocked = new Promise<void>((resolve) => { releaseProjects = resolve; });
+  const projectsRequested = new Promise<void>((resolve) => { projectRequestSeen = resolve; });
+  await page.route(`${api}/actions/list_projects`, async (route) => { projectRequestSeen(); await projectsBlocked; await route.continue(); });
   await page.goto(`${web}/${slug}/settings/agents`);
+  await projectsRequested;
   const card = page.locator('[data-agent="Summary Bot"]');
   await card.waitFor();
-  await card.getByLabel(translate("triggers.project"), { exact: true }).selectOption({ label: "MOB · Mobile" });
+  const loading = card.getByRole("status").filter({ hasText: "Loading Projects" });
+  await loading.waitFor();
+  if (await card.getByRole("button", { name: translate("triggers.add") }).isEnabled()) throw new Error("Add Trigger was enabled while Projects were loading");
+  await Bun.write(`${shots}/trigger-loading-1440.png`, await page.screenshot({ fullPage: true }));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await Bun.write(`${shots}/trigger-loading-390.png`, await page.screenshot());
+  await page.setViewportSize({ width: 1440, height: 900 });
+  releaseProjects();
+  await page.unroute(`${api}/actions/list_projects`);
+  // The Agent row renders before list_projects finishes loading. The default selection must
+  // follow the available Projects instead of leaving the controlled select at an empty id.
+  const projectSelect = card.getByLabel(translate("triggers.project"), { exact: true });
+  await projectSelect.getByRole("option", { name: "MOB · Mobile" }).waitFor({ state: "attached" });
+  if (await projectSelect.locator("option:checked").textContent() !== "MOB · Mobile") throw new Error("the displayed Project was not selected after Projects loaded");
+  if (await card.getByRole("button", { name: translate("triggers.add") }).isDisabled()) throw new Error("Add Trigger remained disabled after Projects loaded");
   await card.getByLabel(translate("triggers.event")).selectOption("sub_items_closed");
   await card.getByRole("button", { name: translate("triggers.add") }).click();
   const triggerRow = card.getByText(translate("triggers.sub_items_closed"), { exact: false }).filter({ hasText: "MOB" }).first();
@@ -77,6 +100,16 @@ try {
   const saved = await call<Array<{ id: string; eventType: string }>>("list_triggers", { agentId: owner.id });
   const trigger = saved.find((row) => row.eventType === "sub_items_closed");
   if (!trigger) throw new Error("the sub-items closed Trigger was not saved");
+  if ((await db.select().from(triggers).where(eq(triggers.id, trigger.id)).then((rows) => rows[0]?.projectId)) !== project.id) throw new Error("the Trigger was not saved to the displayed Project");
+  const noAccessCard = page.locator('[data-agent="No Project Access Bot"]');
+  await noAccessCard.getByText("This Agent has no access to any Projects.", { exact: false }).waitFor();
+  if (await noAccessCard.getByRole("button", { name: translate("triggers.add") }).isEnabled()) throw new Error("Add Trigger was enabled without an accessible Project");
+  await noAccessCard.scrollIntoViewIfNeeded();
+  await Bun.write(`${shots}/trigger-no-access-1440.png`, await page.screenshot({ fullPage: true }));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await noAccessCard.getByLabel(translate("triggers.project"), { exact: true }).scrollIntoViewIfNeeded();
+  await Bun.write(`${shots}/trigger-no-access-390.png`, await page.screenshot());
+  await page.setViewportSize({ width: 1440, height: 900 });
   await Bun.write(`${shots}/sub-items-settings-1440.png`, await page.screenshot({ fullPage: true }));
   await page.setViewportSize({ width: 390, height: 844 });
   await triggerRow.scrollIntoViewIfNeeded();

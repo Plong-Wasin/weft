@@ -190,6 +190,8 @@ async function post(fetcher: FetchLike, apiUrl: string, token: string, path: str
 }
 
 type ClaimedRun = { runId: string; runtimeId: string; agentCli: AgentCliKind; timeoutSeconds?: number; instructions: string; request: string; model: string | null; token: string;
+  /** Runtime-owner configured variables, delivered only to the Daemon claim endpoint. */
+  environment?: Record<string, string>;
   workspaceId?: string; projectId?: string | null; workItemId?: string | null; workItemDisplayId?: string | null; commentId?: string | null; triggerId?: string | null;
   skills?: Array<{ name: string; description: string; instructions: string }>; sandbox?: SandboxProfile;
   /** The stable folder and the CLI Session to resume, as planned by the server; null for a Run without a work item. */
@@ -210,10 +212,17 @@ const CHILD_ENV_ALLOWLIST = [
   "GIT_ASKPASS", "SSH_AUTH_SOCK",
 ] as const;
 
-export function childEnvironment(run: ClaimedRun, apiUrl: string, hostEnv: Record<string, string | undefined> = Bun.env) {
-  const inherited = Object.fromEntries(CHILD_ENV_ALLOWLIST.flatMap((key) => hostEnv[key] === undefined ? [] : [[key, hostEnv[key]!]]));
+export function childEnvironment(run: ClaimedRun, apiUrl: string, hostEnv: Record<string, string | undefined> = Bun.env): Record<string, string> {
+  const selectsClaudeConfig = run.agentCli === "claude" && Boolean(run.environment?.CLAUDE_CONFIG_DIR?.trim());
+  const explicitlySelectsApiKey = Boolean(run.environment?.ANTHROPIC_API_KEY?.trim());
+  const inherited = Object.fromEntries(CHILD_ENV_ALLOWLIST.flatMap((key) => {
+    if (key === "ANTHROPIC_API_KEY" && selectsClaudeConfig && !explicitlySelectsApiKey) return [];
+    return hostEnv[key] === undefined ? [] : [[key, hostEnv[key]!]];
+  }));
+  const configured = Object.fromEntries(Object.entries(run.environment ?? {}).filter(([key, value]) => !key.startsWith("WEFT_") && !["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "TERM", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "GIT_ASKPASS", "SSH_AUTH_SOCK"].includes(key) && !(key === "ANTHROPIC_API_KEY" && !value.trim())));
   return {
     ...inherited,
+    ...configured,
     WEFT_API_URL: apiUrl,
     WEFT_TOKEN: run.token,
     WEFT_RUN_ID: run.runId,
@@ -224,6 +233,31 @@ export function childEnvironment(run: ClaimedRun, apiUrl: string, hostEnv: Recor
     WEFT_COMMENT_ID: run.commentId ?? "",
     WEFT_TRIGGER_ID: run.triggerId ?? "",
   };
+}
+
+/** Redact literal configured values and their exact JSON.stringify-escaped forms plus inherited API and Run tokens. This cannot catch arbitrary derived encodings. */
+export function redactRuntimeEnvironment(text: string, environment: Record<string, string> | undefined, childEnv: Record<string, string> = {}) {
+  let safe = text;
+  const values = [...Object.values(environment ?? {}), childEnv.ANTHROPIC_API_KEY, childEnv.OPENAI_API_KEY, childEnv.WEFT_TOKEN]
+    .filter((value): value is string => Boolean(value))
+    .flatMap((value) => [value, JSON.stringify(value).slice(1, -1)])
+    .sort((a, b) => b.length - a.length);
+  for (const value of new Set(values)) safe = safe.replaceAll(value, "[REDACTED]");
+  return safe;
+}
+
+/** Reassemble text chunks into complete JSONL records before redacting, so values split across stream reads are caught. */
+export async function consumeRedactedOutput(stream: ReadableStream<Uint8Array>, environment: Record<string, string> | undefined, childEnv: Record<string, string>, consumeLine: (line: string) => Promise<void>) {
+  const reader = stream.getReader(); const decoder = new TextDecoder(); let pending = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    pending += decoder.decode(value, { stream: true });
+    const lines = pending.split("\n"); pending = lines.pop() ?? "";
+    for (const line of lines) await consumeLine(redactRuntimeEnvironment(line, environment, childEnv));
+  }
+  pending += decoder.decode();
+  if (pending.trim()) await consumeLine(redactRuntimeEnvironment(pending, environment, childEnv));
 }
 
 /** Sends one Daemon request with the current credential; a rotation during a long Run must not strand its status posts. */
@@ -350,19 +384,7 @@ export async function executeRun(environment: DaemonEnvironment, call: DaemonCal
       cancellations.set(run.runId, () => { if (cancelled) return; cancelled = true; child.kill("SIGTERM"); setTimeout(() => { if (child.exitCode === null) child.kill("SIGKILL"); }, 10_000).unref(); });
       const flushTimer = setInterval(() => { void flush().catch(() => {}); }, 1_000);
       const consume = async (stream: ReadableStream<Uint8Array>) => {
-        const reader = stream.getReader(); const decoder = new TextDecoder(); let pending = "";
-        while (true) {
-          const { value, done } = await reader.read(); if (done) break;
-          pending += decoder.decode(value, { stream: true });
-          const lines = pending.split("\n"); pending = lines.pop() ?? "";
-          for (const line of lines) {
-            await consumeLine(line);
-          }
-        }
-        pending += decoder.decode();
-        // JSONL producers commonly omit the final newline; the last complete JSON record still counts.
-        if (pending.trim()) await consumeLine(pending);
-        async function consumeLine(line: string) {
+        await consumeRedactedOutput(stream, run.environment, childEnv, async (line) => {
           const final = adapter.final(line); if (final !== null) finalOutput = final;
           const usage = adapter.usage(line);
           if (usage) {
@@ -377,7 +399,7 @@ export async function executeRun(environment: DaemonEnvironment, call: DaemonCal
           reportedSessionId = adapter.sessionId(line) ?? reportedSessionId;
           for (const event of adapter.parse(line)) messages.push({ seq: ++seq, type: event.type, output: event.text });
           if (messages.length >= 25) await flush().catch(() => {});
-        }
+        });
       };
       try { await Promise.all([consume(child.stdout), consume(child.stderr)]); } finally { clearInterval(flushTimer); }
       const code = await child.exited;

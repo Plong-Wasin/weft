@@ -2,6 +2,7 @@
 // approval resumes it and its comment (with the Agent marker and Run link) appears; a second Run is cancelled and rerun.
 // The model is a scripted fake driven by an in-process job loop, so no provider is called. Run with `bun e2e/agents.e2e.ts`.
 import { chromium } from "playwright";
+import { mkdir } from "node:fs/promises";
 import { inArray, like } from "drizzle-orm";
 import { agents, createDatabase, jobs, users, workspaces } from "../packages/db/src";
 import { createAgentActions, createApiTokenActions, createJobHandlers, createRuntimeActions, runNextJob, type RunModel } from "../packages/actions/src";
@@ -88,6 +89,28 @@ try {
   await runtimeActions.shareRuntime.handler({ userId: ownerId }, { runtimeId: runtime.id });
   const codeAgent = await createAgentActions(db).createAgent.handler({ userId: ownerId }, { workspaceId, name: "Code Helper", model: "default", runtimeId: runtime.id });
   await createAgentActions(db).setAgentProjectAccess.handler({ userId: ownerId }, { agentId: codeAgent.id, allProjects: true, projectIds: [] });
+  // The Runtime owner can save replacement-only values without exposing the prior secret back into Agent data.
+  await page.goto(`${web}/${slug}/settings/agents`);
+  await page.getByText(translate("agents.runtimeEnvironment"), { exact: true }).waitFor();
+  const environment = page.locator('[data-agent="Code Helper"]');
+  await environment.getByLabel(translate("agents.environmentName")).first().fill("CLAUDE_CONFIG_DIR");
+  await environment.getByLabel(translate("agents.environmentValue")).first().fill("/tmp/claude-profile");
+  await environment.getByRole("button", { name: translate("agents.environmentAdd") }).click();
+  await environment.getByLabel(translate("agents.environmentName")).nth(1).fill("ANTHROPIC_API_KEY");
+  await environment.getByLabel(translate("agents.environmentValue")).nth(1).fill("fake-e2e-key");
+  await environment.getByRole("button", { name: translate("agents.environmentSave") }).click();
+  await environment.getByText(/CLAUDE_CONFIG_DIR, ANTHROPIC_API_KEY|ANTHROPIC_API_KEY, CLAUDE_CONFIG_DIR/).waitFor();
+  const screenshotDir = Bun.env.RUNTIME_ENV_SCREENSHOTS;
+  if (screenshotDir) {
+    await mkdir(screenshotDir, { recursive: true });
+    await environment.locator("[data-runtime-environment]").scrollIntoViewIfNeeded();
+    await Bun.write(`${screenshotDir}/desktop.png`, await page.screenshot());
+    await page.setViewportSize({ width: 390, height: 844 });
+    await environment.locator("[data-runtime-environment]").scrollIntoViewIfNeeded();
+    await Bun.write(`${screenshotDir}/mobile.png`, await page.screenshot());
+  }
+  if ((await page.locator("body").innerText()).includes("fake-e2e-key")) throw new Error("saved environment value appeared in the page");
+  await page.setViewportSize({ width: 1440, height: 900 });
   console.log("agents: admin creates an Agent and opens it to all projects");
 
   // Assign from the work item page: the Run shows its status and waits for the Originator's Confirmation.

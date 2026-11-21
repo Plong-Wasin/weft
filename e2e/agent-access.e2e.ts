@@ -93,7 +93,7 @@ try {
   if (await unavailable.getAttribute("aria-checked") !== "false") throw new Error("PM selected unavailable Agent with the keyboard");
   console.log("agent-access: PM sees reason and cannot select Agent by mouse or keyboard");
 
-  const evidenceDir = Bun.env.AGENT_ACCESS_SCREENSHOTS ?? "/tmp/claude-1000/-home-plong-orca-workspaces-weft-spurdog/4ede5172-06b6-4421-a1f0-57b9ca12a25c/scratchpad/ship-agent-safety-and-comment-ux/ticket-22";
+  const evidenceDir = Bun.env.AGENT_ACCESS_SCREENSHOTS ?? "/home/plong/workspace/weft/.local/ai-ux-reliability/11";
   await Bun.$`mkdir -p ${evidenceDir}`;
   for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 900 }, { width: 390, height: 844 }]) {
     await pm.page.setViewportSize(viewport);
@@ -132,18 +132,38 @@ try {
   await developerUnavailable.waitFor();
   await developer.page.keyboard.press("Escape");
   const developerGrant = owner.page.getByLabel(`${translate("agents.mayUse")} Developer`);
+  if (await owner.page.getByRole("button", { name: translate("agents.save"), exact: true }).first().isEnabled()) throw new Error("Unchanged Agent access unexpectedly enabled Save");
+  const accessSave = owner.page.getByRole("button", { name: translate("agents.save"), exact: true }).first();
   const ownerGrants = async () => (await createAgentActions(db).listManageableAgentAccess.handler({ userId: owner.userId }, { workspaceId })).find((agent) => agent.id === codeAgent.id)?.accessUserIds ?? [];
+  const pmId = memberIds.find((member) => member.name === "PM")!.userId;
   // The checkbox is controlled by the list the page reloads after each save: wait until the page shows the new state before the next click, or the click toggles from a stale list.
   const settled = async (checked: boolean) => { for (let attempt = 0; attempt < 100 && await developerGrant.isChecked() !== checked; attempt += 1) await Bun.sleep(100); if (await developerGrant.isChecked() !== checked) throw new Error(`Runtime owner access checkbox did not show ${checked ? "checked" : "unchecked"}`); };
-  await developerGrant.click({ force: true });
-  for (let attempt = 0; attempt < 50 && !(await ownerGrants()).includes(developerId); attempt += 1) await Bun.sleep(100);
-  if (!(await ownerGrants()).includes(developerId)) throw new Error(`Runtime owner access checkbox did not grant access: ${await owner.page.locator('[role="status"]').allTextContents()}`);
+  const pmGrant = owner.page.getByLabel(`${translate("agents.mayUse")} PM`);
+  await pmGrant.check({ force: true });
+  await pmGrant.uncheck({ force: true });
+  await developerGrant.check({ force: true });
+  if ((await ownerGrants()).includes(developerId)) throw new Error("Agent access draft was saved before Save was clicked");
+  if (await accessSave.isEnabled() !== true) throw new Error("Save did not become available for a changed access draft");
+  const concurrentBase = await ownerGrants();
+  await createAgentActions(db).setAgentAccess.handler({ userId: owner.userId }, { agentId: codeAgent.id, baseUserIds: concurrentBase, userIds: [...concurrentBase, pmId] });
+  await accessSave.click();
+  for (let attempt = 0; attempt < 50 && (!(await ownerGrants()).includes(developerId) || !(await ownerGrants()).includes(pmId)); attempt += 1) await Bun.sleep(100);
+  if (!(await ownerGrants()).includes(developerId) || !(await ownerGrants()).includes(pmId)) throw new Error(`Concurrent access edit did not preserve both grants: ${await owner.page.locator('[role="status"]').allTextContents()}`);
   await settled(true);
+  if (!(await pmGrant.isChecked())) throw new Error("Agent access UI did not refresh the concurrent grant returned by Save");
   await developerGrant.click({ force: true });
+  await owner.page.route("**/actions/set_agent_access", (route) => route.fulfill({ status: 500, body: "save failed" }));
+  await accessSave.click();
+  if (!(await ownerGrants()).includes(developerId) || await developerGrant.isChecked()) throw new Error("Failed save changed server access or discarded the visible draft");
+  for (let attempt = 0; attempt < 20 && !(await accessSave.isEnabled()); attempt += 1) await Bun.sleep(100);
+  if (!(await accessSave.isEnabled())) throw new Error("Failed save discarded the unsaved access draft");
+  await owner.page.unroute("**/actions/set_agent_access");
+  await accessSave.click();
   for (let attempt = 0; attempt < 50 && (await ownerGrants()).includes(developerId); attempt += 1) await Bun.sleep(100);
   if ((await ownerGrants()).includes(developerId)) throw new Error("Runtime owner could not remove Developer access");
   await settled(false);
   await developerGrant.click({ force: true });
+  await accessSave.click();
   for (let attempt = 0; attempt < 50 && !(await ownerGrants()).includes(developerId); attempt += 1) await Bun.sleep(100);
   if (!(await ownerGrants()).includes(developerId)) throw new Error("Runtime owner could not grant Developer access again");
   await developer.page.bringToFront();
@@ -183,10 +203,32 @@ try {
   await ownerAgentName.scrollIntoViewIfNeeded();
   for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 900 }, { width: 390, height: 844 }]) {
     await owner.page.setViewportSize(viewport);
+    await owner.page.getByLabel(`${translate("agents.mayUse")} Developer`).scrollIntoViewIfNeeded();
     for (const theme of ["light", "dark"] as const) {
       await owner.page.evaluate((value) => { localStorage.setItem("weft.theme", value); document.documentElement.setAttribute("data-theme", value); }, theme);
       await Bun.write(`${evidenceDir}/runtime-owner-access-${viewport.width}-${theme}.png`, await owner.page.screenshot({ fullPage: true }));
     }
+  }
+
+  // The workspace Admin also edits project access; a second editor's change must survive this stale UI draft.
+  const docsProject = await projects.createProject.handler({ userId: me.user.id }, { workspaceId, name: "Docs", key: "DOC", visibility: "public" });
+  await createAgentActions(db).setAgentProjectAccess.handler({ userId: me.user.id }, { agentId: codeAgent.id, allProjects: false, projectIds: [] });
+  await admin.goto(`${web}/${slug}/settings/agents`);
+  const agentRow = admin.locator('[data-agent="Code Helper"]');
+  const mobileProject = agentRow.getByLabel("MOB · Mobile");
+  const projectSave = agentRow.getByRole("button", { name: translate("agents.save"), exact: true }).first();
+  await mobileProject.waitFor();
+  if (await projectSave.isEnabled()) throw new Error("Unchanged Agent project access unexpectedly enabled Save");
+  await mobileProject.check();
+  if ((await createAgentActions(db).listAgents.handler({ userId: me.user.id }, { workspaceId })).find((agent) => agent.id === codeAgent.id)?.projectIds.length !== 0) throw new Error("Project access draft was saved before Save was clicked");
+  const projectBase = (await createAgentActions(db).getAgent.handler({ userId: me.user.id }, { agentId: codeAgent.id })).projectIds;
+  await createAgentActions(db).setAgentProjectAccess.handler({ userId: me.user.id }, { agentId: codeAgent.id, allProjects: false, baseAllProjects: false, baseProjectIds: projectBase, projectIds: [docsProject.id] });
+  await projectSave.click();
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const savedProjects = (await createAgentActions(db).getAgent.handler({ userId: me.user.id }, { agentId: codeAgent.id })).projectIds;
+    if (savedProjects.includes(project.id) && savedProjects.includes(docsProject.id)) break;
+    if (attempt === 49) throw new Error("Concurrent project access edit did not preserve both project grants");
+    await Bun.sleep(100);
   }
   await browser.close();
 } catch (error) {

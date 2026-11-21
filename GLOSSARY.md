@@ -325,7 +325,7 @@ A person's mention of an Agent, while that Agent's Run on the Weft server is act
 _Avoid_: Interrupt, inject
 
 **Session**:
-The memory an agent CLI keeps of its earlier conversation. A Run on a Runtime continues the Session of the previous Run of the same Agent on the same work item and the same Runtime, and works in the same folder. It starts a new Session when the previous Run failed or went stale, when the Runtime differs, when the folder is gone, or when a person reruns it as new; the folder is removed once the work item is closed or unused for 7 days. A Run on the Weft server never continues an earlier Run: it starts fresh and sees earlier work only through the work item and its comments.
+The memory an agent CLI keeps of its earlier conversation. A Run on a Runtime continues the Session of the previous Run of the same Agent on the same work item and the same Runtime, and works in the same folder. It starts a new Session when the previous Run failed or went stale, when the Runtime or Claude account differs, when the folder is gone, or when a person reruns it as new; changing the Claude account keeps the folder and its files. The folder is removed once the work item is closed or unused for 7 days. A Run on the Weft server never continues an earlier Run: it starts fresh and sees earlier work only through the work item and its comments.
 _Avoid_: Conversation, thread (a comment thread is something else)
 
 **Wake outcome**:

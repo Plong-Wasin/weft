@@ -30,7 +30,7 @@ function StepView({ step }: { step: Step }) {
 /** The text of each session reason code the Daemon or the server can give. */
 const sessionReasonKeys = {
   first: "runs.session.reason.first", runtime_changed: "runs.session.reason.runtime_changed", previous_failed: "runs.session.reason.previous_failed", previous_active: "runs.session.reason.previous_active",
-  no_session_id: "runs.session.reason.no_session_id", rerun_as_new: "runs.session.reason.rerun_as_new", folder_missing: "runs.session.reason.folder_missing",
+  no_session_id: "runs.session.reason.no_session_id", rerun_as_new: "runs.session.reason.rerun_as_new", folder_missing: "runs.session.reason.folder_missing", runtime_environment_changed: "runs.session.reason.runtime_environment_changed",
   cli_rejected_resume: "runs.session.reason.cli_rejected_resume", cli_without_resume: "runs.session.reason.cli_without_resume", no_work_item: "runs.session.reason.no_work_item",
 } as const;
 /** Whether the Run resumed its CLI Session or started a new one, and why. Nothing is shown for a server Run or a Run that has not started. */

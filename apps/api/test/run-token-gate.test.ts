@@ -8,8 +8,8 @@ import { createApp } from "../src/app";
 const { client, db } = createDatabase();
 afterAll(async () => client.end());
 
-async function scenario(transaction: Database, allowAutopilot = true) {
-  const app = createApp(undefined, transaction);
+async function scenario(transaction: Database, allowAutopilot = true, assetStorage?: import("@weft/actions").AssetStorage) {
+  const app = createApp(undefined, transaction, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, assetStorage);
   const post = (path: string, body: unknown, options: { cookie?: string; token?: string } = {}) => app.handle(new Request(`http://localhost${path}`, {
     method: "POST", headers: { "content-type": "application/json", ...(options.cookie ? { cookie: options.cookie } : {}), ...(options.token ? { authorization: `Bearer ${options.token}` } : {}) }, body: JSON.stringify(body),
   }));
@@ -33,6 +33,18 @@ async function scenario(transaction: Database, allowAutopilot = true) {
   // Runs are claimed with the Daemon credential that registration issued, not with the Personal token.
   const claim = () => post("/api/daemon/runs/claim", {}, { token: registration.daemonToken });
   return { app, post, owner, workspace, project, agent, item, work, claim, agents };
+}
+
+function memoryStorage() {
+  const files = new Map<string, string>();
+  const storage: import("@weft/actions").AssetStorage = {
+    presignPost: ({ key }) => ({ url: "http://storage.test/", fields: { key } }),
+    head: async (key) => files.has(key) ? { size: Buffer.byteLength(files.get(key)!) } : null,
+    remove: async (key) => { files.delete(key); },
+    copy: async (source, destination) => { const value = files.get(source); if (value === undefined) throw new Error("missing asset"); files.set(destination, value); },
+    presignGet: ({ key }) => ({ url: `http://storage.test/${key}` }),
+  };
+  return { storage, put: (key: string, content: string) => files.set(key, content), read: (url: string) => files.get(new URL(url).pathname.slice(1)) };
 }
 
 test.concurrent("a Runtime Run token refuses deletes with a clear message", async () => {
@@ -147,7 +159,8 @@ test.concurrent("a Runtime Run token gets only the baseline writes until an Admi
 
 test.concurrent("a Runtime Run can upload and retrieve a deliverable on its Work item only with the file action grant", async () => {
   await withRollback(db, async (transaction) => {
-    const { post, claim, owner, project, item, agent, agents } = await scenario(transaction);
+    const memory = memoryStorage();
+    const { post, claim, owner, project, item, agent, agents } = await scenario(transaction, true, memory.storage);
     const [claimed] = await (await claim()).json() as Array<{ token: string }>;
     const token = claimed!.token;
     const input = { ownerType: "work_item", ownerId: item.id, filename: "diagram.html", contentType: "text/html", size: 32 };
@@ -161,25 +174,22 @@ test.concurrent("a Runtime Run can upload and retrieve a deliverable on its Work
     const requested = await post("/actions/request_asset_upload", input, { token });
     expect(requested.status).toBe(200);
     const upload = await requested.json() as { assetId: string; url: string; fields: Record<string, string> };
-    const form = new FormData();
-    for (const [key, value] of Object.entries(upload.fields)) form.append(key, value);
-    form.append("file", new Blob(["<!doctype html><title>deliverable</title>"], { type: "text/html" }), "diagram.html");
-    const stored = await fetch(upload.url, { method: "POST", body: form });
-    expect(stored.status).toBe(204);
+    memory.put(upload.fields.key!, "<!doctype html><title>deliverable</title>");
     expect((await post("/actions/complete_asset_upload", { assetId: upload.assetId }, { token })).status).toBe(200);
     const listed = await post("/actions/list_assets", { ownerType: "work_item", ownerId: item.id }, { token });
     expect(await listed.json()).toMatchObject([{ id: upload.assetId, filename: "diagram.html", contentType: "text/html" }]);
     const url = await post("/actions/get_asset_download_url", { assetId: upload.assetId, download: true }, { token });
     const download = await url.json() as { url: string; filename: string; contentType: string; inline: boolean };
     expect(download).toMatchObject({ filename: "diagram.html", contentType: "text/html", inline: false });
-    expect(await (await fetch(download.url)).text()).toBe("<!doctype html><title>deliverable</title>");
+    expect(memory.read(download.url)).toBe("<!doctype html><title>deliverable</title>");
     expect((await post("/actions/get_asset_download_url", { assetId: upload.assetId }, { token })).status).toBe(200);
   });
 });
 
 test.concurrent("a Runtime Run can create a Wiki page and deliver image and file assets only to Wiki pages its Originator can edit", async () => {
   await withRollback(db, async (transaction) => {
-    const { post, claim, owner, workspace, project, agent, agents } = await scenario(transaction);
+    const memory = memoryStorage();
+    const { post, claim, owner, workspace, project, agent, agents } = await scenario(transaction, true, memory.storage);
     const [claimed] = await (await claim()).json() as Array<{ token: string }>;
     const token = claimed!.token;
 
@@ -201,10 +211,7 @@ test.concurrent("a Runtime Run can create a Wiki page and deliver image and file
       }, { token });
       expect(requested.status).toBe(200);
       const ticket = await requested.json() as { assetId: string; url: string; fields: Record<string, string> };
-      const form = new FormData();
-      for (const [key, value] of Object.entries(ticket.fields)) form.append(key, value);
-      form.append("file", new Blob([bytes], { type: contentType }), filename);
-      expect((await fetch(ticket.url, { method: "POST", body: form })).status).toBe(204);
+      memory.put(ticket.fields.key!, bytes);
       expect((await post("/actions/complete_asset_upload", { assetId: ticket.assetId }, { token })).status).toBe(200);
       return ticket.assetId;
     };

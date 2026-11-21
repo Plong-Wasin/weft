@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { activities, agents, comments, createDatabase, daemons, jobs, runs, runtimes, runtimeProfiles, users, workspaces } from "@weft/db";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 import { createApiTokenActions, createRuntimeActions, createRuntimeDispatchActions, handleAgentRunJob, queueRunsForAssignees, sweepRuntimeRuns } from "../src";
@@ -194,6 +194,74 @@ async function runtimeScenario(tx: Parameters<Parameters<typeof withRollback>[1]
   const item = await createWorkItemActions(tx).createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "Work", assigneeIds: [agent.userId] });
   return { workspace, admin, owner, registered, runtime, agent, agents, item, project };
 }
+
+test("simultaneous Daemon claims stay within the Agent ceiling and queued Runs start when a slot frees", async () => {
+  const scenario = await runtimeScenario(db);
+  const triggerName = `claim_race_${crypto.randomUUID().replaceAll("-", "")}`;
+  const functionName = `${triggerName}_fn`;
+  try {
+    await scenario.agents.updateAgent.handler({ userId: scenario.admin.id }, { agentId: scenario.agent.id, maxConcurrentRuns: 1 });
+    await createWorkItemActions(db).createWorkItem.handler({ userId: scenario.admin.id }, { projectId: scenario.project.id, title: "Second queued Run", assigneeIds: [scenario.agent.userId] });
+    const raceRunIds = await db.select({ id: runs.id }).from(runs).where(eq(runs.agentId, scenario.agent.id));
+    const raceIds = raceRunIds.map((run) => `'${run.id}'`).join(",");
+    await db.execute(sql.raw(`create function ${functionName}() returns trigger language plpgsql as $$ begin if old.status = 'queued' and new.status = 'dispatched' and new.id::text in (${raceIds}) then perform pg_sleep(0.5); end if; return new; end $$`));
+    await db.execute(sql.raw(`create trigger ${triggerName} before update of status on runs for each row execute function ${functionName}()`));
+    const dispatch = createRuntimeDispatchActions(db);
+    const [left, right] = await Promise.all([
+      dispatch.claimRuns({ userId: scenario.owner.id, daemonId: scenario.registered.daemonId }, 1),
+      dispatch.claimRuns({ userId: scenario.owner.id, daemonId: scenario.registered.daemonId }, 1),
+    ]);
+    const claimed = [...left, ...right];
+    const [active] = await db.select({ count: sql<number>`count(*)::int` }).from(runs)
+      .where(and(eq(runs.agentId, scenario.agent.id), inArray(runs.status, ["dispatched", "running", "stopping"])));
+    expect(claimed.length).toBeLessThanOrEqual(1);
+    expect(active!.count).toBeLessThanOrEqual(1);
+    const queued = await db.select({ id: runs.id, status: runs.status }).from(runs).where(eq(runs.agentId, scenario.agent.id));
+    expect(queued.filter((run) => run.status === "queued")).toHaveLength(1);
+    await db.execute(sql.raw(`drop trigger ${triggerName} on runs`));
+    await db.execute(sql.raw(`drop function ${functionName}()`));
+    const running = claimed[0];
+    expect(running).toBeDefined();
+    await dispatch.startRun(running!.runId, scenario.runtime.id);
+    await dispatch.finishRun(running!.runId, { status: "completed", finalOutput: "released capacity" });
+    const next = await dispatch.claimRuns({ userId: scenario.owner.id, daemonId: scenario.registered.daemonId }, 20);
+    expect(next).toHaveLength(1);
+    expect(next[0]!.runId).not.toBe(running!.runId);
+  } finally {
+    await db.execute(sql.raw(`drop trigger if exists ${triggerName} on runs`));
+    await db.execute(sql.raw(`drop function if exists ${functionName}()`));
+    await db.delete(workspaces).where(eq(workspaces.id, scenario.workspace.id));
+  }
+});
+
+test("simultaneous Daemon claims never dispatch more than twenty Runs across Agents", async () => {
+  const scenario = await runtimeScenario(db);
+  try {
+    const agentActions = createAgentActions(db);
+    const workActions = createWorkItemActions(db);
+    for (let index = 0; index < 20; index++) {
+      const agent = await agentActions.createAgent.handler({ userId: scenario.admin.id }, { workspaceId: scenario.workspace.id, name: `Concurrent ${index}`, model: "default", runtimeId: scenario.runtime.id });
+      await agentActions.setAgentProjectAccess.handler({ userId: scenario.admin.id }, { agentId: agent.id, allProjects: true, projectIds: [] });
+      await agentActions.setAgentAccess.handler({ userId: scenario.owner.id }, { agentId: agent.id, userIds: [scenario.owner.id, scenario.admin.id] });
+      await workActions.createWorkItem.handler({ userId: scenario.admin.id }, { projectId: scenario.project.id, title: `Concurrent work ${index}`, assigneeIds: [agent.userId] });
+    }
+    const dispatch = createRuntimeDispatchActions(db);
+    const [left, right] = await Promise.all([
+      dispatch.claimRuns({ userId: scenario.owner.id, daemonId: scenario.registered.daemonId }, 20),
+      dispatch.claimRuns({ userId: scenario.owner.id, daemonId: scenario.registered.daemonId }, 20),
+    ]);
+    const claimed = [...left, ...right];
+    const [active] = await db.select({ count: sql<number>`count(*)::int` }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId))
+      .where(and(eq(runtimes.daemonId, scenario.registered.daemonId), inArray(runs.status, ["dispatched", "running", "stopping"])));
+    expect(claimed).toHaveLength(20);
+    expect(active!.count).toBe(20);
+    const [queued] = await db.select({ count: sql<number>`count(*)::int` }).from(runs).innerJoin(agents, eq(agents.id, runs.agentId))
+      .where(and(eq(agents.runtimeId, scenario.runtime.id), eq(runs.status, "queued")));
+    expect(queued!.count).toBe(1);
+  } finally {
+    await db.delete(workspaces).where(eq(workspaces.id, scenario.workspace.id));
+  }
+});
 
 test.concurrent("dispatch uses a restricted default for a missing enforced profile and legacy Full access otherwise", async () => {
   await withRollback(db, async (tx) => {

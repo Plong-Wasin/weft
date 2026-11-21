@@ -1025,7 +1025,7 @@ export const th: Record<keyof typeof en, string> = {
   "assets.title": "ไฟล์แนบ",
   "assets.empty": "ยังไม่มีไฟล์แนบ",
   "assets.loading": "กำลังโหลดไฟล์แนบ…",
-  "assets.dropHint": "วางไฟล์ที่นี่เพื่อแนบ",
+  "assets.dropHint": "เลือกไฟล์หรือวางไฟล์ที่นี่เพื่อแนบ",
   "assets.download": "ดาวน์โหลด",
   "assets.delete": "ลบ",
   "assets.uploading": "กำลังอัปโหลด…",

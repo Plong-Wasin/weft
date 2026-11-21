@@ -2193,7 +2193,7 @@ export const en = {
     "runtimes.editProfile": "Edit",
     "runtimes.deleteProfile": "Delete",
     "agents.runtimeEnvironment": "Agent environment",
-    "agents.runtimeEnvironmentHelp": "Set variables for this Agent on your Runtime. Values are encrypted and never shown again; saving replaces the full set. Use CLAUDE_CONFIG_DIR to select an existing Claude configuration.",
+    "agents.runtimeEnvironmentHelp": "Set variables for this Agent on your Runtime. Values are encrypted and never shown again; saving replaces the full set. Use CLAUDE_CONFIG_DIR to select an existing Claude configuration. A non-empty ANTHROPIC_API_KEY overrides that account; without it, the selected account is used instead of any inherited host key.",
     "agents.runtimeEnvironmentConfigured": "Saved variable names: {names}. Enter each value again to replace them.",
     "agents.environmentName": "Variable name",
     "agents.environmentValue": "Value",

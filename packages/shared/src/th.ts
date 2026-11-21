@@ -2195,7 +2195,7 @@ export const th: Record<keyof typeof en, string> = {
   "runtimes.editProfile": "แก้ไข",
   "runtimes.deleteProfile": "ลบ",
   "agents.runtimeEnvironment": "Environment ของ Agent",
-  "agents.runtimeEnvironmentHelp": "กำหนดตัวแปรสำหรับ Agent นี้บน Runtime ของคุณ ระบบเข้ารหัสค่าและจะไม่แสดงอีกครั้ง การบันทึกจะแทนที่ค่าทั้งหมด ใช้ CLAUDE_CONFIG_DIR เพื่อเลือกการตั้งค่า Claude ที่มีอยู่",
+  "agents.runtimeEnvironmentHelp": "กำหนดตัวแปรสำหรับ Agent นี้บน Runtime ของคุณ ระบบเข้ารหัสค่าและจะไม่แสดงอีกครั้ง การบันทึกจะแทนที่ค่าทั้งหมด ใช้ CLAUDE_CONFIG_DIR เพื่อเลือกการตั้งค่า Claude ที่มีอยู่ หากกำหนด ANTHROPIC_API_KEY ที่ไม่ว่าง ค่านั้นจะใช้แทนบัญชีที่เลือก มิฉะนั้นจะใช้บัญชีที่เลือกโดยไม่ใช้คีย์จากเครื่องที่สืบทอดมา",
   "agents.runtimeEnvironmentConfigured": "ชื่อตัวแปรที่บันทึกไว้: {names} กรอกค่าทั้งหมดอีกครั้งเพื่อแทนที่",
   "agents.environmentName": "ชื่อตัวแปร",
   "agents.environmentValue": "ค่า",

@@ -403,15 +403,15 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     <div role="group" aria-label={t("workItems.quickProperties")} data-quick-properties className={`flex flex-wrap items-center gap-2 ${mode === "page" && propertiesOpen ? "lg:hidden" : ""} ${mode === "peek" ? "@[800px]:hidden" : ""}`}>
       {keyPickers.state}{keyPickers.priority}{keyPickers.assignees}{keyPickers.due}
     </div>
-    {lastDescriptionEdit && <button data-testid="description-last-edited" type="button" className="justify-self-start bg-transparent p-0 text-13 text-secondary hover:bg-transparent hover:text-primary" onClick={() => void openVersions()}>
-      {t("workItems.lastEditedBy").replace("{name}", lastDescriptionEdit.name).replace("{time}", relativeTime(lastDescriptionEdit.at))} ▾
-    </button>}
     <div className="min-h-16 min-w-0 max-w-full">
       <DescriptionEditor key={`${item.id}:${editorEpoch}`} workspaceId={workspace.id} workItemId={item.id} mentionPeople={people} initial={item.description} editable={canWrite}
         status={<p role="status" data-testid="description-save-status" className={`m-0 min-w-0 text-12 ${descriptionSaveState === "notSaved" || descriptionSaveState === "failed" ? "text-danger-text" : "text-tertiary"}`}>{descriptionSaveState === "failed" ? descriptionSaveError ?? t("workItems.descriptionSave.failed") : t(`workItems.descriptionSave.${descriptionSaveState}`)}</p>}
         onSourceDraftChange={(hasDraft) => { if (hasDraft) setDescriptionSaveState("notSaved"); }}
         onChange={(doc) => { pending.current = { id: item.id, doc }; setDescriptionSaveError(null); setDescriptionSaveState("saving"); if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(flush, 700); }} />
     </div>
+    {lastDescriptionEdit && <button data-testid="description-last-edited" type="button" className="justify-self-start bg-transparent p-0 text-13 text-secondary hover:bg-transparent hover:text-primary" onClick={() => void openVersions()}>
+      {t("workItems.lastEditedBy").replace("{name}", lastDescriptionEdit.name).replace("{time}", relativeTime(lastDescriptionEdit.at))} ▾
+    </button>}
     <OutlinksPanel kind="work-item" id={item.id} run={action} refreshKey={descriptionOutlinksKey} updating={descriptionSaveState === "saving" || descriptionSaveState === "updating"} onRefreshComplete={onDescriptionOutlinksRefreshComplete} />
     <div role="group" className="flex w-full min-w-0 max-w-full flex-wrap gap-2" aria-label={t("workItems.actions")}>
       {canWrite && <>

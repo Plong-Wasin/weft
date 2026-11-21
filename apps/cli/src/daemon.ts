@@ -190,6 +190,8 @@ async function post(fetcher: FetchLike, apiUrl: string, token: string, path: str
 }
 
 type ClaimedRun = { runId: string; runtimeId: string; agentCli: AgentCliKind; timeoutSeconds?: number; instructions: string; request: string; model: string | null; token: string;
+  /** Runtime-owner configured variables, delivered only to the Daemon claim endpoint. */
+  environment?: Record<string, string>;
   workspaceId?: string; projectId?: string | null; workItemId?: string | null; workItemDisplayId?: string | null; commentId?: string | null; triggerId?: string | null;
   skills?: Array<{ name: string; description: string; instructions: string }>; sandbox?: SandboxProfile;
   /** The stable folder and the CLI Session to resume, as planned by the server; null for a Run without a work item. */
@@ -210,10 +212,11 @@ const CHILD_ENV_ALLOWLIST = [
   "GIT_ASKPASS", "SSH_AUTH_SOCK",
 ] as const;
 
-export function childEnvironment(run: ClaimedRun, apiUrl: string, hostEnv: Record<string, string | undefined> = Bun.env) {
+export function childEnvironment(run: ClaimedRun, apiUrl: string, hostEnv: Record<string, string | undefined> = Bun.env): Record<string, string> {
   const inherited = Object.fromEntries(CHILD_ENV_ALLOWLIST.flatMap((key) => hostEnv[key] === undefined ? [] : [[key, hostEnv[key]!]]));
   return {
     ...inherited,
+    ...Object.fromEntries(Object.entries(run.environment ?? {}).filter(([key]) => !key.startsWith("WEFT_") && !["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "TERM", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "GIT_ASKPASS", "SSH_AUTH_SOCK"].includes(key))),
     WEFT_API_URL: apiUrl,
     WEFT_TOKEN: run.token,
     WEFT_RUN_ID: run.runId,
@@ -224,6 +227,13 @@ export function childEnvironment(run: ClaimedRun, apiUrl: string, hostEnv: Recor
     WEFT_COMMENT_ID: run.commentId ?? "",
     WEFT_TRIGGER_ID: run.triggerId ?? "",
   };
+}
+
+/** Keep configured values out of streamed Run messages, final output, and failure text if a CLI echoes its environment. */
+export function redactRuntimeEnvironment(text: string, environment: Record<string, string> | undefined) {
+  let safe = text;
+  for (const value of Object.values(environment ?? {}).filter(Boolean).sort((a, b) => b.length - a.length)) safe = safe.replaceAll(value, "[REDACTED]");
+  return safe;
 }
 
 /** Sends one Daemon request with the current credential; a rotation during a long Run must not strand its status posts. */
@@ -362,7 +372,8 @@ export async function executeRun(environment: DaemonEnvironment, call: DaemonCal
         pending += decoder.decode();
         // JSONL producers commonly omit the final newline; the last complete JSON record still counts.
         if (pending.trim()) await consumeLine(pending);
-        async function consumeLine(line: string) {
+        async function consumeLine(rawLine: string) {
+          const line = redactRuntimeEnvironment(rawLine, run.environment);
           const final = adapter.final(line); if (final !== null) finalOutput = final;
           const usage = adapter.usage(line);
           if (usage) {

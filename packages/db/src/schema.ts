@@ -99,6 +99,8 @@ export const agents = pgTable("agents", {
   /** Provider-reported tokens per calendar month; null means no budget. */
   monthlyTokenBudget: integer("monthly_token_budget"),
   runtimeId: uuid("runtime_id").references(() => runtimes.id, { onDelete: "set null" }),
+  /** AES-GCM sealed Runtime-owner environment; never included in ordinary Agent output. */
+  runtimeEnvironment: text("runtime_environment"),
   runtimeProfileId: uuid("runtime_profile_id").references(() => runtimeProfiles.id, { onDelete: "set null" }),
   cliModel: text("cli_model"),
   maxConcurrentRuns: integer("max_concurrent_runs").notNull().default(6),
@@ -1084,6 +1086,8 @@ export const runs = pgTable("runs", {
   cliSessionId: text("cli_session_id"),
   /** The stable folder (a random id) the Runs of one Agent, work item and Runtime share. Null for server Runs and Runs without a work item. */
   sessionFolder: text("session_folder"),
+  /** One-way hash of the Runtime Agent environment used for this Session; a change starts a new CLI Session. */
+  runtimeEnvironmentHash: text("runtime_environment_hash"),
   /** `resumed` when the Run continued the previous Session, `new` when it started one. Null for server Runs and Runs not yet started. */
   sessionMode: text("session_mode"),
   /** Why the Session is new or resumed: a short code such as `previous_failed`, `runtime_changed`, `folder_missing`, `rerun_as_new`. */

@@ -2,7 +2,8 @@ import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { activities, agents, comments, createDatabase, daemons, jobs, runs, runtimes, runtimeProfiles, users, workspaces } from "@weft/db";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
-import { createApiTokenActions, createRuntimeActions, createRuntimeDispatchActions, handleAgentRunJob, sweepRuntimeRuns } from "../src";
+import { createApiTokenActions, createRuntimeActions, createRuntimeDispatchActions, handleAgentRunJob, queueRunsForAssignees, sweepRuntimeRuns } from "../src";
+import { createAgentRuntimeEnvironmentActions } from "../src/agent-runtime-environment";
 import { createAgentActions, createMemberActions, createProjectActions, createRunActions, createWorkItemActions } from "../src";
 
 const { client, db } = createDatabase();
@@ -56,6 +57,7 @@ test.concurrent("the Runtime owner manages named profiles, and two Agents dispat
     expect(await tx.select({ field: activities.field }).from(activities).where(eq(activities.entityId, createdA.id))).toContainEqual({ field: "runtime_profile" });
     await expect(runtimeActions.deleteRuntimeProfile.handler({ userId: owner.id }, { profileId: sandboxed.id })).rejects.toThrow("Move every Agent to another profile");
     const dispatch = createRuntimeDispatchActions(tx);
+    await createAgentRuntimeEnvironmentActions(tx).setAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: createdA.id, variables: { CLAUDE_CONFIG_DIR: "/runtime/claude", ANTHROPIC_API_KEY: "selected-api-key" } });
     const createdRuns = [] as string[];
     for (const agent of [agentA, agentB]) {
       const project = await createProjectActions(tx).createProject.handler({ userId: owner.id }, { workspaceId: workspace.id, name: `${agent.name} work`, key: agent.name === "Sandboxed" ? "SAND" : "FULL", visibility: "private" });
@@ -64,6 +66,8 @@ test.concurrent("the Runtime owner manages named profiles, and two Agents dispat
       createdRuns.push(item.id);
     }
     const claimed = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20);
+    expect(claimed.find((run) => run.environment)?.environment).toEqual({ CLAUDE_CONFIG_DIR: "/runtime/claude", ANTHROPIC_API_KEY: "selected-api-key" });
+    expect(JSON.stringify(await createRunActions(tx).getRunTranscript.handler({ userId: owner.id }, { runId: claimed.find((run) => run.environment)!.runId }))).not.toContain("selected-api-key");
     expect(claimed.map((run) => run.sandbox?.name).sort()).toEqual(["Full access", "Run folder only"]);
     expect(claimed.find((run) => run.sandbox?.mode === "run-folder")?.sandbox).toMatchObject({ enforce: true, filesystemAllowlist: [], networkAllowlist: ["git.example.com"] });
     const transcript = await createRunActions(tx).getRunTranscript.handler({ userId: owner.id }, { runId: claimed.find((run) => run.sandbox?.mode === "run-folder")!.runId });
@@ -610,5 +614,63 @@ test.concurrent("folder paths of a profile are shown to the Runtime owner and wo
     expect(await pathsFor(owner.id)).toEqual(["/home/owner/secret-project"]);
     expect(await pathsFor(admin.id)).toEqual(["/home/owner/secret-project"]);
     expect(await pathsFor(colleague.id)).toEqual([]);
+  });
+});
+
+
+test.concurrent("only the Runtime owner can replace or clear an Agent environment and values stay sealed", async () => {
+  await withRollback(db, async (tx) => {
+    const workspace = await createWorkspaceFactory(tx);
+    const owner = await createMemberFactory(tx, workspace.id, "Member");
+    const admin = await createMemberFactory(tx, workspace.id, "Admin");
+    const otherToken = await createApiTokenActions(tx).createApiToken.handler({ userId: admin.id }, { name: "other runtime" });
+    await createRuntimeActions(tx).registerDaemon.handler({ userId: admin.id, apiTokenId: otherToken.id }, { hostname: "other-owner-box", version: "1", agentClis: ["claude"] });
+    const token = await createApiTokenActions(tx).createApiToken.handler({ userId: owner.id }, { name: "daemon" });
+    const { runtimes: [runtime] } = await createRuntimeActions(tx).registerDaemon.handler({ userId: owner.id, apiTokenId: token.id }, { hostname: "box", version: "1", agentClis: ["claude"] });
+    await createRuntimeActions(tx).shareRuntime.handler({ userId: owner.id }, { runtimeId: runtime!.id });
+    const agent = await createAgentActions(tx).createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Claude", model: "default", runtimeId: runtime!.id });
+    const actions = createAgentRuntimeEnvironmentActions(tx);
+    await expect(actions.setAgentRuntimeEnvironment.handler({ userId: admin.id }, { agentId: agent.id, variables: { CLAUDE_CONFIG_DIR: "/tmp/claude-work", ANTHROPIC_API_KEY: "super-secret" } })).rejects.toMatchObject({ status: 403 });
+    await actions.setAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id, variables: { CLAUDE_CONFIG_DIR: "/tmp/claude-work", ANTHROPIC_API_KEY: "super-secret" } });
+    const stored = (await tx.select().from(agents).where(eq(agents.id, agent.id)))[0]!;
+    expect(stored.runtimeEnvironment).not.toContain("super-secret");
+    await expect(actions.getAgentRuntimeEnvironment.handler({ userId: admin.id }, { agentId: agent.id })).rejects.toMatchObject({ status: 403 });
+    await expect(actions.getAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id })).resolves.toEqual({ variables: ["ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"] });
+    await actions.setAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id, variables: {} });
+    expect((await tx.select().from(agents).where(eq(agents.id, agent.id)))[0]!.runtimeEnvironment).toBeNull();
+  });
+});
+
+
+test.concurrent("changing an Agent Runtime environment starts a new CLI Session in the same work folder", async () => {
+  await withRollback(db, async (tx) => {
+    const workspace = await createWorkspaceFactory(tx);
+    await tx.update(workspaces).set({ allowAutopilot: true }).where(eq(workspaces.id, workspace.id));
+    const owner = await createMemberFactory(tx, workspace.id, "Admin");
+    const apiToken = await createApiTokenActions(tx).createApiToken.handler({ userId: owner.id }, { name: "daemon" });
+    const runtimeActions = createRuntimeActions(tx);
+    const registered = await runtimeActions.registerDaemon.handler({ userId: owner.id, apiTokenId: apiToken.id }, { hostname: "session-box", version: "1", agentClis: ["claude"] });
+    const runtime = registered.runtimes[0]!;
+    await runtimeActions.shareRuntime.handler({ userId: owner.id }, { runtimeId: runtime.id });
+    const agent = await createAgentActions(tx).createAgent.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Account Agent", model: "default", runtimeId: runtime.id });
+    await createAgentActions(tx).setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: true, projectIds: [] });
+    const project = await createProjectActions(tx).createProject.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Session work", key: "SESS", visibility: "private" });
+    const item = await createWorkItemActions(tx).createWorkItem.handler({ userId: owner.id }, { projectId: project.id, title: "Keep this folder", assigneeIds: [agent.userId] });
+    const environmentActions = createAgentRuntimeEnvironmentActions(tx);
+    await environmentActions.setAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id, variables: { CLAUDE_CONFIG_DIR: "/profile/one" } });
+    const dispatch = createRuntimeDispatchActions(tx);
+    const first = (await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 10))[0]!;
+    expect(first.session?.reason).toBe("first");
+    expect(first.environment).toEqual({ CLAUDE_CONFIG_DIR: "/profile/one" });
+    await tx.update(runs).set({ status: "completed", cliSessionId: "session-one", finishedAt: new Date() }).where(eq(runs.id, first.runId));
+    await queueRunsForAssignees(tx, { originatorId: owner.id, project: { id: project.id, workspaceId: workspace.id }, workItemId: item.id, assigneeUserIds: [agent.userId] });
+    const second = (await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 10))[0]!;
+    expect(second.session).toMatchObject({ reason: "resumed", resumeSessionId: "session-one", folder: first.session!.folder });
+    await tx.update(runs).set({ status: "completed", cliSessionId: "session-two", finishedAt: new Date() }).where(eq(runs.id, second.runId));
+    await environmentActions.setAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id, variables: { CLAUDE_CONFIG_DIR: "/profile/two" } });
+    await queueRunsForAssignees(tx, { originatorId: owner.id, project: { id: project.id, workspaceId: workspace.id }, workItemId: item.id, assigneeUserIds: [agent.userId] });
+    const third = (await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 10))[0]!;
+    expect(third.session).toMatchObject({ reason: "runtime_environment_changed", resumeSessionId: null, folder: first.session!.folder });
+    expect(third.environment).toEqual({ CLAUDE_CONFIG_DIR: "/profile/two" });
   });
 });

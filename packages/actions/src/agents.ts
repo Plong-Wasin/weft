@@ -274,7 +274,7 @@ export function createAgentActions(db: Database) {
             allowMemberActions: input.allowMemberActions ?? agent.allowMemberActions,
             allowFeatureActions: input.allowFeatureActions ?? agent.allowFeatureActions,
             allowExportActions: input.allowExportActions ?? agent.allowExportActions,
-            runtimeId, runtimeProfileId, cliModel: input.cliModel === undefined ? agent.cliModel : input.cliModel, maxConcurrentRuns: input.maxConcurrentRuns ?? agent.maxConcurrentRuns,
+            runtimeId, runtimeEnvironment: runtimeId !== agent.runtimeId ? null : agent.runtimeEnvironment, runtimeProfileId, cliModel: input.cliModel === undefined ? agent.cliModel : input.cliModel, maxConcurrentRuns: input.maxConcurrentRuns ?? agent.maxConcurrentRuns,
           }).where(eq(agents.id, agent.id));
           if (runtimeId !== agent.runtimeId) {
             await database.delete(agentAccess).where(eq(agentAccess.agentId, agent.id));

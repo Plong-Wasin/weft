@@ -95,6 +95,46 @@ function AgentRuntimeProfile({ agent, onSaved, onFailed }: { agent: Pick<AgentRe
   </fieldset>;
 }
 
+/** Only the Runtime owner can replace these values; reads return names only, never existing secret values. */
+function AgentRuntimeEnvironment({ agent, onFailed }: { agent: Pick<AgentRecord, "id" | "runtimeId">; onFailed: () => void }) {
+  const [names, setNames] = React.useState<string[]>([]);
+  const [rows, setRows] = React.useState<Array<{ key: string; value: string }>>([]);
+  const [loaded, setLoaded] = React.useState(false);
+  const [saved, setSaved] = React.useState(false);
+  React.useEffect(() => {
+    if (!agent.runtimeId) return;
+    void action<{ variables: string[] }>("get_agent_runtime_environment", { agentId: agent.id }).then((result) => {
+      if (result) { setNames(result.variables); setRows(result.variables.length ? result.variables.map((key) => ({ key, value: "" })) : [{ key: "", value: "" }]); }
+      setLoaded(true);
+    });
+  }, [agent.id, agent.runtimeId]);
+  if (!agent.runtimeId || !loaded) return null;
+  return <fieldset data-runtime-environment className="grid min-w-0 gap-2 border-0 p-0">
+    <legend className="text-13 font-medium text-secondary">{translate("agents.runtimeEnvironment")}</legend>
+    <p className="text-12 text-secondary">{translate("agents.runtimeEnvironmentHelp")}</p>
+    {names.length > 0 && <p className="text-12 text-secondary">{translate("agents.runtimeEnvironmentConfigured").replace("{names}", names.join(", "))}</p>}
+    {rows.map((row, index) => <div key={index} className="grid min-w-0 gap-2 sm:grid-cols-2">
+      <label>{translate("agents.environmentName")}<input value={row.key} autoComplete="off" onChange={(event) => setRows((current) => current.map((entry, i) => i === index ? { ...entry, key: event.target.value } : entry))} /></label>
+      <label>{translate("agents.environmentValue")}<input type="password" autoComplete="new-password" value={row.value} onChange={(event) => setRows((current) => current.map((entry, i) => i === index ? { ...entry, value: event.target.value } : entry))} /></label>
+    </div>)}
+    <div className="flex flex-wrap gap-2">
+      <button type="button" className="secondary" onClick={() => setRows((current) => [...current, { key: "", value: "" }])}>{translate("agents.environmentAdd")}</button>
+      <button type="button" disabled={rows.some((row) => !row.key || !row.value)} onClick={async () => {
+        const variables = Object.fromEntries(rows.map(({ key, value }) => [key.trim(), value]));
+        const result = await action<{ variables: string[] }>("set_agent_runtime_environment", { agentId: agent.id, variables });
+        if (!result) { onFailed(); return; }
+        setNames(result.variables); setRows(result.variables.map((key) => ({ key, value: "" }))); setSaved(true);
+      }}>{translate("agents.environmentSave")}</button>
+      <button type="button" className="secondary" disabled={!names.length} onClick={async () => {
+        const result = await action<{ variables: string[] }>("set_agent_runtime_environment", { agentId: agent.id, variables: {} });
+        if (!result) { onFailed(); return; }
+        setNames([]); setRows([{ key: "", value: "" }]); setSaved(false);
+      }}>{translate("agents.environmentClear")}</button>
+    </div>
+    {saved && <p role="status" className="text-12 text-secondary">{translate("agents.environmentSaved")}</p>}
+  </fieldset>;
+}
+
 /** Why an Agent cannot be deleted: what it wrote, with the biggest kinds first, and Disable as the way out. Focus moves here on open and back to Delete on close. */
 function RetirePanel({ agent, counts, onClose, onDisable }: { agent: { id: string; name: string; enabled: boolean }; counts: Record<string, number>; onClose: () => void; onDisable: () => void }) {
   const panel = React.useRef<HTMLDivElement>(null);
@@ -168,7 +208,7 @@ export function WorkspaceAgents() {
       </Row>)}</RowList>}
     </SettingsBlock>
     {ownerAgents.map((agent) => (
-      <div key={agent.id} className="grid gap-2 border-b border-subtle py-3"><div className="flex flex-wrap items-center gap-x-2"><Avatar name={agent.name} id={agent.id} agent /><strong>{agent.name}</strong><span className="text-13 text-secondary">{profileSummary(agent).join(" · ")}</span></div><AgentRuntimeProfile agent={agent} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} /><AgentPeopleAccess agent={agent} members={members} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} /></div>
+      <div key={agent.id} className="grid gap-2 border-b border-subtle py-3"><div className="flex flex-wrap items-center gap-x-2"><Avatar name={agent.name} id={agent.id} agent /><strong>{agent.name}</strong><span className="text-13 text-secondary">{profileSummary(agent).join(" · ")}</span></div><AgentRuntimeProfile agent={agent} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} /><AgentRuntimeEnvironment agent={agent} onFailed={() => setNote(translate("agents.failed"))} /><AgentPeopleAccess agent={agent} members={members} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} /></div>
     ))}
     {note && <Note note={note} />}
   </section>;
@@ -198,6 +238,7 @@ export function WorkspaceAgents() {
             }} />
           : <><AccessEditor agent={agent} projects={projects} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} />
             {manageableAgentIds.includes(agent.id) ? <AgentPeopleAccess agent={agent} members={members} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} /> : <p className="text-12 text-secondary">{translate("agents.runtimeOwnerAccess")}</p>}</>}
+          {manageableAgentIds.includes(agent.id) && agent.runtimeId && <AgentRuntimeEnvironment agent={agent} onFailed={() => setNote(translate("agents.failed"))} />}
           <fieldset className="grid gap-1 border-0 p-0"><legend className="text-13 font-medium text-secondary">{translate("agents.skills")}</legend>
             {workspaceSkills.length === 0 ? <span className="text-13 text-secondary">{translate("agents.noSkills")}</span> : workspaceSkills.map((skill) => <label key={skill.id} className="flex items-center gap-2" title={skill.description}>
               <input type="checkbox" checked={agent.skills.some((attached) => attached.id === skill.id)} onChange={async (event) => {

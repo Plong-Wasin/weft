@@ -97,7 +97,7 @@ async function deleteRuntimeLocked(transaction: Database, runtimeId: string, act
   for (const agent of bound) {
     if (target) {
       // The Agent keeps running on the target. Its previous Session belongs to the old Runtime, so its next Run starts a new one there.
-      await transaction.update(agents).set({ runtimeId: target.id, runtimeProfileId: targetProfileId, autopilot: true }).where(eq(agents.id, agent.id));
+      await transaction.update(agents).set({ runtimeId: target.id, runtimeEnvironment: null, runtimeProfileId: targetProfileId, autopilot: true }).where(eq(agents.id, agent.id));
       // The people allowed to assign or mention the Agent reset to the target's owner alone when the owner changes; the same owner keeps the list.
       if (target.ownerId !== runtime.ownerId) {
         await transaction.delete(agentAccess).where(eq(agentAccess.agentId, agent.id));
@@ -106,7 +106,7 @@ async function deleteRuntimeLocked(transaction: Database, runtimeId: string, act
     } else {
       // A disabled Agent does not block: its binding goes, and its Autopilot with it, so enabling it later never starts a server-side Autopilot Agent.
       // Its access list resets the way the Agent editor resets it when the Runtime is cleared.
-      await transaction.update(agents).set({ runtimeId: null, runtimeProfileId: null, autopilot: false }).where(eq(agents.id, agent.id));
+      await transaction.update(agents).set({ runtimeId: null, runtimeEnvironment: null, runtimeProfileId: null, autopilot: false }).where(eq(agents.id, agent.id));
       await transaction.delete(agentAccess).where(eq(agentAccess.agentId, agent.id));
       await initializeAgentAccess(transaction, agent.id);
     }

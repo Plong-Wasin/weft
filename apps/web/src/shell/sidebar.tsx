@@ -8,6 +8,7 @@ import { ArrowDown, ArrowLeft, ArrowUp, ChevronRight, FileText, Folder, GripVert
 import { translate, type MessageKey } from "@weft/shared";
 import { action } from "../api";
 import { ProjectNav } from "../project-nav";
+import { InboxNavLink } from "../inbox";
 import { paths } from "../routes";
 import { MenuItem, Popover } from "./popover";
 import type { Member, Project, Workspace } from "../types";
@@ -187,6 +188,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
   const inProjectSettings = section === "settings" && Boolean(projectKey) && (data === undefined || projectList.some((project) => project.key === projectKey));
   const { data: favorites = [] } = useQuery({ queryKey: favoritesKey(workspace.id), queryFn: async () => await action<Array<{ id: string; title: string; projectId: string | null }>>("list_favorite_wiki_pages", { workspaceId: workspace.id }) ?? [], enabled: section === "work" || section === "wiki" });
   return <nav aria-label={translate("shell.sidebar")} className="flex w-64 shrink-0 max-md:w-auto max-md:flex-1 max-md:border-r-0 flex-col gap-0.5 overflow-y-auto border-r border-subtle bg-surface-1 p-2">
+    <InboxNavLink workspace={workspace} />
     {section === "work" && <>
       <NavLink end to={paths.home(workspace.slug)} className={itemClass}>{translate("nav.home")}</NavLink>
       <NavLink to={paths.workspaceViews(workspace.slug)} className={itemClass}>{translate("views.title")}</NavLink>

@@ -19,7 +19,7 @@ import { webOriginFromEnv, type Mailer } from "./mail";
 import { outboundDeliveryJobHandler, outboundJobType, purgeOutboundDeliveries } from "./outbound-webhooks";
 import { outboundWebhooksEnabled } from "./outbound-webhooks-flag";
 
-export type NotificationKind = "mention" | "assignment" | "reply" | "intake_accepted" | "intake_rejected" | "intake_duplicate" | "run_confirmation" | "run_skipped" | "wake_skipped" | "recurrence_paused" | "auto_rule";
+export type NotificationKind = "mention" | "assignment" | "reply" | "intake_accepted" | "intake_rejected" | "intake_duplicate" | "run_confirmation" | "run_skipped" | "wake_skipped" | "recurrence_paused" | "auto_rule" | "secret_output_blocked";
 
 export interface NotifyPayload {
   kind: NotificationKind;
@@ -44,7 +44,30 @@ export async function enqueueNotification(database: Database, payload: NotifyPay
   await enqueueJob(database, { type: "notify", payload: { ...payload, recipientIds } });
 }
 
+/** A Run can block several outputs during one correction attempt; the Run id is the stable notification key. */
+export async function recordSecretOutputBlockedNotifications(database: Database, input: { workspaceId: string; runId: string; actorId: string; recipientIds: string[] }) {
+  const recipients = [...new Set(input.recipientIds)].filter((id) => id !== input.actorId);
+  const members = recipients.length ? await database.select({ userId: workspaceMembers.userId }).from(workspaceMembers)
+    .where(and(eq(workspaceMembers.workspaceId, input.workspaceId), inArray(workspaceMembers.userId, recipients), isNull(workspaceMembers.suspendedAt))) : [];
+  for (const { userId } of members) {
+    const [created] = await database.insert(notifications).values({ workspaceId: input.workspaceId, userId, actorId: input.actorId, kind: "secret_output_blocked", detail: null, jobId: input.runId })
+      .onConflictDoNothing().returning({ userId: notifications.userId });
+    if (created) await publishSignal(database, { type: "notification", workspaceId: input.workspaceId, userId });
+  }
+}
+
 async function fanOut(database: Database, payload: NotifyPayload, job: { id: string }, publish: SignalPublisher) {
+  if (payload.kind === "secret_output_blocked" && payload.workItemId) {
+    const [item] = await database.select({ workspaceId: workItems.workspaceId }).from(workItems).where(eq(workItems.id, payload.workItemId));
+    if (!item) return;
+    for (const userId of payload.recipientIds) {
+      const [member] = await database.select({ userId: workspaceMembers.userId }).from(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, item.workspaceId), eq(workspaceMembers.userId, userId), isNull(workspaceMembers.suspendedAt)));
+      if (!member) continue;
+      const [created] = await database.insert(notifications).values({ workspaceId: item.workspaceId, userId, actorId: payload.actorId, kind: payload.kind, detail: null, jobId: job.id }).onConflictDoNothing().returning({ userId: notifications.userId });
+      if (created) await publish(database, { type: "notification", workspaceId: item.workspaceId, userId });
+    }
+    return;
+  }
   const recurrencePayload = payload as NotifyPayload & { recurrenceId?: string; reason?: string };
   if (payload.kind === "recurrence_paused" && recurrencePayload.recurrenceId) {
     const [recurrence] = await database.select().from(recurrences).where(eq(recurrences.id, recurrencePayload.recurrenceId));
@@ -206,7 +229,7 @@ export async function scheduleCleanupJobs(database: Database) {
 
 const uuid = () => Type.String({ format: "uuid" });
 const notificationOutput = Type.Object({
-  id: Type.String(), kind: Type.Union((["mention", "assignment", "reply", "intake_accepted", "intake_rejected", "intake_duplicate", "run_confirmation", "run_skipped", "wake_skipped", "recurrence_paused", "auto_rule"] as const).map((kind) => Type.Literal(kind))), workItemId: Type.Union([Type.String(), Type.Null()]), wikiPageId: Type.Union([Type.String(), Type.Null()]), pageTitle: Type.Union([Type.String(), Type.Null()]), projectId: Type.Union([Type.String(), Type.Null()]), recurrenceId: Type.Union([Type.String(), Type.Null()]), detail: Type.Union([Type.String(), Type.Null()]),
+  id: Type.String(), kind: Type.Union((["mention", "assignment", "reply", "intake_accepted", "intake_rejected", "intake_duplicate", "run_confirmation", "run_skipped", "wake_skipped", "recurrence_paused", "auto_rule", "secret_output_blocked"] as const).map((kind) => Type.Literal(kind))), workItemId: Type.Union([Type.String(), Type.Null()]), wikiPageId: Type.Union([Type.String(), Type.Null()]), pageTitle: Type.Union([Type.String(), Type.Null()]), projectId: Type.Union([Type.String(), Type.Null()]), recurrenceId: Type.Union([Type.String(), Type.Null()]), detail: Type.Union([Type.String(), Type.Null()]),
   displayId: Type.String(), projectKey: Type.Union([Type.String(), Type.Null()]), workItemTitle: Type.String(), commentId: Type.Union([Type.String(), Type.Null()]),
   intakeId: Type.Union([Type.String(), Type.Null()]), intakeOutcome: Type.Union([Type.String(), Type.Null()]),
   actorId: Type.String(), actorName: Type.String(), readAt: Type.Union([Type.String(), Type.Null()]), createdAt: Type.String(),
@@ -249,7 +272,7 @@ export function createNotificationActions(db: Database) {
         visiblePages.set(row.wikiPageId, Boolean(member));
       }
     }
-    return rows.filter((row) => row.recurrenceId !== null ? visibleProjects.get(row.recurrenceProjectId!) : (row.workItemId
+    return rows.filter((row) => row.kind === "secret_output_blocked" ? true : row.recurrenceId !== null ? visibleProjects.get(row.recurrenceProjectId!) : (row.workItemId
       ? row.deletedAt === null && visibleItems.get(row.workItemId)
       : row.wikiPageId !== null && visiblePages.get(row.wikiPageId)));
   }

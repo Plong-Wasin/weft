@@ -1,9 +1,11 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { activities, agents, comments, createDatabase, daemons, jobs, runs, runtimes, runtimeProfiles, users, workspaces } from "@weft/db";
+import { activities, agents, comments, createDatabase, daemons, jobs, notifications, runMessages, runs, runtimes, runtimeProfiles, users, workItems, workspaces } from "@weft/db";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
-import { createApiTokenActions, createRuntimeActions, createRuntimeDispatchActions, handleAgentRunJob, queueRunsForAssignees, sweepRuntimeRuns } from "../src";
+import { createApiTokenActions, createCommentActions, createRuntimeActions, createRuntimeDispatchActions, handleAgentRunJob, queueRunsForAssignees, sweepRuntimeRuns } from "../src";
 import { createAgentRuntimeEnvironmentActions } from "../src/agent-runtime-environment";
+import { runtimeEnvironmentSecretValues, runtimeEnvironmentValues } from "../src/agent-runtime-environment";
+import { openSecret, sealSecret } from "../src/integration-secrets";
 import { createAgentActions, createMemberActions, createProjectActions, createRunActions, createWorkItemActions } from "../src";
 
 const { client, db } = createDatabase();
@@ -67,6 +69,43 @@ test.concurrent("the Runtime owner manages named profiles, and two Agents dispat
     }
     const claimed = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20);
     expect(claimed.find((run) => run.environment)?.environment).toEqual({ CLAUDE_CONFIG_DIR: "/runtime/claude", ANTHROPIC_API_KEY: "selected-api-key" });
+    const secretRun = claimed.find((run) => run.environment)!;
+    const secretRunId = secretRun.runId;
+    await dispatch.startRun(secretRunId, secretRun.runtimeId);
+    const [secretSnapshot] = await tx.select({ value: runs.runtimeEnvironmentSecrets }).from(runs).where(eq(runs.id, secretRunId));
+    expect(secretSnapshot!.value).not.toContain("selected-api-key");
+    expect(JSON.parse(openSecret(secretSnapshot!.value!))).toEqual({ CLAUDE_CONFIG_DIR: "/runtime/claude", ANTHROPIC_API_KEY: "selected-api-key" });
+    await createAgentRuntimeEnvironmentActions(tx).classifyAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: createdA.id, classifications: { ANTHROPIC_API_KEY: "non-secret" } });
+    const [retainedSnapshot] = await tx.select({ value: runs.runtimeEnvironmentSecrets }).from(runs).where(eq(runs.id, secretRunId));
+    expect(JSON.parse(openSecret(retainedSnapshot!.value!))).toEqual({ CLAUDE_CONFIG_DIR: "/runtime/claude", ANTHROPIC_API_KEY: "selected-api-key" });
+    await expect(createCommentActions(tx).createComment.handler({ userId: owner.id, source: "agent", agent: { agentUserId: createdA.userId, runId: secretRunId, originatorId: owner.id } }, { workItemId: createdRuns[0]!, bodyMarkdown: "leak selected-api-key" })).rejects.toMatchObject({ status: 400, code: "runtime_secret_output" });
+    const alertRows = await tx.select().from(notifications).where(eq(notifications.jobId, secretRunId));
+    expect(alertRows).toHaveLength(1);
+    expect(alertRows[0]).toMatchObject({ userId: owner.id, kind: "secret_output_blocked", workItemId: null, detail: null });
+    const encodedSecret = Buffer.from("selected-api-key").toString("base64");
+    await tx.insert(runMessages).values({ runId: secretRunId, seq: 1, type: "response", output: `Earlier output selected-api-key and ${encodedSecret}` });
+    await expect(dispatch.finishRun(secretRunId, { status: "completed", finalOutput: `Completion included ${encodedSecret}` })).resolves.toMatchObject({ correctionRequired: true, message: expect.not.stringContaining("selected-api-key") });
+    expect((await tx.select().from(runs).where(eq(runs.id, secretRunId)))[0]).toMatchObject({ status: "running", failureReason: "runtime_secret_output", finalOutput: null, runtimeEnvironmentSecrets: expect.any(String) });
+    expect(await tx.select().from(comments).where(eq(comments.runId, secretRunId))).toHaveLength(0);
+    const transcriptAfterBlock = await createRunActions(tx).getRunTranscript.handler({ userId: owner.id }, { runId: secretRunId });
+    expect(JSON.stringify(transcriptAfterBlock)).not.toContain("selected-api-key");
+    expect(JSON.stringify(transcriptAfterBlock)).not.toContain(encodedSecret);
+    await expect(dispatch.finishRun(secretRunId, { status: "completed", finalOutput: `Completion included ${encodedSecret}` })).resolves.toMatchObject({ correctionRequired: true });
+    expect(await tx.select().from(notifications).where(eq(notifications.jobId, secretRunId))).toHaveLength(1);
+    await expect(dispatch.finishRun(secretRunId, { status: "completed", finalOutput: "Safe corrected completion." })).resolves.toMatchObject({ ok: true });
+    expect((await tx.select().from(runs).where(eq(runs.id, secretRunId)))[0]).toMatchObject({ status: "completed", finalOutput: "Safe corrected completion.", runtimeEnvironmentSecrets: null });
+    expect(await tx.select().from(comments).where(eq(comments.runId, secretRunId))).toHaveLength(1);
+    const transcriptAfterFinish = await createRunActions(tx).getRunTranscript.handler({ userId: owner.id }, { runId: secretRunId });
+    expect(JSON.stringify(transcriptAfterFinish)).not.toContain("selected-api-key");
+    expect(JSON.stringify(transcriptAfterFinish)).not.toContain(encodedSecret);
+    const [savedItem] = await tx.select({ projectId: workItems.projectId }).from(workItems).where(eq(workItems.id, createdRuns[0]!));
+    const safeItem = await createWorkItemActions(tx).createWorkItem.handler({ userId: owner.id }, { projectId: savedItem!.projectId, title: "A second Runtime task", assigneeIds: [createdA.userId] });
+    const [safeRun] = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20);
+    expect(safeRun?.workItemId).toBe(safeItem.id);
+    const [safeSnapshot] = await tx.select({ value: runs.runtimeEnvironmentSecrets }).from(runs).where(eq(runs.id, safeRun!.runId));
+    expect(JSON.parse(openSecret(safeSnapshot!.value!))).toEqual({ CLAUDE_CONFIG_DIR: "/runtime/claude" });
+    await dispatch.finishRun(safeRun!.runId, { status: "completed", finalOutput: "safe" });
+    expect((await tx.select({ value: runs.runtimeEnvironmentSecrets }).from(runs).where(eq(runs.id, safeRun!.runId)))[0]!.value).toBeNull();
     expect(JSON.stringify(await createRunActions(tx).getRunTranscript.handler({ userId: owner.id }, { runId: claimed.find((run) => run.environment)!.runId }))).not.toContain("selected-api-key");
     expect(claimed.map((run) => run.sandbox?.name).sort()).toEqual(["Full access", "Run folder only"]);
     expect(claimed.find((run) => run.sandbox?.mode === "run-folder")?.sandbox).toMatchObject({ enforce: true, filesystemAllowlist: [], networkAllowlist: ["git.example.com"] });
@@ -234,6 +273,37 @@ test("simultaneous Daemon claims stay within the Agent ceiling and queued Runs s
   }
 });
 
+test("claiming scans past more than one batch of queued Runs whose Agent is at capacity", async () => {
+  const scenario = await runtimeScenario(db);
+  try {
+    await scenario.agents.updateAgent.handler({ userId: scenario.admin.id }, { agentId: scenario.agent.id, maxConcurrentRuns: 1 });
+    const workActions = createWorkItemActions(db);
+    const dispatch = createRuntimeDispatchActions(db);
+    const [active] = await dispatch.claimRuns({ userId: scenario.owner.id, daemonId: scenario.registered.daemonId }, 1);
+    expect(active).toBeDefined();
+    for (let index = 0; index < 25; index++) {
+      await workActions.createWorkItem.handler({ userId: scenario.admin.id }, { projectId: scenario.project.id, title: `Blocked queued ${index}`, assigneeIds: [scenario.agent.userId] });
+    }
+    const blockedQueue = await db.select({ id: runs.id }).from(runs).where(and(eq(runs.agentId, scenario.agent.id), eq(runs.status, "queued"))).orderBy(runs.createdAt, runs.id);
+    for (const [index, run] of blockedQueue.entries()) {
+      await db.execute(sql`update runs set created_at = timestamp '2026-01-01 00:00:00' + ${index} * interval '1 microsecond' where id = ${run.id}`);
+    }
+    const otherAgent = await createAgentActions(db).createAgent.handler({ userId: scenario.admin.id }, { workspaceId: scenario.workspace.id, name: "Eligible behind full Agent", model: "default", runtimeId: scenario.runtime.id });
+    await createAgentActions(db).setAgentProjectAccess.handler({ userId: scenario.admin.id }, { agentId: otherAgent.id, allProjects: true, projectIds: [] });
+    await createAgentActions(db).setAgentAccess.handler({ userId: scenario.owner.id }, { agentId: otherAgent.id, userIds: [scenario.owner.id, scenario.admin.id] });
+    const eligibleItem = await workActions.createWorkItem.handler({ userId: scenario.admin.id }, { projectId: scenario.project.id, title: "Eligible after blocked queue", assigneeIds: [otherAgent.userId] });
+
+    const claimed = await dispatch.claimRuns({ userId: scenario.owner.id, daemonId: scenario.registered.daemonId }, 20);
+    expect(claimed.map((run) => run.workItemId)).toContain(eligibleItem.id);
+    expect(claimed).toHaveLength(1);
+    const [blockedActive] = await db.select({ count: sql<number>`count(*)::int` }).from(runs)
+      .where(and(eq(runs.agentId, scenario.agent.id), inArray(runs.status, ["dispatched", "running", "stopping"])));
+    expect(blockedActive!.count).toBe(1);
+  } finally {
+    await db.delete(workspaces).where(eq(workspaces.id, scenario.workspace.id));
+  }
+});
+
 test("simultaneous Daemon claims never dispatch more than twenty Runs across Agents", async () => {
   const scenario = await runtimeScenario(db);
   try {
@@ -258,6 +328,14 @@ test("simultaneous Daemon claims never dispatch more than twenty Runs across Age
     const [queued] = await db.select({ count: sql<number>`count(*)::int` }).from(runs).innerJoin(agents, eq(agents.id, runs.agentId))
       .where(and(eq(agents.runtimeId, scenario.runtime.id), eq(runs.status, "queued")));
     expect(queued!.count).toBe(1);
+    await db.update(runs).set({ createdAt: new Date("2020-01-01T00:00:00.000Z") }).where(eq(runs.workspaceId, scenario.workspace.id));
+    for (let index = 0; index < 25; index++) {
+      const item = await createWorkItemActions(db).createWorkItem.handler({ userId: scenario.admin.id }, { projectId: scenario.project.id, title: `Backlog while Daemon is full ${index}`, assigneeIds: [scenario.agent.userId] });
+      await db.update(runs).set({ createdAt: new Date("2020-01-01T00:00:00.000Z") }).where(eq(runs.workItemId, item.id));
+    }
+    expect(await dispatch.claimRuns({ userId: scenario.owner.id, daemonId: scenario.registered.daemonId }, 20)).toEqual([]);
+    const [stillQueued] = await db.select({ count: sql<number>`count(*)::int` }).from(runs).where(and(eq(runs.agentId, scenario.agent.id), eq(runs.status, "queued")));
+    expect(stillQueued!.count).toBe(25);
   } finally {
     await db.delete(workspaces).where(eq(workspaces.id, scenario.workspace.id));
   }
@@ -326,6 +404,21 @@ test.concurrent("unbinding an Agent from its Runtime turns its Autopilot off", a
     expect((await agents.getAgent.handler({ userId: admin.id }, { agentId: agent.id })).autopilot).toBe(true);
     await agents.updateAgent.handler({ userId: admin.id }, { agentId: agent.id, runtimeId: null });
     expect((await agents.getAgent.handler({ userId: admin.id }, { agentId: agent.id })).autopilot).toBe(false);
+  });
+});
+
+test.concurrent("moving an Agent to another Runtime clears the old owner's environment", async () => {
+  await withRollback(db, async (tx) => {
+    const { admin, owner, agent, agents: agentActions } = await runtimeScenario(tx);
+    const targetToken = await createApiTokenActions(tx).createApiToken.handler({ userId: admin.id }, { name: "target daemon" });
+    const targetRuntime = (await createRuntimeActions(tx).registerDaemon.handler({ userId: admin.id, apiTokenId: targetToken.id }, { hostname: "target-box", version: "1", agentClis: ["claude"] })).runtimes[0]!;
+    await createRuntimeActions(tx).shareRuntime.handler({ userId: admin.id }, { runtimeId: targetRuntime.id });
+    const ownerEnvironment = createAgentRuntimeEnvironmentActions(tx);
+    await ownerEnvironment.setAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id, variables: { OWNER_ONLY: "old-runtime-value" } });
+    await agentActions.updateAgent.handler({ userId: admin.id }, { agentId: agent.id, runtimeId: targetRuntime.id });
+    expect((await tx.select({ runtimeId: agents.runtimeId, runtimeEnvironment: agents.runtimeEnvironment }).from(agents).where(eq(agents.id, agent.id)))[0]).toEqual({ runtimeId: targetRuntime.id, runtimeEnvironment: null });
+    await expect(ownerEnvironment.getAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id })).rejects.toMatchObject({ status: 403 });
+    await expect(createAgentRuntimeEnvironmentActions(tx).getAgentRuntimeEnvironment.handler({ userId: admin.id }, { agentId: agent.id })).resolves.toEqual({ variables: [] });
   });
 });
 
@@ -699,13 +792,40 @@ test.concurrent("only the Runtime owner can replace or clear an Agent environmen
     const agent = await createAgentActions(tx).createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Claude", model: "default", runtimeId: runtime!.id });
     const actions = createAgentRuntimeEnvironmentActions(tx);
     await expect(actions.setAgentRuntimeEnvironment.handler({ userId: admin.id }, { agentId: agent.id, variables: { CLAUDE_CONFIG_DIR: "/tmp/claude-work", ANTHROPIC_API_KEY: "super-secret" } })).rejects.toMatchObject({ status: 403 });
-    await actions.setAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id, variables: { CLAUDE_CONFIG_DIR: "/tmp/claude-work", ANTHROPIC_API_KEY: "super-secret" } });
+    await expect(actions.classifyAgentRuntimeEnvironment.handler({ userId: admin.id }, { agentId: agent.id, classifications: { CLAUDE_CONFIG_DIR: "non-secret" } })).rejects.toMatchObject({ status: 403 });
+    await expect(actions.setAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id, variables: { CLAUDE_CONFIG_DIR: "/tmp/claude-work", ANTHROPIC_API_KEY: "super-secret" } })).resolves.toEqual({ saved: true, variables: ["ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"] });
+    await expect(actions.setAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id, variables: { WEFT_TOKEN: "reserved" } })).rejects.toMatchObject({ status: 400 });
+    await expect(actions.setAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id, variables: Object.fromEntries(["A", "B", "C", "D", "E"].map((name) => [name, "x".repeat(8192)])) })).rejects.toMatchObject({ status: 400 });
     const stored = (await tx.select().from(agents).where(eq(agents.id, agent.id)))[0]!;
     expect(stored.runtimeEnvironment).not.toContain("super-secret");
     await expect(actions.getAgentRuntimeEnvironment.handler({ userId: admin.id }, { agentId: agent.id })).rejects.toMatchObject({ status: 403 });
+    await expect(actions.getAgentRuntimeEnvironmentClassifications.handler({ userId: admin.id }, { agentId: agent.id })).rejects.toMatchObject({ status: 403 });
     await expect(actions.getAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id })).resolves.toEqual({ variables: ["ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"] });
+    await expect(actions.getAgentRuntimeEnvironmentClassifications.handler({ userId: owner.id }, { agentId: agent.id })).resolves.toEqual({ variables: [{ name: "ANTHROPIC_API_KEY", classification: "secret" }, { name: "CLAUDE_CONFIG_DIR", classification: "secret" }] });
     await actions.setAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id, variables: {} });
     expect((await tx.select().from(agents).where(eq(agents.id, agent.id)))[0]!.runtimeEnvironment).toBeNull();
+  });
+});
+
+test("existing environment values default to secret and can be reclassified without replacing saved values", async () => {
+  await withRollback(db, async (tx) => {
+    const workspace = await createWorkspaceFactory(tx);
+    const owner = await createMemberFactory(tx, workspace.id, "Admin");
+    const token = await createApiTokenActions(tx).createApiToken.handler({ userId: owner.id }, { name: "daemon" });
+    const registered = await createRuntimeActions(tx).registerDaemon.handler({ userId: owner.id, apiTokenId: token.id }, { hostname: "classify", version: "1", agentClis: ["codex"] });
+    const runtime = registered.runtimes[0]!;
+    await createRuntimeActions(tx).shareRuntime.handler({ userId: owner.id }, { runtimeId: runtime.id });
+    const agent = await createAgentActions(tx).createAgent.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Codex", model: "default", runtimeId: runtime.id });
+    const actions = createAgentRuntimeEnvironmentActions(tx);
+    await tx.update(agents).set({ runtimeEnvironment: sealSecret(JSON.stringify({ MARKER: "short", TOKEN: "sensitive" })) }).where(eq(agents.id, agent.id));
+    expect(await actions.getAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id })).toEqual({ variables: ["MARKER", "TOKEN"] });
+    const saved = await actions.getAgentRuntimeEnvironmentClassifications.handler({ userId: owner.id }, { agentId: agent.id });
+    expect(saved.variables).toEqual([{ name: "MARKER", classification: "secret" }, { name: "TOKEN", classification: "secret" }]);
+    await actions.classifyAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id, classifications: { MARKER: "non-secret" } });
+    const stored = (await tx.select({ runtimeEnvironment: agents.runtimeEnvironment }).from(agents).where(eq(agents.id, agent.id)))[0]!.runtimeEnvironment!;
+    expect(runtimeEnvironmentValues(stored)).toEqual({ MARKER: "short", TOKEN: "sensitive" });
+    expect(runtimeEnvironmentSecretValues(stored)).toEqual({ TOKEN: "sensitive" });
+    expect((await actions.getAgentRuntimeEnvironmentClassifications.handler({ userId: owner.id }, { agentId: agent.id })).variables).toEqual([{ name: "MARKER", classification: "non-secret" }, { name: "TOKEN", classification: "secret" }]);
   });
 });
 
@@ -767,4 +887,51 @@ test("a Runtime owner cannot save an Agent environment after a concurrent unbind
   await move;
   await expect(save).rejects.toMatchObject({ status: 409 });
   expect((await db.select().from(agents).where(eq(agents.id, agent.id)))[0]!.runtimeEnvironment).toBeNull();
+});
+
+test("concurrent first environment saves use a null-aware compare-and-set so only one wins", async () => {
+  const workspace = await createWorkspaceFactory(db);
+  try {
+    const owner = await createMemberFactory(db, workspace.id, "Admin");
+    const token = await createApiTokenActions(db).createApiToken.handler({ userId: owner.id }, { name: "first-save daemon" });
+    const registered = await createRuntimeActions(db).registerDaemon.handler({ userId: owner.id, apiTokenId: token.id }, { hostname: "first-save-box", version: "1", agentClis: ["claude"] });
+    await createRuntimeActions(db).shareRuntime.handler({ userId: owner.id }, { runtimeId: registered.runtimes[0]!.id });
+    const agent = await createAgentActions(db).createAgent.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "First save race", model: "default", runtimeId: registered.runtimes[0]!.id });
+
+    let arrived = 0;
+    let release!: () => void;
+    const bothRead = new Promise<void>((resolve) => { release = resolve; });
+    const barrierDb = new Proxy(db, {
+      get(target, property) {
+        if (property !== "select") return Reflect.get(target, property, target);
+        return (...args: unknown[]) => {
+          const query = (target.select as (...values: unknown[]) => any)(...args);
+          if (++arrived > 2) return query;
+          return new Proxy(query, {
+            get(builder, key) {
+              if (key !== "then") return Reflect.get(builder, key, builder);
+              return (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) => {
+                if (arrived === 2) release();
+                return bothRead.then(() => Promise.resolve(builder).then(resolve, reject));
+              };
+            },
+          });
+        };
+      },
+    });
+    const actions = createAgentRuntimeEnvironmentActions(barrierDb as typeof db);
+    const results = await Promise.allSettled([
+      actions.setAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id, variables: { FIRST: "alpha" } }),
+      actions.setAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id, variables: { SECOND: "beta" } }),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    const rejected = results.find((result) => result.status === "rejected");
+    expect(rejected).toMatchObject({ reason: { status: 409 } });
+    const saved = await createAgentRuntimeEnvironmentActions(db).getAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id });
+    expect(saved.variables).toHaveLength(1);
+    expect(["FIRST", "SECOND"]).toContain(saved.variables[0]);
+  } finally {
+    await db.delete(workspaces).where(eq(workspaces.id, workspace.id));
+  }
 });

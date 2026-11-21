@@ -19,6 +19,7 @@ function memoryStorage() {
   const storage: ExportStorage = {
     presignPost: () => { throw new Error("unused"); },
     head: async (key) => files.has(key) ? { size: files.get(key)!.body.length } : null,
+    read: async (key) => files.get(key)!.bytes,
     remove: async (key) => { files.delete(key); },
     copy: async () => {},
     presignGet: (input) => { links.push(input); return { url: `https://files.test/${input.key}?expires=${input.expiresInSeconds}` }; },

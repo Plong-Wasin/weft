@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
-import { assets, commentMentions, commentVersions, comments as commentsTable, createDatabase, intakeItems, outlinks, workspaces, type Database } from "@weft/db";
+import { assets, commentMentions, commentVersions, comments as commentsTable, createDatabase, intakeItems, outlinks, runs, workspaces, type Database } from "@weft/db";
 import { backfillCommentWrittenForms } from "../src/migrations/comment-written-form";
 import { commentMarkdownOptions, createAgentActions, createApiTokenActions, createCommentActions, createIntakeActions, createProjectActions, createRuntimeActions, createTimelineActions, createWikiActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
+import { sealSecret } from "../src/integration-secrets";
 
 const { client, db } = createDatabase();
 beforeAll(async () => {
@@ -298,6 +299,25 @@ test.concurrent("a comment author is labelled by member identity even when the c
     expect(timeline.find((entry) => entry.kind === "comment")?.comment).toMatchObject({ authorIsAgent: true, runId: null });
     await env.items.updateWorkItem.handler({ userId: agent.userId, source: "ui" }, { workItemId: env.item.id, title: "Updated by Agent" });
     expect((await env.items.listWorkItemActivities.handler({ userId: env.member.id }, { workItemId: env.item.id })).at(-1)).toMatchObject({ actorIsAgent: true, actorCodeCapable: false, actorId: agent.userId });
+  });
+});
+
+test("a Run-token Comment containing a snapshotted secret is withheld and can be safely retried", async () => {
+  await withRollback(db, async (transaction) => {
+    const env = await setup(transaction);
+    const agent = await createAgentActions(transaction).createAgent.handler({ userId: env.admin.id }, { workspaceId: env.workspace.id, name: "Writer", model: "default" });
+    await createAgentActions(transaction).setAgentProjectAccess.handler({ userId: env.admin.id }, { agentId: agent.id, allProjects: true, projectIds: [] });
+    await env.items.updateWorkItem.handler({ userId: env.member.id }, { workItemId: env.item.id, assigneeIds: [agent.userId] });
+    const [run] = await transaction.select().from(runs).where(eq(runs.workItemId, env.item.id));
+    await transaction.update(runs).set({ runtimeEnvironmentSecrets: sealSecret(JSON.stringify({ TOKEN: "snapshot-secret-42" })) }).where(eq(runs.id, run!.id));
+    const context = { userId: env.member.id, source: "agent" as const, agent: { agentUserId: agent.userId, runId: run!.id, originatorId: env.member.id } };
+    await expect(env.comments.createComment.handler(context, { workItemId: env.item.id, bodyMarkdown: "leak snapshot-secret-42" })).rejects.toMatchObject({ status: 400, code: "runtime_secret_output" });
+    const encoded = Buffer.from("snapshot-secret-42").toString("base64");
+    const encodedError = await env.comments.createComment.handler(context, { workItemId: env.item.id, bodyMarkdown: `encoded ${encoded}` }).catch((error) => error);
+    expect(encodedError.message).not.toContain("snapshot-secret-42");
+    expect(encodedError).toMatchObject({ status: 400, code: "runtime_secret_output" });
+    expect(await transaction.select().from(commentsTable).where(eq(commentsTable.runId, run!.id))).toHaveLength(0);
+    await expect(env.comments.createComment.handler(context, { workItemId: env.item.id, bodyMarkdown: "Safe retry" })).resolves.toMatchObject({ bodyText: "Safe retry", runId: run!.id });
   });
 });
 

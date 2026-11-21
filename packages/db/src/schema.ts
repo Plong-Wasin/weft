@@ -376,6 +376,8 @@ export const assets = pgTable("assets", {
   contentType: text("content_type").notNull(),
   size: bigint("size", { mode: "number" }).notNull(),
   status: text("status").notNull().default("pending"),
+  /** True when an Agent attachment could not be completely inspected for configured secrets. */
+  unverified: boolean("unverified").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   uploadedAt: timestamp("uploaded_at", { withTimezone: true }),
 }, (table) => [index().on(table.ownerType, table.ownerId)]);
@@ -1088,6 +1090,8 @@ export const runs = pgTable("runs", {
   sessionFolder: text("session_folder"),
   /** One-way hash of the Runtime Agent environment used for this Session; a change starts a new CLI Session. */
   runtimeEnvironmentHash: text("runtime_environment_hash"),
+  /** Encrypted secret values captured at claim; cleared when the Runtime Run reaches a terminal status. */
+  runtimeEnvironmentSecrets: text("runtime_environment_secrets"),
   /** `resumed` when the Run continued the previous Session, `new` when it started one. Null for server Runs and Runs not yet started. */
   sessionMode: text("session_mode"),
   /** Why the Session is new or resumed: a short code such as `previous_failed`, `runtime_changed`, `folder_missing`, `rerun_as_new`. */

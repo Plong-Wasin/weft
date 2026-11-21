@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, eq, isNull } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, assets, comments, cycles, modules, runs, wikiPages, workItems } from "@weft/db";
+import { activities, assets, comments, cycles, modules, runs, runtimes, wikiPages, workItems } from "@weft/db";
 import { assertNotArchived, liveWorkItems } from "./triage";
 import { intakeItems } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
@@ -10,6 +10,9 @@ import { activityActor, type ActivityContext } from "./work-items";
 import { createS3Storage, inlineImageTypes, maxAssetBytes, type AssetStorage } from "./storage";
 import { assertFeatureEnabled } from "./features";
 import { requireWikiPageAccess } from "./wiki";
+import { openSecret } from "./integration-secrets";
+import { recordSecretOutputBlockedNotifications } from "./notifications";
+import { containsRuntimeSecret } from "./runtime-secret-comments";
 
 type Context = ActivityContext & { agent?: ActivityContext["agent"] & { workspaceId?: string } };
 type AssetRow = typeof assets.$inferSelect;
@@ -19,12 +22,24 @@ type OwnerType = "work_item" | "comment" | "wiki_page" | "cycle" | "module";
 const ownerType = Type.Union([Type.Literal("work_item"), Type.Literal("comment"), Type.Literal("wiki_page"), Type.Literal("cycle"), Type.Literal("module")]);
 const assetOutput = Type.Object({
   id: Type.String(), ownerType, ownerId: Type.String(), uploaderId: Type.String(), filename: Type.String(), contentType: Type.String(),
-  size: Type.Number(), inline: Type.Boolean(), createdAt: Type.String(),
+  size: Type.Number(), inline: Type.Boolean(), unverified: Type.Boolean(), createdAt: Type.String(),
 });
 const uploadOutput = Type.Object({ assetId: Type.String(), url: Type.String(), fields: Type.Record(Type.String(), Type.String()), maxBytes: Type.Number() });
-const downloadOutput = Type.Object({ url: Type.String(), filename: Type.String(), contentType: Type.String(), inline: Type.Boolean() });
+const downloadOutput = Type.Object({ url: Type.String(), filename: Type.String(), contentType: Type.String(), inline: Type.Boolean(), unverified: Type.Boolean() });
 
 export const isInlineImage = (contentType: string) => (inlineImageTypes as readonly string[]).includes(contentType);
+
+/** Inspect formats we can decode without executing or decompressing user supplied data. */
+export function inspectAssetBytes(contentType: string, bytes: Uint8Array, secrets: string[]): { status: "clean" | "secret" | "unverified" } {
+  const supported = /^(text\/(plain|html|csv|markdown|xml)|application\/(json|xml|javascript|x-yaml))$/i.test(contentType);
+  if (!supported) return { status: "unverified" };
+  const prefix = Buffer.from(bytes.subarray(0, 8)).toString("hex");
+  if (prefix.startsWith("25504446") || prefix.startsWith("504b0304") || prefix.startsWith("d0cf11e0") || bytes.includes(0)) return { status: "unverified" };
+  let text: string;
+  try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { return { status: "unverified" }; }
+  const candidates = secrets.filter((value) => value.length > 0).flatMap((value) => [value, JSON.stringify(value).slice(1, -1)]);
+  return containsRuntimeSecret(text, secrets) || candidates.some((value) => text.includes(value)) ? { status: "secret" } : { status: "clean" };
+}
 
 /** Browsers send parameters ("image/png; charset=x") and any case; normalise before comparing. */
 function normaliseType(raw: string) {
@@ -144,7 +159,7 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
 
   const out = (row: AssetRow) => ({
     id: row.id, ownerType: row.ownerType as OwnerType, ownerId: row.ownerId, uploaderId: row.uploaderId, filename: row.filename,
-    contentType: row.contentType, size: row.size, inline: isInlineImage(row.contentType), createdAt: row.createdAt.toISOString(),
+    contentType: row.contentType, size: row.size, inline: isInlineImage(row.contentType), unverified: row.unverified, createdAt: row.createdAt.toISOString(),
   });
 
   return {
@@ -180,38 +195,85 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
         if (row.uploaderId !== context.userId) throw new ActionError("Only the uploader can complete an upload", 403);
         const owner = await resolveOwner(row.ownerType as OwnerType, row.ownerId);
         await assertOwnerOpen(owner);
-        const result = await db.transaction(async (transaction) => {
-          const database = transaction as unknown as Database;
-          // Intake decisions take this lock first. Recheck access after it, so
-          // a rejection or acceptance cannot race a previously authorized upload.
-          if (owner.workItemId) {
-            await database.select({ id: intakeItems.id }).from(intakeItems).where(eq(intakeItems.workItemId, owner.workItemId)).for("update");
-            await requireOwnerAccess(owner, context.userId, "write", database);
+        let publishedKey: string | null = null;
+        let succeeded = false;
+        try {
+          const result = await db.transaction(async (transaction) => {
+            const database = transaction as unknown as Database;
+            if (owner.workItemId) {
+              await database.select({ id: intakeItems.id }).from(intakeItems).where(eq(intakeItems.workItemId, owner.workItemId)).for("update");
+              await requireOwnerAccess(owner, context.userId, "write", database);
+            }
+            // Serialize completion/cancellation before touching the staging object.
+            const [locked] = await database.select().from(assets).where(eq(assets.id, row.id)).for("update");
+            if (!locked) throw new ActionError("Asset not found", 404);
+            if (locked.status === "uploaded") return { asset: out(locked), stagedKey: null };
+            await assertOwnerOpen(owner, database, true);
+            const stagedKey = locked.storageKey;
+            const stored = await store().head(stagedKey);
+            if (!stored) throw new ActionError("File was not uploaded", 400);
+            if (stored.size < 1 || stored.size > limitBytes()) {
+              await store().remove(stagedKey);
+              await database.delete(assets).where(eq(assets.id, locked.id));
+              return { oversize: true as const };
+            }
+            let bytes: Uint8Array;
+            try { bytes = await store().read(stagedKey); }
+            catch { throw new ActionError("Attachment upload could not be finalized; retry the upload", 400); }
+            if (bytes.byteLength !== stored.size || bytes.byteLength < 1 || bytes.byteLength > limitBytes()) {
+              throw new ActionError("Attachment upload could not be finalized; retry the upload", 400);
+            }
+            let unverified = false;
+            if (context.agent) {
+              const [run] = await database.select({ runtimeEnvironmentSecrets: runs.runtimeEnvironmentSecrets, runtimeId: runs.runtimeId, workspaceId: runs.workspaceId, originatorId: runs.originatorId }).from(runs).where(eq(runs.id, context.agent.runId));
+              let secrets: string[] = [];
+              if (run?.runtimeEnvironmentSecrets) {
+                try { secrets = Object.values(JSON.parse(openSecret(run.runtimeEnvironmentSecrets)) as Record<string, string>); }
+                catch { throw new ActionError("Attachment inspection failed; retry with a text-only safe deliverable", 500); }
+              }
+              const inspected = inspectAssetBytes(locked.contentType, bytes, secrets);
+              if (inspected.status === "secret") {
+                await store().remove(stagedKey);
+                await database.delete(assets).where(eq(assets.id, locked.id));
+                const [runtime] = run?.runtimeId ? await database.select({ ownerId: runtimes.ownerId }).from(runtimes).where(eq(runtimes.id, run.runtimeId)) : [];
+                const recipients = [...new Set([run?.originatorId, runtime?.ownerId].filter((id): id is string => Boolean(id) && id !== context.agent!.agentUserId))];
+                if (run) await recordSecretOutputBlockedNotifications(database, { workspaceId: run.workspaceId, runId: context.agent.runId, actorId: context.agent.agentUserId, recipientIds: recipients });
+                return { blocked: true as const };
+              }
+              unverified = inspected.status === "unverified";
+            }
+            // Promote only the bytes read above. The upload URL is confined to the staging key;
+            // no browser credential can write the fresh destination after this point.
+            publishedKey = `${owner.workspaceId}/assets/${locked.id}/${crypto.randomUUID()}`;
+            try {
+              await store().put(publishedKey, bytes, locked.contentType);
+              const persisted = await store().read(publishedKey);
+              if (persisted.byteLength !== bytes.byteLength || !Buffer.from(persisted).equals(Buffer.from(bytes))) throw new Error("Published asset bytes differ from inspected bytes");
+            } catch {
+              await store().remove(publishedKey).catch(() => undefined);
+              publishedKey = null;
+              throw new ActionError("Attachment could not be safely finalized; retry the upload", 500);
+            }
+            const [updated] = await database.update(assets).set({ storageKey: publishedKey, status: "uploaded", size: bytes.byteLength, uploadedAt: new Date(), unverified }).where(eq(assets.id, row.id)).returning();
+            if (owner.workItemId && owner.projectId) {
+              await database.insert(activities).values({
+                workspaceId: owner.workspaceId, projectId: owner.projectId, entityType: "work_item", entityId: owner.workItemId, field: "attachment_added",
+                newValue: { assetId: row.id, filename: row.filename, ownerType: row.ownerType }, ...activityActor(context),
+              });
+            }
+            return { asset: out(updated!), stagedKey };
+          });
+          if ("blocked" in result) {
+            throw new ActionError("Attachment withheld because it contains a configured Runtime secret. Remove the sensitive value and retry with a safe file.", 400);
           }
-          // Completion and cancellation must serialize before touching storage;
-          // otherwise cancellation can remove bytes belonging to an uploaded row.
-          const [locked] = await database.select().from(assets).where(eq(assets.id, row.id)).for("update");
-          if (!locked) throw new ActionError("Asset not found", 404);
-          if (locked.status === "uploaded") return { asset: out(locked) };
-          await assertOwnerOpen(owner, database, true);
-          const stored = await store().head(locked.storageKey);
-          if (!stored) throw new ActionError("File was not uploaded", 400);
-          if (stored.size < 1 || stored.size > limitBytes()) {
-            await store().remove(locked.storageKey);
-            await database.delete(assets).where(eq(assets.id, locked.id));
-            return { oversize: true as const };
-          }
-          const [updated] = await database.update(assets).set({ status: "uploaded", size: stored.size, uploadedAt: new Date() }).where(eq(assets.id, row.id)).returning();
-          if (owner.workItemId && owner.projectId) {
-            await database.insert(activities).values({
-              workspaceId: owner.workspaceId, projectId: owner.projectId, entityType: "work_item", entityId: owner.workItemId, field: "attachment_added",
-              newValue: { assetId: row.id, filename: row.filename, ownerType: row.ownerType }, ...activityActor(context),
-            });
-          }
-          return { asset: out(updated!) };
-        });
-        if (result.oversize) throw new ActionError("File exceeds the size limit", 413);
-        return result.asset!;
+          if ("oversize" in result) throw new ActionError("File exceeds the size limit", 413);
+          succeeded = true;
+          if (result.stagedKey) await store().remove(result.stagedKey).catch(() => undefined);
+          return result.asset;
+        } catch (error) {
+          if (!succeeded && publishedKey) await store().remove(publishedKey).catch(() => undefined);
+          throw error;
+        }
       },
     },
     cancelAssetUpload: {
@@ -250,7 +312,7 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
         if (row.status !== "uploaded") throw new ActionError("Asset not found", 404);
         const inline = !input.download && isInlineImage(row.contentType);
         const { url } = await store().presignGet({ key: row.storageKey, filename: row.filename, contentType: row.contentType, inline });
-        return { url, filename: row.filename, contentType: row.contentType, inline };
+        return { url, filename: row.filename, contentType: row.contentType, inline, unverified: row.unverified };
       },
     },
     deleteAsset: {

@@ -18,13 +18,17 @@ export interface AssetStorage {
   presignPost(input: { key: string; contentType: string; maxBytes: number; expiresInSeconds?: number }): Promise<PresignedPost> | PresignedPost;
   /** Size in bytes of the stored object, or null when it does not exist. */
   head(key: string): Promise<{ size: number } | null>;
+  /** Reads object bytes for inspection and promotion into a published key. */
+  read(key: string): Promise<Uint8Array>;
+  /** Writes server-owned bytes; browser upload URLs never point at this key. */
+  put(key: string, body: string | Uint8Array, contentType: string): Promise<void>;
   remove(key: string): Promise<void>;
   /** Creates an independent object with the source bytes at a new key. */
   copy(sourceKey: string, destinationKey: string): Promise<void>;
   presignGet(input: { key: string; filename: string; contentType: string; inline: boolean; expiresInSeconds?: number }): Promise<PresignedGet> | PresignedGet;
 }
 
-/** Writing an object from the server side (the worker builds Export files; browsers upload Assets with a presigned POST instead). */
+/** Server-side object writes publish inspected Asset bytes and build Export files; browser POSTs only target staging keys. */
 export interface ObjectWriter {
   put(key: string, body: string | Uint8Array, contentType: string): Promise<void>;
 }
@@ -88,6 +92,7 @@ export function createS3Storage(settings: S3Settings = s3SettingsFromEnv()): Exp
         throw error;
       }
     },
+    read: async (key) => new Uint8Array(await internal.file(key).arrayBuffer()),
     remove: async (key) => { await internal.file(key).delete(); },
     put: async (key, body, contentType) => { await internal.file(key).write(body, { type: contentType }); },
     copy: async (sourceKey, destinationKey) => {

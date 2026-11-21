@@ -9,7 +9,7 @@ import { checkInlineImage, formatSize, uploadAsset, UploadError, type AssetRow, 
 
 const deps = { api };
 
-type Resolved = { url: string; inline: boolean } | null;
+type Resolved = { url: string; inline: boolean; unverified: boolean } | null;
 const cache = new Map<string, { at: number; value: Promise<Resolved> }>();
 const cacheMs = 4 * 60_000; // presigned GET URLs last 5 minutes
 
@@ -18,7 +18,7 @@ function resolveAsset(assetId: string): Promise<Resolved> {
   const hit = cache.get(assetId);
   if (hit && Date.now() - hit.at < cacheMs) return hit.value;
   const value = fetch(`${api}/actions/get_asset_download_url`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetId }) })
-    .then(async (response) => (response.ok ? await response.json() as { url: string; inline: boolean } : null)).catch(() => null);
+    .then(async (response) => (response.ok ? await response.json() as { url: string; inline: boolean; unverified: boolean } : null)).catch(() => null);
   cache.set(assetId, { at: Date.now(), value });
   return value;
 }
@@ -69,11 +69,26 @@ export const AssetImage = Node.create<ImageOptions>({
         button(translate("assets.closeViewer"), "×", () => dialog.close()); dialog.append(large); document.body.append(dialog);
         dialog.onclose = () => dialog.remove(); dialog.showModal();
       });
-      const handle = document.createElement("button"); handle.type = "button"; handle.className = "asset-image-resize"; handle.setAttribute("aria-label", translate("assets.resizeImage")); handle.title = translate("assets.resizeImage");
-      handle.onmousedown = (event) => { event.preventDefault(); const startX = event.clientX; const startWidth = image.getBoundingClientRect().width; const move = (next: MouseEvent) => { image.style.width = `${Math.max(80, Math.min(1200, startWidth + next.clientX - startX))}px`; }; const up = (next: MouseEvent) => { move(next); update({ width: Math.round(Math.max(80, Math.min(1200, startWidth + next.clientX - startX))) }); window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); }; window.addEventListener("mousemove", move); window.addEventListener("mouseup", up, { once: true }); };
+      const handle = document.createElement("button"); handle.type = "button"; handle.className = "asset-image-resize"; handle.setAttribute("aria-label", translate("assets.resizeImage")); handle.title = translate("assets.resizeImage"); handle.textContent = "↔";
+      const resizeTo = (width: number) => { const next = Math.round(Math.max(80, Math.min(1200, width))); image.style.width = `${next}px`; update({ width: next }); };
+      handle.onkeydown = (event) => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); resizeTo(image.getBoundingClientRect().width + (event.key === "ArrowRight" ? 20 : -20)); };
+      handle.onpointerdown = (event) => {
+        event.preventDefault();
+        const startX = event.clientX; const startWidth = image.getBoundingClientRect().width;
+        const move = (next: PointerEvent) => { image.style.width = `${Math.max(80, Math.min(1200, startWidth + next.clientX - startX))}px`; };
+        const up = (next: PointerEvent) => { move(next); resizeTo(startWidth + next.clientX - startX); window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+        window.addEventListener("pointermove", move); window.addEventListener("pointerup", up, { once: true });
+      };
       if (this.options.writtenFormControls) controls.append(handle);
       dom.append(controls);
-      void resolveAsset(String(node.attrs.assetId)).then((resolved) => { if (resolved?.inline) { resolvedUrl = resolved.url; image.src = resolved.url; } else image.remove(); });
+      void resolveAsset(String(node.attrs.assetId)).then((resolved) => {
+        if (!resolved?.inline) { image.remove(); return; }
+        resolvedUrl = resolved.url; image.src = resolved.url;
+        if (resolved.unverified) {
+          const status = document.createElement("span"); status.className = "asset-image-unverified"; status.setAttribute("role", "status"); status.textContent = translate("assets.unverified");
+          controls.prepend(status);
+        }
+      });
       return { dom, update: (next) => { currentNode = next; dom.dataset.alignment = String(next.attrs.alignment ?? "center"); image.style.width = next.attrs.width ? `${next.attrs.width}px` : ""; return true; } };
     };
   },
@@ -152,7 +167,7 @@ export function AttachmentsPanel({ workItemId, ownerType = "work_item", canWrite
     setLoading(true);
     const result = await action<AssetRow[]>("list_assets", { ownerType, ownerId: workItemId });
     if (result === null) setError(translate("assets.actionFailed"));
-    else { setRows(result); setError(null); }
+    else setRows(result);
     setLoading(false);
   }, [action, ownerType, workItemId]);
   React.useEffect(() => { void load(); }, [load]);
@@ -191,6 +206,7 @@ export function AttachmentsPanel({ workItemId, ownerType = "work_item", canWrite
     <ul className="m-0 grid list-none gap-1.5 !pl-0">{downloadableRows.map((row) => <li key={row.id} className="flex items-center gap-2 rounded-md bg-layer-1 px-2.5 py-1.5 text-13">
       <Paperclip aria-hidden size={13} className="shrink-0 text-tertiary" />
       <span className="min-w-0 truncate text-primary" title={row.filename}>{row.filename}</span>
+      {row.unverified && <small role="status" className="shrink-0 text-12 text-warning-text">{translate("assets.unverified")}</small>}
       <small className="shrink-0 text-12 text-tertiary">{formatSize(row.size)}</small>
       <span className="ml-auto flex shrink-0 gap-0.5">
         <button type="button" className="grid size-7 place-items-center rounded-md !bg-transparent !p-0 text-secondary hover:!bg-layer-transparent-hover hover:text-primary" aria-label={`${translate("assets.download")} ${row.filename}`} title={translate("assets.download")} onClick={() => void download(row)}><Download aria-hidden size={13} /></button>

@@ -192,6 +192,8 @@ async function post(fetcher: FetchLike, apiUrl: string, token: string, path: str
 type ClaimedRun = { runId: string; runtimeId: string; agentCli: AgentCliKind; timeoutSeconds?: number; instructions: string; request: string; model: string | null; token: string;
   /** Runtime-owner configured variables, delivered only to the Daemon claim endpoint. */
   environment?: Record<string, string>;
+  /** Values classified as secret, used only for output redaction. */
+  secretEnvironment?: Record<string, string>;
   workspaceId?: string; projectId?: string | null; workItemId?: string | null; workItemDisplayId?: string | null; commentId?: string | null; triggerId?: string | null;
   skills?: Array<{ name: string; description: string; instructions: string }>; sandbox?: SandboxProfile;
   /** The stable folder and the CLI Session to resume, as planned by the server; null for a Run without a work item. */
@@ -368,8 +370,8 @@ export async function executeRun(environment: DaemonEnvironment, call: DaemonCal
     let inactive = false;
     let stopCurrent = () => {};
     /** Starts the CLI once, with or without the resume argument, and streams its output until it exits. */
-    const attempt = async (resume: string | null) => {
-      const command = adapter.command({ model: run.model, prompt, resume });
+    const attempt = async (resume: string | null, promptText = prompt) => {
+      const command = adapter.command({ model: run.model, prompt: promptText, resume });
       let child: Bun.Subprocess<"ignore", "pipe", "pipe">;
       try { child = Bun.spawn([...sandboxPrefix, ...command], { cwd: directory, env: childEnv, stdout: "pipe", stderr: "pipe" }); }
       catch (error) {
@@ -384,7 +386,7 @@ export async function executeRun(environment: DaemonEnvironment, call: DaemonCal
       cancellations.set(run.runId, () => { if (cancelled) return; cancelled = true; child.kill("SIGTERM"); setTimeout(() => { if (child.exitCode === null) child.kill("SIGKILL"); }, 10_000).unref(); });
       const flushTimer = setInterval(() => { void flush().catch(() => {}); }, 1_000);
       const consume = async (stream: ReadableStream<Uint8Array>) => {
-        await consumeRedactedOutput(stream, run.environment, childEnv, async (line) => {
+        await consumeRedactedOutput(stream, run.secretEnvironment ?? run.environment, childEnv, async (line) => {
           const final = adapter.final(line); if (final !== null) finalOutput = final;
           const usage = adapter.usage(line);
           if (usage) {
@@ -416,21 +418,56 @@ export async function executeRun(environment: DaemonEnvironment, call: DaemonCal
     if (outcome.spawnFailed) return;
     const { code, cancelled, timedOut } = outcome;
     if (inactive && !reportedUsage && !reportedModel) { cancellations.delete(run.runId); return; }
-    if (cancelled) {
+    const acknowledgeCancellation = async () => {
       while (!environment.signal?.aborted) {
         try { await call("/api/daemon/runs/cancel-ack", { runId: run.runId, usage: reportedUsage, model: reportedModel ?? run.model ?? null }); break; }
         catch { await (environment.sleep ?? wait)(1_000); }
       }
       cancellations.delete(run.runId);
-      return;
+    };
+    if (cancelled) { await acknowledgeCancellation(); return; }
+    await flush().catch(() => flush()).catch(() => {});
+    const submitFinish = async (body: Record<string, unknown>) => {
+      for (let attemptNo = 0; ; attemptNo++) {
+        try {
+          const result = await call("/api/daemon/runs/finish", body) as { correctionRequired?: unknown; message?: unknown };
+          return result?.correctionRequired === true ? { correctionRequired: true, message: typeof result.message === "string" ? result.message : "The Agent's final output was withheld because it contained a configured Runtime secret. Revise your final output without the secret." } : null;
+        }
+        // A 401 is not final here: the credential may have been rotated, and `call` has already re-read it and retried once.
+        catch (error) { const message = String((error as Error).message); if (/^409:/.test(message)) return null; if (attemptNo >= 4 || (/^4\d\d:/.test(message) && !/^401:/.test(message))) throw error; await (environment.sleep ?? wait)(1_000 * (attemptNo + 1)); }
+      }
+    };
+    const finishBody = (result: { status: "completed" | "failed"; finalOutput: string; failureReason?: string; usage?: typeof reportedUsage }) => ({
+      runId: run.runId, ...result, usage: result.usage === undefined ? reportedUsage : result.usage, model: reportedModel ?? run.model ?? null, session: sessionReport(reportedSessionId),
+    });
+    const originalCompletion = { status: code === 0 && !timedOut ? "completed" as const : "failed" as const, finalOutput, failureReason: timedOut ? "timeout" : code === 0 ? undefined : "cli_exit" };
+    const firstFinish = await submitFinish(finishBody(originalCompletion));
+    if (firstFinish?.correctionRequired) {
+      // The CLI has exited, but its Session id lets the Daemon ask the same Agent to revise only its final output.
+      // The response deliberately contains no matched secret value.
+      if (!reportedSessionId || !adapter.resumable) {
+        await submitFinish(finishBody({ status: "failed", finalOutput: "", failureReason: "runtime_secret_output", usage: null }));
+      } else {
+        reportedUsage = null; // The server stored the withheld attempt's usage when it requested this correction.
+        finalOutput = "";
+        const correctionPrompt = `${prompt}\n\n${firstFinish.message}\nThe Run's work is complete. Correct only your final output. If this Run has a Work item, make it a safe replacement Comment; otherwise return a safe final answer. Do not repeat any secret value, and do not repeat or undo completed actions.`;
+        const correction = await attempt(reportedSessionId, correctionPrompt);
+        if (correction.cancelled) { await acknowledgeCancellation(); return; }
+        if (correction.spawnFailed) { cancellations.delete(run.runId); return; }
+        cancellations.delete(run.runId);
+        await flush().catch(() => flush()).catch(() => {});
+        if (correction.code !== 0 || correction.timedOut) {
+          await submitFinish(finishBody({ status: "failed", finalOutput: "", failureReason: "runtime_secret_output" }));
+        } else {
+          const correctionFinish = await submitFinish(finishBody({ status: "completed", finalOutput, usage: reportedUsage }));
+          if (correctionFinish?.correctionRequired) {
+            // One correction is safe to automate; a second protected result fails closed for a human rerun.
+            await submitFinish(finishBody({ status: "failed", finalOutput: "", failureReason: "runtime_secret_output", usage: null }));
+          }
+        }
+      }
     }
     cancellations.delete(run.runId);
-    await flush().catch(() => flush()).catch(() => {});
-    for (let attemptNo = 0; ; attemptNo++) {
-      try { await call("/api/daemon/runs/finish", { runId: run.runId, status: code === 0 && !timedOut ? "completed" : "failed", finalOutput, failureReason: timedOut ? "timeout" : code === 0 ? undefined : "cli_exit", usage: reportedUsage, model: reportedModel ?? run.model ?? null, session: sessionReport(reportedSessionId) }); break; }
-      // A 401 is not final here: the credential may have been rotated, and `call` has already re-read it and retried once.
-      catch (error) { const message = String((error as Error).message); if (/^409:/.test(message)) break; if (attemptNo >= 4 || (/^4\d\d:/.test(message) && !/^401:/.test(message))) throw error; await (environment.sleep ?? wait)(1_000 * (attemptNo + 1)); }
-    }
   } finally {
     await sandboxCleanup();
     if (folder && plan) {

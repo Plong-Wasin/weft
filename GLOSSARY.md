@@ -188,6 +188,10 @@ _Avoid_: PQL, query language, search
 An uploaded file (attachment, inline image, avatar, cover, logo) tied to one owning entity.
 _Avoid_: Upload, media, file (unqualified)
 
+**HTML preview**:
+A person's temporary, interactive view of one HTML Asset without downloading it. Each preview belongs to one person and one opening of the Asset. Public external destinations are blocked until that person allows each destination for that preview; another person's preview has its own permissions. Private network destinations remain blocked, and an idle preview ends along with its permissions.
+_Avoid_: Published page, file conversion
+
 **Inbox**:
 A person's place to see workspace Notifications and follow them to the related work. Opening a Notification marks it read; the person can mark it unread again. An unread Notification does not necessarily mean work remains to be done.
 _Avoid_: Intake, task list
@@ -287,6 +291,10 @@ _Avoid_: Daemon token (ambiguous with the Personal API token)
 **Runtime**:
 One agent CLI of one Daemon under one permission profile, offered to one workspace. It belongs to the Daemon's owner and is private until the owner shares it with the workspace; only then can an admin bind Agents to it. One Runtime profile serves many Agents, and a Run of an Agent bound to an offline Runtime waits until it is back. Profiles are configured only by the Runtime owner and state the sandbox mode plus filesystem and network allowlists. A Runtime with sandbox enforcement enabled fails closed when a required sandbox tool is unavailable; it never falls back to full access. Only an enabled Agent counts as bound: a Runtime is refused deletion while one is bound or a Run of it is unfinished, and a disabled bound Agent loses its binding when the Runtime is deleted. The hourly cleanup deletes a Runtime last really seen more than seven days ago, with no enabled bound Agent and no unfinished Run; the clock is that last sighting, never the reset value a stopped Daemon leaves, and a Runtime whose offline time is unknown is kept. A deleted Runtime returns only as a fresh private Runtime with the starting Full access profile, when its Daemon registers again.
 _Avoid_: Runner, host, environment
+
+**Runtime environment secret**:
+An environment value that the Runtime owner marks as confidential for one Agent on that Runtime. Weft checks output it handles for these values, but a secret changed into another form may not be detected and other output paths on the Runtime are outside that check.
+_Avoid_: API key (a secret may be another kind of value), environment variable (not every variable is secret)
 
 **Run**:
 One execution of an Agent, started by an assignment, a mention, or a Trigger. A Run acts on one work item, except a Run started by a schedule Trigger, which has none. A Run is queued, is dispatched when a Runtime takes it, runs, may wait for a Confirmation or for the user's answer, and ends completed, failed, cancelled, or stale. Its steps are kept as a transcript. Each Run keeps the name of its Agent and the label of its Runtime ("host · agent CLI"), so history stays readable after either is deleted: the Run list shows the live name or label while it exists and the kept one afterwards. A Run on the Weft server has no Runtime label.

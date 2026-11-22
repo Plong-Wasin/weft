@@ -19,7 +19,7 @@ export function WikiBubbleMenu({ editor }: { editor: Editor | null }) {
   const triggers = React.useRef<Partial<Record<Panel, HTMLButtonElement | null>>>({});
   const linkInput = React.useRef<HTMLInputElement>(null);
   // Tiptap re-dispatches a transaction whenever this prop changes identity, so it must stay stable across renders.
-  const shouldShow = React.useCallback(({ state }: { state: { selection: { from: number; to: number } } }) => state.selection.from !== state.selection.to && Boolean(editor?.isEditable), [editor]);
+  const shouldShow = React.useCallback(({ state }: { state: { selection: { from: number; to: number } } }) => state.selection.from !== state.selection.to && Boolean(editor?.isEditable && editor.isFocused), [editor]);
   // Ctrl/Cmd+K opens the Link field here now that the fixed toolbar's Link button is gone.
   React.useEffect(() => {
     const onShortcut = (event: Event) => {

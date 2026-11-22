@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { createDatabase, type Database } from "@weft/db";
+import { createDatabase, labels, type Database } from "@weft/db";
 import { createProjectActions, projectKeyPattern } from "../src";
 import { sanitizeProjectKey } from "../../shared/src";
 import { createMemberFactory, createUserFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
@@ -106,6 +106,34 @@ test.concurrent("private projects are invisible to non-members; workspace Admins
     expect((await actions.getProject.handler({ userId: admin.id }, { workspaceId: workspace.id, key: "SEC" })).id).toBe(secret.id);
     const stranger = await createUserFactory(transaction);
     await expect(actions.listProjects.handler({ userId: stranger.id }, { workspaceId: workspace.id })).rejects.toMatchObject({ status: 403 });
+  });
+});
+
+test.concurrent("Workspace View metadata is batched and follows the caller's Project access", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, admin, member, actions, create } = await setup(transaction);
+    const outsider = await createMemberFactory(transaction, workspace.id, "Member");
+    const publicProject = await create(member.id, "PUB");
+    const privateProject = await create(member.id, "SEC", "private");
+    await transaction.insert(labels).values([
+      { workspaceId: workspace.id, projectId: publicProject.id, name: "Visible" },
+      { workspaceId: workspace.id, projectId: privateProject.id, name: "Private" },
+    ]);
+    const visibleToMember = await actions.listWorkspaceViewMetadata.handler({ userId: member.id }, { workspaceId: workspace.id });
+    const visibleToAdmin = await actions.listWorkspaceViewMetadata.handler({ userId: admin.id }, { workspaceId: workspace.id });
+    const visibleToOutsider = await actions.listWorkspaceViewMetadata.handler({ userId: outsider.id }, { workspaceId: workspace.id });
+    expect(visibleToMember.projects.map((project) => project.key)).toEqual(["PUB", "SEC"]);
+    expect(visibleToMember.states).toHaveLength(12);
+    expect(visibleToAdmin.projects.map((project) => project.key)).toEqual(["PUB", "SEC"]);
+    expect(visibleToAdmin.states).toHaveLength(12);
+    expect(visibleToOutsider.projects.map((project) => project.key)).toEqual(["PUB"]);
+    expect(visibleToOutsider.states).toHaveLength(6);
+    // Labels are ordered by opaque Project UUID in the query; assert membership and scope, not a cross-Project display order.
+    const labelsByProject = (rows: Array<{ projectId: string; name: string }>) => [...rows].sort((a, b) => a.projectId.localeCompare(b.projectId) || a.name.localeCompare(b.name));
+    expect(labelsByProject(visibleToMember.labels.map(({ projectId, name }) => ({ projectId, name })))).toEqual(labelsByProject([
+      { projectId: privateProject.id, name: "Private" }, { projectId: publicProject.id, name: "Visible" },
+    ]));
+    expect(labelsByProject(visibleToOutsider.labels.map(({ projectId, name }) => ({ projectId, name })))).toEqual([{ projectId: publicProject.id, name: "Visible" }]);
   });
 });
 

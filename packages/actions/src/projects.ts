@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, eq, inArray, isNull, isNotNull, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { agentAccess, agents, projectKeyAliases, projectMembers, projects, runtimes, users, workItemStates, workspaceMembers } from "@weft/db";
+import { agentAccess, agents, labels, projectKeyAliases, projectMembers, projects, runtimes, users, workItemStates, workspaceMembers } from "@weft/db";
 import { defaultStates } from "./work-items";
 import { agentUserIds, openProjectToAllProjectAgents, withoutDisabledAgents } from "./agent-access";
 import { triageGroup, triageStateName } from "./triage";
@@ -137,6 +137,30 @@ export function createProjectActions(db: Database) {
           .where(and(eq(projects.workspaceId, input.workspaceId), input.archived ? isNotNull(projects.archivedAt) : isNull(projects.archivedAt)))
           .orderBy(asc(projects.key));
         return rows.filter((row) => workspaceRole === "Admin" || row.project.visibility === "public" || row.role !== null).map((row) => toOutput(row.project, row.role));
+      },
+    },
+    listWorkspaceViewMetadata: {
+      name: "list_workspace_view_metadata", kind: "read" as const,
+      input: Type.Object(workspaceInput),
+      output: Type.Object({ projects: Type.Array(projectOutput), states: Type.Array(Type.Object({ id: Type.String(), projectId: Type.String(), name: Type.String(), group: Type.String() })), labels: Type.Array(Type.Object({ id: Type.String(), projectId: Type.String(), name: Type.String() })) }),
+      handler: async (context: { userId: string }, input: { workspaceId: string }) => {
+        const visibleProjects = await (async () => {
+          const workspaceRole = await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
+          const rows = await db.select({ project: projects, role: projectMembers.role }).from(projects)
+            .leftJoin(projectMembers, and(eq(projectMembers.projectId, projects.id), eq(projectMembers.userId, context.userId)))
+            .where(and(eq(projects.workspaceId, input.workspaceId), isNull(projects.archivedAt))).orderBy(asc(projects.key));
+          return rows.filter((row) => workspaceRole === "Admin" || row.project.visibility === "public" || row.role !== null)
+            .map((row) => ({ project: row.project, output: toOutput(row.project, row.role) }));
+        })();
+        const projectIds = visibleProjects.map(({ project }) => project.id);
+        if (projectIds.length === 0) return { projects: [], states: [], labels: [] };
+        const [states, projectLabels] = await Promise.all([
+          db.select({ id: workItemStates.id, projectId: workItemStates.projectId, name: workItemStates.name, group: workItemStates.group }).from(workItemStates)
+            .where(inArray(workItemStates.projectId, projectIds)).orderBy(asc(workItemStates.projectId), asc(workItemStates.sortOrder)),
+          db.select({ id: labels.id, projectId: labels.projectId, name: labels.name }).from(labels)
+            .where(inArray(labels.projectId, projectIds)).orderBy(asc(labels.projectId), asc(labels.name)),
+        ]);
+        return { projects: visibleProjects.map(({ output }) => output), states, labels: projectLabels };
       },
     },
     getProject: {

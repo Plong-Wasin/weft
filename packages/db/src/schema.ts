@@ -293,6 +293,8 @@ export const daemons = pgTable("daemons", {
   hostname: text("hostname").notNull(),
   tokenId: uuid("token_id").notNull().references(() => apiTokens.id, { onDelete: "cascade" }),
   version: text("version").notNull(),
+  /** Explicit protocol features this Daemon can safely execute; empty for historical registrations. */
+  capabilities: jsonb("capabilities").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
   lastHeartbeatAt: timestamp("last_heartbeat_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [uniqueIndex().on(table.tokenId)]);

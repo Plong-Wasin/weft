@@ -183,8 +183,8 @@ export async function detectedClis(path = Bun.env.PATH ?? "") {
   return found;
 }
 
-async function post(fetcher: FetchLike, apiUrl: string, token: string, path: string, body: unknown) {
-  const response = await fetcher(`${apiUrl.replace(/\/$/, "")}${path}`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "x-weft-source": "cli" }, body: JSON.stringify(body) });
+async function post(fetcher: FetchLike, apiUrl: string, token: string, path: string, body: unknown, extraHeaders: Record<string, string> = {}) {
+  const response = await fetcher(`${apiUrl.replace(/\/$/, "")}${path}`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "x-weft-source": "cli", ...extraHeaders }, body: JSON.stringify(body) });
   if (!response.ok) throw new Error(`${response.status}: ${(await response.text()) || response.statusText}`);
   return response.json();
 }
@@ -522,7 +522,7 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
     // Read at every attempt: `weft login` while the Daemon runs replaces the CLI token, and the next retry must use it.
     const personalToken = env.WEFT_TOKEN ?? (await readCliConfig(env)).token ?? "";
     try {
-      registration = await post(fetcher, apiUrl, personalToken, "/api/daemon/register", { hostname: env.WEFT_HOSTNAME ?? hostname(), version: CLI_VERSION, agentClis, rotate: !credential || rotateNext }) as { daemonId: string; daemonToken?: string; runtimes?: Array<{ id: string }> };
+      registration = await post(fetcher, apiUrl, personalToken, "/api/daemon/register", { hostname: env.WEFT_HOSTNAME ?? hostname(), version: CLI_VERSION, agentClis, rotate: !credential || rotateNext }, { "x-weft-capabilities": "runtime_environment,runtime_sandbox" }) as { daemonId: string; daemonToken?: string; runtimes?: Array<{ id: string }> };
     } catch (error) {
       if (isUnauthorized(error)) throw new RegistrationUnauthorized((error as Error).message);
       throw error;

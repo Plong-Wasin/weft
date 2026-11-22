@@ -269,7 +269,8 @@ export function createApp(
       const bearer = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
       const owner = bearer ? await tokens.authenticateWithToken(bearer) : null;
       if (!owner) { set.status = 401; return { error: "Personal API token expired or invalid. Run `weft login` to sign in again." }; }
-      try { return await runtimeActions.registerDaemon.handler({ userId: owner.userId, apiTokenId: owner.tokenId }, body); }
+      const advertised = request.headers.get("x-weft-capabilities")?.split(",").map((capability) => capability.trim()).filter((capability) => capability === "runtime_environment" || capability === "runtime_sandbox");
+      try { return await runtimeActions.registerDaemon.handler({ userId: owner.userId, apiTokenId: owner.tokenId }, { ...body, ...(advertised ? { capabilities: advertised } : {}) }); }
       catch (error) { set.status = error instanceof ActionError ? error.status : 400; return { error: error instanceof Error ? error.message : "Daemon registration failed" }; }
     }, { body: runtimeActions.registerDaemon.input })
     .post("/api/daemon/runs/claim", async ({ request, set }) => {

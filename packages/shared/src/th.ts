@@ -2435,6 +2435,7 @@ export const th: Record<keyof typeof en, string> = {
   "account.value.false": "ไม่ใช่",
   "agents.profileDefault": "ค่าเริ่มต้น",
   "runs.failure.sandbox_unavailable": "Run เริ่มไม่ได้ เพราะคอมพิวเตอร์เครื่องนี้ใช้ข้อจำกัดด้านความปลอดภัยที่ตั้งไว้ให้เอเจนต์นี้ไม่ได้",
+  "runs.failure.runtime_capability_missing": "Weft Daemon บนคอมพิวเตอร์เครื่องนี้ไม่รองรับ environment หรือการตั้งค่าความปลอดภัยของเอเจนต์ ให้อัปเดต CLI แล้วเริ่ม Daemon ใหม่ หรือเปลี่ยนการตั้งค่าของเอเจนต์",
   "runs.failure.spawn_failed": "Run เริ่มบนคอมพิวเตอร์ของเอเจนต์ไม่ได้",
   "runs.failure.timeout": "Run ใช้เวลานานเกินไปจึงถูกหยุด",
   "runs.failure.cli_exit": "เครื่องมือเขียนโค้ดหยุดทำงานเพราะเกิดข้อผิดพลาด",

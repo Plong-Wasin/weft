@@ -2433,6 +2433,7 @@ export const en = {
   "account.value.false": "No",
   "agents.profileDefault": "Default",
   "runs.failure.sandbox_unavailable": "The Run could not start. This computer cannot apply the safety limits set for this Agent.",
+  "runs.failure.runtime_capability_missing": "This computer's Weft Daemon does not support the Agent's Runtime environment or safety settings. Update the CLI and restart the Daemon, or change the Agent settings.",
   "runs.failure.spawn_failed": "The Run could not start on the Agent's computer.",
   "runs.failure.timeout": "The Run took too long and was stopped.",
   "runs.failure.cli_exit": "The coding tool stopped with an error.",

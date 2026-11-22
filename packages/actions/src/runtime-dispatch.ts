@@ -138,7 +138,7 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
     },
     claimRuns: async (context: { userId: string; daemonId: string }, requestedLimit = 20) => db.transaction(async (transaction) => {
       const tx = transaction as unknown as Database;
-      const [daemon] = await tx.select({ id: daemons.id, hostname: daemons.hostname }).from(daemons).where(and(eq(daemons.id, context.daemonId), eq(daemons.ownerId, context.userId)));
+      const [daemon] = await tx.select({ id: daemons.id, hostname: daemons.hostname, capabilities: daemons.capabilities }).from(daemons).where(and(eq(daemons.id, context.daemonId), eq(daemons.ownerId, context.userId)));
       if (!daemon) throw new ActionError("Daemon not found", 404);
       // Claims on one Daemon must observe each other's committed capacity checks. Take this before Run row locks so all claimers
       // use the same lock order; finish/cancel paths need no advisory lock and can still release capacity while a claim waits.
@@ -171,6 +171,16 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
         const [project] = row.run.projectId ? await tx.select({ key: projects.key }).from(projects).where(eq(projects.id, row.run.projectId)) : [];
         const attachedSkills = await tx.select({ name: skills.name, description: skills.description, instructions: skills.instructions }).from(agentSkills).innerJoin(skills, eq(skills.id, agentSkills.skillId)).where(and(eq(agentSkills.agentId, row.agent.id), eq(skills.scope, "workspace")));
         const [profile] = row.agent.runtimeProfileId ? await tx.select().from(runtimeProfiles).where(eq(runtimeProfiles.id, row.agent.runtimeProfileId)) : [];
+        // Historical Daemons ignore fields they do not understand. Fail before creating a run token or returning any configured
+        // values when the claimed Run depends on environment injection or sandbox enforcement they did not advertise.
+        const requiredCapabilities = [
+          ...(row.agent.runtimeEnvironment ? ["runtime_environment"] : []),
+          ...(row.runtime.enforceSandbox || (profile && profile.sandbox !== "full") ? ["runtime_sandbox"] : []),
+        ];
+        if (requiredCapabilities.some((capability) => !daemon.capabilities.includes(capability))) {
+          await tx.update(runs).set({ status: "failed", failureReason: "runtime_capability_missing", finishedAt: now() }).where(and(eq(runs.id, row.run.id), eq(runs.status, "queued")));
+          continue;
+        }
         // Over budget: the Run never reaches the Daemon, and its requester hears why, as for a server Run.
         if (row.agent.monthlyTokenBudget !== null && (await agentMonthlyUsage(tx, row.agent.id, now())) >= row.agent.monthlyTokenBudget) {
           const [skipped] = await tx.update(runs).set({ status: "skipped", failureReason: "budget_exceeded", finishedAt: now() }).where(and(eq(runs.id, row.run.id), eq(runs.status, "queued"))).returning({ id: runs.id });

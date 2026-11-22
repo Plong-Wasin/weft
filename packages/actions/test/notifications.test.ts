@@ -6,6 +6,7 @@ import {
   runNextJob, scheduleCleanupJobs, sendNotificationDigests,
 } from "../src";
 import { createMemberFactory, createUserFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
+import { recordSecretOutputBlockedNotifications } from "../src/notifications";
 
 const { client, db } = createDatabase();
 afterAll(async () => client.end());
@@ -298,6 +299,19 @@ test.concurrent("running the fan-out job twice does not duplicate notifications"
     await handlers.notify!(transaction, job!.payload, { id: job!.id, type: "notify" });
     expect(await transaction.select().from(notifications).where(eq(notifications.userId, other.id))).toHaveLength(1);
     expect((await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).unreadCount).toBe(1);
+  });
+});
+
+test("Runtime secret alerts reach workspace recipients without revealing inaccessible Work item details", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, admin, other, item, inbox } = await setup(transaction, "private");
+    const runId = crypto.randomUUID();
+    const blocked = { workspaceId: workspace.id, runId, actorId: admin.id, recipientIds: [other.id] };
+    await recordSecretOutputBlockedNotifications(transaction, blocked);
+    await recordSecretOutputBlockedNotifications(transaction, blocked);
+    const notification = (await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id })).notifications[0];
+    expect(notification).toMatchObject({ kind: "secret_output_blocked", workItemId: null, workItemTitle: "", detail: null });
+    expect(await transaction.select().from(notifications).where(eq(notifications.jobId, runId))).toHaveLength(1);
   });
 });
 

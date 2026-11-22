@@ -1,7 +1,7 @@
 import { Elysia } from "elysia";
 import { Type } from "@sinclair/typebox";
 import { cors } from "@elysiajs/cors";
-import { createMailerFromEnv, type Mailer, ActionError, AgentAccessDeniedError, actionRegistry, createActionList, createApiTokenActions, createRuntimeDispatchActions, aiWriteActions, HIDDEN_FROM_AI, skillWriteActions, createWorkspaceAction, registerAction, writeDecision, type ActionContext, type SignalBus } from "@weft/actions";
+import { createMailerFromEnv, type Mailer, ActionError, AgentAccessDeniedError, actionRegistry, createActionList, createApiTokenActions, createRuntimeDispatchActions, aiWriteActions, HIDDEN_FROM_AI, skillWriteActions, createWorkspaceAction, registerAction, writeDecision, type ActionContext, type SignalBus, containsRuntimeSecretValue, lockRuntimeRun, openSecret, recordSecretOutputBlockedNotifications } from "@weft/actions";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { agents, apiTokens, collections, comments, createDatabase, oauthAccessToken, oauthClient, runs, runtimes, users, wikiPages, workItems, type Database } from "@weft/db";
 import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
@@ -307,7 +307,7 @@ export function createApp(
       const caller = await resolveDaemonCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Daemon credential expired or invalid. Run `weft login` to sign in again." }; }
       const [run] = caller.daemonId ? await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runs.id, body.runId), eq(runtimes.daemonId, caller.daemonId))) : [];
       if (!run) { set.status = 403; return { error: "Run is not assigned to this Daemon" }; }
-      await runtimeDispatch.finishRun(body.runId, body); return { ok: true };
+      return await runtimeDispatch.finishRun(body.runId, body);
     }, { body: Type.Object({
       runId: Type.String({ format: "uuid" }), status: Type.Union([Type.Literal("completed"), Type.Literal("failed")]), finalOutput: Type.String(), failureReason: Type.Optional(Type.String()),
       // The CLI's own counts; null or absent when the CLI printed none, which keeps the Run's usage unknown.
@@ -494,7 +494,32 @@ export function createApp(
         // Converter work is charged to the user (a token is only a sub-limit of its user, so many tokens are still one caller); a caller without a user is keyed by address and workspace.
         const bodyWorkspace = (body as { workspaceId?: string } | null)?.workspaceId ?? "";
         const converterKey = caller.userId ? `user:${caller.userId}` : `ip:${clientAddress(request, Number(Bun.env.TRUSTED_PROXY_HOPS ?? 0))}:${bodyWorkspace}`;
-        const result = await withWrittenFormKey(converterKey, () => (action.handler as (context: ActionContext, input: unknown) => Promise<unknown>)(caller, body), (caller as { apiTokenId?: string }).apiTokenId);
+        const executeAction = () => withWrittenFormKey(converterKey, () => (action.handler as (context: ActionContext, input: unknown) => Promise<unknown>)(caller, body), (caller as { apiTokenId?: string }).apiTokenId);
+        let result: unknown;
+        if (caller.source === "agent" && caller.agent && action.kind === "write") {
+          const guarded = await db.transaction(async (transaction) => {
+            const tx = transaction as unknown as Database;
+            await lockRuntimeRun(tx, caller.agent!.runId);
+            const [run] = await tx.select({ status: runs.status, runtimeEnvironmentSecrets: runs.runtimeEnvironmentSecrets, runtimeId: runs.runtimeId, workspaceId: runs.workspaceId }).from(runs).where(eq(runs.id, caller.agent!.runId)).for("update");
+            if (!run || !["dispatched", "running"].includes(run.status)) return { kind: "inactive" as const };
+            if (run.runtimeEnvironmentSecrets) {
+              let secrets: string[] = [];
+              let snapshotUnreadable = false;
+              try { secrets = Object.values(JSON.parse(openSecret(run.runtimeEnvironmentSecrets)) as Record<string, string>); }
+              catch { snapshotUnreadable = true; }
+              if (snapshotUnreadable || containsRuntimeSecretValue(body, secrets)) return { kind: "blocked" as const, run };
+            }
+            return { kind: "result" as const, result: await executeAction() };
+          });
+          if (guarded.kind === "inactive") { set.status = 409; return { error: "This Agent Run is no longer active." }; }
+          if (guarded.kind === "blocked") {
+            const [runtime] = guarded.run.runtimeId ? await db.select({ ownerId: runtimes.ownerId }).from(runtimes).where(eq(runtimes.id, guarded.run.runtimeId)) : [];
+            await recordSecretOutputBlockedNotifications(db, { workspaceId: guarded.run.workspaceId, runId: caller.agent.runId, actorId: caller.agent.agentUserId, recipientIds: [caller.agent.originatorId, ...(runtime ? [runtime.ownerId] : [])] });
+            set.status = 400;
+            return { error: "Write withheld because it contains a configured Runtime secret. Remove or replace the value and retry.", code: "runtime_secret_output" };
+          }
+          result = guarded.result;
+        } else result = await executeAction();
         if (action.kind === "write") await publishChange(db, bus, body, result);
         return result;
       } catch (error) {

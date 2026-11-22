@@ -1,11 +1,12 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
-import { agentAccess, agents, comments, confirmations, createDatabase, jobs, runs, workspaces, type Database } from "@weft/db";
+import { agentAccess, agents, comments, confirmations, createDatabase, jobs, notifications, runMessages, runs, workspaces, type Database } from "@weft/db";
 import {
   createAgentActions, createConfirmationStore, createProjectActions, createRunActions, createRuntimeDispatchActions, createWorkItemActions, handleAgentRunJob, retryAutomatically, revokeAgentRuns, startRun, RunModelNetworkError,
   type RunModel, type RunModelRequest, type RunModelResponse,
 } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
+import { sealSecret } from "../src/integration-secrets";
 
 const { client, db } = createDatabase();
 afterAll(async () => client.end());
@@ -82,6 +83,31 @@ test("Daemon finishRun posts every hostile Agent final answer", async () => {
     const posted = await transaction.select().from(comments).where(eq(comments.runId, s.run.id));
     expect(posted).toHaveLength(1);
     expect(posted[0]!.bodyText.length).toBeGreaterThan(0);
+  });
+});
+
+test("Daemon completion with a secret requests correction, then accepts a safe retry once", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await transaction.update(runs).set({ status: "running", startedAt: new Date(), runtimeEnvironmentSecrets: sealSecret(JSON.stringify({ API_TOKEN: "runtime-secret-value" })) }).where(eq(runs.id, s.run.id));
+    await transaction.insert(runMessages).values({ runId: s.run.id, seq: 1, type: "response", output: `Observed runtime-secret-value and ${Buffer.from("runtime-secret-value").toString("base64")}` });
+    const dispatch = createRuntimeDispatchActions(transaction);
+    const blockedOutput = `Result included runtime-secret-value and ${Buffer.from("runtime-secret-value").toString("base64")}`;
+    await expect(dispatch.finishRun(s.run.id, { status: "completed", finalOutput: blockedOutput, usage: { inputTokens: 10, outputTokens: 2 } })).resolves.toMatchObject({ correctionRequired: true, message: expect.not.stringContaining("runtime-secret-value") });
+    expect(await reload(transaction, s.run.id)).toMatchObject({ status: "running", failureReason: "runtime_secret_output", finalOutput: null, runtimeEnvironmentSecrets: expect.any(String) });
+    expect(await transaction.select().from(comments).where(eq(comments.runId, s.run.id))).toHaveLength(0);
+    const afterBlock = await s.actions.getRunTranscript.handler({ userId: s.member.id }, { runId: s.run.id });
+    expect(JSON.stringify(afterBlock)).not.toContain("runtime-secret-value");
+    expect(JSON.stringify(afterBlock)).not.toContain(Buffer.from("runtime-secret-value").toString("base64"));
+    await expect(dispatch.finishRun(s.run.id, { status: "completed", finalOutput: blockedOutput })).resolves.toMatchObject({ correctionRequired: true });
+    expect(await transaction.select().from(notifications).where(eq(notifications.jobId, s.run.id))).toHaveLength(1);
+    await expect(dispatch.finishRun(s.run.id, { status: "completed", finalOutput: "Safe corrected completion.", usage: { inputTokens: 3, outputTokens: 1 } })).resolves.toMatchObject({ ok: true });
+    expect(await reload(transaction, s.run.id)).toMatchObject({ status: "completed", finalOutput: "Safe corrected completion.", runtimeEnvironmentSecrets: null });
+    expect(await reload(transaction, s.run.id)).toMatchObject({ inputTokens: 13, outputTokens: 3, usageReported: true });
+    expect(await transaction.select().from(comments).where(eq(comments.runId, s.run.id))).toHaveLength(1);
+    const transcript = await s.actions.getRunTranscript.handler({ userId: s.member.id }, { runId: s.run.id });
+    expect(JSON.stringify(transcript)).not.toContain("runtime-secret-value");
+    expect(JSON.stringify(transcript)).not.toContain(Buffer.from("runtime-secret-value").toString("base64"));
   });
 });
 

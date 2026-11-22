@@ -11,6 +11,8 @@ import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 import { hasAgentAccess } from "./agent-access";
 import { emitRunFinished } from "./outbound-webhooks";
+import { openSecret } from "./integration-secrets";
+import { lockRuntimeRun, redactRuntimeSecrets, scrubRunMessages } from "./runtime-secret-comments";
 
 type RunRow = typeof runs.$inferSelect;
 type Context = { userId: string };
@@ -494,10 +496,12 @@ async function withdrawConfirmations(database: Database, runId: string) {
 export async function settleCancelled(database: Database, runId: string): Promise<boolean> {
   return database.transaction(async (transaction) => {
     const tx = transaction as unknown as Database;
-    const [run] = await tx.select({ status: runs.status }).from(runs).where(eq(runs.id, runId));
+    await lockRuntimeRun(tx, runId);
+    const [run] = await tx.select({ status: runs.status, runtimeEnvironmentSecrets: runs.runtimeEnvironmentSecrets }).from(runs).where(eq(runs.id, runId));
     if (run?.status === "running") return false;
     if (run?.status === "stopping") {
-      const [settled] = await tx.update(runs).set({ status: "cancelled", finishedAt: new Date() }).where(and(eq(runs.id, runId), eq(runs.status, "stopping"))).returning({ id: runs.id, agentId: runs.agentId, workItemId: runs.workItemId });
+      await scrubRunMessages(tx, runId, run.runtimeEnvironmentSecrets);
+      const [settled] = await tx.update(runs).set({ status: "cancelled", finishedAt: new Date(), runtimeEnvironmentSecrets: null }).where(and(eq(runs.id, runId), eq(runs.status, "stopping"))).returning({ id: runs.id, agentId: runs.agentId, workItemId: runs.workItemId });
       if (settled) {
         await withdrawConfirmations(tx, runId);
         await emitRunFinished(tx, runId);
@@ -554,7 +558,11 @@ export async function recoverAbandonedRun(database: Database, runId: string, now
   }
   const stale = await database.transaction(async (transaction) => {
     const tx = transaction as unknown as Database;
-    const [row] = await tx.update(runs).set({ status: "stale", failureReason: "worker_crashed", finishedAt: now }).where(and(eq(runs.id, runId), eq(runs.status, "running"))).returning();
+    await lockRuntimeRun(tx, runId);
+    const [current] = await tx.select({ status: runs.status, runtimeEnvironmentSecrets: runs.runtimeEnvironmentSecrets }).from(runs).where(eq(runs.id, runId)).for("update");
+    if (current?.status !== "running") return null;
+    await scrubRunMessages(tx, runId, current.runtimeEnvironmentSecrets);
+    const [row] = await tx.update(runs).set({ status: "stale", failureReason: "worker_crashed", finishedAt: now, runtimeEnvironmentSecrets: null }).where(and(eq(runs.id, runId), eq(runs.status, "running"))).returning();
     if (row) await emitRunFinished(tx, runId);
     return row;
   });
@@ -570,10 +578,12 @@ export async function revokeAgentRuns(database: Database, agentId: string, actor
   for (const run of active) {
     await database.transaction(async (transaction) => {
       const tx = transaction as unknown as Database;
+      await lockRuntimeRun(tx, run.id);
       const [current] = await tx.select().from(runs).where(eq(runs.id, run.id)).for("update");
       if (!current || !["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input", "follow_up"].includes(current.status)) return;
       const running = ["running", "awaiting_input", "stopping"].includes(current.status);
-      const [updated] = await tx.update(runs).set({ status: running ? "stopping" : "failed", failureReason: reason, ...(running ? {} : { finishedAt: now }) })
+      if (!running) await scrubRunMessages(tx, run.id, current.runtimeEnvironmentSecrets);
+      const [updated] = await tx.update(runs).set({ status: running ? "stopping" : "failed", failureReason: reason, ...(running ? {} : { finishedAt: now, runtimeEnvironmentSecrets: null }) })
         .where(eq(runs.id, run.id)).returning();
       if (!updated) return;
       if (!running) {
@@ -603,10 +613,12 @@ export async function revokeMemberRuns(database: Database, workspaceId: string, 
   for (const run of active) {
     await database.transaction(async (transaction) => {
       const tx = transaction as unknown as Database;
+      await lockRuntimeRun(tx, run.id);
       const [current] = await tx.select().from(runs).where(eq(runs.id, run.id)).for("update");
       if (!current || !["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input", "follow_up"].includes(current.status)) return;
       const running = ["running", "awaiting_input", "stopping"].includes(current.status);
-      const [updated] = await tx.update(runs).set({ status: running ? "stopping" : "cancelled", failureReason: reason, ...(running ? {} : { finishedAt: now }) })
+      if (!running) await scrubRunMessages(tx, run.id, current.runtimeEnvironmentSecrets);
+      const [updated] = await tx.update(runs).set({ status: running ? "stopping" : "cancelled", failureReason: reason, ...(running ? {} : { finishedAt: now, runtimeEnvironmentSecrets: null }) })
         .where(eq(runs.id, run.id)).returning();
       if (!updated) return;
       if (!running) {
@@ -630,10 +642,12 @@ export async function cancelAgentRuns(database: Database, agentId: string, actor
   for (const run of active) {
     await database.transaction(async (transaction) => {
       const tx = transaction as unknown as Database;
+      await lockRuntimeRun(tx, run.id);
       const [current] = await tx.select().from(runs).where(eq(runs.id, run.id)).for("update");
       if (!current || !["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input", "follow_up"].includes(current.status)) return;
       const running = ["running", "awaiting_input", "stopping"].includes(current.status);
-      const [updated] = await tx.update(runs).set({ status: running ? "stopping" : "cancelled", failureReason: reason, ...(running ? {} : { finishedAt: now }) })
+      if (!running) await scrubRunMessages(tx, run.id, current.runtimeEnvironmentSecrets);
+      const [updated] = await tx.update(runs).set({ status: running ? "stopping" : "cancelled", failureReason: reason, ...(running ? {} : { finishedAt: now, runtimeEnvironmentSecrets: null }) })
         .where(eq(runs.id, run.id)).returning();
       if (!updated) return;
       if (!running) {
@@ -784,10 +798,16 @@ export function createRunActions(db: Database) {
         const rows = await db.select().from(runMessages).where(eq(runMessages.runId, run.id)).orderBy(asc(runMessages.seq));
         // Tool inputs and results, and the thoughts that quote them, were read with the Originator's permissions (private projects, wiki), so other members see which tools ran, not what they returned.
         const full = run.originatorId === context.userId || access.workspaceRole === "Admin";
+        let secretValues: string[] = [];
+        let secretsUnreadable = false;
+        if (run.runtimeEnvironmentSecrets) {
+          try { secretValues = Object.values(JSON.parse(openSecret(run.runtimeEnvironmentSecrets)) as Record<string, string>); }
+          catch { secretsUnreadable = true; }
+        }
         // A Confirmation is addressed to the Originator: other readers see the steps but never the proposal to decide.
         const cards = run.originatorId === context.userId ? await db.select().from(confirmations).where(and(eq(confirmations.runId, run.id), eq(confirmations.userId, context.userId))).orderBy(asc(confirmations.createdAt)) : [];
         return {
-          steps: toDisplaySteps(rows).map((step) => full ? step : step.kind === "tool_call" ? { ...step, input: null, result: null } : step.kind === "thought" ? { ...step, text: "" } : step),
+          steps: secretsUnreadable ? [] : redactRuntimeSecrets(toDisplaySteps(rows).map((step) => full ? step : step.kind === "tool_call" ? { ...step, input: null, result: null } : step.kind === "thought" ? { ...step, text: "" } : step), secretValues),
           runtimeProfile: profile ? { name: profile.name, sandbox: profile.sandbox, enforceSandbox: profile.enforceSandbox } : null,
           failureMessage: (await failureDetailAllowed(db, context.userId, access.workspaceRole, [run]))(run) && detailReasons.includes(run.failureReason ?? "") ? run.finalOutput : null,
           failureReason: run.failureReason,

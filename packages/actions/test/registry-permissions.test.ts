@@ -145,7 +145,7 @@ test.concurrent("sanity: with these inputs a workspace Admin reaches past the pe
     // Runtime profiles are changed only by the Runtime owner (ticket 22): an Admin on someone else's computer is refused by design, a business rule, not a gate.
     // undo_auto_rule_change needs a real automatic change: the probe's id is not found, so the Action answers 404 (a business rule, not a gate).
     // The fixture Agent has no Runtime; environment settings require a bound Runtime owner.
-    expect(refused).toEqual(["undo_auto_rule_change", "join_project", "cancel_asset_upload", "set_agent_runtime_profile", "get_agent_runtime_environment", "set_agent_runtime_environment", "update_runtime_profile", "delete_runtime_profile"]);
+    expect(refused).toEqual(["undo_auto_rule_change", "join_project", "cancel_asset_upload", "set_agent_runtime_profile", "get_agent_runtime_environment", "get_agent_runtime_environment_classifications", "set_agent_runtime_environment", "classify_agent_runtime_environment", "update_runtime_profile", "delete_runtime_profile"]);
   });
 });
 

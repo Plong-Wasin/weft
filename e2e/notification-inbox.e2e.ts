@@ -8,7 +8,7 @@ const apiPort = Number(Bun.env.E2E_API_PORT ?? 3118);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5218);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
-const shots = "/home/plong/workspace/weft/.local/ai-ux-reliability/12-notification-inbox";
+const shots = "/home/plong/workspace/weft/.local/ai-ux-follow-up/05";
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
   Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
@@ -55,16 +55,19 @@ try {
   const item = await call<{ id: string; sequence: number }>("create_work_item", { projectId: project.id, title: "Inbox destination" });
   const database = createDatabase();
   await database.db.insert(notifications).values({ workspaceId: workspace.id, userId: me.user.id, actorId: me.user.id, kind: "mention", workItemId: item.id, jobId: crypto.randomUUID() });
+  await database.db.insert(notifications).values({ workspaceId: workspace.id, userId: me.user.id, actorId: me.user.id, kind: "secret_output_blocked", detail: null, readAt: new Date(), jobId: crypto.randomUUID() });
   await database.client.end();
-  const fixtureInbox = await call<{ unreadCount: number; notifications: Array<{ id: string }> }>("list_notifications", { workspaceId: workspace.id });
+  const fixtureInbox = await call<{ unreadCount: number; notifications: Array<{ id: string; workItemId: string | null }> }>("list_notifications", { workspaceId: workspace.id });
   check(fixtureInbox.unreadCount === 1, `notification fixture was not visible to the member: ${JSON.stringify(fixtureInbox)}`);
-  const notificationId = fixtureInbox.notifications[0]!.id;
+  const notificationId = fixtureInbox.notifications.find((notification) => notification.workItemId === item.id)!.id;
 
   await page.goto(`${web}/${slug}/notifications`);
   const inboxNav = page.locator(`a[href="/${slug}/notifications"]`).first();
   await inboxNav.waitFor();
   await page.waitForFunction((label) => [...document.querySelectorAll(`a[href="/${location.pathname.split("/")[1]}/notifications"]`)].some((link) => link.textContent?.includes("Inbox") && link.getAttribute("aria-label")?.includes(label)), translate("inbox.unread").replace("{count}", "1"));
   await page.getByRole("link", { name: /MOB-1 Inbox destination/ }).waitFor();
+  await page.getByText(translate("inbox.secretOutputBlockedDetail")).waitFor();
+  check(await page.getByText(translate("inbox.secretOutputBlockedDetail")).count() === 1, "Runtime secret alert did not render a generic retry message");
   await page.getByRole("link", { name: translate("topbar.notifications") }).waitFor();
   await page.getByRole("button", { name: translate("inbox.markAllRead") }).waitFor();
   await page.getByRole("button", { name: new RegExp(translate("inbox.unreadTab")) }).waitFor();
@@ -86,6 +89,7 @@ try {
   check(await drawer.count() === 0, "mobile navigation drawer did not close after route change");
 
   const targetLink = () => page.getByRole("link", { name: /MOB-1 Inbox destination/ });
+  const targetEntry = () => page.locator("li").filter({ has: targetLink() });
   const assertUnread = async (expected: number, context: string) => {
     const current = await call<{ unreadCount: number }>("list_notifications", { workspaceId: workspace.id });
     check(current.unreadCount === expected, `${context}: expected ${expected} unread, found ${current.unreadCount}`);
@@ -151,14 +155,14 @@ try {
   await assertUnread(0, "successfully loaded destination");
   await page.goto(`${web}/${slug}/notifications`);
   await page.getByRole("link", { name: /MOB-1 Inbox destination/ }).waitFor();
-  await page.getByRole("button", { name: translate("inbox.markUnread") }).click();
-  await page.getByRole("button", { name: translate("inbox.markRead") }).waitFor();
+  await targetEntry().getByRole("button", { name: translate("inbox.markUnread") }).click();
+  await targetEntry().getByRole("button", { name: translate("inbox.markRead") }).waitFor();
   await assertUnread(1, "manual mark unread");
-  await page.getByRole("button", { name: translate("inbox.markRead") }).click();
-  await page.getByRole("button", { name: translate("inbox.markUnread") }).waitFor();
+  await targetEntry().getByRole("button", { name: translate("inbox.markRead") }).click();
+  await targetEntry().getByRole("button", { name: translate("inbox.markUnread") }).waitFor();
   await assertUnread(0, "manual mark read");
-  await page.getByRole("button", { name: translate("inbox.markUnread") }).click();
-  await page.getByRole("button", { name: translate("inbox.markRead") }).waitFor();
+  await targetEntry().getByRole("button", { name: translate("inbox.markUnread") }).click();
+  await targetEntry().getByRole("button", { name: translate("inbox.markRead") }).waitFor();
   await assertUnread(1, "second manual mark unread");
   await page.waitForFunction((countLabel) => [...document.querySelectorAll('a[href$="/notifications"]')].some((link) => link.textContent?.includes("Inbox") && link.getAttribute("aria-label")?.includes(countLabel)), translate("inbox.unread").replace("{count}", "1"));
   await page.getByRole("button", { name: new RegExp(translate("inbox.unreadTab")) }).click();

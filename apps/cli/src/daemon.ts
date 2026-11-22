@@ -357,7 +357,16 @@ export async function executeRun(environment: DaemonEnvironment, call: DaemonCal
         return;
       }
     }
-    await call("/api/daemon/runs/start", { runId: run.runId, runtimeId: run.runtimeId, ...(plan ? { session: { mode: decision.mode, reason: decision.reason } } : {}) });
+    try {
+      await call("/api/daemon/runs/start", { runId: run.runId, runtimeId: run.runtimeId, ...(plan ? { session: { mode: decision.mode, reason: decision.reason } } : {}) });
+    } catch (error) {
+      // The server rechecks current Runtime policy at this boundary. A stale claim is terminalized through the normal
+      // finish path so notifications, cancellation state and work-item follow-ups behave like other failed Runs.
+      if (/^409:.*sandbox enforcement changed/i.test(String((error as Error).message))) {
+        return;
+      }
+      throw error;
+    }
     const messages: Array<{ seq: number; type: string; output: unknown }> = [];
     let finalOutput = "";
     let seq = 0;

@@ -196,10 +196,22 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
       }
       return claimed;
     }),
-    startRun: async (runId: string, runtimeId: string, session?: { mode: "resumed" | "new"; reason: string }) => {
-      const [run] = await db.update(runs).set({ status: "running", startedAt: now(), ...(session ? { sessionMode: session.mode, sessionReason: session.reason } : {}) }).where(and(eq(runs.id, runId), eq(runs.runtimeId, runtimeId), eq(runs.status, "dispatched"))).returning({ id: runs.id });
+    startRun: async (runId: string, runtimeId: string, session?: { mode: "resumed" | "new"; reason: string }) => db.transaction(async (transaction) => {
+      const tx = transaction as unknown as Database;
+      // Serialize the start boundary with enforcement changes. Whichever operation obtains this Runtime row lock first
+      // defines whether this Run is already running when enforcement is enabled.
+      const [runtime] = await tx.select({ enforceSandbox: runtimes.enforceSandbox }).from(runtimes).where(eq(runtimes.id, runtimeId)).for("update");
+      if (!runtime) throw new ActionError("Runtime not found", 404);
+      const [candidate] = await tx.select({ runId: runs.id, profileSandbox: runtimeProfiles.sandbox }).from(runs)
+        .innerJoin(agents, eq(agents.id, runs.agentId)).leftJoin(runtimeProfiles, eq(runtimeProfiles.id, agents.runtimeProfileId))
+        .where(and(eq(runs.id, runId), eq(runs.runtimeId, runtimeId), eq(runs.status, "dispatched")));
+      if (!candidate) throw new ActionError("Run is not dispatched to this Runtime", 409);
+      if (runtime.enforceSandbox && candidate.profileSandbox !== "read-only" && candidate.profileSandbox !== "run-folder") {
+        throw new ActionError("Sandbox enforcement changed after this Run was claimed; refusing to start it", 409);
+      }
+      const [run] = await tx.update(runs).set({ status: "running", startedAt: now(), ...(session ? { sessionMode: session.mode, sessionReason: session.reason } : {}) }).where(and(eq(runs.id, runId), eq(runs.runtimeId, runtimeId), eq(runs.status, "dispatched"))).returning({ id: runs.id });
       if (!run) throw new ActionError("Run is not dispatched to this Runtime", 409);
-    },
+    }),
     appendMessages: async (runId: string, messages: Array<{ seq: number; type: string; output: unknown }>) => {
       if (!messages.length) return;
       await db.transaction(async (transaction) => {

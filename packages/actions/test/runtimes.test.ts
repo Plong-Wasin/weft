@@ -552,11 +552,14 @@ test.concurrent("sandbox enforcement and Runtime start serialize at the server b
 
 test.concurrent("a removed member's Runtime stops receiving Runs and is unshared, and a Guest cannot share one", async () => {
   await withRollback(db, async (tx) => {
-    const { workspace, admin, owner, registered, runtime, item } = await runtimeScenario(tx);
+    const { workspace, admin, owner, registered, runtime, agent, item } = await runtimeScenario(tx);
     const [pending] = await tx.select({ id: runs.id, status: runs.status }).from(runs).where(eq(runs.workItemId, item.id));
     expect(pending?.status).toBe("queued");
+    const [followUp] = await tx.insert(runs).values({ workspaceId: workspace.id, projectId: item.projectId, workItemId: item.id, agentId: agent.id, originatorId: admin.id, status: "follow_up", followUpSince: new Date() }).returning({ id: runs.id });
     await createMemberActions(tx).removeMember.handler({ userId: admin.id }, { workspaceId: workspace.id, userId: owner.id });
-    expect((await tx.select({ status: runs.status }).from(runs).where(eq(runs.id, pending!.id)))[0]?.status).toBe("failed");
+    expect(await tx.select({ status: runs.status }).from(runs).where(inArray(runs.id, [pending!.id, followUp!.id]))).toEqual([{ status: "failed" }, { status: "failed" }]);
+    const waitingRuns = await tx.select({ id: runs.id }).from(runs).where(and(eq(runs.workItemId, item.id), inArray(runs.status, ["queued", "follow_up"])));
+    expect(waitingRuns).toEqual([]);
     expect(await createRuntimeDispatchActions(tx).claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20)).toEqual([]);
     expect((await tx.select({ shared: runtimes.shared }).from(runtimes).where(eq(runtimes.id, runtime.id)))[0]!.shared).toBe(false);
     const guest = await createMemberFactory(tx, workspace.id, "Guest");

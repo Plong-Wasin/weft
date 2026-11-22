@@ -1260,6 +1260,7 @@ export const en = {
     "inbox.intakeRejected": "{actor} rejected your Intake item",
     "inbox.runSkipped": "{actor} did not start your request: its monthly token budget is used up",
     "inbox.runSkipped.runtime_capability_missing": "{actor} could not start your request because its computer's Daemon does not support the Agent's Runtime environment or safety settings",
+    "inbox.runSkipped.runtime_unshared": "{actor} did not start your request because the Agent's Runtime is no longer shared with this workspace",
     "inbox.runSkipped.execution_binding_changed": "{actor} changed where this Agent runs. We asked its previous executor to cancel this Run; it may take time to stop.",
     "inbox.runSkipped.project_access_revoked": "{actor} stopped this Run because its Originator or Agent owner no longer has Project write access.",
     "inbox.runSkipped.originator_project_access_revoked": "{actor} did not start your request because you no longer have Project write access.",

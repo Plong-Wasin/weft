@@ -174,12 +174,22 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
             : null;
         if (revokedReason) {
           const [skipped] = await tx.update(runs).set({ status: "skipped", failureReason: revokedReason, finishedAt: now() }).where(and(eq(runs.id, row.run.id), eq(runs.status, "queued"))).returning({ id: runs.id });
-          if (skipped && row.run.workItemId) await enqueueNotification(tx, { kind: "run_skipped", workItemId: row.run.workItemId, commentId: row.run.commentId ?? undefined, actorId: row.agent.userId, recipientIds: [row.run.originatorId] });
+          if (skipped) {
+            if (row.run.workItemId) {
+              await enqueueNotification(tx, { kind: "run_skipped", workItemId: row.run.workItemId, commentId: row.run.commentId ?? undefined, actorId: row.agent.userId, recipientIds: [row.run.originatorId], detail: revokedReason });
+              // This Run is terminal. Starting the single waiting Follow-up advances the chain once; if it is also revoked,
+              // the next claim terminates it without creating another Follow-up, so revoked work cannot loop indefinitely.
+              await startFollowUpRun(tx, row.agent.id, row.run.workItemId);
+            }
+          }
           continue;
         }
         if (row.run.projectId && !(await agentOwnerCanUseProject(tx, row.agent, row.run.projectId))) {
           const [skipped] = await tx.update(runs).set({ status: "skipped", failureReason: "creator_access_revoked", finishedAt: now() }).where(and(eq(runs.id, row.run.id), eq(runs.status, "queued"))).returning({ id: runs.id });
-          if (skipped && row.run.workItemId) await enqueueNotification(tx, { kind: "run_skipped", workItemId: row.run.workItemId, commentId: row.run.commentId ?? undefined, actorId: row.agent.userId, recipientIds: [row.run.originatorId] });
+          if (skipped && row.run.workItemId) {
+            await enqueueNotification(tx, { kind: "run_skipped", workItemId: row.run.workItemId, commentId: row.run.commentId ?? undefined, actorId: row.agent.userId, recipientIds: [row.run.originatorId], detail: "creator_access_revoked" });
+            await startFollowUpRun(tx, row.agent.id, row.run.workItemId);
+          }
           continue;
         }
         const [{ count: agentCount }] = await tx.select({ count: sql<number>`count(*)::int` }).from(runs).where(and(eq(runs.agentId, row.agent.id), inArray(runs.status, ["dispatched", "running", "stopping"])));

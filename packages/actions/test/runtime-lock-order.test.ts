@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
-import { and, eq, sql } from "drizzle-orm";
-import { agents as agentRows, createDatabase, jobs, projectMembers, runs, workspaces } from "@weft/db";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { agents as agentRows, createDatabase, jobs, projectMembers, runTokens, runs, workspaces } from "@weft/db";
 import { createMemberFactory, createWorkspaceFactory } from "../../db/src/test-helpers";
 import { createAgentActions, createApiTokenActions, createProjectActions, createRuntimeActions, createRuntimeDispatchActions, createWorkItemActions, startRun as startServerRun, withAgentRunProjectAuthorization } from "../src";
 
@@ -379,4 +379,68 @@ test.serial("switching server-to-Runtime and Runtime-to-server cancels executing
   expect((await db.select({ status: runs.status, runtimeLabel: runs.runtimeLabel }).from(runs).where(eq(runs.id, afterBindRun!.id)))[0])
     .toMatchObject({ status: "queued", runtimeLabel: null });
   expect((await db.select({ id: jobs.id }).from(jobs).where(eq(jobs.dedupeKey, `agent_run:${afterBindRun!.id}:unbound`))).length).toBe(1);
+});
+
+test.serial("Runtime claim skips an archived Project Run and drains its waiting Follow-up exactly once", async () => {
+  const workspace = await createWorkspaceFactory(db);
+  await db.update(workspaces).set({ allowAutopilot: true }).where(eq(workspaces.id, workspace.id));
+  const admin = await createMemberFactory(db, workspace.id, "Admin");
+  const projects = createProjectActions(db);
+  const project = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Archived Runtime access", key: `AR${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private" });
+  const token = await createApiTokenActions(db).createApiToken.handler({ userId: admin.id }, { name: "archive test daemon" });
+  const runtimeActions = createRuntimeActions(db);
+  const registered = await runtimeActions.registerDaemon.handler({ userId: admin.id, apiTokenId: token.id }, { hostname: "archive-test", version: "1", agentClis: ["codex"] });
+  const runtime = registered.runtimes[0]!;
+  await runtimeActions.shareRuntime.handler({ userId: admin.id }, { runtimeId: runtime.id });
+  const agents = createAgentActions(db);
+  const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Archive Runtime Agent", model: "default", runtimeId: runtime.id });
+  await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id] });
+  const item = await createWorkItemActions(db).createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "Archived before dispatch", assigneeIds: [agent.userId] });
+  const [queued] = await db.select({ id: runs.id }).from(runs).where(and(eq(runs.workItemId, item.id), eq(runs.status, "queued")));
+  await db.update(runs).set({ createdAt: new Date(Date.now() - 10_000) }).where(eq(runs.id, queued!.id));
+  const [followUp] = await db.insert(runs).values({ workspaceId: workspace.id, projectId: project.id, workItemId: item.id, agentId: agent.id, originatorId: admin.id, status: "follow_up", followUpSince: new Date(), createdAt: new Date(Date.now() + 10_000) }).returning({ id: runs.id });
+  await projects.archiveProject.handler({ userId: admin.id }, { projectId: project.id });
+
+  expect(await createRuntimeDispatchActions(db).claimRuns({ userId: admin.id, daemonId: registered.daemonId }, 1)).toEqual([]);
+  expect(await db.select({ id: runs.id, status: runs.status, failureReason: runs.failureReason }).from(runs).where(inArray(runs.id, [queued!.id, followUp!.id])))
+    .toEqual([
+      { id: queued!.id, status: "skipped", failureReason: "originator_project_access_revoked" },
+      { id: followUp!.id, status: "skipped", failureReason: "originator_project_access_revoked" },
+    ]);
+  const pending = await db.select({ id: runs.id }).from(runs).where(and(eq(runs.workItemId, item.id), inArray(runs.status, ["queued", "follow_up"])));
+  expect(pending).toEqual([]);
+  expect(await db.select({ id: runTokens.runId }).from(runTokens).where(inArray(runTokens.runId, [queued!.id, followUp!.id]))).toEqual([]);
+  const notices = await db.select({ payload: jobs.payload }).from(jobs).where(eq(jobs.type, "notify"));
+  expect(notices.filter(({ payload }) => payload && typeof payload === "object" && "detail" in payload && payload.detail === "originator_project_access_revoked" && "workItemId" in payload && payload.workItemId === item.id)).toHaveLength(2);
+});
+
+test.serial("server start skips an archived Project Run and advances, then terminates, its waiting Follow-up", async () => {
+  const workspace = await createWorkspaceFactory(db);
+  await db.update(workspaces).set({ allowAutopilot: true }).where(eq(workspaces.id, workspace.id));
+  const admin = await createMemberFactory(db, workspace.id, "Admin");
+  const projects = createProjectActions(db);
+  const project = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Archived server access", key: `AS${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private" });
+  const agents = createAgentActions(db);
+  const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Archive server Agent", model: "default", autopilot: true });
+  await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id] });
+  const item = await createWorkItemActions(db).createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "Archived before server start", assigneeIds: [agent.userId] });
+  const [queued] = await db.select({ id: runs.id }).from(runs).where(and(eq(runs.workItemId, item.id), eq(runs.status, "queued")));
+  const [followUp] = await db.insert(runs).values({ workspaceId: workspace.id, projectId: project.id, workItemId: item.id, agentId: agent.id, originatorId: admin.id, status: "follow_up", followUpSince: new Date() }).returning({ id: runs.id });
+  await projects.archiveProject.handler({ userId: admin.id }, { projectId: project.id });
+
+  expect(await startServerRun(db, queued!.id, "test-model")).toBe("gone");
+  expect(await db.select({ status: runs.status, failureReason: runs.failureReason }).from(runs).where(eq(runs.id, queued!.id)))
+    .toEqual([{ status: "skipped", failureReason: "originator_project_access_revoked" }]);
+  expect(await db.select({ status: runs.status }).from(runs).where(eq(runs.id, followUp!.id))).toEqual([{ status: "queued" }]);
+  expect(await startServerRun(db, followUp!.id, "test-model")).toBe("gone");
+  expect(await db.select({ status: runs.status, failureReason: runs.failureReason }).from(runs).where(inArray(runs.id, [queued!.id, followUp!.id])))
+    .toEqual([
+      { status: "skipped", failureReason: "originator_project_access_revoked" },
+      { status: "skipped", failureReason: "originator_project_access_revoked" },
+    ]);
+  const pending = await db.select({ id: runs.id }).from(runs).where(and(eq(runs.workItemId, item.id), inArray(runs.status, ["queued", "follow_up"])));
+  expect(pending).toEqual([]);
+  const notices = await db.select({ payload: jobs.payload }).from(jobs).where(eq(jobs.type, "notify"));
+  expect(notices.filter(({ payload }) => payload && typeof payload === "object" && "detail" in payload && payload.detail === "originator_project_access_revoked" && "workItemId" in payload && payload.workItemId === item.id)).toHaveLength(2);
+  expect(await db.select({ id: runTokens.runId }).from(runTokens).where(inArray(runTokens.runId, [queued!.id, followUp!.id]))).toEqual([]);
 });

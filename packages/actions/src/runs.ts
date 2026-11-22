@@ -726,8 +726,15 @@ export async function startRun(database: Database, runId: string, modelId?: stri
       const reason = originatorAccess ? "creator_access_revoked" : "originator_project_access_revoked";
       const [skipped] = await tx.update(runs).set({ status: "skipped", failureReason: reason, finishedAt: new Date() })
         .where(and(eq(runs.id, runId), eq(runs.status, "queued"))).returning({ id: runs.id });
-      if (skipped && run.workItemId) await enqueueNotification(tx, { kind: "run_skipped", workItemId: run.workItemId, commentId: run.commentId ?? undefined, actorId: agent.userId, recipientIds: [run.originatorId], detail: reason });
-      if (skipped) await emitRunFinished(tx, runId);
+      if (skipped) {
+        if (run.workItemId) {
+          await enqueueNotification(tx, { kind: "run_skipped", workItemId: run.workItemId, commentId: run.commentId ?? undefined, actorId: agent.userId, recipientIds: [run.originatorId], detail: reason });
+          // The skipped Run cannot produce more follow-ups. Advance the one already waiting; the worker rechecks its
+          // own authorization and terminally skips it if the same Project access has been revoked.
+          await startFollowUpRun(tx, agent.id, run.workItemId);
+        }
+        await emitRunFinished(tx, runId);
+      }
       return "gone";
     }
     const [current] = await tx.select({ id: runs.id }).from(runs).where(eq(runs.id, runId)).for("update");

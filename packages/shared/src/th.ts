@@ -1263,6 +1263,7 @@ export const th: Record<keyof typeof en, string> = {
   "inbox.intakeRejected": "{actor} ปฏิเสธรายการ Intake ของคุณ",
   "inbox.runSkipped": "{actor} ไม่ได้เริ่มงานของคุณ: งบ token รายเดือนหมดแล้ว",
   "inbox.runSkipped.runtime_capability_missing": "{actor} เริ่มงานของคุณไม่ได้ เพราะ Daemon บนคอมพิวเตอร์ไม่รองรับ environment หรือการตั้งค่าความปลอดภัยของ Agent",
+  "inbox.runSkipped.runtime_unshared": "{actor} ไม่ได้เริ่มงานของคุณเพราะ Runtime ของ Agent ไม่ได้แชร์กับเวิร์กสเปซนี้แล้ว",
   "inbox.runSkipped.execution_binding_changed": "{actor} เปลี่ยนตำแหน่งที่เอเจนต์นี้ทำงาน เราส่งคำขอให้ตัวประมวลผลเดิมหยุด Run นี้ ซึ่งอาจใช้เวลาสักครู่",
   "inbox.runSkipped.project_access_revoked": "{actor} หยุด Run นี้เพราะผู้เริ่มต้นหรือเจ้าของ Agent ไม่มีสิทธิ์เขียนใน Project แล้ว",
   "inbox.runSkipped.originator_project_access_revoked": "{actor} ไม่ได้เริ่มงานของคุณเพราะคุณไม่มีสิทธิ์เขียนใน Project แล้ว",

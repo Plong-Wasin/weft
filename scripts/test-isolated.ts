@@ -124,16 +124,22 @@ async function runFileOn(database: string, file: string, bunArgs: string[], tota
   const pass = count("pass"), fail = count("fail");
   totals.pass += pass; totals.fail += fail; totals.tests += pass + fail;
   // A file that exits non-zero with no failing test (a crash, an unhandled error between tests) still fails the run.
-  if (exitCode !== 0 && fail === 0) { totals.failedFiles += 1; console.log(`(fail) ${file} exited with code ${exitCode}`); }
-  for (const line of output.split("\n").filter((line) => line.startsWith("(fail)"))) console.log(`${line}  <- ${file}`);
+  if (exitCode !== 0 && fail === 0) { totals.failedFiles += 1; console.log(`(fail) ${escapeControlChars(file)} exited with code ${exitCode}`); }
+  for (const line of output.split("\n").filter((line) => line.startsWith("(fail)"))) console.log(`${escapeControlChars(line)}  <- ${escapeControlChars(file)}`);
   if (process.env.GITHUB_ACTIONS === "true" && (exitCode !== 0 || fail > 0)) {
     const diagnostics = output.split("\n").slice(-80).join("\n").slice(-12_000);
     const redactedDiagnostics = diagnostics.replace(/(postgres(?:ql)?:\/\/[^:\s/]+:)[^@\s/]+(@)/gi, "$1[redacted]$2");
-    console.log(`::group::Failure details for ${file} (last 80 lines, 12,000 characters max)`);
-    console.log(redactedDiagnostics ? redactedDiagnostics.split("\n").map((line) => `  ${line}`).join("\n") : "  The test process exited without diagnostic output.");
+    const groupTitle = escapeControlChars(file).slice(0, 200);
+    console.log(`::group::Failure details for ${groupTitle} (last 80 lines, 12,000 characters max)`);
+    console.log(redactedDiagnostics ? redactedDiagnostics.split("\n").map((line) => `  ${escapeControlChars(line)}`).join("\n") : "  The test process exited without diagnostic output.");
     console.log("::endgroup::");
   }
   return `===== ${file} (exit ${exitCode})\n${output}\n`;
+}
+
+/** Prevent test-controlled filenames/output from becoming GitHub Actions workflow commands. */
+function escapeControlChars(value: string): string {
+  return value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, (char) => `\\u${char.codePointAt(0)!.toString(16).padStart(4, "0")}`);
 }
 
 /** Runs `bun test` on one database. Quiet runs print only the failing test names and the totals; the full output goes to `logFile`. */
@@ -148,7 +154,7 @@ async function runOne(database: string, bunArgs: string[], logFile: string, labe
   await Bun.write(logFile, output);
   const lines = output.split("\n");
   const failed = lines.filter((line) => line.startsWith("(fail)"));
-  for (const line of failed.slice(0, 20)) console.log(`${tag}${line}`);
+  for (const line of failed.slice(0, 20)) console.log(`${tag}${escapeControlChars(line)}`);
   if (failed.length > 20) console.log(`${tag}... ${failed.length - 20} more failures`);
   for (const line of lines.filter((line) => /^\s*\d+ (pass|fail)$|^Ran \d+ tests/.test(line))) console.log(`${tag}${line.trim()}`);
   console.log(`${tag}full output: ${logFile}`);

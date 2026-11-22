@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, agents, comments, confirmations, daemons, projectMembers, runMessages, runs, runtimeProfiles, runtimes, users, workItems, workspaceMembers, workspaces } from "@weft/db";
+import { activities, agents, comments, confirmations, daemons, projectMembers, projects, runMessages, runs, runtimeProfiles, runtimes, users, workItems, workspaceMembers, workspaces } from "@weft/db";
 import { steerMessageType, toDisplaySteps, type SteerMessage } from "./run-steps";
 import { agentMonthlyUsage } from "./agent-budget";
 import { estimateCostUsd, loadPriceTable, type PriceTable } from "./usage";
@@ -195,7 +195,7 @@ export async function loadWakeStep(database: Database, runId: string | null | un
   return { runId: row.run.id, agentId: row.agent.id, agentUserId: row.agent.userId, originatorId: row.run.originatorId, depth: row.run.depth, workspaceId: row.run.workspaceId, canWakeAgents: row.agent.canWakeAgents };
 }
 
-type WakeTarget = { id: string; userId: string; name: string; budget: number | null; runtimeId: string | null };
+type WakeTarget = { id: string; userId: string; name: string; budget: number | null; runtimeId: string | null; createdBy?: string; memberOwned?: boolean };
 
 function skippedOutcome(target: WakeTarget, reason: WakeSkipReason): WakeOutcome {
   return { agentId: target.id, userId: target.userId, agentName: target.name, status: "skipped", reason, runId: null };
@@ -347,6 +347,22 @@ async function canWriteProject(database: Database, userId: string, projectId: st
   }
 }
 
+/** A Runtime Agent created by its current owner remains eligible only while that owner can still write its Project. */
+export async function agentOwnerCanUseProject(database: Database, agent: { createdBy?: string; runtimeId: string | null; memberOwned?: boolean }, projectId: string): Promise<boolean> {
+  if (!agent.memberOwned) return true;
+  if (!agent.runtimeId || !agent.createdBy) return false;
+  const [runtime] = await database.select({ ownerId: runtimes.ownerId, workspaceId: runtimes.workspaceId }).from(runtimes).where(eq(runtimes.id, agent.runtimeId));
+  if (runtime?.ownerId !== agent.createdBy) return false;
+  if (!(await canWriteProject(database, agent.createdBy, projectId))) return false;
+  // Serialize against concurrent removal, role changes, archive and suspension so revocation either wins before this Run Action or waits until it commits.
+  await database.select({ id: projects.id }).from(projects).where(and(eq(projects.id, projectId), eq(projects.workspaceId, runtime.workspaceId))).for("share");
+  await database.select({ userId: workspaceMembers.userId }).from(workspaceMembers)
+    .where(and(eq(workspaceMembers.workspaceId, runtime.workspaceId), eq(workspaceMembers.userId, agent.createdBy))).for("share");
+  await database.select({ userId: projectMembers.userId }).from(projectMembers)
+    .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, agent.createdBy))).for("share");
+  return canWriteProject(database, agent.createdBy, projectId);
+}
+
 /**
  * The one wake decision (ADR 0013): every path that starts a Run for an Agent calls it, after the caller checked a person's own project write and Agent access.
  * - An Agent's or Autopilot's change (`waker` "agent") wakes only when its Run's Agent has the Can wake Agents switch on (`switch_off` otherwise). Then the chain's Originator, depth and waking Run are taken from that Run, and the wake is refused with an Activity and a notice when the depth would pass `maxWakeDepth` (`depth_limit`), when the Originator may not write in the project (`no_project_write`) or may not use the target Agent (`no_agent_access`). A hourly Run limit that holds the wake is `hourly_limit`.
@@ -360,6 +376,10 @@ export async function decideAndStartWake(database: Database, input: {
   commentId?: string | null; triggerId?: string | null; chain?: { wokenByRunId: string | null; depth: number };
 }): Promise<WakeOutcome> {
   const { target, workspaceId, projectId, workItemId, commentId, triggerId } = input;
+  if (!(await agentOwnerCanUseProject(database, target, projectId))) {
+    if (input.waker === "agent" && input.step) return refuseWake(database, { step: input.step, target, workspaceId, projectId, workItemId, commentId }, "no_project_write");
+    return skippedOutcome(target, "no_project_write");
+  }
   // A person's request starts a chain of its own unless it names the chain it belongs to (a Follow-up Run's request does).
   if (input.waker !== "agent") return startWake(database, { waker: input.waker, actorId: input.originatorId, target, workspaceId, projectId, workItemId, originatorId: input.originatorId, commentId, triggerId, chain: input.chain ?? personChain });
   const step = input.step;
@@ -437,7 +457,7 @@ async function startWake(database: Database, input: {
  */
 export async function queueRunsForAssignees(database: Database, input: { originatorId: string; waker?: Waker; wakingRunId?: string | null; project: { id: string; workspaceId: string }; workItemId: string; assigneeUserIds: string[]; commentId?: string }): Promise<WakeOutcome[]> {
   if (input.assigneeUserIds.length === 0) return [];
-  const targets = await database.select({ id: agents.id, userId: agents.userId, name: users.name, budget: agents.monthlyTokenBudget, runtimeId: agents.runtimeId }).from(agents)
+  const targets = await database.select({ id: agents.id, userId: agents.userId, name: users.name, budget: agents.monthlyTokenBudget, runtimeId: agents.runtimeId, createdBy: agents.createdBy, memberOwned: agents.memberOwned }).from(agents)
     .innerJoin(users, eq(users.id, agents.userId))
     .innerJoin(projectMembers, and(eq(projectMembers.userId, agents.userId), eq(projectMembers.projectId, input.project.id)))
     .where(and(inArray(agents.userId, input.assigneeUserIds), eq(agents.enabled, true), eq(agents.workspaceId, input.project.workspaceId)))

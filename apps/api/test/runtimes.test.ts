@@ -2,10 +2,10 @@ import { afterAll, expect, test } from "bun:test";
 import { chmod, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { apiTokens, createDatabase, type Database } from "@weft/db";
+import { apiTokens, createDatabase, workItems, type Database } from "@weft/db";
 import { eq } from "drizzle-orm";
-import { createAgentActions, createProjectActions, createRuntimeActions, createWorkItemActions } from "@weft/actions";
-import { withRollback } from "../../../packages/db/src/test-helpers";
+import { createAgentActions, createApiTokenActions, createProjectActions, createRuntimeActions, createRuntimeDispatchActions, createWorkItemActions } from "@weft/actions";
+import { createMemberFactory, withRollback } from "../../../packages/db/src/test-helpers";
 import { startDaemon } from "../../cli/src/daemon";
 import { createApp } from "../src/app";
 
@@ -37,6 +37,35 @@ test.concurrent("the API registers Daemon CLIs and keeps private Runtime rows ou
     expect((await registration.json() as { runtimes: unknown[] }).runtimes).toHaveLength(2);
     const visible = await app.handle(new Request(`http://localhost/actions/list_runtimes`, { method: "POST", headers: { cookie: owner.cookie, "content-type": "application/json" }, body: JSON.stringify({ workspaceId: workspace.id }) }));
     expect((await visible.json() as unknown[])).toHaveLength(2);
+  });
+});
+
+test.concurrent("a revoked creator Project grant blocks a dispatched Member Agent's direct Run Action", async () => {
+  await withRollback(db, async (transaction) => {
+    const { app, post, signUp } = await setup(transaction);
+    const admin = await signUp();
+    const workspace = await (await post("/actions/create_workspace", { name: "Team", slug: `member-run-${crypto.randomUUID()}` }, admin.cookie)).json() as { id: string };
+    await post("/actions/set_autopilot_setting", { workspaceId: workspace.id, allowAutopilot: true }, admin.cookie);
+    const member = await createMemberFactory(transaction, workspace.id, "Member");
+    const projects = createProjectActions(transaction);
+    const project = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Member work", key: `MW${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private" });
+    await projects.addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: member.id, role: "Member" });
+    const personalToken = await createApiTokenActions(transaction).createApiToken.handler({ userId: member.id }, { name: "member daemon" });
+    const runtimeActions = createRuntimeActions(transaction);
+    const runtime = (await runtimeActions.registerDaemon.handler({ userId: member.id, apiTokenId: personalToken.id }, { hostname: "member-owner", version: "1", agentClis: ["codex"] })).runtimes[0]!;
+    await runtimeActions.shareRuntime.handler({ userId: member.id }, { runtimeId: runtime.id });
+    const agent = await createAgentActions(transaction).createAgent.handler({ userId: member.id }, { workspaceId: workspace.id, name: "Member Agent", instructions: "Use my project access", model: "default", runtimeId: runtime.id });
+    await createAgentActions(transaction).setAgentProjectAccess.handler({ userId: member.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id] });
+    const item = await createWorkItemActions(transaction).createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Before revocation", assigneeIds: [agent.userId] });
+    const [claimed] = await createRuntimeDispatchActions(transaction).claimRuns({ userId: member.id, daemonId: runtime.daemonId });
+    expect(claimed?.status).toBe("dispatched");
+    await projects.removeProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: member.id });
+    const readRefused = await post("/actions/get_work_item", { workspaceId: workspace.id, displayId: item.displayId }, undefined, claimed!.token);
+    expect(readRefused.status).toBe(403);
+    const refused = await post("/actions/update_work_item", { workItemId: item.id, title: "After revocation" }, undefined, claimed!.token);
+    expect(refused.status).toBe(403);
+    const [stored] = await transaction.select({ title: workItems.title }).from(workItems).where(eq(workItems.id, item.id));
+    expect(stored?.title).toBe("Before revocation");
   });
 });
 

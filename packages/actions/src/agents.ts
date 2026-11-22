@@ -19,6 +19,7 @@ import { cancelAgentRuns, revokeAgentRuns } from "./runs";
 import { auditAgentChange } from "./agent-audit";
 import { agentContentCounts, agentContentKinds, totalAgentContent } from "./agent-retirement";
 import { ActionError, requireWorkspaceRole } from "./members";
+import { requireProjectAccess } from "./projects";
 
 
 type AgentRow = typeof agents.$inferSelect;
@@ -52,7 +53,7 @@ const limitFields = {
 };
 const textFields = { name: Type.String({ minLength: 1, maxLength: 100 }), instructions: Type.String({ maxLength: 20000 }), model: Type.String({ minLength: 1, maxLength: 200 }) };
 
-/** Workspace Admins configure Agents; a non-Guest member may create one only on their own Runtime. */
+/** Workspace Admins configure any Agent; a non-Guest Member can create and manage only their own Runtime Agent. */
 export function createAgentActions(db: Database) {
   const tx = (transaction: unknown) => transaction as Database;
 
@@ -109,6 +110,18 @@ export function createAgentActions(db: Database) {
     return agent;
   }
 
+  /** A Member may configure only an Agent they created on the Runtime they still own. */
+  async function loadManageableAgent(database: Database, context: Context, agentId: string, lock = false) {
+    const query = database.select().from(agents).where(eq(agents.id, agentId));
+    const [agent] = await (lock ? query.for("update") : query);
+    if (!agent) throw new ActionError("Agent not found", 404);
+    const role = await requireWorkspaceRole(database, context.userId, agent.workspaceId, "read");
+    if (role === "Admin") return agent;
+    const [runtime] = agent.runtimeId ? await database.select({ ownerId: runtimes.ownerId }).from(runtimes).where(eq(runtimes.id, agent.runtimeId)) : [];
+    if (role !== "Member" || !agent.memberOwned || agent.createdBy !== context.userId || runtime?.ownerId !== context.userId) throw new ActionError("Members may manage only Agents they created on their own Runtime", 403);
+    return agent;
+  }
+
   async function presentOne(database: Database, agentId: string) {
     const [row] = await database.select().from(agents).where(eq(agents.id, agentId));
     return (await present(database, [row!]))[0]!;
@@ -141,20 +154,37 @@ export function createAgentActions(db: Database) {
     listManageableAgentAccess: {
       name: "list_manageable_agent_access", kind: "read" as const,
       input: Type.Object({ workspaceId: uuid() }),
-      output: Type.Array(Type.Object({ id: Type.String(), name: Type.String(), runtimeId: Type.Union([Type.String(), Type.Null()]), runtimeProfileId: Type.Union([Type.String(), Type.Null()]), runtimeProfileName: Type.Union([Type.String(), Type.Null()]), runtimeProfileSandbox: Type.Union([Type.String(), Type.Null()]), accessUserIds: Type.Array(Type.String()) })),
+      output: Type.Array(Type.Object({ id: Type.String(), name: Type.String(), createdBy: Type.String(), memberOwned: Type.Boolean(), instructions: Type.String(), model: Type.String(), enabled: Type.Boolean(), runtimeId: Type.Union([Type.String(), Type.Null()]), runtimeProfileId: Type.Union([Type.String(), Type.Null()]), runtimeProfileName: Type.Union([Type.String(), Type.Null()]), runtimeProfileSandbox: Type.Union([Type.String(), Type.Null()]), accessUserIds: Type.Array(Type.String()), allProjects: Type.Boolean(), projectIds: Type.Array(Type.String()), cliModel: Type.Union([Type.String(), Type.Null()]), maxConcurrentRuns: Type.Integer(), maxToolCalls: Type.Integer(), maxTokens: Type.Integer(), timeoutSeconds: Type.Integer(), monthlyTokenBudget: Type.Union([Type.Integer(), Type.Null()]) })),
       handler: async (context: Context, input: { workspaceId: string }) => {
-        await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
-        const rows = await db.select({ id: agents.id, userId: agents.userId, runtimeId: agents.runtimeId, runtimeProfileId: agents.runtimeProfileId }).from(agents).where(eq(agents.workspaceId, input.workspaceId));
+        const viewerRole = await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
+        const rows = await db.select({ id: agents.id, userId: agents.userId, createdBy: agents.createdBy, memberOwned: agents.memberOwned, instructions: agents.instructions, model: agents.model, enabled: agents.enabled, runtimeId: agents.runtimeId, runtimeProfileId: agents.runtimeProfileId, allProjects: agents.allProjects, cliModel: agents.cliModel, maxConcurrentRuns: agents.maxConcurrentRuns, maxToolCalls: agents.maxToolCalls, maxTokens: agents.maxTokens, timeoutSeconds: agents.timeoutSeconds, monthlyTokenBudget: agents.monthlyTokenBudget }).from(agents).where(eq(agents.workspaceId, input.workspaceId));
         const manageable = [] as typeof rows;
         for (const row of rows) if (await canManageAgentAccess(db, { workspaceId: input.workspaceId, runtimeId: row.runtimeId }, context.userId)) manageable.push(row);
         if (!manageable.length) return [];
         const ids = manageable.map((row) => row.id), userIds = manageable.map((row) => row.userId), profileIds = manageable.flatMap((row) => row.runtimeProfileId ? [row.runtimeProfileId] : []);
-        const [names, grants] = await Promise.all([
+        const [names, grants, projectGrants] = await Promise.all([
           db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, userIds)),
           db.select({ agentId: agentAccess.agentId, userId: agentAccess.userId }).from(agentAccess).where(inArray(agentAccess.agentId, ids)),
+          db.select({ agentId: agentProjects.agentId, projectId: agentProjects.projectId }).from(agentProjects).where(inArray(agentProjects.agentId, ids)),
         ]);
         const profiles = profileIds.length ? await db.select({ id: runtimeProfiles.id, name: runtimeProfiles.name, sandbox: runtimeProfiles.sandbox }).from(runtimeProfiles).where(inArray(runtimeProfiles.id, profileIds)) : [];
-        return manageable.map((row) => ({ id: row.id, name: names.find((user) => user.id === row.userId)?.name ?? "", runtimeId: row.runtimeId, runtimeProfileId: row.runtimeProfileId, runtimeProfileName: profiles.find((profile) => profile.id === row.runtimeProfileId)?.name ?? null, runtimeProfileSandbox: profiles.find((profile) => profile.id === row.runtimeProfileId)?.sandbox ?? null, accessUserIds: grants.filter((grant) => grant.agentId === row.id).map((grant) => grant.userId).sort() }));
+        return manageable.map((row) => {
+          const mayConfigure = viewerRole === "Admin" || (row.memberOwned && row.createdBy === context.userId);
+          return {
+            ...row, instructions: mayConfigure ? row.instructions : "", model: mayConfigure ? row.model : "default",
+            allProjects: mayConfigure ? row.allProjects : false,
+            cliModel: mayConfigure ? row.cliModel : null, maxConcurrentRuns: mayConfigure ? row.maxConcurrentRuns : 6,
+            maxToolCalls: mayConfigure ? row.maxToolCalls : agentLimitDefaults.maxToolCalls,
+            maxTokens: mayConfigure ? row.maxTokens : agentLimitDefaults.maxTokens,
+            timeoutSeconds: mayConfigure ? row.timeoutSeconds : agentLimitDefaults.timeoutSeconds,
+            monthlyTokenBudget: mayConfigure ? row.monthlyTokenBudget : null,
+            name: names.find((user) => user.id === row.userId)?.name ?? "",
+            runtimeProfileName: profiles.find((profile) => profile.id === row.runtimeProfileId)?.name ?? null,
+            runtimeProfileSandbox: profiles.find((profile) => profile.id === row.runtimeProfileId)?.sandbox ?? null,
+            accessUserIds: grants.filter((grant) => grant.agentId === row.id).map((grant) => grant.userId).sort(),
+            projectIds: mayConfigure ? projectGrants.filter((grant) => grant.agentId === row.id).map((grant) => grant.projectId).sort() : [],
+          };
+        });
       },
     },
     listAgents: {
@@ -170,7 +200,7 @@ export function createAgentActions(db: Database) {
       name: "get_agent", kind: "read" as const,
       input: Type.Object({ agentId: uuid() }), output: agentOutput,
       handler: async (context: Context, input: { agentId: string }) => {
-        await loadAdminAgent(db, context, input.agentId);
+        await loadManageableAgent(db, context, input.agentId);
         return presentOne(db, input.agentId);
       },
     },
@@ -210,6 +240,8 @@ export function createAgentActions(db: Database) {
         // The owner check comes first: an Agent with no Runtime has no owner, so anyone else gets the same refusal.
         const [runtime] = agent?.runtimeId ? await database.select({ id: runtimes.id, ownerId: runtimes.ownerId, workspaceId: runtimes.workspaceId }).from(runtimes).where(eq(runtimes.id, agent.runtimeId)) : [];
         if (!agent || !runtime || runtime.ownerId !== context.userId) throw new ActionError("Only the Runtime owner can choose this Agent's profile", 403);
+        const role = await requireWorkspaceRole(database, context.userId, runtime.workspaceId, "read");
+        if (role === "Guest") throw new ActionError("Guests cannot manage Agent settings", 403);
         await database.select({ id: runtimes.id }).from(runtimes).where(eq(runtimes.id, runtime.id)).for("update");
         const [profile] = await database.select({ id: runtimeProfiles.id, name: runtimeProfiles.name, sandbox: runtimeProfiles.sandbox }).from(runtimeProfiles).where(and(eq(runtimeProfiles.id, input.profileId), eq(runtimeProfiles.runtimeId, runtime.id)));
         if (!profile) throw new ActionError("Profile must belong to the Agent's Runtime", 400);
@@ -228,10 +260,12 @@ export function createAgentActions(db: Database) {
         const role = await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
         if (role !== "Admin") {
           if (role !== "Member" || !input.runtimeId) throw new ActionError("Only a workspace Admin can create a server Agent; Members may create an Agent on their own Runtime", 403);
+          if (input.autopilot !== undefined || input.canWakeAgents !== undefined) {
+            throw new ActionError("Only a workspace Admin can change Autopilot or allow an Agent to wake other Agents", 403);
+          }
           const [runtime] = await db.select({ id: runtimes.id, ownerId: runtimes.ownerId, shared: runtimes.shared }).from(runtimes)
             .where(and(eq(runtimes.id, input.runtimeId), eq(runtimes.workspaceId, input.workspaceId)));
           if (!runtime || !runtime.shared || runtime.ownerId !== context.userId) throw new ActionError("A Member may create an Agent only on their own Runtime shared with this workspace", 403);
-          if (input.canWakeAgents === true) throw new ActionError("Only a workspace Admin can allow an Agent to wake other Agents", 403);
         }
         if (input.autopilot === true && !input.runtimeId) {
           const [workspace] = await db.select({ allowAutopilot: workspaces.allowAutopilot }).from(workspaces).where(eq(workspaces.id, input.workspaceId));
@@ -254,10 +288,11 @@ export function createAgentActions(db: Database) {
             maxToolCalls: input.maxToolCalls ?? agentLimitDefaults.maxToolCalls, maxTokens: input.maxTokens ?? agentLimitDefaults.maxTokens,
             timeoutSeconds: input.timeoutSeconds ?? agentLimitDefaults.timeoutSeconds, monthlyTokenBudget: input.monthlyTokenBudget ?? null,
             autopilot: input.runtimeId ? true : input.autopilot ?? false, canWakeAgents: role === "Admin" ? input.canWakeAgents ?? false : false,
+            memberOwned: role === "Member",
             runtimeId: input.runtimeId ?? null, runtimeProfileId, cliModel: input.cliModel ?? null, maxConcurrentRuns: input.maxConcurrentRuns ?? 6,
           }).returning();
           await initializeAgentAccess(database, row!.id);
-          await auditAgentChange(database, { workspaceId: input.workspaceId, entityType: "agent", entityId: row!.id, field: "created", oldValue: null, newValue: { name: input.name, runtimeId: row!.runtimeId, autopilot: row!.autopilot, canWakeAgents: row!.canWakeAgents }, actorId: context.userId });
+          await auditAgentChange(database, { workspaceId: input.workspaceId, entityType: "agent", entityId: row!.id, field: "created", oldValue: null, newValue: { name: input.name, instructions: row!.instructions, model: row!.model, runtimeId: row!.runtimeId, autopilot: row!.autopilot, canWakeAgents: row!.canWakeAgents, cliModel: row!.cliModel, maxConcurrentRuns: row!.maxConcurrentRuns, maxToolCalls: row!.maxToolCalls, maxTokens: row!.maxTokens, timeoutSeconds: row!.timeoutSeconds, monthlyTokenBudget: row!.monthlyTokenBudget }, actorId: context.userId });
           return (await present(database, [row!]))[0]!;
         });
       },
@@ -270,8 +305,13 @@ export function createAgentActions(db: Database) {
         assertLimits(input);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
-          const agent = await loadAdminAgent(database, context, input.agentId, true);
+          const agent = await loadManageableAgent(database, context, input.agentId, true);
+          const role = await requireWorkspaceRole(database, context.userId, agent.workspaceId, "read");
+          if (role !== "Admin" && (input.autopilot !== undefined || input.canWakeAgents !== undefined || input.allowProjectActions !== undefined || input.allowMemberActions !== undefined || input.allowFeatureActions !== undefined || input.allowExportActions !== undefined || input.runtimeId !== undefined)) {
+            throw new ActionError("Only a workspace Admin can change Autopilot, Agent grants, or Runtime bindings", 403);
+          }
           const runtimeId = input.runtimeId === undefined ? agent.runtimeId : input.runtimeId;
+          const memberOwned = input.runtimeId !== undefined && runtimeId !== agent.runtimeId ? false : agent.memberOwned;
           const runtimeProfileId = runtimeId === agent.runtimeId ? agent.runtimeProfileId : await resolveProfile(database, runtimeId, null);
           if (input.autopilot === true && !runtimeId) {
             const [workspace] = await database.select({ allowAutopilot: workspaces.allowAutopilot }).from(workspaces).where(eq(workspaces.id, agent.workspaceId));
@@ -292,6 +332,7 @@ export function createAgentActions(db: Database) {
             allowFeatureActions: input.allowFeatureActions ?? agent.allowFeatureActions,
             allowExportActions: input.allowExportActions ?? agent.allowExportActions,
             runtimeId, runtimeEnvironment: runtimeId !== agent.runtimeId ? null : agent.runtimeEnvironment, runtimeProfileId, cliModel: input.cliModel === undefined ? agent.cliModel : input.cliModel, maxConcurrentRuns: input.maxConcurrentRuns ?? agent.maxConcurrentRuns,
+            memberOwned,
           }).where(eq(agents.id, agent.id));
           if (runtimeId !== agent.runtimeId) {
             await database.delete(agentAccess).where(eq(agentAccess.agentId, agent.id));
@@ -304,8 +345,14 @@ export function createAgentActions(db: Database) {
             oldValue: Object.fromEntries(Object.entries(changedGrants).map(([key, value]) => [key, value.from])),
             newValue: Object.fromEntries(Object.entries(changedGrants).map(([key, value]) => [key, value.to])), actorId: context.userId, source: "ui",
           });
-          const changes = { instructions: [agent.instructions, input.instructions], model: [agent.model, input.model], autopilot: [agent.autopilot, input.autopilot], canWakeAgents: [agent.canWakeAgents, input.canWakeAgents], runtimeId: [agent.runtimeId, runtimeId] };
-          const changed = Object.fromEntries(Object.entries(changes).filter(([key, pair]) => input[key as keyof typeof input] !== undefined && pair[0] !== pair[1]));
+          const changes = {
+            instructions: [agent.instructions, input.instructions], model: [agent.model, input.model], autopilot: [agent.autopilot, input.autopilot],
+            canWakeAgents: [agent.canWakeAgents, input.canWakeAgents], runtimeId: [agent.runtimeId, runtimeId], cliModel: [agent.cliModel, input.cliModel],
+            maxConcurrentRuns: [agent.maxConcurrentRuns, input.maxConcurrentRuns], maxToolCalls: [agent.maxToolCalls, input.maxToolCalls],
+            maxTokens: [agent.maxTokens, input.maxTokens], timeoutSeconds: [agent.timeoutSeconds, input.timeoutSeconds],
+            monthlyTokenBudget: [agent.monthlyTokenBudget, input.monthlyTokenBudget], memberOwned: [agent.memberOwned, memberOwned],
+          };
+          const changed = Object.fromEntries(Object.entries(changes).filter(([key, pair]) => (key === "memberOwned" ? pair[0] !== pair[1] : input[key as keyof typeof input] !== undefined && pair[0] !== pair[1])));
           if (input.name !== undefined) changed.name = [null, input.name];
           if (Object.keys(changed).length) await auditAgentChange(database, { workspaceId: agent.workspaceId, entityType: "agent", entityId: agent.id, field: "configuration", oldValue: Object.fromEntries(Object.entries(changed).map(([key, pair]) => [key, pair[0]])), newValue: Object.fromEntries(Object.entries(changed).map(([key, pair]) => [key, pair[1]])), actorId: context.userId });
           if (agent.runtimeId && runtimeId === null) {
@@ -335,7 +382,7 @@ export function createAgentActions(db: Database) {
       input: Type.Object({ agentId: uuid() }), output: Type.Object({ deleted: Type.Boolean() }),
       handler: async (context: Context, input: { agentId: string }) => db.transaction(async (transaction) => {
         const database = tx(transaction);
-        const agent = await loadAdminAgent(database, context, input.agentId, true);
+        const agent = await loadManageableAgent(database, context, input.agentId, true);
         // Lock the bot user row first: a write that references it (an in-flight Run posting a comment) takes a shared lock on that row, so it either commits before the count below or waits and then fails once the user is gone. Without the lock a comment written between the count and the delete would be destroyed by the cascade.
         await database.select({ id: users.id }).from(users).where(eq(users.id, agent.userId)).for("update");
         const counts = await agentContentCounts(database, agent.userId);
@@ -353,7 +400,7 @@ export function createAgentActions(db: Database) {
       output: Type.Object({ blocked: Type.Boolean(), counts: Type.Object(Object.fromEntries(agentContentKinds.map((kind) => [kind, Type.Integer({ minimum: 0 })]))) }),
       // The same counts the delete refusal carries; the settings page shows them before an admin confirms a delete.
       handler: async (context: Context, input: { agentId: string }) => {
-        const agent = await loadAdminAgent(db, context, input.agentId);
+        const agent = await loadManageableAgent(db, context, input.agentId);
         const counts = await agentContentCounts(db, agent.userId);
         return { blocked: totalAgentContent(counts) > 0, counts };
       },
@@ -363,14 +410,20 @@ export function createAgentActions(db: Database) {
       input: Type.Object({ agentId: uuid(), allProjects: Type.Boolean(), projectIds: Type.Array(uuid()), baseAllProjects: Type.Optional(Type.Boolean()), baseProjectIds: Type.Optional(Type.Array(uuid())) }), output: agentOutput,
       handler: async (context: Context, input: { agentId: string; allProjects: boolean; projectIds: string[]; baseAllProjects?: boolean; baseProjectIds?: string[] }) => db.transaction(async (transaction) => {
         const database = tx(transaction);
-        const agent = await loadAdminAgent(database, context, input.agentId, true);
+        const agent = await loadManageableAgent(database, context, input.agentId, true);
         const allProjects = input.baseAllProjects !== undefined && input.allProjects === input.baseAllProjects ? agent.allProjects : input.allProjects;
+        const role = await requireWorkspaceRole(database, context.userId, agent.workspaceId, "read");
+        if (role !== "Admin" && allProjects) throw new ActionError("Members may open only specific Projects where they have write access", 403);
         const ids = allProjects ? [] : input.baseProjectIds
           ? mergeAccessSet(input.baseProjectIds, input.projectIds, (await database.select({ projectId: agentProjects.projectId }).from(agentProjects).where(eq(agentProjects.agentId, agent.id))).map((row) => row.projectId))
           : [...new Set(input.projectIds)];
-        if (ids.length > 0) {
+        if (ids.length > 0 && role === "Admin") {
           const found = await database.select({ id: projects.id }).from(projects).where(and(eq(projects.workspaceId, agent.workspaceId), inArray(projects.id, ids)));
           if (found.length !== ids.length) throw new ActionError("Projects must belong to the Agent's workspace", 400);
+        }
+        if (role !== "Admin") for (const projectId of ids) {
+          const { project } = await requireProjectAccess(database, context.userId, projectId, "write");
+          if (project.workspaceId !== agent.workspaceId) throw new ActionError("Projects must belong to the Agent's workspace", 400);
         }
         await database.update(agents).set({ allProjects }).where(eq(agents.id, agent.id));
         await database.delete(agentProjects).where(eq(agentProjects.agentId, agent.id));
@@ -388,6 +441,8 @@ export function createAgentActions(db: Database) {
         const database = tx(transaction);
         const [agent] = await database.select().from(agents).where(eq(agents.id, input.agentId)).for("update");
         if (!agent) throw new ActionError("Agent not found", 404);
+        const role = await requireWorkspaceRole(database, context.userId, agent.workspaceId, "read");
+        if (role === "Guest") throw new ActionError("Guests cannot manage Agent settings", 403);
         if (!(await canManageAgentAccess(database, agent, context.userId))) throw new ActionError("Only the Runtime owner can manage access to this Code-capable Agent; an Admin manages other Agents", 403);
         const ids = input.baseUserIds
           ? mergeAccessSet(input.baseUserIds, input.userIds, (await database.select({ userId: agentAccess.userId }).from(agentAccess).where(eq(agentAccess.agentId, agent.id))).map((row) => row.userId))
@@ -430,7 +485,7 @@ export function createAgentActions(db: Database) {
   async function setEnabled(context: Context, agentId: string, enabled: boolean) {
     return db.transaction(async (transaction) => {
       const database = tx(transaction);
-      const agent = await loadAdminAgent(database, context, agentId, true);
+      const agent = await loadManageableAgent(database, context, agentId, true);
       await database.update(agents).set({ enabled }).where(eq(agents.id, agent.id));
       if (agent.enabled !== enabled) await auditAgentChange(database, { workspaceId: agent.workspaceId, entityType: "agent", entityId: agent.id, field: "enabled", oldValue: agent.enabled, newValue: enabled, actorId: context.userId });
       if (!enabled) await cancelAgentRuns(database, agent.id, context.userId, "Agent was disabled");

@@ -5,7 +5,7 @@ import { agentSkills, agents, comments, daemons, projects, runMessages, runToken
 import { ActionError } from "./members";
 import { enqueueJob } from "./jobs";
 import { createCommentActions } from "./comments";
-import { maxAutomaticRetries, retryAutomatically, startFollowUpRun, runtimeLabelOf } from "./runs";
+import { agentOwnerCanUseProject, maxAutomaticRetries, retryAutomatically, startFollowUpRun, runtimeLabelOf } from "./runs";
 import { followUpCommentBlock } from "./follow-up-comments";
 import { subItemsClosedBlock } from "./sub-items-closed-prompt";
 import { queueRunResultEmail } from "./email-digest";
@@ -164,6 +164,12 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
         cursor = { createdAt: row.createdAtCursor, id: row.run.id };
         if (claimed.length >= claimLimit) break;
         if (activeDaemonRuns >= 20) break;
+        if (row.run.projectId && !(await agentOwnerCanUseProject(tx, row.agent, row.run.projectId))) {
+          const [skipped] = await tx.update(runs).set({ status: "skipped", failureReason: "creator_access_revoked", finishedAt: now() }).where(and(eq(runs.id, row.run.id), eq(runs.status, "queued"))).returning({ id: runs.id });
+          if (skipped && row.run.workItemId) await enqueueNotification(tx, { kind: "run_skipped", workItemId: row.run.workItemId, commentId: row.run.commentId ?? undefined, actorId: row.agent.userId, recipientIds: [row.run.originatorId] });
+          if (skipped && row.run.workItemId) await startFollowUpRun(tx, row.agent.id, row.run.workItemId);
+          continue;
+        }
         const [{ count: agentCount }] = await tx.select({ count: sql<number>`count(*)::int` }).from(runs).where(and(eq(runs.agentId, row.agent.id), inArray(runs.status, ["dispatched", "running", "stopping"])));
         if (agentCount >= row.agent.maxConcurrentRuns) continue;
         const [item] = row.run.workItemId ? await tx.select({ title: workItems.title, description: workItems.descriptionMarkdown, sequence: workItems.sequence }).from(workItems).where(eq(workItems.id, row.run.workItemId)) : [];

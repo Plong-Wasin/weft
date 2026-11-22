@@ -98,6 +98,8 @@ export const agents = pgTable("agents", {
   timeoutSeconds: integer("timeout_seconds").notNull().default(1800),
   /** Provider-reported tokens per calendar month; null means no budget. */
   monthlyTokenBudget: integer("monthly_token_budget"),
+  /** True only for Agents created by a workspace Member on their own Runtime; their eligible Projects remain tied to the creator's live permissions. */
+  memberOwned: boolean("member_owned").notNull().default(false),
   runtimeId: uuid("runtime_id").references(() => runtimes.id, { onDelete: "set null" }),
   /** AES-GCM sealed Runtime-owner environment; never included in ordinary Agent output. */
   runtimeEnvironment: text("runtime_environment"),

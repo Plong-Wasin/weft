@@ -2,7 +2,7 @@ import { Type } from "@sinclair/typebox";
 import { and, eq, isNull } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { agents, runtimes } from "@weft/db";
-import { ActionError } from "./members";
+import { ActionError, requireWorkspaceRole } from "./members";
 import { openSecret, sealSecret } from "./integration-secrets";
 
 const uuid = () => Type.String({ format: "uuid" });
@@ -30,9 +30,11 @@ function sealEntries(variables: Record<string, Entry>) { return Object.keys(vari
 /** Runtime owner controls for per-Agent environment; only encrypted values are persisted. */
 export function createAgentRuntimeEnvironmentActions(db: Database) {
   async function ownedAgent(userId: string, agentId: string) {
-    const [row] = await db.select({ id: agents.id, runtimeId: agents.runtimeId, runtimeEnvironment: agents.runtimeEnvironment }).from(agents).where(eq(agents.id, agentId));
+    const [row] = await db.select({ id: agents.id, runtimeId: agents.runtimeId, workspaceId: agents.workspaceId, runtimeEnvironment: agents.runtimeEnvironment }).from(agents).where(eq(agents.id, agentId));
     const [runtime] = row?.runtimeId ? await db.select({ id: runtimes.id, ownerId: runtimes.ownerId }).from(runtimes).where(eq(runtimes.id, row.runtimeId)) : [];
     if (!row || !runtime || runtime.ownerId !== userId) throw new ActionError("Only the Runtime owner can manage this Agent's environment", 403);
+    const role = await requireWorkspaceRole(db, userId, row.workspaceId, "read");
+    if (role === "Guest") throw new ActionError("Guests cannot manage Agent settings", 403);
     return row;
   }
   const summaries = (entries: Record<string, Entry>) => Object.entries(entries).sort(([a], [b]) => a.localeCompare(b)).map(([name, entry]) => ({ name, classification: entry.classification }));

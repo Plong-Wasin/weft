@@ -301,8 +301,14 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
       handler: async (context: Context, input: { runtimeId: string; name: string; sandbox: "full" | "read-only" | "run-folder"; filesystemAllowlist: string[]; networkAllowlist: string[] }) => {
         const runtime = await ownedRuntime(context.userId, input.runtimeId);
         if (input.sandbox === "full" && (input.filesystemAllowlist.length || input.networkAllowlist.length)) throw new ActionError("Full access profiles do not use allowlists", 400);
-        const [profile] = await db.insert(runtimeProfiles).values({ ...input }).returning();
-        await auditAgentChange(db, { workspaceId: runtime.workspaceId, entityType: "runtime", entityId: runtime.id, field: "profile_created", oldValue: null, newValue: { id: profile!.id, name: input.name, sandbox: input.sandbox }, actorId: context.userId });
+        const profile = await db.transaction(async (transaction) => {
+          const database = transaction as unknown as Database;
+          const [locked] = await database.select({ id: runtimes.id }).from(runtimes).where(eq(runtimes.id, runtime.id)).for("update");
+          if (!locked) throw new ActionError("Runtime not found", 404);
+          const [created] = await database.insert(runtimeProfiles).values({ ...input }).returning();
+          await auditAgentChange(database, { workspaceId: runtime.workspaceId, entityType: "runtime", entityId: runtime.id, field: "profile_created", oldValue: null, newValue: { id: created!.id, name: input.name, sandbox: input.sandbox }, actorId: context.userId });
+          return created!;
+        });
         return profile!;
       },
     },
@@ -311,13 +317,19 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
       input: Type.Object({ profileId: Type.String({ format: "uuid" }), name: Type.String({ minLength: 1, maxLength: 80 }), sandbox: Type.Union([Type.Literal("full"), Type.Literal("read-only"), Type.Literal("run-folder")]), filesystemAllowlist: Type.Array(Type.String({ maxLength: 500 }), { maxItems: 30 }), networkAllowlist: Type.Array(Type.String({ maxLength: 253 }), { maxItems: 100 }) }),
       output: Type.Object({ id: Type.String({ format: "uuid" }), runtimeId: Type.String({ format: "uuid" }), name: Type.String(), sandbox: Type.String(), filesystemAllowlist: Type.Array(Type.String()), networkAllowlist: Type.Array(Type.String()) }),
       handler: async (context: Context, input: { profileId: string; name: string; sandbox: "full" | "read-only" | "run-folder"; filesystemAllowlist: string[]; networkAllowlist: string[] }) => {
-        const [prior] = await db.select().from(runtimeProfiles).where(eq(runtimeProfiles.id, input.profileId));
-        if (!prior) throw new ActionError("Runtime profile not found", 404);
-        const runtime = await ownedRuntime(context.userId, prior.runtimeId);
+        const [found] = await db.select().from(runtimeProfiles).where(eq(runtimeProfiles.id, input.profileId));
+        if (!found) throw new ActionError("Runtime profile not found", 404);
+        const runtime = await ownedRuntime(context.userId, found.runtimeId);
         if (input.sandbox === "full" && (input.filesystemAllowlist.length || input.networkAllowlist.length)) throw new ActionError("Full access profiles do not use allowlists", 400);
-        const [updated] = await db.update(runtimeProfiles).set({ name: input.name, sandbox: input.sandbox, filesystemAllowlist: input.filesystemAllowlist, networkAllowlist: input.networkAllowlist }).where(eq(runtimeProfiles.id, prior.id)).returning();
-        await auditAgentChange(db, { workspaceId: runtime.workspaceId, entityType: "runtime", entityId: runtime.id, field: "profile_updated", oldValue: { name: prior.name, sandbox: prior.sandbox, filesystemAllowlist: prior.filesystemAllowlist, networkAllowlist: prior.networkAllowlist }, newValue: { name: input.name, sandbox: input.sandbox, filesystemAllowlist: input.filesystemAllowlist, networkAllowlist: input.networkAllowlist }, actorId: context.userId });
-        return updated!;
+        return db.transaction(async (transaction) => {
+          const database = transaction as unknown as Database;
+          await database.select({ id: runtimes.id }).from(runtimes).where(eq(runtimes.id, runtime.id)).for("update");
+          const [prior] = await database.select().from(runtimeProfiles).where(and(eq(runtimeProfiles.id, input.profileId), eq(runtimeProfiles.runtimeId, runtime.id)));
+          if (!prior) throw new ActionError("Runtime profile not found", 404);
+          const [updated] = await database.update(runtimeProfiles).set({ name: input.name, sandbox: input.sandbox, filesystemAllowlist: input.filesystemAllowlist, networkAllowlist: input.networkAllowlist }).where(eq(runtimeProfiles.id, prior.id)).returning();
+          await auditAgentChange(database, { workspaceId: runtime.workspaceId, entityType: "runtime", entityId: runtime.id, field: "profile_updated", oldValue: { name: prior.name, sandbox: prior.sandbox, filesystemAllowlist: prior.filesystemAllowlist, networkAllowlist: prior.networkAllowlist }, newValue: { name: input.name, sandbox: input.sandbox, filesystemAllowlist: input.filesystemAllowlist, networkAllowlist: input.networkAllowlist }, actorId: context.userId });
+          return updated!;
+        });
       },
     },
     deleteRuntimeProfile: {

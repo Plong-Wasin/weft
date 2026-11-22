@@ -1090,6 +1090,8 @@ export const runs = pgTable("runs", {
   sessionFolder: text("session_folder"),
   /** One-way hash of the Runtime Agent environment used for this Session; a change starts a new CLI Session. */
   runtimeEnvironmentHash: text("runtime_environment_hash"),
+  /** Immutable permission policy delivered when this Run was claimed; start refuses if current policy differs. */
+  runtimeSandboxPolicy: jsonb("runtime_sandbox_policy").$type<{ profileId: string | null; mode: string; filesystemAllowlist: string[]; networkAllowlist: string[]; enforce: boolean } | null>(),
   /** Encrypted secret values captured at claim; cleared when the Runtime Run reaches a terminal status. */
   runtimeEnvironmentSecrets: text("runtime_environment_secrets"),
   /** `resumed` when the Run continued the previous Session, `new` when it started one. Null for server Runs and Runs not yet started. */

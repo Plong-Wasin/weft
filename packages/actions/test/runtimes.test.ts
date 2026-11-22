@@ -371,11 +371,78 @@ test.concurrent("a Full access claim cannot start after its Runtime enables sand
 
     await createRuntimeActions(tx).setRuntimeSandboxEnforcement.handler({ userId: owner.id }, { runtimeId: runtime.id, enforceSandbox: true });
 
-    await expect(dispatch.startRun(claimed!.runId, runtime.id)).rejects.toThrow(/sandbox enforcement/i);
-    await dispatch.finishRun(claimed!.runId, { status: "failed", finalOutput: "Not started", failureReason: "sandbox_enforcement_changed" });
+    await expect(dispatch.startRun(claimed!.runId, runtime.id)).rejects.toThrow(/sandbox policy changed/i);
+    await dispatch.finishRun(claimed!.runId, { status: "failed", finalOutput: "Not started", failureReason: "sandbox_policy_changed" });
     const [run] = await tx.select({ status: runs.status }).from(runs).where(eq(runs.id, claimed!.runId));
     expect(run!.status).toBe("failed");
     expect(item.id).toBeTruthy();
+  });
+});
+
+test.concurrent("a Run cannot start with a stale profile after its policy is tightened", async () => {
+  await withRollback(db, async (tx) => {
+    const { admin, owner, registered, runtime, agent, project } = await runtimeScenario(tx);
+    const item = await createWorkItemActions(tx).createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "Claim before profile edit", assigneeIds: [agent.userId] });
+    const dispatch = createRuntimeDispatchActions(tx);
+    const [claimed] = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 1);
+    expect(claimed!.sandbox).toMatchObject({ mode: "full", enforce: false });
+    const [profile] = await tx.select().from(runtimeProfiles).where(and(eq(runtimeProfiles.runtimeId, runtime.id), eq(runtimeProfiles.sandbox, "full")));
+    await createRuntimeActions(tx).updateRuntimeProfile.handler({ userId: owner.id }, {
+      profileId: profile!.id, name: profile!.name, sandbox: "read-only", filesystemAllowlist: [], networkAllowlist: [],
+    });
+
+    await expect(dispatch.startRun(claimed!.runId, runtime.id)).rejects.toThrow(/sandbox policy changed/i);
+    expect(item.id).toBeTruthy();
+  });
+});
+
+test.concurrent("a Run cannot start after its claimed profile allowlist is tightened", async () => {
+  await withRollback(db, async (tx) => {
+    const { admin, owner, registered, runtime, agent, project } = await runtimeScenario(tx);
+    const actions = createRuntimeActions(tx);
+    const profile = await actions.createRuntimeProfile.handler({ userId: owner.id }, { runtimeId: runtime.id, name: "Restricted claim", sandbox: "run-folder", filesystemAllowlist: [], networkAllowlist: ["model.example"] });
+    await createAgentActions(tx).setAgentRuntimeProfile.handler({ userId: owner.id }, { agentId: agent.id, profileId: profile.id });
+    const item = await createWorkItemActions(tx).createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "Claim before allowlist edit", assigneeIds: [agent.userId] });
+    const dispatch = createRuntimeDispatchActions(tx);
+    const [claimed] = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 1);
+    expect(claimed!.sandbox).toMatchObject({ mode: "run-folder", networkAllowlist: ["model.example"] });
+    await actions.updateRuntimeProfile.handler({ userId: owner.id }, { profileId: profile.id, name: profile.name, sandbox: "run-folder", filesystemAllowlist: [], networkAllowlist: [] });
+
+    await expect(dispatch.startRun(claimed!.runId, runtime.id)).rejects.toThrow(/sandbox policy changed/i);
+    expect(item.id).toBeTruthy();
+  });
+});
+
+test.concurrent("a newly claimed Full access Run still cannot start when enforcement is already enabled", async () => {
+  await withRollback(db, async (tx) => {
+    const { admin, owner, registered, runtime, agent, project } = await runtimeScenario(tx);
+    await createRuntimeActions(tx).setRuntimeSandboxEnforcement.handler({ userId: owner.id }, { runtimeId: runtime.id, enforceSandbox: true });
+    await createWorkItemActions(tx).createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "Full access under enforcement", assigneeIds: [agent.userId] });
+    const dispatch = createRuntimeDispatchActions(tx);
+    const [claimed] = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 1);
+    expect(claimed!.sandbox).toMatchObject({ mode: "full", enforce: true });
+    await expect(dispatch.startRun(claimed!.runId, runtime.id)).rejects.toThrow(/sandbox policy changed/i);
+  });
+});
+
+test.concurrent("profile edits and starts serialize on the Runtime policy boundary", async () => {
+  await withRollback(db, async (tx) => {
+    const { admin, owner, registered, runtime, agent, project } = await runtimeScenario(tx);
+    const actions = createRuntimeActions(tx);
+    const profile = await actions.createRuntimeProfile.handler({ userId: owner.id }, { runtimeId: runtime.id, name: "Concurrent edit", sandbox: "run-folder", filesystemAllowlist: [], networkAllowlist: ["model.example"] });
+    await createAgentActions(tx).setAgentRuntimeProfile.handler({ userId: owner.id }, { agentId: agent.id, profileId: profile.id });
+    await createWorkItemActions(tx).createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "Concurrent start", assigneeIds: [agent.userId] });
+    const dispatch = createRuntimeDispatchActions(tx);
+    const [claimed] = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 1);
+    const start = dispatch.startRun(claimed!.runId, runtime.id).then(() => "started" as const, () => "rejected" as const);
+    const edit = actions.updateRuntimeProfile.handler({ userId: owner.id }, { profileId: profile.id, name: profile.name, sandbox: "run-folder", filesystemAllowlist: [], networkAllowlist: [] });
+    const [result] = await Promise.all([start, edit]);
+    const [run] = await tx.select({ status: runs.status }).from(runs).where(eq(runs.id, claimed!.runId));
+    if (result === "started") expect(run!.status).toBe("running");
+    else {
+      expect(run!.status).toBe("dispatched");
+      await expect(dispatch.startRun(claimed!.runId, runtime.id)).rejects.toThrow(/sandbox policy changed/i);
+    }
   });
 });
 
@@ -393,7 +460,7 @@ test.concurrent("sandbox enforcement and Runtime start serialize at the server b
       expect(run!.status).toBe("running");
     } else {
       expect(run!.status).toBe("dispatched");
-      await expect(dispatch.startRun(claimed!.runId, runtime.id)).rejects.toThrow(/sandbox enforcement/i);
+      await expect(dispatch.startRun(claimed!.runId, runtime.id)).rejects.toThrow(/sandbox policy changed/i);
     }
   });
 });

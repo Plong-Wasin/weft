@@ -291,10 +291,10 @@ export function createApp(
       if (!runtime) { set.status = 403; return { error: "Runtime not found" }; }
       try { await runtimeDispatch.startRun(body.runId, runtime.id, body.session); }
       catch (error) {
-        if (error instanceof Error && /sandbox enforcement changed after this Run was claimed/i.test(error.message)) {
+        if (error instanceof Error && /sandbox policy changed after this Run was claimed/i.test(error.message)) {
           // Complete through the normal finish path so old Daemons that only know the start endpoint still notify,
           // release capacity and create any required follow-up Run.
-          await runtimeDispatch.finishRun(body.runId, { status: "failed", finalOutput: "Sandbox enforcement changed after this Run was claimed; it was not started.", failureReason: "sandbox_enforcement_changed" });
+          await runtimeDispatch.finishRun(body.runId, { status: "failed", finalOutput: "Sandbox policy changed after this Run was claimed; it was not started.", failureReason: "sandbox_policy_changed" });
         }
         throw error;
       }

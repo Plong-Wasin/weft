@@ -362,7 +362,7 @@ export async function executeRun(environment: DaemonEnvironment, call: DaemonCal
     } catch (error) {
       // The server rechecks current Runtime policy at this boundary. A stale claim is terminalized through the normal
       // finish path so notifications, cancellation state and work-item follow-ups behave like other failed Runs.
-      if (/^409:.*sandbox enforcement changed/i.test(String((error as Error).message))) {
+      if (/^409:.*sandbox policy changed/i.test(String((error as Error).message))) {
         return;
       }
       throw error;

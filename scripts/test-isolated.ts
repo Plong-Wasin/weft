@@ -126,6 +126,13 @@ async function runFileOn(database: string, file: string, bunArgs: string[], tota
   // A file that exits non-zero with no failing test (a crash, an unhandled error between tests) still fails the run.
   if (exitCode !== 0 && fail === 0) { totals.failedFiles += 1; console.log(`(fail) ${file} exited with code ${exitCode}`); }
   for (const line of output.split("\n").filter((line) => line.startsWith("(fail)"))) console.log(`${line}  <- ${file}`);
+  if (process.env.GITHUB_ACTIONS === "true" && (exitCode !== 0 || fail > 0)) {
+    const diagnostics = output.split("\n").slice(-80).join("\n").slice(-12_000);
+    const redactedDiagnostics = diagnostics.replace(/(postgres(?:ql)?:\/\/[^:\s/]+:)[^@\s/]+(@)/gi, "$1[redacted]$2");
+    console.log(`::group::Failure details for ${file} (last 80 lines, 12,000 characters max)`);
+    console.log(redactedDiagnostics ? redactedDiagnostics.split("\n").map((line) => `  ${line}`).join("\n") : "  The test process exited without diagnostic output.");
+    console.log("::endgroup::");
+  }
   return `===== ${file} (exit ${exitCode})\n${output}\n`;
 }
 

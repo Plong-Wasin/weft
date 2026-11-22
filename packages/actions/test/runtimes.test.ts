@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { activities, agents, comments, createDatabase, daemons, jobs, notifications, runMessages, runTokens, runs, runtimes, runtimeProfiles, users, workItems, workspaces } from "@weft/db";
+import { activities, agents, comments, createDatabase, daemons, jobs, notifications, projects, runMessages, runTokens, runs, runtimes, runtimeProfiles, users, workItemAssignees, workItems, workspaces } from "@weft/db";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 import { createApiTokenActions, createCommentActions, createJobHandlers, createNotificationActions, createRuntimeActions, createRuntimeDispatchActions, createRunActions, handleAgentRunJob, queueRunsForAssignees, sweepRuntimeRuns } from "../src";
 import { createAgentRuntimeEnvironmentActions } from "../src/agent-runtime-environment";
@@ -371,9 +371,19 @@ test("claiming scans past more than one batch of queued Runs whose Agent is at c
     const dispatch = createRuntimeDispatchActions(db);
     const [active] = await dispatch.claimRuns({ userId: scenario.owner.id, daemonId: scenario.registered.daemonId }, 1);
     expect(active).toBeDefined();
-    for (let index = 0; index < 25; index++) {
-      await workActions.createWorkItem.handler({ userId: scenario.admin.id }, { projectId: scenario.project.id, title: `Blocked queued ${index}`, assigneeIds: [scenario.agent.userId] });
-    }
+    const [project] = await db.select({ nextSequence: projects.workItemSequence }).from(projects).where(eq(projects.id, scenario.project.id));
+    const blockedItems = Array.from({ length: 25 }, (_, index) => ({
+      id: crypto.randomUUID(), workspaceId: scenario.workspace.id, projectId: scenario.project.id,
+      sequence: project!.nextSequence + index + 1, title: `Blocked queued ${index}`, descriptionText: "",
+      stateId: scenario.item.stateId, sortOrder: scenario.item.sortOrder + 65_536 * (index + 1), createdBy: scenario.admin.id,
+    }));
+    await db.insert(workItems).values(blockedItems);
+    await db.insert(workItemAssignees).values(blockedItems.map((item) => ({ workItemId: item.id, userId: scenario.agent.userId })));
+    await db.insert(runs).values(blockedItems.map((item) => ({
+      workspaceId: scenario.workspace.id, projectId: scenario.project.id, workItemId: item.id,
+      agentId: scenario.agent.id, originatorId: scenario.admin.id,
+    })));
+    await db.update(projects).set({ workItemSequence: project!.nextSequence + blockedItems.length }).where(eq(projects.id, scenario.project.id));
     const blockedQueue = await db.select({ id: runs.id }).from(runs).where(and(eq(runs.agentId, scenario.agent.id), eq(runs.status, "queued"))).orderBy(runs.createdAt, runs.id);
     for (const [index, run] of blockedQueue.entries()) {
       await db.execute(sql`update runs set created_at = timestamp '2026-01-01 00:00:00' + ${index} * interval '1 microsecond' where id = ${run.id}`);

@@ -269,7 +269,8 @@ export function createApp(
       const bearer = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
       const owner = bearer ? await tokens.authenticateWithToken(bearer) : null;
       if (!owner) { set.status = 401; return { error: "Personal API token expired or invalid. Run `weft login` to sign in again." }; }
-      try { return await runtimeActions.registerDaemon.handler({ userId: owner.userId, apiTokenId: owner.tokenId }, body); }
+      const advertised = request.headers.get("x-weft-capabilities")?.split(",").map((capability) => capability.trim()).filter((capability) => capability === "runtime_environment" || capability === "runtime_sandbox");
+      try { return await runtimeActions.registerDaemon.handler({ userId: owner.userId, apiTokenId: owner.tokenId }, { ...body, ...(advertised ? { capabilities: advertised } : {}) }); }
       catch (error) { set.status = error instanceof ActionError ? error.status : 400; return { error: error instanceof Error ? error.message : "Daemon registration failed" }; }
     }, { body: runtimeActions.registerDaemon.input })
     .post("/api/daemon/runs/claim", async ({ request, set }) => {
@@ -289,7 +290,16 @@ export function createApp(
       const caller = await resolveDaemonCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Daemon credential expired or invalid. Run `weft login` to sign in again." }; }
       const [runtime] = caller.daemonId ? await db.select({ id: runtimes.id }).from(runtimes).where(and(eq(runtimes.daemonId, caller.daemonId), eq(runtimes.id, body.runtimeId))) : [];
       if (!runtime) { set.status = 403; return { error: "Runtime not found" }; }
-      await runtimeDispatch.startRun(body.runId, runtime.id, body.session); return { ok: true };
+      try { await runtimeDispatch.startRun(body.runId, runtime.id, body.session); }
+      catch (error) {
+        if (error instanceof Error && /sandbox policy changed after this Run was claimed/i.test(error.message)) {
+          // Complete through the normal finish path so old Daemons that only know the start endpoint still notify,
+          // release capacity and create any required follow-up Run.
+          await runtimeDispatch.finishRun(body.runId, { status: "failed", finalOutput: "Sandbox policy changed after this Run was claimed; it was not started.", failureReason: "sandbox_policy_changed" });
+        }
+        throw error;
+      }
+      return { ok: true };
     }, { body: Type.Object({ runId: Type.String({ format: "uuid" }), runtimeId: Type.String({ format: "uuid" }), session: Type.Optional(sessionReport) }) })
     // The Daemon asks which of its stable Session folders belong to closed work items; it then removes those folders.
     .post("/api/daemon/session-folders/check", async ({ request, body, set }) => {

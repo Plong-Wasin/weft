@@ -213,6 +213,7 @@ test("daemon detects Claude and Codex on the injected PATH, registers them, and 
   const controller = new AbortController();
   let registration: unknown;
   const frames: string[] = [];
+  const observed = { advertisedCapabilities: null as string | null };
   class FakeSocket extends EventTarget {
     readyState = 0;
     constructor() { super(); setTimeout(() => { this.readyState = 1; this.dispatchEvent(new Event("open")); }, 0); }
@@ -221,11 +222,13 @@ test("daemon detects Claude and Codex on the injected PATH, registers them, and 
   }
   await startDaemon({
     env: { XDG_CONFIG_HOME: configHome, PATH: path, WEFT_HOSTNAME: "devbox" },
-    fetch: async (input, init) => { expect(new URL(String(input)).origin).toBe("https://weft.example"); expect(new Headers(init?.headers).get("authorization")).toBe("Bearer weft_cli"); if (String(input).endsWith("/api/daemon/register")) registration = JSON.parse(String(init?.body)); return Response.json({ daemonId: "daemon-id", runtimes: [], daemonToken: "weft_daemon_test" }); },
+    fetch: async (input, init) => { expect(new URL(String(input)).origin).toBe("https://weft.example"); expect(new Headers(init?.headers).get("authorization")).toBe("Bearer weft_cli"); if (String(input).endsWith("/api/daemon/register")) { registration = JSON.parse(String(init?.body)); observed.advertisedCapabilities = new Headers(init?.headers).get("x-weft-capabilities"); } return Response.json({ daemonId: "daemon-id", runtimes: [], daemonToken: "weft_daemon_test" }); },
     webSocket: (url) => { expect(url).toContain("weft.example"); expect(url).toContain("token=weft_daemon_test"); return new FakeSocket() as unknown as WebSocket; },
     signal: controller.signal, heartbeatMs: 5,
   });
   expect(registration).toMatchObject({ hostname: "devbox", version: "1.0.0", agentClis: ["claude", "codex"], rotate: true });
+  expect(registration).not.toHaveProperty("capabilities");
+  expect(observed.advertisedCapabilities).toBe("runtime_environment,runtime_sandbox");
   // The Daemon credential lives in its own 0600 file in the 0700 Daemon directory, never in the CLI config.
   const credentialFile = join(configHome, "weft", "daemon-credential.json");
   expect(JSON.parse(await readFile(credentialFile, "utf8"))).toEqual({ token: "weft_daemon_test" });

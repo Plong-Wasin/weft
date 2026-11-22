@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { chmod, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { apiTokens, createDatabase, workItems, type Database } from "@weft/db";
+import { apiTokens, createDatabase, runTokens, runs, runtimeProfiles, workItems, type Database } from "@weft/db";
 import { eq } from "drizzle-orm";
 import { createAgentActions, createApiTokenActions, createProjectActions, createRuntimeActions, createRuntimeDispatchActions, createWorkItemActions } from "@weft/actions";
 import { createMemberFactory, withRollback } from "../../../packages/db/src/test-helpers";
@@ -155,6 +155,84 @@ test.concurrent("a fake Runtime CLI uses its Run token through the real Daemon a
       await daemonTask?.catch(() => {});
       app.stop(true);
       await rm(path, { recursive: true, force: true });
+    }
+  });
+});
+
+test.concurrent("a stale claimed sandbox policy gets a 409 and fails without spawning the CLI", async () => {
+  await withRollback(db, async (transaction) => {
+    const { app, post, signUp } = await setup(transaction);
+    const owner = await signUp();
+    const workspace = await (await post("/actions/create_workspace", { name: "Team", slug: `stale-${crypto.randomUUID().slice(0, 8)}` }, owner.cookie)).json() as { id: string };
+    await post("/actions/set_autopilot_setting", { workspaceId: workspace.id, allowAutopilot: true }, owner.cookie);
+    const token = await (await post("/actions/create_api_token", { name: "daemon" }, owner.cookie)).json() as { token: string };
+    const project = await createProjectActions(transaction).createProject.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Policy transition", key: `SP${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private" });
+    const agents = createAgentActions(transaction);
+    const agent = await agents.createAgent.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Runtime Agent", instructions: "Run only if authorized", model: "default" });
+    await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: true, projectIds: [] });
+    const registered = await (await post("/actions/register_daemon", { hostname: "stale-policy-test", version: "1", agentClis: ["claude"] }, undefined, token.token)).json() as { runtimes: Array<{ id: string }> };
+    const runtimeId = registered.runtimes[0]!.id;
+    const runtimeActions = createRuntimeActions(transaction);
+    await runtimeActions.shareRuntime.handler({ userId: owner.id }, { runtimeId });
+    await agents.updateAgent.handler({ userId: owner.id }, { agentId: agent.id, runtimeId });
+    const [profile] = await transaction.select().from(runtimeProfiles).where(eq(runtimeProfiles.runtimeId, runtimeId));
+    const item = await createWorkItemActions(transaction).createWorkItem.handler({ userId: owner.id }, { projectId: project.id, title: "Check the transition", assigneeIds: [agent.userId] });
+
+    const path = await mkdtemp(join(tmpdir(), "weft-stale-policy-cli-"));
+    const configHome = await mkdtemp(join(tmpdir(), "weft-stale-policy-config-"));
+    const marker = join(path, "spawned");
+    await writeFile(join(path, "claude"), `#!/bin/sh\nprintf started > "${marker}"\nprintf '%s\\n' '{"type":"result","result":"should never run"}'\n`);
+    await chmod(join(path, "claude"), 0o755);
+    const claimed = Promise.withResolvers<void>();
+    const releaseClaim = Promise.withResolvers<void>();
+    let capturedClaim = false;
+    let startStatus: number | undefined;
+    const controller = new AbortController();
+    app.listen(0);
+    let daemonTask: Promise<void> | undefined;
+    try {
+      const apiUrl = `http://localhost:${app.server!.port}`;
+      daemonTask = startDaemon({
+        env: { WEFT_TOKEN: token.token, XDG_CONFIG_HOME: configHome, WEFT_API_URL: apiUrl, PATH: `${path}:${Bun.env.PATH ?? ""}`, WEFT_HOSTNAME: "stale-policy-test" },
+        fetch: async (input, init) => {
+          const response = await fetch(input, init);
+          const url = String(input);
+          if (url.endsWith("/api/daemon/runs/claim") && !capturedClaim) {
+            const runs = await response.clone().json() as Array<{ runId: string }>;
+            if (runs.length) { capturedClaim = true; claimed.resolve(); await releaseClaim.promise; }
+          }
+          if (url.endsWith("/api/daemon/runs/start")) startStatus = response.status;
+          return response;
+        },
+        signal: controller.signal, heartbeatMs: 20, reprobeMs: 60_000,
+      });
+
+      await Promise.race([claimed.promise, Bun.sleep(5_000).then(() => { throw new Error("Daemon did not claim the queued Run"); })]);
+      await runtimeActions.updateRuntimeProfile.handler({ userId: owner.id }, { profileId: profile!.id, name: profile!.name, sandbox: "read-only", filesystemAllowlist: [], networkAllowlist: [] });
+      releaseClaim.resolve();
+
+      let status = "dispatched";
+      for (let i = 0; i < 200 && status !== "failed"; i++) {
+        const rows = await (await post("/actions/list_runs", { workItemId: item.id }, owner.cookie)).json() as Array<{ status: string; failureReason: string | null }>;
+        status = rows[0]?.status ?? "missing";
+        if (status !== "failed") await Bun.sleep(25);
+      }
+      expect(status).toBe("failed");
+      const rows = await (await post("/actions/list_runs", { workItemId: item.id }, owner.cookie)).json() as Array<{ id: string; status: string; failureReason: string | null }>;
+      expect(rows[0]).toMatchObject({ status: "failed", failureReason: "sandbox_policy_changed" });
+      const [terminalRun] = await transaction.select({ status: runs.status, runtimeEnvironmentSecrets: runs.runtimeEnvironmentSecrets }).from(runs).where(eq(runs.id, rows[0]!.id));
+      const [runCredential] = await transaction.select({ expiresAt: runTokens.expiresAt }).from(runTokens).where(eq(runTokens.runId, rows[0]!.id));
+      expect(terminalRun).toMatchObject({ status: "failed", runtimeEnvironmentSecrets: null });
+      expect(runCredential!.expiresAt.getTime()).toBeLessThanOrEqual(Date.now());
+      expect(startStatus).toBe(409);
+      expect(await Bun.file(marker).exists()).toBe(false);
+    } finally {
+      releaseClaim.resolve();
+      controller.abort();
+      await daemonTask?.catch(() => {});
+      app.stop(true);
+      await rm(path, { recursive: true, force: true });
+      await rm(configHome, { recursive: true, force: true });
     }
   });
 });

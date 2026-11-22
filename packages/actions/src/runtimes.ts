@@ -18,6 +18,7 @@ export const staleRuntimeRoundBudgetMs = 30_000;
 /** A Daemon credential is re-issued once less than this much of its lifetime is left. */
 const rotateBeforeMs = 7 * 24 * 60 * 60 * 1000;
 const cli = Type.Union([Type.Literal("claude"), Type.Literal("codex")]);
+const daemonCapability = Type.Union([Type.Literal("runtime_environment"), Type.Literal("runtime_sandbox")]);
 /** How many Session folders the Runtime list shows per Runtime, newest first. */
 const sessionFolderLimit = 10;
 /** Run statuses that are not final: a Runtime with one of them on it cannot be deleted. */
@@ -80,9 +81,13 @@ type BoundAgentsChoice = "unbind" | { moveTo: string };
 async function deleteRuntimeLocked(transaction: Database, runtimeId: string, actorId: string | null, options: {
   boundAgents?: BoundAgentsChoice; authorize: (runtime: { id: string; workspaceId: string; ownerId: string; lastSeenAt: Date }) => Promise<void>;
 }) {
-  // The row lock comes first: a binding or a Run that commits after this point waits, and the checks below see it.
+  // Binding moves and deletes that move Agents may touch two Runtimes; lock both in the same stable order as update_agent.
+  const [observed] = await transaction.select({ id: runtimes.id }).from(runtimes).where(eq(runtimes.id, runtimeId));
+  if (!observed) throw new ActionError("Runtime not found", 404);
+  const lockIds = [...new Set([runtimeId, ...(typeof options.boundAgents === "object" ? [options.boundAgents.moveTo] : [])])].sort();
+  await transaction.select({ id: runtimes.id }).from(runtimes).where(inArray(runtimes.id, lockIds)).orderBy(runtimes.id).for("update");
   const [runtime] = await transaction.select({ id: runtimes.id, workspaceId: runtimes.workspaceId, ownerId: runtimes.ownerId, agentCli: runtimes.agentCli, daemonId: runtimes.daemonId, lastSeenAt: runtimes.lastSeenAt })
-    .from(runtimes).where(eq(runtimes.id, runtimeId)).for("update");
+    .from(runtimes).where(eq(runtimes.id, runtimeId));
   if (!runtime) throw new ActionError("Runtime not found", 404);
   await options.authorize(runtime);
   const [daemon] = await transaction.select({ hostname: daemons.hostname }).from(daemons).where(eq(daemons.id, runtime.daemonId));
@@ -213,11 +218,13 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
       name: "register_daemon", kind: "write" as const,
       input: Type.Object({
         hostname: Type.String({ minLength: 1, maxLength: 255 }), version: Type.String({ minLength: 1, maxLength: 64 }), agentClis: Type.Array(cli, { uniqueItems: true }),
+        /** Optional for old Daemons; omission means they support no negotiated features. */
+        capabilities: Type.Optional(Type.Array(daemonCapability, { uniqueItems: true })),
         /** Set when the Daemon has no local credential file, or a Daemon credential was refused: the server then issues a new one even if the active one is fine. */
         rotate: Type.Optional(Type.Boolean()),
       }),
       output: Type.Object({ daemonId: Type.String({ format: "uuid" }), runtimes: Type.Array(output), daemonToken: Type.Optional(Type.String()) }),
-      handler: async (context: Context, input: { hostname: string; version: string; agentClis: Array<"claude" | "codex">; rotate?: boolean }) => {
+      handler: async (context: Context, input: { hostname: string; version: string; agentClis: Array<"claude" | "codex">; capabilities?: Array<"runtime_environment" | "runtime_sandbox">; rotate?: boolean }) => {
         if (!context.apiTokenId) throw new ActionError("Daemon registration requires a Personal API token", 403);
         const [caller] = await db.select({ daemonOnly: apiTokens.daemonOnly }).from(apiTokens).where(eq(apiTokens.id, context.apiTokenId));
         if (!caller || caller.daemonOnly) throw new ActionError("Daemon registration requires a Personal API token", 403);
@@ -234,7 +241,7 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
           let daemonId: string;
           let activeTokenId: string;
           if (current && !input.rotate && activeLeftMs >= rotateBeforeMs) {
-            const [daemon] = await tx.update(daemons).set({ version: input.version, lastHeartbeatAt: timestamp }).where(eq(daemons.id, current.id)).returning({ id: daemons.id });
+            const [daemon] = await tx.update(daemons).set({ version: input.version, capabilities: input.capabilities ?? [], lastHeartbeatAt: timestamp }).where(eq(daemons.id, current.id)).returning({ id: daemons.id });
             daemonId = daemon!.id;
             activeTokenId = current.tokenId;
           } else {
@@ -242,14 +249,14 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
             daemonToken = minted.token;
             activeTokenId = minted.id;
             if (current) {
-              const [daemon] = await tx.update(daemons).set({ tokenId: minted.id, version: input.version, lastHeartbeatAt: timestamp }).where(eq(daemons.id, current.id)).returning({ id: daemons.id });
+              const [daemon] = await tx.update(daemons).set({ tokenId: minted.id, version: input.version, capabilities: input.capabilities ?? [], lastHeartbeatAt: timestamp }).where(eq(daemons.id, current.id)).returning({ id: daemons.id });
               daemonId = daemon!.id;
               // The previous credential stays usable for the grace period, never past its own expiry.
               const graceEnd = new Date(timestamp.getTime() + DAEMON_ROTATION_GRACE_MS);
               const graceExpiry = current.expiresAt && current.expiresAt < graceEnd ? current.expiresAt : graceEnd;
               await tx.update(apiTokens).set({ expiresAt: graceExpiry }).where(and(eq(apiTokens.id, current.tokenId), isNull(apiTokens.revokedAt)));
             } else {
-              const [daemon] = await tx.insert(daemons).values({ ownerId: context.userId, tokenId: minted.id, hostname: input.hostname, version: input.version, lastHeartbeatAt: timestamp }).returning({ id: daemons.id });
+              const [daemon] = await tx.insert(daemons).values({ ownerId: context.userId, tokenId: minted.id, hostname: input.hostname, version: input.version, capabilities: input.capabilities ?? [], lastHeartbeatAt: timestamp }).returning({ id: daemons.id });
               daemonId = daemon!.id;
             }
           }
@@ -301,8 +308,14 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
       handler: async (context: Context, input: { runtimeId: string; name: string; sandbox: "full" | "read-only" | "run-folder"; filesystemAllowlist: string[]; networkAllowlist: string[] }) => {
         const runtime = await ownedRuntime(context.userId, input.runtimeId);
         if (input.sandbox === "full" && (input.filesystemAllowlist.length || input.networkAllowlist.length)) throw new ActionError("Full access profiles do not use allowlists", 400);
-        const [profile] = await db.insert(runtimeProfiles).values({ ...input }).returning();
-        await auditAgentChange(db, { workspaceId: runtime.workspaceId, entityType: "runtime", entityId: runtime.id, field: "profile_created", oldValue: null, newValue: { id: profile!.id, name: input.name, sandbox: input.sandbox }, actorId: context.userId });
+        const profile = await db.transaction(async (transaction) => {
+          const database = transaction as unknown as Database;
+          const [locked] = await database.select({ id: runtimes.id }).from(runtimes).where(eq(runtimes.id, runtime.id)).for("update");
+          if (!locked) throw new ActionError("Runtime not found", 404);
+          const [created] = await database.insert(runtimeProfiles).values({ ...input }).returning();
+          await auditAgentChange(database, { workspaceId: runtime.workspaceId, entityType: "runtime", entityId: runtime.id, field: "profile_created", oldValue: null, newValue: { id: created!.id, name: input.name, sandbox: input.sandbox }, actorId: context.userId });
+          return created!;
+        });
         return profile!;
       },
     },
@@ -311,13 +324,19 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
       input: Type.Object({ profileId: Type.String({ format: "uuid" }), name: Type.String({ minLength: 1, maxLength: 80 }), sandbox: Type.Union([Type.Literal("full"), Type.Literal("read-only"), Type.Literal("run-folder")]), filesystemAllowlist: Type.Array(Type.String({ maxLength: 500 }), { maxItems: 30 }), networkAllowlist: Type.Array(Type.String({ maxLength: 253 }), { maxItems: 100 }) }),
       output: Type.Object({ id: Type.String({ format: "uuid" }), runtimeId: Type.String({ format: "uuid" }), name: Type.String(), sandbox: Type.String(), filesystemAllowlist: Type.Array(Type.String()), networkAllowlist: Type.Array(Type.String()) }),
       handler: async (context: Context, input: { profileId: string; name: string; sandbox: "full" | "read-only" | "run-folder"; filesystemAllowlist: string[]; networkAllowlist: string[] }) => {
-        const [prior] = await db.select().from(runtimeProfiles).where(eq(runtimeProfiles.id, input.profileId));
-        if (!prior) throw new ActionError("Runtime profile not found", 404);
-        const runtime = await ownedRuntime(context.userId, prior.runtimeId);
+        const [found] = await db.select().from(runtimeProfiles).where(eq(runtimeProfiles.id, input.profileId));
+        if (!found) throw new ActionError("Runtime profile not found", 404);
+        const runtime = await ownedRuntime(context.userId, found.runtimeId);
         if (input.sandbox === "full" && (input.filesystemAllowlist.length || input.networkAllowlist.length)) throw new ActionError("Full access profiles do not use allowlists", 400);
-        const [updated] = await db.update(runtimeProfiles).set({ name: input.name, sandbox: input.sandbox, filesystemAllowlist: input.filesystemAllowlist, networkAllowlist: input.networkAllowlist }).where(eq(runtimeProfiles.id, prior.id)).returning();
-        await auditAgentChange(db, { workspaceId: runtime.workspaceId, entityType: "runtime", entityId: runtime.id, field: "profile_updated", oldValue: { name: prior.name, sandbox: prior.sandbox, filesystemAllowlist: prior.filesystemAllowlist, networkAllowlist: prior.networkAllowlist }, newValue: { name: input.name, sandbox: input.sandbox, filesystemAllowlist: input.filesystemAllowlist, networkAllowlist: input.networkAllowlist }, actorId: context.userId });
-        return updated!;
+        return db.transaction(async (transaction) => {
+          const database = transaction as unknown as Database;
+          await database.select({ id: runtimes.id }).from(runtimes).where(eq(runtimes.id, runtime.id)).for("update");
+          const [prior] = await database.select().from(runtimeProfiles).where(and(eq(runtimeProfiles.id, input.profileId), eq(runtimeProfiles.runtimeId, runtime.id)));
+          if (!prior) throw new ActionError("Runtime profile not found", 404);
+          const [updated] = await database.update(runtimeProfiles).set({ name: input.name, sandbox: input.sandbox, filesystemAllowlist: input.filesystemAllowlist, networkAllowlist: input.networkAllowlist }).where(eq(runtimeProfiles.id, prior.id)).returning();
+          await auditAgentChange(database, { workspaceId: runtime.workspaceId, entityType: "runtime", entityId: runtime.id, field: "profile_updated", oldValue: { name: prior.name, sandbox: prior.sandbox, filesystemAllowlist: prior.filesystemAllowlist, networkAllowlist: prior.networkAllowlist }, newValue: { name: input.name, sandbox: input.sandbox, filesystemAllowlist: input.filesystemAllowlist, networkAllowlist: input.networkAllowlist }, actorId: context.userId });
+          return updated!;
+        });
       },
     },
     deleteRuntimeProfile: {
@@ -364,12 +383,17 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
     setRuntimeSandboxEnforcement: {
       name: "set_runtime_sandbox_enforcement", kind: "write" as const,
       input: Type.Object({ runtimeId: Type.String({ format: "uuid" }), enforceSandbox: Type.Boolean() }), output: Type.Object({ id: Type.String(), enforceSandbox: Type.Boolean() }),
-      handler: async (context: Context, input: { runtimeId: string; enforceSandbox: boolean }) => {
-        const prior = await ownedRuntime(context.userId, input.runtimeId);
-        await db.update(runtimes).set({ enforceSandbox: input.enforceSandbox }).where(eq(runtimes.id, prior.id));
-        await auditAgentChange(db, { workspaceId: prior.workspaceId, entityType: "runtime", entityId: prior.id, field: "enforce_sandbox", oldValue: prior.enforceSandbox, newValue: input.enforceSandbox, actorId: context.userId });
+      handler: async (context: Context, input: { runtimeId: string; enforceSandbox: boolean }) => db.transaction(async (transaction) => {
+        const database = transaction as unknown as Database;
+        const [prior] = await database.select({ id: runtimes.id, ownerId: runtimes.ownerId, workspaceId: runtimes.workspaceId, enforceSandbox: runtimes.enforceSandbox })
+          .from(runtimes).where(eq(runtimes.id, input.runtimeId)).for("update");
+        if (!prior) throw new ActionError("Runtime not found", 404);
+        if (prior.ownerId !== context.userId) throw new ActionError("Only the Runtime owner can change profiles", 403);
+        await requireWorkspaceRole(database, context.userId, prior.workspaceId, "read");
+        await database.update(runtimes).set({ enforceSandbox: input.enforceSandbox }).where(eq(runtimes.id, prior.id));
+        await auditAgentChange(database, { workspaceId: prior.workspaceId, entityType: "runtime", entityId: prior.id, field: "enforce_sandbox", oldValue: prior.enforceSandbox, newValue: input.enforceSandbox, actorId: context.userId });
         return { id: prior.id, enforceSandbox: input.enforceSandbox };
-      },
+      }),
     },
     shareRuntime: {
       name: "share_runtime", kind: "write" as const,

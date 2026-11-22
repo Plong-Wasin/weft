@@ -295,6 +295,8 @@ export const daemons = pgTable("daemons", {
   hostname: text("hostname").notNull(),
   tokenId: uuid("token_id").notNull().references(() => apiTokens.id, { onDelete: "cascade" }),
   version: text("version").notNull(),
+  /** Explicit protocol features this Daemon can safely execute; empty for historical registrations. */
+  capabilities: jsonb("capabilities").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
   lastHeartbeatAt: timestamp("last_heartbeat_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [uniqueIndex().on(table.tokenId)]);
@@ -517,6 +519,8 @@ export const notifications = pgTable("notifications", {
   workItemId: uuid("work_item_id").references(() => workItems.id, { onDelete: "cascade" }),
   wikiPageId: uuid("wiki_page_id").references(() => wikiPages.id, { onDelete: "cascade" }),
   commentId: uuid("comment_id").references(() => comments.id, { onDelete: "cascade" }),
+  /** A work-item-free scheduled Run a notification should open. */
+  runId: uuid("run_id").references((): AnyPgColumn => runs.id, { onDelete: "cascade" }),
   recurrenceId: uuid("recurrence_id").references(() => recurrences.id, { onDelete: "cascade" }),
   detail: text("detail"),
   jobId: uuid("job_id").notNull(),
@@ -1092,6 +1096,8 @@ export const runs = pgTable("runs", {
   sessionFolder: text("session_folder"),
   /** One-way hash of the Runtime Agent environment used for this Session; a change starts a new CLI Session. */
   runtimeEnvironmentHash: text("runtime_environment_hash"),
+  /** Immutable permission policy delivered when this Run was claimed; start refuses if current policy differs. */
+  runtimeSandboxPolicy: jsonb("runtime_sandbox_policy").$type<{ profileId: string | null; mode: string; filesystemAllowlist: string[]; networkAllowlist: string[]; enforce: boolean } | null>(),
   /** Encrypted secret values captured at claim; cleared when the Runtime Run reaches a terminal status. */
   runtimeEnvironmentSecrets: text("runtime_environment_secrets"),
   /** `resumed` when the Run continued the previous Session, `new` when it started one. Null for server Runs and Runs not yet started. */

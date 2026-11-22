@@ -236,13 +236,17 @@ export function createAgentActions(db: Database) {
       input: Type.Object({ agentId: uuid(), profileId: uuid() }), output: agentOutput,
       handler: async (context: Context, input: { agentId: string; profileId: string }) => db.transaction(async (transaction) => {
         const database = tx(transaction);
-        const [agent] = await database.select().from(agents).where(eq(agents.id, input.agentId));
+        const [observedAgent] = await database.select().from(agents).where(eq(agents.id, input.agentId));
         // The owner check comes first: an Agent with no Runtime has no owner, so anyone else gets the same refusal.
-        const [runtime] = agent?.runtimeId ? await database.select({ id: runtimes.id, ownerId: runtimes.ownerId, workspaceId: runtimes.workspaceId }).from(runtimes).where(eq(runtimes.id, agent.runtimeId)) : [];
-        if (!agent || !runtime || runtime.ownerId !== context.userId) throw new ActionError("Only the Runtime owner can choose this Agent's profile", 403);
+        const [observedRuntime] = observedAgent?.runtimeId ? await database.select({ id: runtimes.id }).from(runtimes).where(eq(runtimes.id, observedAgent.runtimeId)) : [];
+        if (!observedAgent || !observedRuntime) throw new ActionError("Only the Runtime owner can choose this Agent's profile", 403);
+        await database.select({ id: runtimes.id }).from(runtimes).where(eq(runtimes.id, observedRuntime.id)).for("update");
+        const [runtime] = await database.select({ id: runtimes.id, ownerId: runtimes.ownerId, workspaceId: runtimes.workspaceId }).from(runtimes).where(eq(runtimes.id, observedRuntime.id));
+        const [agent] = await database.select().from(agents).where(eq(agents.id, input.agentId)).for("update");
+        if (!agent || agent.runtimeId !== observedAgent.runtimeId || !runtime || agent.runtimeId !== runtime.id) throw new ActionError("The Agent's Runtime changed; reload settings and try again", 409);
+        if (runtime.ownerId !== context.userId) throw new ActionError("Only the Runtime owner can choose this Agent's profile", 403);
         const role = await requireWorkspaceRole(database, context.userId, runtime.workspaceId, "read");
         if (role === "Guest") throw new ActionError("Guests cannot manage Agent settings", 403);
-        await database.select({ id: runtimes.id }).from(runtimes).where(eq(runtimes.id, runtime.id)).for("update");
         const [profile] = await database.select({ id: runtimeProfiles.id, name: runtimeProfiles.name, sandbox: runtimeProfiles.sandbox }).from(runtimeProfiles).where(and(eq(runtimeProfiles.id, input.profileId), eq(runtimeProfiles.runtimeId, runtime.id)));
         if (!profile) throw new ActionError("Profile must belong to the Agent's Runtime", 400);
         const [enforcing] = await database.select({ enforceSandbox: runtimes.enforceSandbox }).from(runtimes).where(eq(runtimes.id, runtime.id));
@@ -278,6 +282,15 @@ export function createAgentActions(db: Database) {
         assertLimits(input);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
+          const creationRole = await requireWorkspaceRole(database, context.userId, input.workspaceId, "read");
+          if (creationRole !== "Admin" && (creationRole !== "Member" || !input.runtimeId)) throw new ActionError("Only a workspace Admin can create a server Agent; Members may create an Agent on their own Runtime", 403);
+          if (creationRole !== "Admin" && (input.autopilot !== undefined || input.canWakeAgents !== undefined)) throw new ActionError("Only a workspace Admin can change Autopilot or allow an Agent to wake other Agents", 403);
+          if (input.runtimeId) {
+            const [runtime] = await database.select({ id: runtimes.id, ownerId: runtimes.ownerId, shared: runtimes.shared }).from(runtimes)
+              .where(and(eq(runtimes.id, input.runtimeId), eq(runtimes.workspaceId, input.workspaceId))).for("update");
+            if (!runtime || !runtime.shared) throw new ActionError("Runtime must be shared with this workspace", 400);
+            if (creationRole !== "Admin" && runtime.ownerId !== context.userId) throw new ActionError("A Member may create an Agent only on their own Runtime shared with this workspace", 403);
+          }
           const runtimeProfileId = await resolveProfile(database, input.runtimeId ?? null, null);
           const id = crypto.randomUUID();
           // The bot user has no account or session, so nobody can sign in as it.
@@ -288,7 +301,7 @@ export function createAgentActions(db: Database) {
             maxToolCalls: input.maxToolCalls ?? agentLimitDefaults.maxToolCalls, maxTokens: input.maxTokens ?? agentLimitDefaults.maxTokens,
             timeoutSeconds: input.timeoutSeconds ?? agentLimitDefaults.timeoutSeconds, monthlyTokenBudget: input.monthlyTokenBudget ?? null,
             autopilot: input.runtimeId ? true : input.autopilot ?? false, canWakeAgents: role === "Admin" ? input.canWakeAgents ?? false : false,
-            memberOwned: role === "Member",
+            memberOwned: creationRole === "Member",
             runtimeId: input.runtimeId ?? null, runtimeProfileId, cliModel: input.cliModel ?? null, maxConcurrentRuns: input.maxConcurrentRuns ?? 6,
           }).returning();
           await initializeAgentAccess(database, row!.id);
@@ -305,12 +318,17 @@ export function createAgentActions(db: Database) {
         assertLimits(input);
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
-          const agent = await loadManageableAgent(database, context, input.agentId, true);
+          const observed = await loadManageableAgent(database, context, input.agentId);
+          const runtimeId = input.runtimeId === undefined ? observed.runtimeId : input.runtimeId;
+          const policyRuntimeIds = [...new Set([observed.runtimeId, runtimeId].filter((id): id is string => id !== null))].sort();
+          if (policyRuntimeIds.length) await database.select({ id: runtimes.id }).from(runtimes).where(inArray(runtimes.id, policyRuntimeIds)).orderBy(runtimes.id).for("update");
+          const [agent] = await database.select().from(agents).where(eq(agents.id, input.agentId)).for("update");
+          if (!agent || agent.runtimeId !== observed.runtimeId) throw new ActionError("The Agent's Runtime changed; reload settings and try again", 409);
+          await loadManageableAgent(database, context, input.agentId);
           const role = await requireWorkspaceRole(database, context.userId, agent.workspaceId, "read");
           if (role !== "Admin" && (input.autopilot !== undefined || input.canWakeAgents !== undefined || input.allowProjectActions !== undefined || input.allowMemberActions !== undefined || input.allowFeatureActions !== undefined || input.allowExportActions !== undefined || input.runtimeId !== undefined)) {
             throw new ActionError("Only a workspace Admin can change Autopilot, Agent grants, or Runtime bindings", 403);
           }
-          const runtimeId = input.runtimeId === undefined ? agent.runtimeId : input.runtimeId;
           const memberOwned = input.runtimeId !== undefined && runtimeId !== agent.runtimeId ? false : agent.memberOwned;
           const runtimeProfileId = runtimeId === agent.runtimeId ? agent.runtimeProfileId : await resolveProfile(database, runtimeId, null);
           if (input.autopilot === true && !runtimeId) {

@@ -182,54 +182,70 @@ function AgentRuntimeProfile({ agent, onSaved, onFailed }: { agent: Pick<AgentRe
   </fieldset>;
 }
 
-/** Only the Runtime owner can replace these values; reads return names only, never existing secret values. */
+/** Only the Runtime owner can manage these values; reads return names and classifications, never existing values. */
 function AgentRuntimeEnvironment({ agent, onFailed }: { agent: Pick<AgentRecord, "id" | "runtimeId">; onFailed: () => void }) {
   const [classifications, setClassifications] = React.useState<Array<{ name: string; classification: "secret" | "non-secret" }>>([]);
-  const [rows, setRows] = React.useState<Array<{ key: string; value: string }>>([]);
+  const [savedClassifications, setSavedClassifications] = React.useState<Array<{ name: string; classification: "secret" | "non-secret" }>>([]);
+  const [revision, setRevision] = React.useState("");
+  const [editing, setEditing] = React.useState<string | null>(null);
+  const [value, setValue] = React.useState("");
+  const [newName, setNewName] = React.useState("");
+  const [newValue, setNewValue] = React.useState("");
   const [loaded, setLoaded] = React.useState(false);
   const [saved, setSaved] = React.useState(false);
   React.useEffect(() => {
     if (!agent.runtimeId) return;
-    void action<{ variables: Array<{ name: string; classification: "secret" | "non-secret" }> }>("get_agent_runtime_environment_classifications", { agentId: agent.id }).then((result) => {
-      if (result) { setClassifications(result.variables); setRows(result.variables.length ? result.variables.map(({ name }) => ({ key: name, value: "" })) : [{ key: "", value: "" }]); }
+    void action<{ revision: string; variables: Array<{ name: string; classification: "secret" | "non-secret" }> }>("get_agent_runtime_environment_editor", { agentId: agent.id }).then((result) => {
+      if (result) { setRevision(result.revision); setClassifications(result.variables); setSavedClassifications(result.variables); }
       setLoaded(true);
     });
   }, [agent.id, agent.runtimeId]);
   if (!agent.runtimeId || !loaded) return null;
+  const apply = async (set: Record<string, string>, remove: string[] = []) => {
+    const result = await action<{ revision: string; variables: typeof classifications }>("update_agent_runtime_environment", { agentId: agent.id, revision, set, remove });
+    if (!result) {
+      const latest = await action<{ revision: string; variables: typeof classifications }>("get_agent_runtime_environment_editor", { agentId: agent.id });
+      if (latest) { setRevision(latest.revision); setClassifications(latest.variables); setSavedClassifications(latest.variables); }
+      setEditing(null); setValue(""); setNewName(""); setNewValue(""); onFailed(); return false;
+    }
+    setRevision(result.revision); setClassifications(result.variables); setSavedClassifications(result.variables); setEditing(null); setValue(""); setNewName(""); setNewValue(""); setSaved(true); return true;
+  };
+  const classificationDirty = JSON.stringify(classifications) !== JSON.stringify(savedClassifications);
   return <fieldset data-runtime-environment className="grid min-w-0 gap-2 border-0 p-0">
     <legend className="text-13 font-medium text-secondary">{translate("agents.runtimeEnvironment")}</legend>
     <p className="text-12 text-secondary">{translate("agents.runtimeEnvironmentHelp")}</p>
-    {classifications.length > 0 && <div className="grid gap-1" aria-label={translate("agents.runtimeEnvironmentClassifications")}>
-      {classifications.map(({ name, classification }) => <label key={name} className="flex flex-wrap items-center gap-2 text-12">
-        <span className="font-medium">{name}</span>
-        <select aria-label={`${name} ${translate("agents.environmentClassification")}`} value={classification} onChange={(event) => setClassifications((current) => current.map((entry) => entry.name === name ? { ...entry, classification: event.target.value as "secret" | "non-secret" } : entry))}>
-          <option value="secret">{translate("agents.environmentSecret")}</option><option value="non-secret">{translate("agents.environmentNonSecret")}</option>
-        </select>
-      </label>)}
-      <button type="button" className="secondary justify-self-start" onClick={async () => {
+    {classifications.length > 0 && <div role="group" className="grid gap-2" aria-label={translate("agents.runtimeEnvironmentClassifications")}>
+      {classifications.map(({ name, classification }) => <div key={name} data-environment-name={name} className="grid min-w-0 gap-2 rounded-md border border-subtle p-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+        <strong className="break-all text-13">{name}</strong>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <label className="flex items-center gap-2 text-12">{translate("agents.environmentClassification")}
+            <select aria-label={`${name} ${translate("agents.environmentClassification")}`} value={classification} onChange={(event) => setClassifications((current) => current.map((entry) => entry.name === name ? { ...entry, classification: event.target.value as "secret" | "non-secret" } : entry))}>
+              <option value="secret">{translate("agents.environmentSecret")}</option><option value="non-secret">{translate("agents.environmentNonSecret")}</option>
+            </select>
+          </label>
+          {editing === name ? <>
+            <label className="min-w-[12rem] flex-1 text-12">{translate("agents.environmentValue")}<input id={`environment-value-${agent.id}`} type="password" autoComplete="new-password" aria-describedby={`environment-value-help-${agent.id}`} value={value} onChange={(event) => setValue(event.target.value)} /></label>
+            <small id={`environment-value-help-${agent.id}`} className="text-secondary">{translate("agents.environmentUnchanged")}</small>
+            <button type="button" onClick={() => void apply({ [name]: value })}>{translate("agents.environmentUpdate")}</button>
+            <button type="button" className="secondary" onClick={() => { setEditing(null); setValue(""); }}>{translate("agents.cancel")}</button>
+          </> : <button type="button" className="secondary" disabled={classificationDirty} onClick={() => { setEditing(name); setValue(""); }}>{translate("agents.environmentChangeValue")}</button>}
+          <button type="button" className="secondary" disabled={classificationDirty} onClick={() => void apply({}, [name])}>{translate("agents.environmentRemove")}</button>
+        </div>
+      </div>)}
+      <button type="button" className="secondary justify-self-start" disabled={!classificationDirty} onClick={async () => {
         const result = await action<{ variables: typeof classifications }>("classify_agent_runtime_environment", { agentId: agent.id, classifications: Object.fromEntries(classifications.map(({ name, classification }) => [name, classification])) });
         if (!result) { onFailed(); return; }
-        setClassifications(result.variables); setSaved(true);
+        setClassifications(result.variables); setSavedClassifications(result.variables);
+        const latest = await action<{ revision: string }>("get_agent_runtime_environment_editor", { agentId: agent.id });
+        if (latest) setRevision(latest.revision);
+        setSaved(true);
       }}>{translate("agents.environmentSaveClassifications")}</button>
     </div>}
-    {rows.map((row, index) => <div key={index} className="grid min-w-0 gap-2 sm:grid-cols-2">
-      <label>{translate("agents.environmentName")}<input value={row.key} autoComplete="off" onChange={(event) => setRows((current) => current.map((entry, i) => i === index ? { ...entry, key: event.target.value } : entry))} /></label>
-      <label>{translate("agents.environmentValue")}<input type="password" autoComplete="new-password" value={row.value} onChange={(event) => setRows((current) => current.map((entry, i) => i === index ? { ...entry, value: event.target.value } : entry))} /></label>
-    </div>)}
-    <div className="flex flex-wrap gap-2">
-      <button type="button" className="secondary" onClick={() => setRows((current) => [...current, { key: "", value: "" }])}>{translate("agents.environmentAdd")}</button>
-      <button type="button" disabled={rows.some((row) => !row.key || !row.value)} onClick={async () => {
-        const variables = Object.fromEntries(rows.map(({ key, value }) => [key.trim(), value]));
-        const result = await action<{ variables: string[] }>("set_agent_runtime_environment", { agentId: agent.id, variables });
-        if (!result) { onFailed(); return; }
-        setClassifications(result.variables.map((name) => ({ name, classification: "secret" }))); setRows(result.variables.map((name) => ({ key: name, value: "" }))); setSaved(true);
-      }}>{translate("agents.environmentSave")}</button>
-      <button type="button" className="secondary" disabled={!classifications.length} onClick={async () => {
-        const result = await action<{ variables: typeof classifications }>("set_agent_runtime_environment", { agentId: agent.id, variables: {} });
-        if (!result) { onFailed(); return; }
-        setClassifications([]); setRows([{ key: "", value: "" }]); setSaved(false);
-      }}>{translate("agents.environmentClear")}</button>
-    </div>
+    <form method="post" className="grid min-w-0 gap-2 rounded-md border border-subtle p-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end" onSubmit={(event) => { event.preventDefault(); void apply({ [newName.trim()]: newValue }); }}>
+      <label>{translate("agents.environmentName")}<input name="variable-name" required value={newName} autoComplete="off" autoCapitalize="none" spellCheck={false} onChange={(event) => setNewName(event.target.value)} /></label>
+      <label>{translate("agents.environmentValue")}<input name="variable-value" type="password" autoComplete="new-password" required value={newValue} onChange={(event) => setNewValue(event.target.value)} /></label>
+      <button type="submit" disabled={classificationDirty}>{translate("agents.environmentAdd")}</button>
+    </form>
     {saved && <p role="status" className="text-12 text-secondary">{translate("agents.environmentSaved")}</p>}
   </fieldset>;
 }

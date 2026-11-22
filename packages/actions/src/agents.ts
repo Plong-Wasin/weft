@@ -356,11 +356,12 @@ export function createAgentActions(db: Database) {
             await database.delete(agentAccess).where(eq(agentAccess.agentId, agent.id));
             await initializeAgentAccess(database, agent.id);
           }
-          if (agent.runtimeId && runtimeId && agent.runtimeId !== runtimeId) {
-            // Runs already dispatched to the old computer cannot keep using its credentials after this binding moves.
-            // Queued Runs have no runtimeId yet and remain available to the newly bound Runtime. Running processes are marked stopping
-            // and receive the Daemon's normal cancellation signal; the server cannot synchronously terminate a process on the old computer.
-            await revokeAgentRuns(database, agent.id, context.userId, "Agent was rebound to another Runtime", undefined, { runtimeId: agent.runtimeId, followUp: true, notify: true });
+          if (agent.runtimeId !== runtimeId) {
+            // Revoke only work already executing in the old class/Runtime. Queued Runs may proceed under the new binding,
+            // or are handed to the server worker below when the Agent is unbound. Running external processes receive cancellation but cannot be killed synchronously.
+            await revokeAgentRuns(database, agent.id, context.userId, "Agent was rebound to another Runtime", undefined, {
+              runtimeId: agent.runtimeId, executingOnly: agent.runtimeId === null, followUp: true, notifyDetail: "runtime_rebound",
+            });
           }
           const grantValues = ["allowProjectActions", "allowMemberActions", "allowFeatureActions", "allowExportActions"] as const;
           const changedGrants = Object.fromEntries(grantValues.filter((key) => input[key] !== undefined && input[key] !== agent[key]).map((key) => [key, { from: agent[key], to: input[key] }]));

@@ -38,14 +38,17 @@ const columnProperties = displayProperties.filter((property) => property !== "cy
 /** The spreadsheet of work items across every project the viewer can access. Reads only; edits happen in the work item itself. */
 function WorkspaceSheet({ items, projects, states, labels, people, workspaceSlug, props, empty }: { items: Item[]; projects: Project[]; states: State[]; labels: Label[]; people: Member[]; workspaceSlug: string; props: DisplayProperty[]; empty: string }) {
   const columns = props.filter((property) => (columnProperties as readonly string[]).includes(property) && property !== "id");
-  const stateOf = (item: Item) => states.find((state) => state.id === item.stateId);
+  const statesById = React.useMemo(() => new Map(states.map((state) => [state.id, state])), [states]);
+  const labelsById = React.useMemo(() => new Map(labels.map((label) => [label.id, label])), [labels]);
+  const peopleById = React.useMemo(() => new Map(people.map((person) => [person.userId, person])), [people]);
+  const stateOf = (item: Item) => statesById.get(item.stateId);
   const cellOf = (item: Item, property: DisplayProperty) => {
     switch (property) {
       case "state": return <span className="flex items-center gap-1.5"><StateIcon group={stateOf(item)?.group ?? "unstarted"} />{stateOf(item)?.name}</span>;
       case "priority": return <span className="flex items-center gap-1.5"><PriorityIcon priority={item.priority} />{t(`workItems.priority.${item.priority}`)}</span>;
       case "assignee": return item.assigneeIds.length === 0 ? <span className="text-tertiary">—</span>
-        : <span className="flex items-center -space-x-1">{item.assigneeIds.slice(0, 3).map((id) => <Avatar key={id} name={people.find((person) => person.userId === id)?.name ?? "?"} id={id} agent={people.find((person) => person.userId === id)?.isAgent} />)}</span>;
-      case "labels": return item.labelIds.length === 0 ? <span className="text-tertiary">—</span> : <span>{item.labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ")}</span>;
+        : <span className="flex items-center -space-x-1">{item.assigneeIds.slice(0, 3).map((id) => { const person = peopleById.get(id); return <Avatar key={id} name={person?.name ?? "?"} id={id} agent={person?.isAgent} />; })}</span>;
+      case "labels": return item.labelIds.length === 0 ? <span className="text-tertiary">—</span> : <span>{item.labelIds.map((id) => labelsById.get(id)?.name).filter(Boolean).join(", ")}</span>;
       case "dates": return <span>{item.startDate && item.dueDate ? `${formatDay(item.startDate)} – ${formatDay(item.dueDate)}` : item.startDate ? formatDay(item.startDate) : item.dueDate ? formatDay(item.dueDate) : "—"}</span>;
       default: return null;
     }

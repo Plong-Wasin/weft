@@ -10,7 +10,7 @@ const apiPort = Number(Bun.env.E2E_API_PORT ?? 3129);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5229);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
-const shots = "/home/plong/workspace/weft/.local/ai-ux-follow-up/10";
+const shots = "/home/plong/workspace/weft/.local/continuous-improvements/workspace-performance";
 const { client, db } = createDatabase();
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
@@ -32,6 +32,12 @@ try {
   const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
+  await page.addInitScript(() => {
+    (window as Window & { __workspaceLongTasks?: number[] }).__workspaceLongTasks = [];
+    new PerformanceObserver((entries) => {
+      (window as Window & { __workspaceLongTasks: number[] }).__workspaceLongTasks.push(...entries.getEntries().map((entry) => entry.duration));
+    }).observe({ type: "longtask", buffered: true });
+  });
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const call = async <T>(name: string, body: unknown) => {
@@ -96,15 +102,14 @@ try {
   const stateByProject = new Map<string, string>([[template!.id, states[0]!.id]]);
   for (let index = 0; index < projectRows.length; index += 1) stateByProject.set(projectRows[index]!.id, clonedStates[index * states.length]!.id);
   const fixture = allProjects.flatMap((project, projectIndex) => Array.from({ length: 10 }, (_, itemIndex) => ({
-    workspaceId, projectId: project.id, sequence: itemIndex + 1, title: `Scale ${String(projectIndex).padStart(3, "0")} item ${String(itemIndex + 1).padStart(2, "0")}`,
+    id: crypto.randomUUID(), workspaceId, projectId: project.id, sequence: itemIndex + 1, title: `Scale ${String(projectIndex).padStart(3, "0")} item ${String(itemIndex + 1).padStart(2, "0")}`,
     stateId: stateByProject.get(project.id)!, sortOrder: itemIndex, createdBy: me.user.id,
   })));
   for (let offset = 0; offset < fixture.length; offset += 500) await db.insert(workItems).values(fixture.slice(offset, offset + 500));
   const fixtureLabels = allProjects.map((project, index) => ({ id: crypto.randomUUID(), workspaceId, projectId: project.id, name: `Scale Label ${index}`, color: "#4488cc" }));
   await db.insert(labels).values(fixtureLabels);
-  const fixtureItems = await db.select({ id: workItems.id, projectId: workItems.projectId }).from(workItems).where(eq(workItems.workspaceId, workspaceId));
   const firstItemPerProject = new Map<string, string>();
-  for (const item of fixtureItems) if (!firstItemPerProject.has(item.projectId)) firstItemPerProject.set(item.projectId, item.id);
+  for (const item of fixture) if (!firstItemPerProject.has(item.projectId)) firstItemPerProject.set(item.projectId, item.id);
   await db.insert(workItemLabels).values(fixtureLabels.map((label) => ({ workItemId: firstItemPerProject.get(label.projectId)!, labelId: label.id })));
 
   // The last of 250 Projects is discoverable from the navigation by key and name, on desktop and phone.
@@ -162,7 +167,7 @@ try {
   check(await targetProject.isChecked(), "filtering another Project removed the selected Project from Agent access");
 
   const started = performance.now();
-  const measured = await call<{ items: Array<{ displayId: string }>; truncated: boolean }>("list_workspace_work_items_with_metadata", { workspaceId });
+  const measured = await call<{ items: Array<{ displayId: string; labelIds: string[] }>; truncated: boolean }>("list_workspace_work_items_with_metadata", { workspaceId });
   const apiMs = Math.round(performance.now() - started);
   const payloadBytes = Buffer.byteLength(JSON.stringify(measured));
   check(measured.items.length === 2000 && measured.truncated, `expected a disclosed 2,000-row cap, got ${measured.items.length} rows and truncated=${measured.truncated}`);
@@ -172,34 +177,55 @@ try {
   const renderStarted = performance.now();
   const actionRequests: string[] = [];
   let metadataResponseMs: number | null = null;
-  const actionStarted = new Map<string, number>();
+  const actionStarted = new WeakMap<object, number>();
+  const workItemsResponseMs: number[] = [];
   page.on("request", (request) => {
     const match = new URL(request.url()).pathname.match(/^\/actions\/([^/]+)$/);
     if (match) {
       actionRequests.push(match[1]!);
-      actionStarted.set(request.url(), performance.now());
+      actionStarted.set(request, performance.now());
     }
   });
   page.on("response", (response) => {
-    if (new URL(response.url()).pathname === "/actions/list_workspace_view_metadata") metadataResponseMs = Math.round(performance.now() - (actionStarted.get(response.url()) ?? performance.now()));
+    const elapsed = Math.round(performance.now() - (actionStarted.get(response.request()) ?? performance.now()));
+    const path = new URL(response.url()).pathname;
+    if (path === "/actions/list_workspace_view_metadata") metadataResponseMs = elapsed;
+    if (path === "/actions/list_workspace_work_items_with_metadata") workItemsResponseMs.push(elapsed);
   });
+  const cdp = await context.newCDPSession(page);
+  await cdp.send("Performance.enable");
+  const metricsBefore = await cdp.send("Performance.getMetrics");
+  await page.evaluate(() => (window as Window & { __workspaceLongTasks: number[] }).__workspaceLongTasks.splice(0));
   await page.goto(`${web}/${slug}/workspace-views/all-issues`);
   await page.getByRole("status").filter({ hasText: "Showing the first 2,000" }).waitFor();
   await page.getByTestId("row-SCL000-1").waitFor().catch(() => undefined);
   await page.waitForFunction(() => document.querySelectorAll('[data-testid^="row-"]').length === 2000, null, { timeout: 120_000 });
-  const renderMs = Math.round(performance.now() - renderStarted);
+  const navigationToRowsMs = Math.round(performance.now() - renderStarted);
   const stateLabelRequests = actionRequests.filter((name) => name === "list_states" || name === "list_labels").length;
   if (Bun.env.EXPECT_OPTIMIZED === "true") {
     check(stateLabelRequests === 0, `Workspace View made ${stateLabelRequests} per-Project state/label requests`);
     check(actionRequests.filter((name) => name === "list_workspace_view_metadata").length === 1, `expected one workspace metadata request, got ${actionRequests.join(", ")}`);
   }
-  console.log(`Workspace View request observation: actions=${actionRequests.length}, perProjectStateLabelRequests=${stateLabelRequests}, metadataResponseMs=${metadataResponseMs ?? "missing"}, responseAndRenderMs=${renderMs}`);
+  console.log(`Workspace View request observation: actions=${actionRequests.length}, perProjectStateLabelRequests=${stateLabelRequests}, metadataResponseMs=${metadataResponseMs ?? "missing"}, navigationToRowsMs=${navigationToRowsMs}`);
   const renderedRows = await page.locator('[data-testid^="row-"]').count();
+  const browserMetrics = await page.evaluate(() => {
+    const navigation = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming;
+    return {
+      domContentLoadedMs: Math.round(navigation.domContentLoadedEventEnd - navigation.startTime),
+      loadEventMs: Math.round(navigation.loadEventEnd - navigation.startTime),
+      longTasks: (window as Window & { __workspaceLongTasks: number[] }).__workspaceLongTasks,
+      nodeCount: document.getElementsByTagName("*").length,
+    };
+  });
+  const { metrics } = await cdp.send("Performance.getMetrics");
+  const before = new Map(metricsBefore.metrics.map((entry) => [entry.name, entry.value]));
+  const metric = (name: string) => Number((metrics.find((entry) => entry.name === name)?.value ?? 0) - (before.get(name) ?? 0)).toFixed(3);
+  console.log(`browser profile: ${JSON.stringify({ ...browserMetrics, workItemsResponseMs, metadataResponseMs, scriptDurationSeconds: metric("ScriptDuration"), layoutDurationSeconds: metric("LayoutDuration"), recalcStyleDurationSeconds: metric("RecalcStyleDuration"), jsHeapUsedBytes: metrics.find((entry) => entry.name === "JSHeapUsedSize")?.value ?? null })}`);
   const firstRow = page.getByTestId("row-SCL000-1");
   await firstRow.getByText("Scale Label 0", { exact: true }).waitFor();
   await firstRow.getByText("Backlog", { exact: true }).waitFor();
   await page.screenshot({ path: `${shots}/workspace-view-1440.png`, fullPage: false });
-  console.log(`browser observation desktop: rows=${renderedRows}, renderMs=${renderMs}, screenshot=${shots}/workspace-view-1440.png`);
+  console.log(`browser observation desktop: rows=${renderedRows}, navigationToRowsMs=${navigationToRowsMs}, screenshot=${shots}/workspace-view-1440.png`);
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: `${shots}/workspace-view-390.png`, fullPage: false });

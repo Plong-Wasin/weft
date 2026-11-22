@@ -84,7 +84,7 @@ export function createActionList(db: Database, options: { integrations?: boolean
     admin.listMemberAccounts, admin.suspendMember, admin.reactivateMember, admin.signOutMember, admin.forcePasswordReset, admin.cancelForcedPasswordReset, admin.listMemberApiTokens, admin.revokeMemberApiToken,
     admin.listAuditLog, admin.exportAuditLog, admin.listMySessions, admin.revokeMySession, admin.signOutEverywhere, admin.acknowledgeSecurityNotice,
     members.listMembers, members.createInvite, members.listOpenInvites, members.revokeInvite, members.acceptInvite, members.changeMemberRole, members.removeMember,
-    projects.createProject, projects.listProjects, projects.getProject, projects.updateProject, projects.renameProjectKey,
+    projects.createProject, projects.listProjects, projects.listWorkspaceViewMetadata, projects.getProject, projects.updateProject, projects.renameProjectKey,
     projects.setProjectFeatures, projects.archiveProject, projects.unarchiveProject, projects.joinProject, projects.listProjectMembers,
     projects.addProjectMember, projects.changeProjectMemberRole, projects.removeProjectMember,
     projectPreferences.listProjectPreferences, projectPreferences.setProjectPreference, projectPreferences.setProjectOrder, projectPreferences.resetProjectOrder,

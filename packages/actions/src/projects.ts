@@ -9,6 +9,7 @@ import { defaultTypeOf } from "./work-item-properties";
 import { featureColumns, featuresForShape, featuresOf, featuresPatchSchema, featuresSchema, projectFeatures, projectShapes, type ProjectFeatures, type ProjectShape } from "./features";
 import { ActionError, requireWorkspaceRole, roleLevel, workspaceRoles, type WorkspaceRole } from "./members";
 import { pauseCreatorRecurrences } from "./recurrence-pause";
+import { revokeProjectMemberRuns } from "./run-revocation";
 
 export const projectKeyPattern = /^[A-Z][A-Z0-9]{1,11}$/;
 export const projectVisibilities = ["public", "private"] as const;
@@ -298,7 +299,10 @@ export function createProjectActions(db: Database) {
           if (input.role === "Guest") {
             const [workspaceRole] = await database.select({ role: workspaceMembers.role }).from(workspaceMembers)
               .where(and(eq(workspaceMembers.workspaceId, target.workspaceId), eq(workspaceMembers.userId, input.userId)));
-            if (workspaceRole?.role !== "Admin") await pauseCreatorRecurrences(database, input.userId, { projectId: input.projectId }, "creator no longer has write access to the project", context.userId);
+            if (workspaceRole?.role !== "Admin") {
+              if (target.role !== "Guest") await revokeProjectMemberRuns(database, input.projectId, input.userId, context.userId);
+              await pauseCreatorRecurrences(database, input.userId, { projectId: input.projectId }, "creator no longer has write access to the project", context.userId);
+            }
           }
           const [user] = await database.select({ name: users.name, email: users.email }).from(users).where(eq(users.id, input.userId));
           return { userId: input.userId, name: user!.name, email: user!.email, role: input.role, isAgent: false };
@@ -320,6 +324,7 @@ export function createProjectActions(db: Database) {
             throw new ActionError("A project needs at least one Admin", 400);
           }
           await database.delete(projectMembers).where(eq(projectMembers.id, target.id));
+          await revokeProjectMemberRuns(database, input.projectId, input.userId, context.userId);
           await pauseCreatorRecurrences(database, input.userId, { projectId: input.projectId }, "creator was removed from the project", context.userId);
           return { removed: true };
         });

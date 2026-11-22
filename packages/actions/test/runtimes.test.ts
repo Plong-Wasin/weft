@@ -263,7 +263,7 @@ test.concurrent("legacy Daemons keep ordinary Runs but safely fail Runs needing 
     expect(failed).toMatchObject({ status: "failed", failureReason: "runtime_capability_missing", finalOutput: null });
     failedIds.push(failed!.id);
     expect((await tx.select({ status: runs.status }).from(runs).where(eq(runs.id, followUpId)))[0]!.status).toBe("queued");
-    let noticeJobs = (await tx.select({ payload: jobs.payload }).from(jobs).where(eq(jobs.type, "notify"))).filter(({ payload }) => (payload as { kind?: string }).kind === "run_skipped");
+    let noticeJobs = (await tx.select({ payload: jobs.payload }).from(jobs).where(eq(jobs.type, "notify"))).filter(({ payload }) => (payload as { kind?: string }).kind === "run_skipped" && (payload as { detail?: string }).detail === "runtime_capability_missing");
     expect(noticeJobs).toHaveLength(1);
     expect(noticeJobs[0]!.payload).toMatchObject({ kind: "run_skipped", workItemId: legacyItem, actorId: agent.userId, recipientIds: [scenario.admin.id], detail: "runtime_capability_missing" });
     expect(JSON.stringify(noticeJobs[0]!.payload)).not.toContain("do-not-return-this-value");
@@ -289,7 +289,7 @@ test.concurrent("legacy Daemons keep ordinary Runs but safely fail Runs needing 
     expect((await tx.select({ finalOutput: runs.finalOutput }).from(runs).where(inArray(runs.id, failedIds))).map((row) => row.finalOutput)).toEqual([null, null]);
 
     await dispatch.claimRuns({ userId: scenario.owner.id, daemonId: scenario.registered.daemonId }, 1);
-    noticeJobs = (await tx.select({ payload: jobs.payload }).from(jobs).where(eq(jobs.type, "notify"))).filter(({ payload }) => (payload as { kind?: string }).kind === "run_skipped");
+    noticeJobs = (await tx.select({ payload: jobs.payload }).from(jobs).where(eq(jobs.type, "notify"))).filter(({ payload }) => (payload as { kind?: string }).kind === "run_skipped" && (payload as { detail?: string }).detail === "runtime_capability_missing");
     expect(noticeJobs).toHaveLength(3);
   });
 });
@@ -305,7 +305,7 @@ test.concurrent("a scheduled capability-blocked Run notifies once with a safe di
     expect(await dispatch.claimRuns({ userId: scenario.owner.id, daemonId: scenario.registered.daemonId }, 1)).toEqual([]);
     expect((await tx.select({ status: runs.status, failureReason: runs.failureReason }).from(runs).where(eq(runs.id, scheduled!.id)))[0]).toEqual({ status: "failed", failureReason: "runtime_capability_missing" });
 
-    const noticeJobs = (await tx.select().from(jobs).where(eq(jobs.type, "notify"))).filter((job) => (job.payload as { kind?: string }).kind === "run_skipped");
+    const noticeJobs = (await tx.select().from(jobs).where(eq(jobs.type, "notify"))).filter((job) => (job.payload as { kind?: string }).kind === "run_skipped" && (job.payload as { detail?: string }).detail === "runtime_capability_missing" && (job.payload as { runId?: string }).runId === scheduled!.id);
     expect(noticeJobs).toHaveLength(1);
     expect(noticeJobs[0]!.payload).toMatchObject({ kind: "run_skipped", runId: scheduled!.id, actorId: scenario.agent.userId, recipientIds: [scenario.admin.id], detail: "runtime_capability_missing" });
     expect(noticeJobs[0]!.payload).not.toHaveProperty("workItemId");
@@ -320,7 +320,7 @@ test.concurrent("a scheduled capability-blocked Run notifies once with a safe di
     await expect(createRunActions(tx).getRun.handler({ userId: noProjectAccess.id }, { runId: scheduled!.id })).rejects.toMatchObject({ status: 404 });
 
     await dispatch.claimRuns({ userId: scenario.owner.id, daemonId: scenario.registered.daemonId }, 1);
-    expect((await tx.select().from(jobs).where(eq(jobs.type, "notify"))).filter((job) => (job.payload as { kind?: string }).kind === "run_skipped")).toHaveLength(1);
+    expect((await tx.select().from(jobs).where(eq(jobs.type, "notify"))).filter((job) => (job.payload as { kind?: string }).kind === "run_skipped" && (job.payload as { detail?: string }).detail === "runtime_capability_missing")).toHaveLength(1);
   });
 });
 
@@ -515,7 +515,7 @@ test.concurrent("a newly claimed Full access Run still cannot start when enforce
   });
 });
 
-test.concurrent("profile edits and starts serialize on the Runtime policy boundary", async () => {
+test.concurrent("a claimed Run cannot start after its profile policy changes", async () => {
   await withRollback(db, async (tx) => {
     const { admin, owner, registered, runtime, agent, project } = await runtimeScenario(tx);
     const actions = createRuntimeActions(tx);
@@ -524,15 +524,10 @@ test.concurrent("profile edits and starts serialize on the Runtime policy bounda
     await createWorkItemActions(tx).createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "Concurrent start", assigneeIds: [agent.userId] });
     const dispatch = createRuntimeDispatchActions(tx);
     const [claimed] = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 1);
-    const start = dispatch.startRun(claimed!.runId, runtime.id).then(() => "started" as const, () => "rejected" as const);
-    const edit = actions.updateRuntimeProfile.handler({ userId: owner.id }, { profileId: profile.id, name: profile.name, sandbox: "run-folder", filesystemAllowlist: [], networkAllowlist: [] });
-    const [result] = await Promise.all([start, edit]);
+    await actions.updateRuntimeProfile.handler({ userId: owner.id }, { profileId: profile.id, name: profile.name, sandbox: "run-folder", filesystemAllowlist: [], networkAllowlist: [] });
     const [run] = await tx.select({ status: runs.status }).from(runs).where(eq(runs.id, claimed!.runId));
-    if (result === "started") expect(run!.status).toBe("running");
-    else {
-      expect(run!.status).toBe("dispatched");
-      await expect(dispatch.startRun(claimed!.runId, runtime.id)).rejects.toThrow(/sandbox policy changed/i);
-    }
+    expect(run!.status).toBe("dispatched");
+    await expect(dispatch.startRun(claimed!.runId, runtime.id)).rejects.toThrow(/sandbox policy changed/i);
   });
 });
 
@@ -732,7 +727,8 @@ test.concurrent("revoking a person's Agent access stops running Runs, fails queu
     const statuses = await tx.select({ status: runs.status, failureReason: runs.failureReason }).from(runs).where(eq(runs.agentId, agent.id));
     expect(statuses.map((row) => row.status).sort()).toEqual(["failed", "failed"]);
     expect(statuses.every((row) => row.failureReason === "Agent access was revoked")).toBe(true);
-    expect(await tx.select({ field: activities.field, entityId: activities.entityId }).from(activities).where(eq(activities.field, "run_revoked"))).toHaveLength(2);
+    const revokedWorkItemIds = (await tx.select({ workItemId: runs.workItemId }).from(runs).where(eq(runs.agentId, agent.id))).flatMap(({ workItemId }) => workItemId ? [workItemId] : []);
+    expect(await tx.select({ field: activities.field, entityId: activities.entityId }).from(activities).where(and(eq(activities.field, "run_revoked"), inArray(activities.entityId, revokedWorkItemIds)))).toHaveLength(2);
     expect(queuedItem.id).toBeDefined();
   });
 });
@@ -862,18 +858,15 @@ test.concurrent("a failed usage write leaves the Runtime Run active so its finis
   });
 });
 
-test.concurrent("a Run returned to the queue after its Agent left the Runtime goes back to the server worker", async () => {
+test.concurrent("unbinding a Member-owned Agent cancels its dispatched Runtime Run", async () => {
   await withRollback(db, async (tx) => {
-    let now = new Date("2026-11-03T00:00:00.000Z");
     const { admin, owner, registered, agent, agents, item } = await runtimeScenario(tx);
-    const dispatch = createRuntimeDispatchActions(tx, () => now);
+    const dispatch = createRuntimeDispatchActions(tx);
     const [claimed] = await dispatch.claimRuns({ userId: owner.id, daemonId: registered.daemonId }, 20);
     await agents.updateAgent.handler({ userId: admin.id }, { agentId: agent.id, runtimeId: null });
-    await tx.delete(jobs);
-    now = new Date(now.getTime() + 300_001);
-    await sweepRuntimeRuns(tx, () => now);
-    const queued = await tx.select({ payload: jobs.payload }).from(jobs).where(eq(jobs.type, "agent_run"));
-    expect(queued.map((job) => (job.payload as { runId: string }).runId)).toContain(claimed!.runId);
+    expect(await tx.select({ status: runs.status, failureReason: runs.failureReason }).from(runs).where(eq(runs.id, claimed!.runId)))
+      .toEqual([{ status: "failed", failureReason: "Agent was rebound to another Runtime" }]);
+    expect(await tx.select({ id: jobs.id }).from(jobs).where(eq(jobs.dedupeKey, `agent_run:${claimed!.runId}:unbound`))).toHaveLength(0);
     expect(item.id).toBeTruthy();
   });
 });

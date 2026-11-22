@@ -360,7 +360,7 @@ export function createAgentActions(db: Database) {
             // Revoke only work already executing in the old class/Runtime. Queued Runs may proceed under the new binding,
             // or are handed to the server worker below when the Agent is unbound. Running external processes receive cancellation but cannot be killed synchronously.
             await revokeAgentRuns(database, agent.id, context.userId, "Agent was rebound to another Runtime", undefined, {
-              runtimeId: agent.runtimeId, executingOnly: agent.runtimeId === null, followUp: true, notifyDetail: "runtime_rebound",
+              runtimeId: agent.runtimeId, executingOnly: agent.runtimeId === null, followUp: true, notifyDetail: "execution_binding_changed",
             });
           }
           const grantValues = ["allowProjectActions", "allowMemberActions", "allowFeatureActions", "allowExportActions"] as const;

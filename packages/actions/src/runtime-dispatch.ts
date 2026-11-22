@@ -5,7 +5,7 @@ import { agentSkills, agents, comments, daemons, projects, runMessages, runToken
 import { ActionError } from "./members";
 import { enqueueJob } from "./jobs";
 import { createCommentActions } from "./comments";
-import { agentOwnerCanUseProject, agentRuntimeCanRun, canWriteProject, maxAutomaticRetries, retryAutomatically, startFollowUpRun, runtimeLabelOf, withAgentRunProjectAuthorization } from "./runs";
+import { agentOwnerCanUseProject, agentRuntimeCanRun, canWriteProject, lockRunProjectWriteAccess, maxAutomaticRetries, retryAutomatically, startFollowUpRun, runtimeLabelOf } from "./runs";
 import { followUpCommentBlock } from "./follow-up-comments";
 import { subItemsClosedBlock } from "./sub-items-closed-prompt";
 import { queueRunResultEmail } from "./email-digest";
@@ -238,15 +238,16 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
     }),
     startRun: async (runId: string, runtimeId: string, session?: { mode: "resumed" | "new"; reason: string }) => db.transaction(async (transaction) => {
       const tx = transaction as unknown as Database;
-      const [observedRun] = await tx.select({ runtimeId: runs.runtimeId, status: runs.status }).from(runs).where(eq(runs.id, runId));
+      const [observedRun] = await tx.select().from(runs).where(eq(runs.id, runId));
       if (observedRun?.runtimeId !== runtimeId || observedRun.status !== "dispatched") throw new ActionError("Run is not dispatched to this Runtime", 409);
       // Serialize the start boundary with enforcement changes. Whichever operation obtains this Runtime row lock first
       // defines whether this Run is already running when enforcement is enabled.
       const [runtime] = await tx.select({ enforceSandbox: runtimes.enforceSandbox }).from(runtimes).where(eq(runtimes.id, runtimeId)).for("update");
       if (!runtime) throw new ActionError("Run is not dispatched to this Runtime", 409);
-      const access = await withAgentRunProjectAuthorization(tx, runId, async (state) => state);
-      if (!access.active) throw new ActionError("Run is not dispatched to this Runtime", 409);
-      if (!access.allowed) throw new ActionError("The Originator or Runtime owner no longer has Project write access, or the Runtime binding changed", 403);
+      const [currentAgent] = observedRun.agentId ? await tx.select({ createdBy: agents.createdBy, runtimeId: agents.runtimeId, memberOwned: agents.memberOwned }).from(agents).where(eq(agents.id, observedRun.agentId)).for("share") : [];
+      if (!currentAgent || currentAgent.runtimeId !== runtimeId || !(await agentRuntimeCanRun(tx, { runtimeId }))) throw new ActionError("The Agent is no longer bound to this shared Runtime", 403);
+      if (!(await lockRunProjectWriteAccess(tx, observedRun, currentAgent))) throw new ActionError("The Originator or Runtime owner no longer has Project write access", 403);
+      await lockRuntimeRun(tx, runId);
       const [candidate] = await tx.select({ runId: runs.id, policy: runs.runtimeSandboxPolicy, profileId: runtimeProfiles.id, profileSandbox: runtimeProfiles.sandbox, filesystemAllowlist: runtimeProfiles.filesystemAllowlist, networkAllowlist: runtimeProfiles.networkAllowlist }).from(runs)
         .innerJoin(agents, eq(agents.id, runs.agentId)).leftJoin(runtimeProfiles, and(eq(runtimeProfiles.id, agents.runtimeProfileId), eq(runtimeProfiles.runtimeId, runs.runtimeId)))
         .where(and(eq(runs.id, runId), eq(runs.runtimeId, runtimeId), eq(runs.status, "dispatched")));

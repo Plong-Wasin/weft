@@ -18,6 +18,7 @@ export const staleRuntimeRoundBudgetMs = 30_000;
 /** A Daemon credential is re-issued once less than this much of its lifetime is left. */
 const rotateBeforeMs = 7 * 24 * 60 * 60 * 1000;
 const cli = Type.Union([Type.Literal("claude"), Type.Literal("codex")]);
+const daemonCapability = Type.Union([Type.Literal("runtime_environment"), Type.Literal("runtime_sandbox")]);
 /** How many Session folders the Runtime list shows per Runtime, newest first. */
 const sessionFolderLimit = 10;
 /** Run statuses that are not final: a Runtime with one of them on it cannot be deleted. */
@@ -213,11 +214,13 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
       name: "register_daemon", kind: "write" as const,
       input: Type.Object({
         hostname: Type.String({ minLength: 1, maxLength: 255 }), version: Type.String({ minLength: 1, maxLength: 64 }), agentClis: Type.Array(cli, { uniqueItems: true }),
+        /** Optional for old Daemons; omission means they support no negotiated features. */
+        capabilities: Type.Optional(Type.Array(daemonCapability, { uniqueItems: true })),
         /** Set when the Daemon has no local credential file, or a Daemon credential was refused: the server then issues a new one even if the active one is fine. */
         rotate: Type.Optional(Type.Boolean()),
       }),
       output: Type.Object({ daemonId: Type.String({ format: "uuid" }), runtimes: Type.Array(output), daemonToken: Type.Optional(Type.String()) }),
-      handler: async (context: Context, input: { hostname: string; version: string; agentClis: Array<"claude" | "codex">; rotate?: boolean }) => {
+      handler: async (context: Context, input: { hostname: string; version: string; agentClis: Array<"claude" | "codex">; capabilities?: Array<"runtime_environment" | "runtime_sandbox">; rotate?: boolean }) => {
         if (!context.apiTokenId) throw new ActionError("Daemon registration requires a Personal API token", 403);
         const [caller] = await db.select({ daemonOnly: apiTokens.daemonOnly }).from(apiTokens).where(eq(apiTokens.id, context.apiTokenId));
         if (!caller || caller.daemonOnly) throw new ActionError("Daemon registration requires a Personal API token", 403);
@@ -234,7 +237,7 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
           let daemonId: string;
           let activeTokenId: string;
           if (current && !input.rotate && activeLeftMs >= rotateBeforeMs) {
-            const [daemon] = await tx.update(daemons).set({ version: input.version, lastHeartbeatAt: timestamp }).where(eq(daemons.id, current.id)).returning({ id: daemons.id });
+            const [daemon] = await tx.update(daemons).set({ version: input.version, capabilities: input.capabilities ?? [], lastHeartbeatAt: timestamp }).where(eq(daemons.id, current.id)).returning({ id: daemons.id });
             daemonId = daemon!.id;
             activeTokenId = current.tokenId;
           } else {
@@ -242,14 +245,14 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
             daemonToken = minted.token;
             activeTokenId = minted.id;
             if (current) {
-              const [daemon] = await tx.update(daemons).set({ tokenId: minted.id, version: input.version, lastHeartbeatAt: timestamp }).where(eq(daemons.id, current.id)).returning({ id: daemons.id });
+              const [daemon] = await tx.update(daemons).set({ tokenId: minted.id, version: input.version, capabilities: input.capabilities ?? [], lastHeartbeatAt: timestamp }).where(eq(daemons.id, current.id)).returning({ id: daemons.id });
               daemonId = daemon!.id;
               // The previous credential stays usable for the grace period, never past its own expiry.
               const graceEnd = new Date(timestamp.getTime() + DAEMON_ROTATION_GRACE_MS);
               const graceExpiry = current.expiresAt && current.expiresAt < graceEnd ? current.expiresAt : graceEnd;
               await tx.update(apiTokens).set({ expiresAt: graceExpiry }).where(and(eq(apiTokens.id, current.tokenId), isNull(apiTokens.revokedAt)));
             } else {
-              const [daemon] = await tx.insert(daemons).values({ ownerId: context.userId, tokenId: minted.id, hostname: input.hostname, version: input.version, lastHeartbeatAt: timestamp }).returning({ id: daemons.id });
+              const [daemon] = await tx.insert(daemons).values({ ownerId: context.userId, tokenId: minted.id, hostname: input.hostname, version: input.version, capabilities: input.capabilities ?? [], lastHeartbeatAt: timestamp }).returning({ id: daemons.id });
               daemonId = daemon!.id;
             }
           }

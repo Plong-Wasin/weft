@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { apiTokens, createDatabase, type Database } from "@weft/db";
+import { apiTokens, createDatabase, daemons, type Database } from "@weft/db";
 import { withRollback } from "../../../packages/db/src/test-helpers";
 import { createApp } from "../src/app";
 
@@ -9,8 +9,8 @@ afterAll(async () => client.end());
 
 function setup(transaction: Database) {
   const app = createApp(undefined, transaction);
-  const call = (path: string, body: unknown, options: { cookie?: string; bearer?: string } = {}) => app.handle(new Request(`http://localhost${path}`, {
-    method: "POST", headers: { "content-type": "application/json", ...(options.cookie ? { cookie: options.cookie } : {}), ...(options.bearer ? { authorization: `Bearer ${options.bearer}` } : {}) }, body: JSON.stringify(body),
+  const call = (path: string, body: unknown, options: { cookie?: string; bearer?: string; headers?: Record<string, string> } = {}) => app.handle(new Request(`http://localhost${path}`, {
+    method: "POST", headers: { "content-type": "application/json", ...(options.cookie ? { cookie: options.cookie } : {}), ...(options.bearer ? { authorization: `Bearer ${options.bearer}` } : {}), ...options.headers }, body: JSON.stringify(body),
   }));
   const signUp = async () => {
     const response = await call("/api/auth/sign-up/email", { name: "Dev", email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" });
@@ -57,10 +57,11 @@ test.concurrent("register_daemon with a Personal token leaves it usable, issues 
     const personal = (await (await call("/actions/create_api_token", { name: "cli" }, { cookie: owner.cookie })).json() as { token: string }).token;
     const first = await (await call("/api/daemon/register", { hostname: "devbox", version: "1", agentClis: ["claude"] }, { bearer: personal })).json() as { daemonId: string; runtimes: Array<{ id: string }>; daemonToken?: string };
     expect(first.daemonToken).toStartWith("weft_daemon_");
-    const second = await (await call("/api/daemon/register", { hostname: "devbox", version: "1", agentClis: ["claude"] }, { bearer: personal })).json() as { daemonId: string; runtimes: Array<{ id: string }>; daemonToken?: string };
+    const second = await (await call("/api/daemon/register", { hostname: "devbox", version: "1", agentClis: ["claude"] }, { bearer: personal, headers: { "x-weft-capabilities": "runtime_environment,runtime_sandbox" } })).json() as { daemonId: string; runtimes: Array<{ id: string }>; daemonToken?: string };
     expect(second.daemonToken).toBeUndefined();
     expect(second.daemonId).toBe(first.daemonId);
     expect(second.runtimes.map((runtime) => runtime.id)).toEqual(first.runtimes.map((runtime) => runtime.id));
+    expect((await transaction.select({ capabilities: daemons.capabilities }).from(daemons).where(eq(daemons.id, first.daemonId)))[0]!.capabilities).toEqual(["runtime_environment", "runtime_sandbox"]);
     // The Personal token keeps working for /actions after registrations.
     expect((await call("/actions/list_projects", { workspaceId: workspace.id }, { bearer: personal })).status).toBe(200);
     const daemon = first.daemonToken!;

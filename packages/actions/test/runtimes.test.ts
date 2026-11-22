@@ -1,12 +1,12 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { activities, agents, comments, createDatabase, daemons, jobs, notifications, runMessages, runs, runtimes, runtimeProfiles, users, workItems, workspaces } from "@weft/db";
+import { activities, agents, comments, createDatabase, daemons, jobs, notifications, runMessages, runTokens, runs, runtimes, runtimeProfiles, users, workItems, workspaces } from "@weft/db";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
-import { createApiTokenActions, createCommentActions, createRuntimeActions, createRuntimeDispatchActions, handleAgentRunJob, queueRunsForAssignees, sweepRuntimeRuns } from "../src";
+import { createApiTokenActions, createCommentActions, createJobHandlers, createNotificationActions, createRuntimeActions, createRuntimeDispatchActions, createRunActions, handleAgentRunJob, queueRunsForAssignees, sweepRuntimeRuns } from "../src";
 import { createAgentRuntimeEnvironmentActions } from "../src/agent-runtime-environment";
 import { runtimeEnvironmentSecretValues, runtimeEnvironmentValues } from "../src/agent-runtime-environment";
 import { openSecret, sealSecret } from "../src/integration-secrets";
-import { createAgentActions, createMemberActions, createProjectActions, createRunActions, createWorkItemActions } from "../src";
+import { createAgentActions, createMemberActions, createProjectActions, createWorkItemActions } from "../src";
 
 const { client, db } = createDatabase();
 afterAll(async () => client.end());
@@ -17,12 +17,12 @@ test.concurrent("a Daemon registers one private Runtime per detected CLI and wor
     const owner = await createMemberFactory(tx, workspace.id, "Member");
     const actions = createRuntimeActions(tx);
     const { id: tokenId } = await createApiTokenActions(tx).createApiToken.handler({ userId: owner.id }, { name: "daemon" });
-    const daemon = await actions.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1.0", agentClis: ["claude", "codex"] });
+    const daemon = await actions.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1.0", agentClis: ["claude", "codex"], capabilities: ["runtime_environment", "runtime_sandbox"] });
     expect(daemon.runtimes).toHaveLength(2);
     expect(daemon.runtimes.map((runtime) => runtime.agentCli).sort()).toEqual(["claude", "codex"]);
     expect(daemon.runtimes.every((runtime) => runtime.ownerId === owner.id && !runtime.shared && runtime.online)).toBe(true);
     expect(await tx.select({ name: runtimeProfiles.name, sandbox: runtimeProfiles.sandbox }).from(runtimeProfiles).where(eq(runtimeProfiles.runtimeId, daemon.runtimes[0]!.id))).toEqual([{ name: "Full access", sandbox: "full" }]);
-    expect((await actions.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1.0", agentClis: ["claude", "codex"] })).runtimes.map((r) => r.id)).toEqual(daemon.runtimes.map((r) => r.id));
+    expect((await actions.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1.0", agentClis: ["claude", "codex"], capabilities: ["runtime_environment", "runtime_sandbox"] })).runtimes.map((r) => r.id)).toEqual(daemon.runtimes.map((r) => r.id));
   });
 });
 
@@ -34,7 +34,7 @@ test.concurrent("the Runtime owner manages named profiles, and two Agents dispat
     const otherAdmin = await createMemberFactory(tx, workspace.id, "Admin");
     const token = await createApiTokenActions(tx).createApiToken.handler({ userId: owner.id }, { name: "daemon" });
     const runtimeActions = createRuntimeActions(tx);
-    const registered = await runtimeActions.registerDaemon.handler({ userId: owner.id, apiTokenId: token.id }, { hostname: "shared-machine", version: "1", agentClis: ["codex"] });
+    const registered = await runtimeActions.registerDaemon.handler({ userId: owner.id, apiTokenId: token.id }, { hostname: "shared-machine", version: "1", agentClis: ["codex"], capabilities: ["runtime_environment", "runtime_sandbox"] });
     const runtime = registered.runtimes[0]!;
     await runtimeActions.shareRuntime.handler({ userId: owner.id }, { runtimeId: runtime.id });
     const sandboxed = await runtimeActions.createRuntimeProfile.handler({ userId: owner.id }, { runtimeId: runtime.id, name: "Run folder only", sandbox: "run-folder", filesystemAllowlist: [], networkAllowlist: ["git.example.com"] });
@@ -122,7 +122,7 @@ test.concurrent("members see their private and shared Runtimes, but private Runt
     const { id: tokenId } = await createApiTokenActions(tx).createApiToken.handler({ userId: owner.id }, { name: "daemon" });
     const admin = await createMemberFactory(tx, workspace.id, "Admin");
     const actions = createRuntimeActions(tx);
-    const { runtimes } = await actions.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1.0", agentClis: ["claude", "codex"] });
+    const { runtimes } = await actions.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1.0", agentClis: ["claude", "codex"], capabilities: ["runtime_environment", "runtime_sandbox"] });
     const mine = await actions.listRuntimes.handler({ userId: owner.id }, { workspaceId: workspace.id });
     expect(mine).toHaveLength(2);
     expect(await actions.listRuntimes.handler({ userId: admin.id }, { workspaceId: workspace.id })).toEqual([]);
@@ -141,7 +141,7 @@ test.concurrent("Runtime presence expires after 150 seconds and the Daemon heart
     const owner = await createMemberFactory(tx, workspace.id, "Member");
     const { id: tokenId } = await createApiTokenActions(tx).createApiToken.handler({ userId: owner.id }, { name: "daemon" });
     const actions = createRuntimeActions(tx, () => current);
-    const { daemonId } = await actions.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1", agentClis: ["claude"] });
+    const { daemonId } = await actions.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1", agentClis: ["claude"], capabilities: ["runtime_environment", "runtime_sandbox"] });
     expect((await actions.listRuntimes.handler({ userId: owner.id }, { workspaceId: workspace.id }))[0]!.online).toBe(true);
     current = new Date(current.getTime() + 150_001);
     expect((await actions.listRuntimes.handler({ userId: owner.id }, { workspaceId: workspace.id }))[0]!.online).toBe(false);
@@ -158,7 +158,7 @@ test.concurrent("an online Runtime claims a Run and completes with a Markdown ta
     const owner = await createMemberFactory(tx, workspace.id, "Admin");
     const { id: tokenId } = await createApiTokenActions(tx).createApiToken.handler({ userId: owner.id }, { name: "daemon" });
     const registry = createRuntimeActions(tx);
-    const registered = await registry.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1", agentClis: ["claude"] });
+    const registered = await registry.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1", agentClis: ["claude"], capabilities: ["runtime_environment", "runtime_sandbox"] });
     const runtime = registered.runtimes[0]!;
     await registry.shareRuntime.handler({ userId: owner.id }, { runtimeId: runtime.id });
     const project = await createProjectActions(tx).createProject.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Alpha", key: "ALP", visibility: "private" });
@@ -221,7 +221,7 @@ async function runtimeScenario(tx: Parameters<Parameters<typeof withRollback>[1]
   const owner = await createMemberFactory(tx, workspace.id, role);
   const { id: tokenId } = await createApiTokenActions(tx).createApiToken.handler({ userId: owner.id }, { name: "daemon" });
   const registry = createRuntimeActions(tx);
-  const registered = await registry.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1", agentClis: ["claude"] });
+  const registered = await registry.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1", agentClis: ["claude"], capabilities: ["runtime_environment", "runtime_sandbox"] });
   const runtime = registered.runtimes[0]!;
   await registry.shareRuntime.handler({ userId: owner.id }, { runtimeId: runtime.id });
   const project = await createProjectActions(tx).createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Alpha", key: "ALP", visibility: "private" });
@@ -231,8 +231,98 @@ async function runtimeScenario(tx: Parameters<Parameters<typeof withRollback>[1]
   await agents.updateAgent.handler({ userId: admin.id }, { agentId: agent.id, runtimeId: runtime.id });
   await agents.setAgentAccess.handler({ userId: owner.id }, { agentId: agent.id, userIds: [owner.id, admin.id] });
   const item = await createWorkItemActions(tx).createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "Work", assigneeIds: [agent.userId] });
-  return { workspace, admin, owner, registered, runtime, agent, agents, item, project };
+  return { workspace, admin, owner, tokenId, registered, runtime, agent, agents, item, project };
 }
+
+test.concurrent("legacy Daemons keep ordinary Runs but safely fail Runs needing unadvertised environment or sandbox features", async () => {
+  await withRollback(db, async (tx) => {
+    const scenario = await runtimeScenario(tx, "Admin");
+    const dispatch = createRuntimeDispatchActions(tx);
+    // Historical registration shapes omit capabilities and remain accepted; that Daemon can still run an ordinary Run.
+    await createRuntimeActions(tx).registerDaemon.handler({ userId: scenario.owner.id, apiTokenId: scenario.tokenId }, { hostname: "devbox", version: "1.0.0", agentClis: ["claude"] });
+    expect((await tx.select({ capabilities: daemons.capabilities }).from(daemons).where(eq(daemons.id, scenario.registered.daemonId)))[0]!.capabilities).toEqual([]);
+    const [ordinary] = await dispatch.claimRuns({ userId: scenario.owner.id, daemonId: scenario.registered.daemonId }, 1);
+    expect(ordinary?.runId).toBeTruthy();
+    await dispatch.finishRun(ordinary!.runId, { status: "completed", finalOutput: "ordinary work complete" });
+
+    const profile = await createRuntimeActions(tx).createRuntimeProfile.handler({ userId: scenario.owner.id }, { runtimeId: scenario.runtime.id, name: "Restricted", sandbox: "run-folder", filesystemAllowlist: [], networkAllowlist: [] });
+    const agent = await scenario.agents.createAgent.handler({ userId: scenario.admin.id }, { workspaceId: scenario.workspace.id, name: "Configured", instructions: "Needs configured access", model: "default", runtimeId: scenario.runtime.id });
+    await scenario.agents.setAgentRuntimeProfile.handler({ userId: scenario.owner.id }, { agentId: agent.id, profileId: profile.id });
+    await scenario.agents.setAgentProjectAccess.handler({ userId: scenario.admin.id }, { agentId: agent.id, allProjects: true, projectIds: [] });
+    await scenario.agents.setAgentAccess.handler({ userId: scenario.owner.id }, { agentId: agent.id, userIds: [scenario.owner.id, scenario.admin.id] });
+    await createAgentRuntimeEnvironmentActions(tx).setAgentRuntimeEnvironment.handler({ userId: scenario.owner.id }, { agentId: agent.id, variables: { PRIVATE_MARKER: "do-not-return-this-value" } });
+    const work = createWorkItemActions(tx);
+    const failedIds: string[] = [];
+    const addWork = async (title: string) => (await work.createWorkItem.handler({ userId: scenario.admin.id }, { projectId: scenario.project.id, title, assigneeIds: [agent.userId] })).id;
+
+    const legacyItem = await addWork("Legacy capability check");
+    const followUpId = crypto.randomUUID();
+    await tx.insert(runs).values({ id: followUpId, workspaceId: scenario.workspace.id, projectId: scenario.project.id, workItemId: legacyItem, agentId: agent.id, originatorId: scenario.admin.id, status: "follow_up", followUpSince: new Date(0), createdAt: new Date(0) });
+    expect(await dispatch.claimRuns({ userId: scenario.owner.id, daemonId: scenario.registered.daemonId }, 1)).toEqual([]);
+    let [failed] = await tx.select({ id: runs.id, status: runs.status, failureReason: runs.failureReason, finalOutput: runs.finalOutput }).from(runs).where(and(eq(runs.workItemId, legacyItem), eq(runs.failureReason, "runtime_capability_missing")));
+    expect(failed).toMatchObject({ status: "failed", failureReason: "runtime_capability_missing", finalOutput: null });
+    failedIds.push(failed!.id);
+    expect((await tx.select({ status: runs.status }).from(runs).where(eq(runs.id, followUpId)))[0]!.status).toBe("queued");
+    let noticeJobs = (await tx.select({ payload: jobs.payload }).from(jobs).where(eq(jobs.type, "notify"))).filter(({ payload }) => (payload as { kind?: string }).kind === "run_skipped");
+    expect(noticeJobs).toHaveLength(1);
+    expect(noticeJobs[0]!.payload).toMatchObject({ kind: "run_skipped", workItemId: legacyItem, actorId: agent.userId, recipientIds: [scenario.admin.id], detail: "runtime_capability_missing" });
+    expect(JSON.stringify(noticeJobs[0]!.payload)).not.toContain("do-not-return-this-value");
+    const notify = createJobHandlers().notify!;
+    await notify(tx, noticeJobs[0]!.payload, { id: crypto.randomUUID(), type: "notify" });
+    expect((await tx.select({ kind: notifications.kind, detail: notifications.detail, userId: notifications.userId }).from(notifications))).toContainEqual({ kind: "run_skipped", detail: "runtime_capability_missing", userId: scenario.admin.id });
+
+    // A current Daemon that declares environment support alone still cannot receive a sandbox-dependent Run.
+    await createRuntimeActions(tx).registerDaemon.handler({ userId: scenario.owner.id, apiTokenId: scenario.tokenId }, { hostname: "devbox", version: "1.0.0", agentClis: ["claude"], capabilities: ["runtime_environment"] });
+    const envOnlyItem = await addWork("Environment without sandbox capability");
+    expect(await dispatch.claimRuns({ userId: scenario.owner.id, daemonId: scenario.registered.daemonId }, 1)).toEqual([]);
+    [failed] = await tx.select({ id: runs.id, status: runs.status, failureReason: runs.failureReason, finalOutput: runs.finalOutput }).from(runs).where(and(eq(runs.workItemId, envOnlyItem), eq(runs.failureReason, "runtime_capability_missing")));
+    expect(failed).toMatchObject({ status: "failed", failureReason: "runtime_capability_missing", finalOutput: null });
+    failedIds.push(failed!.id);
+
+    await createRuntimeActions(tx).registerDaemon.handler({ userId: scenario.owner.id, apiTokenId: scenario.tokenId }, { hostname: "devbox", version: "1.0.0", agentClis: ["claude"], capabilities: ["runtime_environment", "runtime_sandbox"] });
+    const currentItem = await addWork("Current capabilities");
+    const [claimed] = await dispatch.claimRuns({ userId: scenario.owner.id, daemonId: scenario.registered.daemonId }, 1);
+    expect(claimed).toMatchObject({ environment: { PRIVATE_MARKER: "do-not-return-this-value" }, sandbox: { mode: "run-folder" } });
+    expect(claimed?.secretEnvironment).toEqual({ PRIVATE_MARKER: "do-not-return-this-value" });
+    expect(await tx.select().from(runTokens).where(inArray(runTokens.runId, failedIds))).toEqual([]);
+    expect((await tx.select({ status: runs.status }).from(runs).where(eq(runs.workItemId, currentItem)))[0]!.status).toBe("dispatched");
+    expect((await tx.select({ finalOutput: runs.finalOutput }).from(runs).where(inArray(runs.id, failedIds))).map((row) => row.finalOutput)).toEqual([null, null]);
+
+    await dispatch.claimRuns({ userId: scenario.owner.id, daemonId: scenario.registered.daemonId }, 1);
+    noticeJobs = (await tx.select({ payload: jobs.payload }).from(jobs).where(eq(jobs.type, "notify"))).filter(({ payload }) => (payload as { kind?: string }).kind === "run_skipped");
+    expect(noticeJobs).toHaveLength(3);
+  });
+});
+
+test.concurrent("a scheduled capability-blocked Run notifies once with a safe direct destination visible only to Project readers", async () => {
+  await withRollback(db, async (tx) => {
+    const scenario = await runtimeScenario(tx, "Admin");
+    await tx.update(runs).set({ status: "completed", finishedAt: new Date() }).where(eq(runs.workItemId, scenario.item.id));
+    await createAgentRuntimeEnvironmentActions(tx).setAgentRuntimeEnvironment.handler({ userId: scenario.owner.id }, { agentId: scenario.agent.id, variables: { SCHEDULED_SECRET: "never-in-notice" } });
+    await createRuntimeActions(tx).registerDaemon.handler({ userId: scenario.owner.id, apiTokenId: scenario.tokenId }, { hostname: "devbox", version: "1.0.0", agentClis: ["claude"] });
+    const [scheduled] = await tx.insert(runs).values({ workspaceId: scenario.workspace.id, projectId: scenario.project.id, workItemId: null, agentId: scenario.agent.id, originatorId: scenario.admin.id }).returning();
+    const dispatch = createRuntimeDispatchActions(tx);
+    expect(await dispatch.claimRuns({ userId: scenario.owner.id, daemonId: scenario.registered.daemonId }, 1)).toEqual([]);
+    expect((await tx.select({ status: runs.status, failureReason: runs.failureReason }).from(runs).where(eq(runs.id, scheduled!.id)))[0]).toEqual({ status: "failed", failureReason: "runtime_capability_missing" });
+
+    const noticeJobs = (await tx.select().from(jobs).where(eq(jobs.type, "notify"))).filter((job) => (job.payload as { kind?: string }).kind === "run_skipped");
+    expect(noticeJobs).toHaveLength(1);
+    expect(noticeJobs[0]!.payload).toMatchObject({ kind: "run_skipped", runId: scheduled!.id, actorId: scenario.agent.userId, recipientIds: [scenario.admin.id], detail: "runtime_capability_missing" });
+    expect(noticeJobs[0]!.payload).not.toHaveProperty("workItemId");
+    expect(JSON.stringify(noticeJobs[0]!.payload)).not.toContain("never-in-notice");
+    await createJobHandlers().notify!(tx, noticeJobs[0]!.payload, { id: noticeJobs[0]!.id, type: "notify" });
+    const inbox = await createNotificationActions(tx).listNotifications.handler({ userId: scenario.admin.id }, { workspaceId: scenario.workspace.id });
+    expect(inbox.notifications).toContainEqual(expect.objectContaining({ kind: "run_skipped", runId: scheduled!.id, workItemId: null, projectId: scenario.project.id, detail: "runtime_capability_missing" }));
+
+    const noProjectAccess = await createMemberFactory(tx, scenario.workspace.id, "Member");
+    await tx.insert(notifications).values({ workspaceId: scenario.workspace.id, userId: noProjectAccess.id, actorId: scenario.agent.userId, kind: "run_skipped", runId: scheduled!.id, detail: "runtime_capability_missing", jobId: crypto.randomUUID() });
+    expect((await createNotificationActions(tx).listNotifications.handler({ userId: noProjectAccess.id }, { workspaceId: scenario.workspace.id })).notifications).toEqual([]);
+    await expect(createRunActions(tx).getRun.handler({ userId: noProjectAccess.id }, { runId: scheduled!.id })).rejects.toMatchObject({ status: 404 });
+
+    await dispatch.claimRuns({ userId: scenario.owner.id, daemonId: scenario.registered.daemonId }, 1);
+    expect((await tx.select().from(jobs).where(eq(jobs.type, "notify"))).filter((job) => (job.payload as { kind?: string }).kind === "run_skipped")).toHaveLength(1);
+  });
+});
 
 test("simultaneous Daemon claims stay within the Agent ceiling and queued Runs start when a slot frees", async () => {
   const scenario = await runtimeScenario(db);
@@ -515,7 +605,7 @@ test.concurrent("moving an Agent to another Runtime clears the old owner's envir
   await withRollback(db, async (tx) => {
     const { admin, owner, agent, agents: agentActions } = await runtimeScenario(tx);
     const targetToken = await createApiTokenActions(tx).createApiToken.handler({ userId: admin.id }, { name: "target daemon" });
-    const targetRuntime = (await createRuntimeActions(tx).registerDaemon.handler({ userId: admin.id, apiTokenId: targetToken.id }, { hostname: "target-box", version: "1", agentClis: ["claude"] })).runtimes[0]!;
+    const targetRuntime = (await createRuntimeActions(tx).registerDaemon.handler({ userId: admin.id, apiTokenId: targetToken.id }, { hostname: "target-box", version: "1", agentClis: ["claude"], capabilities: ["runtime_environment", "runtime_sandbox"] })).runtimes[0]!;
     await createRuntimeActions(tx).shareRuntime.handler({ userId: admin.id }, { runtimeId: targetRuntime.id });
     const ownerEnvironment = createAgentRuntimeEnvironmentActions(tx);
     await ownerEnvironment.setAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id, variables: { OWNER_ONLY: "old-runtime-value" } });
@@ -592,8 +682,8 @@ test.concurrent("a CLI the Daemon no longer detects goes offline while the other
     const owner = await createMemberFactory(tx, workspace.id, "Member");
     const { id: tokenId } = await createApiTokenActions(tx).createApiToken.handler({ userId: owner.id }, { name: "daemon" });
     const actions = createRuntimeActions(tx);
-    const { daemonId } = await actions.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1", agentClis: ["claude", "codex"] });
-    await actions.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1", agentClis: ["claude"] });
+    const { daemonId } = await actions.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1", agentClis: ["claude", "codex"], capabilities: ["runtime_environment", "runtime_sandbox"] });
+    await actions.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1", agentClis: ["claude"], capabilities: ["runtime_environment", "runtime_sandbox"] });
     await actions.heartbeat({ userId: owner.id }, daemonId);
     const listed = await actions.listRuntimes.handler({ userId: owner.id }, { workspaceId: workspace.id });
     expect(listed.map((runtime) => [runtime.agentCli, runtime.online])).toEqual([["claude", true], ["codex", false]]);
@@ -813,12 +903,12 @@ test.concurrent("registering again never brings back a deleted Full access profi
     const owner = await createMemberFactory(tx, workspace.id, "Member");
     const actions = createRuntimeActions(tx);
     const { id: tokenId } = await createApiTokenActions(tx).createApiToken.handler({ userId: owner.id }, { name: "daemon" });
-    const first = await actions.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1.0", agentClis: ["claude"] });
+    const first = await actions.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1.0", agentClis: ["claude"], capabilities: ["runtime_environment", "runtime_sandbox"] });
     const runtime = first.runtimes[0]!;
     const restricted = await actions.createRuntimeProfile.handler({ userId: owner.id }, { runtimeId: runtime.id, name: "Run folder only", sandbox: "run-folder", filesystemAllowlist: [], networkAllowlist: [] });
     const full = (await actions.listRuntimeProfiles.handler({ userId: owner.id }, { runtimeId: runtime.id })).find((profile) => profile.sandbox === "full")!;
     await actions.deleteRuntimeProfile.handler({ userId: owner.id }, { profileId: full.id });
-    await actions.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1.1", agentClis: ["claude"] });
+    await actions.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1.1", agentClis: ["claude"], capabilities: ["runtime_environment", "runtime_sandbox"] });
     expect((await actions.listRuntimeProfiles.handler({ userId: owner.id }, { runtimeId: runtime.id })).map((profile) => profile.id)).toEqual([restricted.id]);
   });
 });
@@ -830,7 +920,7 @@ test.concurrent("on a Runtime that enforces a sandbox a new or re-bound Agent ge
     const actions = createRuntimeActions(tx);
     const agents = createAgentActions(tx);
     const { id: tokenId } = await createApiTokenActions(tx).createApiToken.handler({ userId: owner.id }, { name: "daemon" });
-    const registered = await actions.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1.0", agentClis: ["claude"] });
+    const registered = await actions.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1.0", agentClis: ["claude"], capabilities: ["runtime_environment", "runtime_sandbox"] });
     const runtime = registered.runtimes[0]!;
     await actions.shareRuntime.handler({ userId: owner.id }, { runtimeId: runtime.id });
     const open = await agents.createAgent.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Open", model: "default", runtimeId: runtime.id });
@@ -853,7 +943,7 @@ test.concurrent("assigning a Runtime profile after deletion returns the profile 
     const owner = await createMemberFactory(tx, workspace.id, "Admin");
     const runtimeActions = createRuntimeActions(tx);
     const token = await createApiTokenActions(tx).createApiToken.handler({ userId: owner.id }, { name: "daemon" });
-    const runtime = (await runtimeActions.registerDaemon.handler({ userId: owner.id, apiTokenId: token.id }, { hostname: "devbox", version: "1.0", agentClis: ["claude"] })).runtimes[0]!;
+    const runtime = (await runtimeActions.registerDaemon.handler({ userId: owner.id, apiTokenId: token.id }, { hostname: "devbox", version: "1.0", agentClis: ["claude"], capabilities: ["runtime_environment", "runtime_sandbox"] })).runtimes[0]!;
     await runtimeActions.shareRuntime.handler({ userId: owner.id }, { runtimeId: runtime.id });
     const profile = (await tx.select().from(runtimeProfiles).where(eq(runtimeProfiles.runtimeId, runtime.id)))[0]!;
     await runtimeActions.createRuntimeProfile.handler({ userId: owner.id }, { runtimeId: runtime.id, name: "Keep", sandbox: "read-only", filesystemAllowlist: [], networkAllowlist: [] });
@@ -872,7 +962,7 @@ test.concurrent("folder paths of a profile are shown to the Runtime owner and wo
     const colleague = await createMemberFactory(tx, workspace.id, "Member");
     const actions = createRuntimeActions(tx);
     const { id: tokenId } = await createApiTokenActions(tx).createApiToken.handler({ userId: owner.id }, { name: "daemon" });
-    const runtime = (await actions.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1.0", agentClis: ["claude"] })).runtimes[0]!;
+    const runtime = (await actions.registerDaemon.handler({ userId: owner.id, apiTokenId: tokenId }, { hostname: "devbox", version: "1.0", agentClis: ["claude"], capabilities: ["runtime_environment", "runtime_sandbox"] })).runtimes[0]!;
     await actions.createRuntimeProfile.handler({ userId: owner.id }, { runtimeId: runtime.id, name: "Reads", sandbox: "read-only", filesystemAllowlist: ["/home/owner/secret-project"], networkAllowlist: [] });
     await actions.shareRuntime.handler({ userId: owner.id }, { runtimeId: runtime.id });
     const pathsFor = async (userId: string) => (await actions.listRuntimeProfiles.handler({ userId }, { runtimeId: runtime.id })).find((profile) => profile.name === "Reads")!.filesystemAllowlist;
@@ -889,9 +979,9 @@ test.concurrent("only the Runtime owner can replace or clear an Agent environmen
     const owner = await createMemberFactory(tx, workspace.id, "Member");
     const admin = await createMemberFactory(tx, workspace.id, "Admin");
     const otherToken = await createApiTokenActions(tx).createApiToken.handler({ userId: admin.id }, { name: "other runtime" });
-    await createRuntimeActions(tx).registerDaemon.handler({ userId: admin.id, apiTokenId: otherToken.id }, { hostname: "other-owner-box", version: "1", agentClis: ["claude"] });
+    await createRuntimeActions(tx).registerDaemon.handler({ userId: admin.id, apiTokenId: otherToken.id }, { hostname: "other-owner-box", version: "1", agentClis: ["claude"], capabilities: ["runtime_environment", "runtime_sandbox"] });
     const token = await createApiTokenActions(tx).createApiToken.handler({ userId: owner.id }, { name: "daemon" });
-    const { runtimes: [runtime] } = await createRuntimeActions(tx).registerDaemon.handler({ userId: owner.id, apiTokenId: token.id }, { hostname: "box", version: "1", agentClis: ["claude"] });
+    const { runtimes: [runtime] } = await createRuntimeActions(tx).registerDaemon.handler({ userId: owner.id, apiTokenId: token.id }, { hostname: "box", version: "1", agentClis: ["claude"], capabilities: ["runtime_environment", "runtime_sandbox"] });
     await createRuntimeActions(tx).shareRuntime.handler({ userId: owner.id }, { runtimeId: runtime!.id });
     const agent = await createAgentActions(tx).createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Claude", model: "default", runtimeId: runtime!.id });
     const actions = createAgentRuntimeEnvironmentActions(tx);
@@ -980,7 +1070,7 @@ test.concurrent("changing an Agent Runtime environment starts a new CLI Session 
     const owner = await createMemberFactory(tx, workspace.id, "Admin");
     const apiToken = await createApiTokenActions(tx).createApiToken.handler({ userId: owner.id }, { name: "daemon" });
     const runtimeActions = createRuntimeActions(tx);
-    const registered = await runtimeActions.registerDaemon.handler({ userId: owner.id, apiTokenId: apiToken.id }, { hostname: "session-box", version: "1", agentClis: ["claude"] });
+    const registered = await runtimeActions.registerDaemon.handler({ userId: owner.id, apiTokenId: apiToken.id }, { hostname: "session-box", version: "1", agentClis: ["claude"], capabilities: ["runtime_environment", "runtime_sandbox"] });
     const runtime = registered.runtimes[0]!;
     await runtimeActions.shareRuntime.handler({ userId: owner.id }, { runtimeId: runtime.id });
     const agent = await createAgentActions(tx).createAgent.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Account Agent", model: "default", runtimeId: runtime.id });
@@ -1010,7 +1100,7 @@ test("a Runtime owner cannot save an Agent environment after a concurrent unbind
   const workspace = await createWorkspaceFactory(db);
   const owner = await createMemberFactory(db, workspace.id, "Admin");
   const token = await createApiTokenActions(db).createApiToken.handler({ userId: owner.id }, { name: "concurrent daemon" });
-  const registered = await createRuntimeActions(db).registerDaemon.handler({ userId: owner.id, apiTokenId: token.id }, { hostname: "concurrent-box", version: "1", agentClis: ["claude"] });
+  const registered = await createRuntimeActions(db).registerDaemon.handler({ userId: owner.id, apiTokenId: token.id }, { hostname: "concurrent-box", version: "1", agentClis: ["claude"], capabilities: ["runtime_environment", "runtime_sandbox"] });
   const runtime = registered.runtimes[0]!;
   await createRuntimeActions(db).shareRuntime.handler({ userId: owner.id }, { runtimeId: runtime.id });
   const agent = await createAgentActions(db).createAgent.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Concurrent environment", model: "default", runtimeId: runtime.id });
@@ -1037,7 +1127,7 @@ test("concurrent first environment saves use a null-aware compare-and-set so onl
   try {
     const owner = await createMemberFactory(db, workspace.id, "Admin");
     const token = await createApiTokenActions(db).createApiToken.handler({ userId: owner.id }, { name: "first-save daemon" });
-    const registered = await createRuntimeActions(db).registerDaemon.handler({ userId: owner.id, apiTokenId: token.id }, { hostname: "first-save-box", version: "1", agentClis: ["claude"] });
+    const registered = await createRuntimeActions(db).registerDaemon.handler({ userId: owner.id, apiTokenId: token.id }, { hostname: "first-save-box", version: "1", agentClis: ["claude"], capabilities: ["runtime_environment", "runtime_sandbox"] });
     await createRuntimeActions(db).shareRuntime.handler({ userId: owner.id }, { runtimeId: registered.runtimes[0]!.id });
     const agent = await createAgentActions(db).createAgent.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "First save race", model: "default", runtimeId: registered.runtimes[0]!.id });
 

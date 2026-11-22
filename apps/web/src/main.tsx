@@ -36,6 +36,7 @@ import { AnalyticsOverviewRoute, AnalyticsRoute } from "./pages/analytics-route"
 import { ActiveCyclesRoute, ProjectCycleRoute, ProjectCyclesRoute, ProjectIntakeRoute, ProjectModuleRoute, ProjectModulesRoute, ProjectPageRoute, ProjectPagesRoute, ProjectViewRoute, ProjectViewsRoute } from "./pages/project-feature-pages";
 import { ProjectArchivesRoute } from "./pages/project-archives";
 import { WorkItemPage } from "./pages/work-item-page";
+import { ScheduledRunPage } from "./pages/scheduled-run";
 import { PublishedWikiPage } from "./published-wiki-page";
 import { Toaster } from "./toast";
 import "./style.css";
@@ -100,6 +101,7 @@ function AppRoutes() {
         <Route path="analytics/work-items" element={<AnalyticsRoute />} />
         <Route path="active-cycles" element={<ActiveCyclesRoute />} />
         <Route path="browse/:displayId" element={<WorkItemPage />} />
+        <Route path="runs/:runId" element={<ScheduledRunPage />} />
         <Route path="notifications" element={<NotificationsRoute />} />
         <Route path="wiki" element={<WikiRoute />} />
         <Route path="wiki/:pageId" element={<WikiRoute />} />

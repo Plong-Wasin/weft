@@ -138,7 +138,7 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
     },
     claimRuns: async (context: { userId: string; daemonId: string }, requestedLimit = 20) => db.transaction(async (transaction) => {
       const tx = transaction as unknown as Database;
-      const [daemon] = await tx.select({ id: daemons.id, hostname: daemons.hostname }).from(daemons).where(and(eq(daemons.id, context.daemonId), eq(daemons.ownerId, context.userId)));
+      const [daemon] = await tx.select({ id: daemons.id, hostname: daemons.hostname, capabilities: daemons.capabilities }).from(daemons).where(and(eq(daemons.id, context.daemonId), eq(daemons.ownerId, context.userId)));
       if (!daemon) throw new ActionError("Daemon not found", 404);
       // Claims on one Daemon must observe each other's committed capacity checks. Take this before Run row locks so all claimers
       // use the same lock order; finish/cancel paths need no advisory lock and can still release capacity while a claim waits.
@@ -183,6 +183,21 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
           const [skipped] = await tx.update(runs).set({ status: "skipped", failureReason: "budget_exceeded", finishedAt: now() }).where(and(eq(runs.id, row.run.id), eq(runs.status, "queued"))).returning({ id: runs.id });
           if (skipped && row.run.workItemId) await enqueueNotification(tx, { kind: "run_skipped", workItemId: row.run.workItemId, commentId: row.run.commentId ?? undefined, actorId: row.agent.userId, recipientIds: [row.run.originatorId] });
           if (skipped && row.run.workItemId) await startFollowUpRun(tx, row.agent.id, row.run.workItemId);
+          continue;
+        }
+        // Historical Daemons ignore fields they do not understand. Fail before creating a run token or returning any configured
+        // values when the claimed Run depends on environment injection or sandbox enforcement they did not advertise.
+        const requiredCapabilities = [
+          ...(row.agent.runtimeEnvironment ? ["runtime_environment"] : []),
+          ...(sandbox.mode !== "full" || sandbox.enforce ? ["runtime_sandbox"] : []),
+        ];
+        if (requiredCapabilities.some((capability) => !daemon.capabilities.includes(capability))) {
+          const [failed] = await tx.update(runs).set({ status: "failed", failureReason: "runtime_capability_missing", finishedAt: now() })
+            .where(and(eq(runs.id, row.run.id), eq(runs.status, "queued"))).returning({ id: runs.id, agentId: runs.agentId, workItemId: runs.workItemId });
+          if (failed) {
+            await enqueueNotification(tx, { kind: "run_skipped", ...(failed.workItemId ? { workItemId: failed.workItemId } : { runId: failed.id }), commentId: row.run.commentId ?? undefined, actorId: row.agent.userId, recipientIds: [row.run.originatorId], detail: "runtime_capability_missing" });
+            if (failed.agentId && failed.workItemId) await startFollowUpRun(tx, failed.agentId, failed.workItemId);
+          }
           continue;
         }
         const boundary = crypto.randomUUID().replaceAll("-", "");

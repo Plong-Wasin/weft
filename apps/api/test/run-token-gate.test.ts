@@ -24,7 +24,7 @@ async function scenario(transaction: Database, allowAutopilot = true, assetStora
   const agents = createAgentActions(transaction);
   const agent = await agents.createAgent.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Runtime Agent", instructions: "Work", model: "default" });
   await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: true, projectIds: [] });
-  const registration = await (await post("/actions/register_daemon", { hostname: "gate", version: "1", agentClis: ["claude"] }, { token: personal.token })).json() as { runtimes: Array<{ id: string }>; daemonToken: string };
+  const registration = await (await post("/actions/register_daemon", { hostname: "gate", version: "1", agentClis: ["claude"], capabilities: ["runtime_environment", "runtime_sandbox"] }, { token: personal.token })).json() as { runtimes: Array<{ id: string }>; daemonToken: string };
   const runtimeId = registration.runtimes[0]!.id;
   await createRuntimeActions(transaction).shareRuntime.handler({ userId: owner.id }, { runtimeId });
   await agents.updateAgent.handler({ userId: owner.id }, { agentId: agent.id, runtimeId });
@@ -393,7 +393,7 @@ test.concurrent("a connected Daemon is told about queued work within seconds, wi
     app.listen(0);
     try {
       // Re-register on a second Daemon, bind a second Agent to its Runtime, then connect.
-      const registration = await (await post("/actions/register_daemon", { hostname: "second", version: "1", agentClis: ["codex"] }, { token: daemonToken.token })).json() as { runtimes: Array<{ id: string }>; daemonToken: string };
+      const registration = await (await post("/actions/register_daemon", { hostname: "second", version: "1", agentClis: ["codex"], capabilities: ["runtime_environment", "runtime_sandbox"] }, { token: daemonToken.token })).json() as { runtimes: Array<{ id: string }>; daemonToken: string };
       const runtimeId = registration.runtimes[0]!.id;
       await createRuntimeActions(transaction).shareRuntime.handler({ userId: owner.id }, { runtimeId });
       const agents = createAgentActions(transaction);

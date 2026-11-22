@@ -1023,6 +1023,45 @@ test("existing environment values default to secret and can be reclassified with
   });
 });
 
+test("Runtime owner can update or remove one variable without exposing or replacing untouched values and classifications", async () => {
+  await withRollback(db, async (tx) => {
+    const workspace = await createWorkspaceFactory(tx);
+    const owner = await createMemberFactory(tx, workspace.id, "Admin");
+    const other = await createMemberFactory(tx, workspace.id, "Member");
+    const token = await createApiTokenActions(tx).createApiToken.handler({ userId: owner.id }, { name: "delta daemon" });
+    const registered = await createRuntimeActions(tx).registerDaemon.handler({ userId: owner.id, apiTokenId: token.id }, { hostname: "delta-box", version: "1", agentClis: ["claude"] });
+    const runtime = registered.runtimes[0]!;
+    await createRuntimeActions(tx).shareRuntime.handler({ userId: owner.id }, { runtimeId: runtime.id });
+    const agent = await createAgentActions(tx).createAgent.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Delta environment", model: "default", runtimeId: runtime.id });
+    const actions = createAgentRuntimeEnvironmentActions(tx);
+    await actions.setAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id, variables: { KEEP: "keep-secret", CHANGE: "old-secret", REMOVE: "remove-secret" } });
+    await actions.classifyAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id, classifications: { KEEP: "non-secret", CHANGE: "non-secret" } });
+    const snapshot = await actions.getAgentRuntimeEnvironmentEditor.handler({ userId: owner.id }, { agentId: agent.id });
+    expect(snapshot.variables).toEqual([{ name: "CHANGE", classification: "non-secret" }, { name: "KEEP", classification: "non-secret" }, { name: "REMOVE", classification: "secret" }]);
+    expect(JSON.stringify(snapshot)).not.toContain("keep-secret");
+    await expect(actions.updateAgentRuntimeEnvironment.handler({ userId: other.id }, { agentId: agent.id, revision: snapshot.revision, set: { CHANGE: "leak" }, remove: [] })).rejects.toMatchObject({ status: 403 });
+    await expect(actions.updateAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id, revision: snapshot.revision, set: { WEFT_TOKEN: "reserved" }, remove: [] })).rejects.toMatchObject({ status: 400 });
+    await expect(actions.updateAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id, revision: snapshot.revision, set: {}, remove: ["MISSING"] })).rejects.toMatchObject({ status: 409 });
+    const updated = await actions.updateAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id, revision: snapshot.revision, set: { CHANGE: "new-secret", ADDED: "added-secret" }, remove: ["REMOVE"] });
+    expect(updated.variables).toEqual([{ name: "ADDED", classification: "secret" }, { name: "CHANGE", classification: "non-secret" }, { name: "KEEP", classification: "non-secret" }]);
+    expect(JSON.stringify(updated)).not.toContain("new-secret");
+    const sealed = (await tx.select({ runtimeEnvironment: agents.runtimeEnvironment }).from(agents).where(eq(agents.id, agent.id)))[0]!.runtimeEnvironment!;
+    expect(runtimeEnvironmentValues(sealed)).toEqual({ KEEP: "keep-secret", CHANGE: "new-secret", ADDED: "added-secret" });
+    expect(runtimeEnvironmentSecretValues(sealed)).toEqual({ ADDED: "added-secret" });
+    await expect(actions.updateAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id, revision: snapshot.revision, set: { CHANGE: "stale-write" }, remove: [] })).rejects.toMatchObject({ status: 409 });
+    expect(runtimeEnvironmentValues(sealed)).not.toHaveProperty("REMOVE");
+    const raceSnapshot = await actions.getAgentRuntimeEnvironmentEditor.handler({ userId: owner.id }, { agentId: agent.id });
+    const race = await Promise.allSettled([
+      actions.updateAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id, revision: raceSnapshot.revision, set: { LEFT: "left" }, remove: [] }),
+      actions.updateAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id, revision: raceSnapshot.revision, set: { RIGHT: "right" }, remove: [] }),
+    ]);
+    expect(race.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(race.filter((result) => result.status === "rejected" && (result.reason as { status?: number }).status === 409)).toHaveLength(1);
+    const finalSealed = (await tx.select({ runtimeEnvironment: agents.runtimeEnvironment }).from(agents).where(eq(agents.id, agent.id)))[0]!.runtimeEnvironment!;
+    expect(Object.keys(runtimeEnvironmentValues(finalSealed)).filter((name) => ["LEFT", "RIGHT"].includes(name))).toHaveLength(1);
+  });
+});
+
 
 test.concurrent("changing an Agent Runtime environment starts a new CLI Session in the same work folder", async () => {
   await withRollback(db, async (tx) => {

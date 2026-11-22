@@ -36,7 +36,7 @@ const urlFor = (name: string) => { const url = new URL(base); url.pathname = `/$
 const envFor = (databaseUrl: string) => ({ ...Bun.env, DATABASE_URL: databaseUrl, ALLOW_SIGNUP: "true", ALLOW_WORKSPACE_CREATION: "true", PASSWORD_BREACH_CHECK: "off", SMTP_HOST: "", MAIL_TRANSPORT: "smtp", WEFT_INTEGRATIONS_ENABLED: "true" });
 
 /** Files that time themselves against a deadline with the CPU (converter limits, backfill, the Daemon black box). They fail when other files load the machine, so they run after the queue, when the machine is quiet. */
-const timingSensitive = /written-form-(limits|round7)|migrate-schema-only|apps\/cli\/test\/daemon\.test/;
+const timingSensitive = /written-form-(limits|round7)|migrate-schema-only|apps\/cli\/test\/daemon\.test|packages\/actions\/test\/(runtimes|comments|registry-permissions)\.test|apps\/api\/test\/(run-token-gate|rate-limits)\.test/;
 /** Timing-sensitive files that also take over four minutes of test time between them (the Written form fair queue, probation, pool fairness, fuzz and worker files, and the backfill). The default run leaves them out; `--slow` (`bun run test:slow`) adds them. Run it after changing the Written form converter or its queue, or the backfill. */
 const slow = /written-form-(fair-queue|probation|pool-fairness|fuzz|worker)|migration-backfill/;
 

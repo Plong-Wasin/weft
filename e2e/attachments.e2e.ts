@@ -1,6 +1,6 @@
 // Browser end-to-end flow: attach a file to a work item, paste an inline image into the description, a comment and a wiki page.
 // Run with `bun run e2e` (needs the shared weft-postgres and weft-minio containers; `docker compose up -d minio`).
-import { chromium, type Page } from "playwright";
+import { chromium, firefox, webkit, type Page } from "playwright";
 import { mkdir } from "node:fs/promises";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
@@ -94,7 +94,11 @@ async function pickImage(page: Page, inputSelector: string, editorSelector: stri
 let failed = false;
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web), waitFor(live)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
+  const browserName = Bun.env.E2E_BROWSER ?? "chromium";
+  const browserType = browserName === "firefox" ? firefox : browserName === "webkit" ? webkit : chromium;
+  const browser = await browserType.launch({ executablePath: browserName === "chromium" ? Bun.env.CHROMIUM_PATH : undefined });
+  // Other engines stop after attachment previews; the existing editor acceptance below is Chromium-only.
+  pdfPreviewFlow: {
   const page = await browser.newPage();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   await page.goto(web);
@@ -208,10 +212,28 @@ try {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.screenshot({ path: `${screenshotDir}/pdf-desktop-1440.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
+  const mobilePdfLink = pdfDialog.getByRole("link", { name: translate("assets.openPdf") });
+  check(await pdfFrame.isHidden(), "embedded PDF viewer must be replaced on narrow screens to avoid its clipped document viewport");
+  check(await mobilePdfLink.isVisible(), "mobile PDF preview has no visible browser-viewer alternative");
+  check((await mobilePdfLink.getAttribute("target")) === "_blank", "mobile PDF alternative must open separately");
+  check((await mobilePdfLink.getAttribute("rel"))?.includes("noopener"), "mobile PDF alternative must not expose its opener");
+  check((await mobilePdfLink.getAttribute("href")) === pdfUrl?.split("#")[0], "mobile PDF alternative must use the same authorized signed URL");
+  const mobileLinkBox = await mobilePdfLink.boundingBox();
+  check(Boolean(mobileLinkBox && mobileLinkBox.x >= 0 && mobileLinkBox.x + mobileLinkBox.width <= 390), "mobile PDF alternative extends beyond the viewport");
   await page.screenshot({ path: `${screenshotDir}/pdf-mobile-390.png`, fullPage: true });
+  if (browserName === "chromium") {
+    const pdfTabPromise = page.context().waitForEvent("page");
+    await mobilePdfLink.click();
+    const pdfTab = await pdfTabPromise;
+    await pdfTab.waitForURL((url) => url.origin === new URL(pdfUrl!).origin || url.protocol === "chrome-extension:", { timeout: 10_000 });
+    const openedPdfUrl = pdfTab.url();
+    check(openedPdfUrl.startsWith(new URL(pdfUrl!).origin) || openedPdfUrl.startsWith("chrome-extension://"), `mobile PDF alternative opened unexpected URL: ${openedPdfUrl}`);
+    await pdfTab.close();
+  }
   await pdfDialog.getByRole("button", { name: translate("assets.closePreview") }).click();
   await pdfDialog.waitFor({ state: "detached" });
   await page.setViewportSize({ width: 1440, height: 900 });
+  if (browserName !== "chromium") break pdfPreviewFlow;
   console.log("case attachment-image-video-pdf-previews: passed");
 
   async function notesUnverified() {
@@ -394,6 +416,7 @@ try {
   // The reload-and-restore check of a Wiki page image is not asserted here: Wiki bodies now persist through the live service, which this flow does not start.
 
   console.log("e2e attachments: ok");
+  }
   await browser.close();
 } catch (error) {
   failed = true;

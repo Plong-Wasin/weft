@@ -1033,6 +1033,8 @@ export const en = {
     "assets.previewFailed": "Could not preview this attachment. You can still download it.",
     "assets.videoPreview": "Video preview",
     "assets.pdfPreview": "PDF preview",
+    "assets.pdfOpenHint": "Open this PDF in your browser’s PDF viewer for a full-page view.",
+    "assets.openPdf": "Open PDF in a new tab",
     "assets.closePreview": "Close preview",
     "assets.unverified": "Unverified",
     "assets.delete": "Delete",

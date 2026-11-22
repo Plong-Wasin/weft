@@ -258,7 +258,13 @@ function AttachmentPreviewDialog({ preview, onClose }: { preview: { row: AssetRo
     media = <video className="asset-preview-video" src={url} controls preload="metadata" width="1280" height="720" aria-label={`${translate("assets.videoPreview")} ${row.filename}`} />;
   } else if (row.contentType === "application/pdf") {
     // The built-in PDF viewer is the only parser here; the server requires a PDF signature before issuing an inline URL.
-    media = <iframe className="asset-preview-pdf" src={`${url}#view=FitH`} title={`${translate("assets.pdfPreview")} ${row.filename}`} referrerPolicy="no-referrer" />;
+    media = <>
+      <div className="asset-preview-pdf-mobile" role="region" aria-label={translate("assets.pdfPreview")}>
+        <p>{translate("assets.pdfOpenHint")}</p>
+        <a className="inline-flex w-fit rounded-md border border-subtle bg-surface-1 px-3 py-2 text-primary" href={url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">{translate("assets.openPdf")}</a>
+      </div>
+      <iframe className="asset-preview-pdf" src={`${url}#view=FitH`} title={`${translate("assets.pdfPreview")} ${row.filename}`} referrerPolicy="no-referrer" />
+    </>;
   }
   return <dialog ref={dialog} className="asset-preview-dialog" aria-labelledby={titleId}
     onClose={() => { if (dialog.current?.returnValue !== "unmount") onClose(); }} onClick={(event) => { if (event.target === event.currentTarget) dialog.current?.close(); }}>

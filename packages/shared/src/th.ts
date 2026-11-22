@@ -1035,6 +1035,8 @@ export const th: Record<keyof typeof en, string> = {
   "assets.previewFailed": "แสดงตัวอย่างไฟล์แนบนี้ไม่ได้ แต่ยังดาวน์โหลดไฟล์ได้",
   "assets.videoPreview": "ตัวอย่างวิดีโอ",
   "assets.pdfPreview": "ตัวอย่าง PDF",
+  "assets.pdfOpenHint": "เปิด PDF นี้ในตัวดู PDF ของเบราว์เซอร์เพื่อดูเต็มหน้า",
+  "assets.openPdf": "เปิด PDF ในแท็บใหม่",
   "assets.closePreview": "ปิดตัวอย่าง",
   "assets.unverified": "ยังไม่ได้ตรวจสอบ",
   "inbox.secretOutputBlocked": "ระงับผลงานของ Agent เนื่องจากมีความลับของ Runtime ที่กำหนดไว้",

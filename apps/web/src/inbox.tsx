@@ -11,12 +11,12 @@ import { autoRuleReasonText } from "./auto-rule-reason";
 
 type Workspace = { id: string; slug: string; name: string };
 type Notification = {
-  id: string; kind: "mention" | "assignment" | "reply" | "intake_accepted" | "intake_rejected" | "intake_duplicate" | "run_confirmation" | "run_skipped" | "wake_skipped" | "recurrence_paused" | "auto_rule"; workItemId: string | null; wikiPageId: string | null; pageTitle: string | null; projectId: string | null; projectKey: string | null; commentId: string | null; recurrenceId: string | null; detail: string | null; displayId: string; workItemTitle: string;
+  id: string; kind: "mention" | "assignment" | "reply" | "intake_accepted" | "intake_rejected" | "intake_duplicate" | "run_confirmation" | "run_skipped" | "wake_skipped" | "recurrence_paused" | "auto_rule" | "secret_output_blocked"; workItemId: string | null; wikiPageId: string | null; pageTitle: string | null; projectId: string | null; projectKey: string | null; commentId: string | null; recurrenceId: string | null; detail: string | null; displayId: string; workItemTitle: string;
   actorName: string; readAt: string | null; createdAt: string; intakeId: string | null; intakeOutcome: string | null;
 };
 const inboxMessage = {
   mention: "inbox.mention", reply: "inbox.reply", assignment: "inbox.assignment",
-  intake_accepted: "inbox.intakeAccepted", intake_rejected: "inbox.intakeRejected", intake_duplicate: "inbox.intakeDuplicate", run_confirmation: "inbox.runConfirmation", run_skipped: "inbox.runSkipped", wake_skipped: "inbox.wakeSkipped", recurrence_paused: "inbox.recurrencePaused", auto_rule: "inbox.autoRule",
+  intake_accepted: "inbox.intakeAccepted", intake_rejected: "inbox.intakeRejected", intake_duplicate: "inbox.intakeDuplicate", run_confirmation: "inbox.runConfirmation", run_skipped: "inbox.runSkipped", wake_skipped: "inbox.wakeSkipped", recurrence_paused: "inbox.recurrencePaused", auto_rule: "inbox.autoRule", secret_output_blocked: "inbox.secretOutputBlocked",
 } as const;
 type Inbox = { unreadCount: number; notifications: Notification[] };
 
@@ -99,7 +99,7 @@ export function InboxPanel({ workspace }: { workspace: Workspace }) {
     <ul style={{ listStyle: "none", paddingLeft: 0 }}>
       {shown.map((item) => <li key={item.id} className={`mb-2 grid min-w-0 gap-2 rounded-md border border-subtle p-3 sm:grid-cols-[minmax(0,1fr)_auto] ${item.readAt ? "" : "bg-layer-1"}`}>
         {item.kind === "recurrence_paused" ? `${translate(inboxMessage[item.kind])}: ${item.detail ?? ""}` : <>{translate(item.kind === "wake_skipped" ? `inbox.wakeSkipped.${item.detail ?? "no_agent_access"}` as never : inboxMessage[item.kind]).replace("{actor}", item.actorName)}{" "}
-        {item.workItemId || item.wikiPageId ? <Link to={item.readAt ? notificationTarget(workspace.slug, item) : notificationTargetWithInboxId(workspace.slug, item, item.id)}>{item.wikiPageId ? item.pageTitle : `${item.displayId} ${item.workItemTitle}`}</Link> : <span>{item.detail}</span>}{item.kind === "auto_rule" && item.detail && <>{": "}{autoRuleReasonText(item.detail, translate)}</>}</>}{" "}
+        {item.workItemId || item.wikiPageId ? <Link to={item.readAt ? notificationTarget(workspace.slug, item) : notificationTargetWithInboxId(workspace.slug, item, item.id)}>{item.wikiPageId ? item.pageTitle : `${item.displayId} ${item.workItemTitle}`}</Link> : <span>{item.kind === "secret_output_blocked" ? translate("inbox.secretOutputBlockedDetail") : item.detail}</span>}{item.kind === "auto_rule" && item.detail && <>{": "}{autoRuleReasonText(item.detail, translate)}</>}</>}{" "}
         <small>{formatDate(item.createdAt)}</small>{" "}
         <button type="button" className="secondary justify-self-start sm:justify-self-end" disabled={markRead.isPending || markUnread.isPending} onClick={() => item.readAt ? markUnread.mutate(item.id) : markRead.mutate(item.id)}>{translate(item.readAt ? "inbox.markUnread" : "inbox.markRead")}</button>
       </li>)}

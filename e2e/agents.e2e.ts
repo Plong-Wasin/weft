@@ -81,6 +81,7 @@ try {
   await card.waitFor();
   await card.getByLabel(translate("agents.allProjects")).click();
   await page.waitForFunction(() => document.querySelector('[data-agent="Helper Bot"] input[type=checkbox]:checked') !== null);
+  await card.locator("fieldset").filter({ hasText: translate("agents.allProjects") }).getByRole("button", { name: translate("agents.save") }).click();
   const ownerId = me.user.id;
   const daemonToken = await createApiTokenActions(db).createApiToken.handler({ userId: ownerId }, { name: "e2e daemon" });
   const runtimeActions = createRuntimeActions(db);
@@ -98,8 +99,13 @@ try {
   await environment.getByRole("button", { name: translate("agents.environmentAdd") }).click();
   await environment.getByLabel(translate("agents.environmentName")).nth(1).fill("ANTHROPIC_API_KEY");
   await environment.getByLabel(translate("agents.environmentValue")).nth(1).fill("fake-e2e-key");
+  await environment.getByRole("button", { name: translate("agents.environmentAdd") }).click();
+  await environment.getByLabel(translate("agents.environmentName")).nth(2).fill("MODE");
+  await environment.getByLabel(translate("agents.environmentValue")).nth(2).fill("x");
   await environment.getByRole("button", { name: translate("agents.environmentSave") }).click();
-  await environment.getByText(/CLAUDE_CONFIG_DIR, ANTHROPIC_API_KEY|ANTHROPIC_API_KEY, CLAUDE_CONFIG_DIR/).waitFor();
+  await environment.getByLabel(`MODE ${translate("agents.environmentClassification")}`).selectOption("non-secret");
+  await environment.getByRole("button", { name: translate("agents.environmentSaveClassifications") }).click();
+  if (await environment.getByLabel(`MODE ${translate("agents.environmentClassification")}`).inputValue() !== "non-secret") throw new Error("short environment value classification was not saved");
   const screenshotDir = Bun.env.RUNTIME_ENV_SCREENSHOTS;
   if (screenshotDir) {
     await mkdir(screenshotDir, { recursive: true });

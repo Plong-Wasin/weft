@@ -3,10 +3,10 @@ import { plainTextWrittenForm } from "./rich-markdown";
 import { writtenFormOf } from "./written-form-pool";
 import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, agentAccess, agents, collections, collectionMembers, commentMentions, commentVersions, comments, intakeItems, outlinks, projectKeyAliases, projectMembers, projects, runtimes, users, wikiPageShares, wikiPages, workItems, workItemAssignees, workspaceMembers } from "@weft/db";
+import { activities, agentAccess, agents, collections, collectionMembers, commentMentions, commentVersions, comments, intakeItems, outlinks, projectKeyAliases, projectMembers, projects, runs, runtimes, users, wikiPageShares, wikiPages, workItems, workItemAssignees, workspaceMembers } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { assertNotArchived, liveWorkItems } from "./triage";
-import { enqueueNotification } from "./notifications";
+import { enqueueNotification, recordSecretOutputBlockedNotifications } from "./notifications";
 import { accessibleProjects, requireProjectAccess } from "./projects";
 import { requireWikiPageAccess } from "./wiki";
 import { agentUserIds, withoutDisabledAgents } from "./agent-access";
@@ -21,6 +21,8 @@ import { WRITTEN_FORM_MAX_INPUT_LENGTH, type MarkdownOptions, type ResolvedRefer
 import { clearOutlinkPart, commentPart, existingStableReferences, makeUnavailableReferencesPlainText, setOutlinksFromDocument } from "./outlinks";
 import { assertFeatureEnabled, featuresOf } from "./features";
 import { validateRichTextAssets } from "./rich-text-validation";
+import { openSecret } from "./integration-secrets";
+import { containsRuntimeSecret, containsRuntimeSecretValue } from "./runtime-secret-comments";
 
 type Context = ActivityContext;
 type CommentRow = typeof comments.$inferSelect;
@@ -188,6 +190,15 @@ export function createCommentActions(db: Database) {
   }
 
   async function commentBody(context: Context, item: { id: string; projectId: string; workspaceId: string }, body: unknown, markdown: string | undefined, existingRefs: string[] = []) {
+    if (context.source === "agent" && context.agent?.runId) {
+      const [run] = await db.select({ runtimeEnvironmentSecrets: runs.runtimeEnvironmentSecrets, runtimeId: runs.runtimeId, workspaceId: runs.workspaceId }).from(runs).where(eq(runs.id, context.agent.runId));
+      const values = run?.runtimeEnvironmentSecrets ? Object.values(JSON.parse(openSecret(run.runtimeEnvironmentSecrets)) as Record<string, string>) : [];
+      if (containsRuntimeSecret(markdown ?? "", values) || containsRuntimeSecretValue(body, values)) {
+        const [runtime] = run?.runtimeId ? await db.select({ ownerId: runtimes.ownerId }).from(runtimes).where(eq(runtimes.id, run.runtimeId)) : [];
+        if (run) await recordSecretOutputBlockedNotifications(db, { workspaceId: run.workspaceId, runId: context.agent.runId, actorId: context.agent.agentUserId, recipientIds: [context.agent.originatorId, ...(runtime ? [runtime.ownerId] : [])] });
+        throw new ActionError("Comment withheld because it contains a configured Runtime secret. Remove or replace the value and retry.", 400, "runtime_secret_output");
+      }
+    }
     const referenceText = markdown ?? await writtenFormOf(body);
     const { references, options } = await commentMarkdownOptions(db, context.userId, item.workspaceId, item.projectId, referenceText);
     let prepared;

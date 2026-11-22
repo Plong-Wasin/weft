@@ -333,6 +333,8 @@ test.concurrent("duplicates a visible page in place, copies its image assets, an
     const storage: AssetStorage = {
       presignPost: () => ({ url: "", fields: {} }),
       head: async (key) => objects.has(key) ? { size: 4 } : null,
+      read: async () => new Uint8Array(4),
+      put: async (key) => { objects.add(key); },
       remove: async (key) => { objects.delete(key); },
       copy: async (source, destination) => { if (!objects.has(source)) throw new Error("missing source"); objects.add(destination); },
       presignGet: () => ({ url: "" }),

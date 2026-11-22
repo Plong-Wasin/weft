@@ -1,23 +1,124 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { activities, assets as assetTable, createDatabase, intakeItems, workspaces, type Database } from "@weft/db";
+import { activities, apiTokens, assets as assetTable, createDatabase, daemons, intakeItems, notifications, runs, runtimes, workspaces, type Database } from "@weft/db";
 import { createAssetActions, createCommentActions, createIntakeActions, createProjectActions, createWikiActions, createWorkItemActions, signPostPolicy, type AssetStorage } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
+import { sealSecret } from "../src/integration-secrets";
+
+test("secret inspection recognizes text and HTML while refusing to call unsupported documents clean", async () => {
+  const { inspectAssetBytes } = await import("../src/assets");
+  expect(inspectAssetBytes("text/plain", Buffer.from("value=top-secret"), ["top-secret"])).toEqual({ status: "secret" });
+  expect(inspectAssetBytes("text/html", Buffer.from("<p>top-secret</p>"), ["top-secret"])).toEqual({ status: "secret" });
+  for (const encoding of ["base64", "base64url", "hex"] as const) {
+    expect(inspectAssetBytes("text/plain", Buffer.from(`payload=${Buffer.from("top-secret").toString(encoding)}`), ["top-secret"])).toEqual({ status: "secret" });
+  }
+  expect(inspectAssetBytes("application/pdf", Buffer.from("%PDF-1.7"), ["top-secret"])).toEqual({ status: "unverified" });
+  expect(inspectAssetBytes("text/plain", Buffer.from("%PDF-1.7 hidden"), ["top-secret"])).toEqual({ status: "unverified" });
+  expect(inspectAssetBytes("text/plain", Buffer.from([0xff, 0xfe]), ["top-secret"])).toEqual({ status: "unverified" });
+  expect(inspectAssetBytes("text/plain", Buffer.from("hello"), ["top-secret"])).toEqual({ status: "clean" });
+});
+
+test.concurrent("Agent secret attachment is withheld, its partial object is removed, and retry error hides the value", async () => {
+  await withRollback(db, async (transaction) => {
+    const env = await setup(transaction);
+    const runId = crypto.randomUUID();
+    const [token] = await transaction.insert(apiTokens).values({ userId: env.admin.id, name: "Runtime", tokenHash: crypto.randomUUID(), tokenPrefix: "test", daemonOnly: true }).returning();
+    const [daemon] = await transaction.insert(daemons).values({ ownerId: env.admin.id, hostname: "test-host", tokenId: token!.id, version: "test" }).returning();
+    const [runtime] = await transaction.insert(runtimes).values({ workspaceId: env.workspace.id, daemonId: daemon!.id, ownerId: env.admin.id, agentCli: "codex", shared: true }).returning();
+    await transaction.insert(runs).values({ id: runId, workspaceId: env.workspace.id, projectId: env.project.id, workItemId: env.item.id, agentId: null, originatorId: env.member.id, runtimeId: runtime!.id, status: "running", runtimeEnvironmentSecrets: sealSecret(JSON.stringify({ API_TOKEN: "hidden-value-928" })) });
+    const context = { userId: env.member.id, agent: { agentUserId: env.guest.id, runId, originatorId: env.member.id, workspaceId: env.workspace.id } };
+    const ticket = await env.assets.requestAssetUpload.handler(context, { ownerType: "work_item", ownerId: env.item.id, filename: "report.txt", contentType: "text/plain", size: 35 });
+    env.mem.putBytes(ticket.fields.key!, new TextEncoder().encode("result: hidden-value-928"));
+    let failure: Error | undefined;
+    try { await env.assets.completeAssetUpload.handler(context, { assetId: ticket.assetId }); } catch (error) { failure = error as Error; }
+    expect(failure?.message).toContain("retry with a safe file");
+    expect(failure?.message).not.toContain("hidden-value-928");
+    expect(env.mem.objects.has(ticket.fields.key!)).toBe(false);
+    expect(await env.assets.listAssets.handler({ userId: env.member.id }, { ownerType: "work_item", ownerId: env.item.id })).toEqual([]);
+    const notices = await transaction.select({ kind: notifications.kind, detail: notifications.detail, workItemId: notifications.workItemId, userId: notifications.userId }).from(notifications);
+    expect(notices).toHaveLength(2);
+    expect(notices.every((notice) => notice.kind === "secret_output_blocked" && notice.detail === null && notice.workItemId === null)).toBe(true);
+    expect(new Set(notices.map((notice) => notice.userId))).toEqual(new Set([env.member.id, env.admin.id]));
+    const retry = await env.assets.requestAssetUpload.handler(context, { ownerType: "work_item", ownerId: env.item.id, filename: "safe.txt", contentType: "text/plain", size: 12 });
+    env.mem.putBytes(retry.fields.key!, new TextEncoder().encode("safe output"));
+    expect(await env.assets.completeAssetUpload.handler(context, { assetId: retry.assetId })).toMatchObject({ filename: "safe.txt", unverified: false });
+  });
+});
+
+test.concurrent("reusing a still-valid upload URL cannot replace the exact bytes inspected and published", async () => {
+  await withRollback(db, async (transaction) => {
+    const env = await setup(transaction);
+    const runId = crypto.randomUUID();
+    await transaction.insert(runs).values({ id: runId, workspaceId: env.workspace.id, projectId: env.project.id, workItemId: env.item.id, originatorId: env.member.id, status: "running", runtimeEnvironmentSecrets: sealSecret(JSON.stringify({ API_TOKEN: "late-secret-772" })) });
+    const context = { userId: env.member.id, agent: { agentUserId: env.guest.id, runId, originatorId: env.member.id, workspaceId: env.workspace.id } };
+    const ticket = await env.assets.requestAssetUpload.handler(context, { ownerType: "work_item", ownerId: env.item.id, filename: "result.txt", contentType: "text/plain", size: 11 });
+    env.mem.putBytes(ticket.fields.key!, new TextEncoder().encode("safe result"));
+    const published = await env.assets.completeAssetUpload.handler(context, { assetId: ticket.assetId });
+    const [row] = await transaction.select().from(assetTable).where(eq(assetTable.id, published.id));
+    const approvedBytes = env.mem.objects.get(row!.storageKey)!;
+    env.mem.putBytes(ticket.fields.key!, new TextEncoder().encode("late-secret-772"));
+    expect(row!.storageKey).not.toBe(ticket.fields.key);
+    expect(new TextDecoder().decode(env.mem.objects.get(row!.storageKey))).toBe("safe result");
+    expect(new TextDecoder().decode(approvedBytes)).toBe("safe result");
+    const download = await env.assets.getAssetDownloadUrl.handler({ userId: env.member.id }, { assetId: published.id });
+    expect(decodeURIComponent(new URL(download.url).pathname.slice(1))).toBe(row!.storageKey);
+    expect(new TextDecoder().decode(env.mem.objects.get(decodeURIComponent(new URL(download.url).pathname.slice(1))))).toBe("safe result");
+  });
+});
+
+test.concurrent("failed publication removes the partial destination and leaves a cancellable pending upload", async () => {
+  await withRollback(db, async (transaction) => {
+    const env = await setup(transaction);
+    const ticket = await env.assets.requestAssetUpload.handler({ userId: env.member.id }, { ownerType: "work_item", ownerId: env.item.id, filename: "retry.txt", contentType: "text/plain", size: 5 });
+    env.mem.putBytes(ticket.fields.key!, new TextEncoder().encode("retry"));
+    const originalPut = env.mem.storage.put;
+    env.mem.storage.put = async (key, body) => {
+      await originalPut(key, body, "text/plain");
+      throw new Error("storage interrupted after partial write");
+    };
+    await expect(env.assets.completeAssetUpload.handler({ userId: env.member.id }, { assetId: ticket.assetId })).rejects.toMatchObject({ status: 500 });
+    const [pending] = await transaction.select().from(assetTable).where(eq(assetTable.id, ticket.assetId));
+    expect(pending?.status).toBe("pending");
+    expect([...env.mem.objects.keys()].filter((key) => key.includes(`/assets/${ticket.assetId}/`))).toEqual([]);
+    expect(env.mem.objects.has(ticket.fields.key!)).toBe(true);
+    await env.assets.cancelAssetUpload.handler({ userId: env.member.id }, { assetId: ticket.assetId });
+    expect(env.mem.objects.has(ticket.fields.key!)).toBe(false);
+    env.mem.storage.put = originalPut;
+  });
+});
+
+test.concurrent("Agent document and undecodable uploads are delivered with a persistent unverified state", async () => {
+  await withRollback(db, async (transaction) => {
+    const env = await setup(transaction);
+    const runId = crypto.randomUUID();
+    await transaction.insert(runs).values({ id: runId, workspaceId: env.workspace.id, projectId: env.project.id, workItemId: env.item.id, originatorId: env.member.id, status: "running" });
+    const context = { userId: env.member.id, agent: { agentUserId: env.admin.id, runId, originatorId: env.member.id, workspaceId: env.workspace.id } };
+    for (const [filename, contentType, bytes] of [["manual.pdf", "application/pdf", new TextEncoder().encode("%PDF-1.7 encrypted")], ["manual.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", new Uint8Array([0x50, 0x4b, 0x03, 0x04])], ["broken.txt", "text/plain", new Uint8Array([0xff, 0xfe])], ["inline.png", "image/png", new Uint8Array([0x89, 0x50, 0x4e, 0x47])]] as const) {
+      const ticket = await env.assets.requestAssetUpload.handler(context, { ownerType: "work_item", ownerId: env.item.id, filename, contentType, size: bytes.byteLength });
+      env.mem.putBytes(ticket.fields.key!, bytes);
+      expect(await env.assets.completeAssetUpload.handler(context, { assetId: ticket.assetId })).toMatchObject({ filename, unverified: true });
+      if (filename === "inline.png") expect(await env.assets.getAssetDownloadUrl.handler({ userId: env.member.id }, { assetId: ticket.assetId })).toMatchObject({ inline: true, unverified: true });
+    }
+    expect((await env.assets.listAssets.handler({ userId: env.member.id }, { ownerType: "work_item", ownerId: env.item.id })).map((asset) => asset.unverified)).toEqual([true, true, true, true]);
+  });
+});
 
 const { client, db } = createDatabase();
 afterAll(async () => client.end());
 
 /** In-memory object storage; `put` plays the browser's upload step. */
 function memoryStorage() {
-  const objects = new Map<string, number>();
+  const objects = new Map<string, Uint8Array>();
   const storage: AssetStorage = {
     presignPost: ({ key, contentType, maxBytes }) => ({ url: "http://storage.test/bucket", fields: { key, "Content-Type": contentType, maxBytes: String(maxBytes) } }),
-    head: async (key) => (objects.has(key) ? { size: objects.get(key)! } : null),
+    head: async (key) => (objects.has(key) ? { size: objects.get(key)!.byteLength } : null),
+    read: async (key) => objects.get(key)!,
+    put: async (key, body) => { objects.set(key, typeof body === "string" ? new TextEncoder().encode(body) : new Uint8Array(body)); },
     remove: async (key) => { objects.delete(key); },
-    copy: async (source, destination) => { const size = objects.get(source); if (size === undefined) throw new Error("missing source"); objects.set(destination, size); },
+    copy: async (source, destination) => { const bytes = objects.get(source); if (bytes === undefined) throw new Error("missing source"); objects.set(destination, bytes); },
     presignGet: ({ key, inline, contentType, filename }) => ({ url: `http://storage.test/${key}?inline=${inline}&type=${encodeURIComponent(inline ? contentType : "application/octet-stream")}&name=${encodeURIComponent(filename)}` }),
   };
-  return { storage, put: (key: string, size: number) => objects.set(key, size), objects };
+  return { storage, put: (key: string, size: number) => objects.set(key, new Uint8Array(size)), putBytes: (key: string, bytes: Uint8Array) => objects.set(key, bytes), objects };
 }
 
 async function setup(transaction: Database, limit = 5 * 1024 * 1024) {
@@ -153,8 +254,10 @@ test("cancellation and completion serialize before changing stored bytes", async
     releaseHead();
     expect((await completing).id).toBe(ticket.assetId);
     expect(await cancelling).toMatchObject({ status: 404 });
-    expect(env.mem.objects.has(ticket.fields.key!)).toBe(true);
-    expect((await db.select().from(assetTable).where(eq(assetTable.id, ticket.assetId)))[0]?.status).toBe("uploaded");
+    expect(env.mem.objects.has(ticket.fields.key!)).toBe(false);
+    const [completed] = await db.select().from(assetTable).where(eq(assetTable.id, ticket.assetId));
+    expect(completed?.status).toBe("uploaded");
+    expect(env.mem.objects.has(completed!.storageKey)).toBe(true);
   } finally {
     await db.delete(workspaces).where(eq(workspaces.id, env.workspace.id));
   }
@@ -212,8 +315,9 @@ test("attachment deletion observes a concurrent Intake decision", async () => {
     release(); await decision;
     expect(settledBeforeDecision).toBe(false);
     expect(await deletion).toMatchObject({ status: 400 });
-    expect(env.mem.objects.has(`${env.workspace.id}/${asset.id}`)).toBe(true);
-    expect(await db.select().from(assetTable).where(eq(assetTable.id, asset.id))).toHaveLength(1);
+    const [retained] = await db.select().from(assetTable).where(eq(assetTable.id, asset.id));
+    expect(retained).toBeDefined();
+    expect(env.mem.objects.has(retained!.storageKey)).toBe(true);
     expect((await db.select().from(activities).where(eq(activities.entityId, item.workItemId))).some((row) => row.field === "attachment_removed")).toBe(false);
   } finally { await db.delete(workspaces).where(eq(workspaces.id, env.workspace.id)); }
 });

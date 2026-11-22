@@ -58,6 +58,8 @@ export * from "./agent-budget";
 export * from "./usage";
 export * from "./runtimes";
 export * from "./runtime-dispatch";
+export { containsRuntimeSecret, containsRuntimeSecretValue, lockRuntimeRun } from "./runtime-secret-comments";
+export { openSecret } from "./integration-secrets";
 export * from "./triggers";
 export * from "./recurrences";
 export * from "./wiki-yjs";

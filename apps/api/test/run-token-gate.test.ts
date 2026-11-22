@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { activities, assets as assetRows, comments as commentRows, createDatabase, runs, type Database } from "@weft/db";
-import { createAgentActions, createCommentActions, createProjectActions, createRuntimeDispatchActions, createRuntimeActions, createTriggerActions, createWikiActions, createWorkItemActions } from "@weft/actions";
+import { activities, assets as assetRows, comments as commentRows, createDatabase, runs, workItems, type Database } from "@weft/db";
+import { createAgentActions, createAgentRuntimeEnvironmentActions, createCommentActions, createProjectActions, createRuntimeDispatchActions, createRuntimeActions, createTriggerActions, createWikiActions, createWorkItemActions, lockRuntimeRun } from "@weft/actions";
 import { createMemberFactory, withRollback } from "../../../packages/db/src/test-helpers";
 import { createApp } from "../src/app";
 
@@ -40,6 +40,8 @@ function memoryStorage() {
   const storage: import("@weft/actions").AssetStorage = {
     presignPost: ({ key }) => ({ url: "http://storage.test/", fields: { key } }),
     head: async (key) => files.has(key) ? { size: Buffer.byteLength(files.get(key)!) } : null,
+    read: async (key) => new TextEncoder().encode(files.get(key) ?? ""),
+    put: async (key, body) => { files.set(key, typeof body === "string" ? body : new TextDecoder().decode(body)); },
     remove: async (key) => { files.delete(key); },
     copy: async (source, destination) => { const value = files.get(source); if (value === undefined) throw new Error("missing asset"); files.set(destination, value); },
     presignGet: ({ key }) => ({ url: `http://storage.test/${key}` }),
@@ -161,6 +163,7 @@ test.concurrent("a Runtime Run can upload and retrieve a deliverable on its Work
   await withRollback(db, async (transaction) => {
     const memory = memoryStorage();
     const { post, claim, owner, project, item, agent, agents } = await scenario(transaction, true, memory.storage);
+    await createAgentRuntimeEnvironmentActions(transaction).setAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id, variables: { API_TOKEN: "late-secret-772" } });
     const [claimed] = await (await claim()).json() as Array<{ token: string }>;
     const token = claimed!.token;
     const input = { ownerType: "work_item", ownerId: item.id, filename: "diagram.html", contentType: "text/html", size: 32 };
@@ -182,6 +185,12 @@ test.concurrent("a Runtime Run can upload and retrieve a deliverable on its Work
     const download = await url.json() as { url: string; filename: string; contentType: string; inline: boolean };
     expect(download).toMatchObject({ filename: "diagram.html", contentType: "text/html", inline: false });
     expect(memory.read(download.url)).toBe("<!doctype html><title>deliverable</title>");
+    // The POST policy remains valid after completion; replaying it writes only to staging.
+    memory.put(upload.fields.key!, "<!doctype html><title>late-secret-772</title>");
+    const currentUrl = await post("/actions/get_asset_download_url", { assetId: upload.assetId, download: true }, { token });
+    const current = await currentUrl.json() as { url: string };
+    expect(memory.read(current.url)).toBe("<!doctype html><title>deliverable</title>");
+    expect((await post("/actions/list_assets", { ownerType: "work_item", ownerId: item.id }, { token })).status).toBe(200);
     expect((await post("/actions/get_asset_download_url", { assetId: upload.assetId }, { token })).status).toBe(200);
   });
 });
@@ -294,6 +303,63 @@ test.concurrent("changes made through a Run token fire no Trigger, for create, u
     await post("/actions/create_comment", { workItemId: item.id, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "from agent" }] }] } }, { token });
     expect((await transaction.select({ id: runs.id }).from(runs)).length).toBe(before);
   });
+});
+
+test.concurrent("Runtime secret detection blocks Agent work item, comment, and wiki writes before persistence", async () => {
+  await withRollback(db, async (transaction) => {
+    const { post, claim, owner, workspace, project, agent, item } = await scenario(transaction);
+    const secret = 'runtime-"quoted"\\slash-token';
+    await createAgentRuntimeEnvironmentActions(transaction).setAgentRuntimeEnvironment.handler({ userId: owner.id }, { agentId: agent.id, variables: { API_TOKEN: secret } });
+    await createAgentActions(transaction).updateAgent.handler({ userId: owner.id }, { agentId: agent.id, allowFeatureActions: true });
+    const [claimed] = await (await claim()).json() as Array<{ token: string; runId: string }>;
+    const token = claimed!.token;
+    const denied = await post("/actions/update_work_item", { workItemId: item.id, title: `Line one\nLeaked ${secret}` }, { token });
+    expect(denied.status).toBe(400);
+    const deniedBody = await denied.text();
+    expect(deniedBody).not.toContain(secret);
+    expect(JSON.parse(deniedBody)).toMatchObject({ code: "runtime_secret_output" });
+    expect((await transaction.select({ title: workItems.title }).from(workItems).where(eq(workItems.id, item.id)))[0]?.title).toBe(item.title);
+
+    const comment = await post("/actions/create_comment", { workItemId: item.id, bodyMarkdown: `Comment leaks ${secret}` }, { token });
+    expect(comment.status).toBe(400);
+    expect(await comment.text()).not.toContain(secret);
+    const wiki = await post("/actions/create_wiki_page", { workspaceId: workspace.id, projectId: project.id, title: "Notes", contentMarkdown: `Wiki leaks ${secret}` }, { token });
+    expect(wiki.status).toBe(400);
+    expect(await wiki.text()).not.toContain(secret);
+    expect(await transaction.select({ id: commentRows.id }).from(commentRows).where(eq(commentRows.workItemId, item.id))).toHaveLength(0);
+    await transaction.update(runs).set({ runtimeEnvironmentSecrets: "unreadable-snapshot" }).where(eq(runs.id, claimed!.runId));
+    const unreadable = await post("/actions/update_work_item", { workItemId: item.id, title: "Safe-looking text" }, { token });
+    expect(unreadable.status).toBe(400);
+    expect(await unreadable.text()).not.toContain("unreadable-snapshot");
+    expect((await transaction.select({ title: workItems.title }).from(workItems).where(eq(workItems.id, item.id)))[0]?.title).toBe(item.title);
+    expect(await transaction.select({ id: runs.id }).from(runs).where(eq(runs.id, claimed!.runId))).toHaveLength(1);
+  });
+});
+
+test.concurrent("a Run completion waits for an Agent write's secret check and persistence lock", async () => {
+  const runId = crypto.randomUUID();
+  let acquired!: () => void;
+  const lockAcquired = new Promise<void>((resolve) => { acquired = resolve; });
+  let releaseWrite!: () => void;
+  const writeBarrier = new Promise<void>((resolve) => { releaseWrite = resolve; });
+  let persisted = false;
+  let completionSettled = false;
+  const write = db.transaction(async (transaction) => {
+    await lockRuntimeRun(transaction as unknown as Database, runId);
+    acquired();
+    await writeBarrier;
+    persisted = true;
+  });
+  await lockAcquired;
+  const completion = createRuntimeDispatchActions(db).finishRun(runId, { status: "completed", finalOutput: "done" }).finally(() => { completionSettled = true; });
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  expect(completionSettled).toBe(false);
+  expect(persisted).toBe(false);
+  releaseWrite();
+  await write;
+  await completion.catch(() => undefined); // This synthetic Run id has no row; the lock wait is the behavior under test.
+  expect(persisted).toBe(true);
+  expect(completionSettled).toBe(true);
 });
 
 test.concurrent("turning off allow Autopilot stops new Runtime Runs and ends the authority of Run tokens already issued", async () => {

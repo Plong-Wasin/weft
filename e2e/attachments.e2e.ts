@@ -113,6 +113,12 @@ try {
     page.getByRole("button", { name: translate("workItems.attachAction") }).click(),
   ]);
   const attachments = page.getByTestId("attachments");
+  // Show the persisted warning state in the browser acceptance screenshots.
+  await page.route("**/actions/list_assets", async (route) => {
+    const response = await route.fetch();
+    const rows = await response.json() as Array<Record<string, unknown>>;
+    await route.fulfill({ response, json: rows.map((row) => row.filename === "notes.txt" ? { ...row, unverified: true } : row) });
+  });
   await attachments.waitFor();
   await page.getByTestId("attachment-dropzone").waitFor();
 
@@ -123,11 +129,25 @@ try {
   ]);
   await attachments.getByText("notes.txt").waitFor();
   await attachments.getByText("second.txt").waitFor();
+  await notesUnverified();
   check(await attachments.locator("img").count() === 0, "non-image attachment rendered inline");
   const notesRow = attachments.locator("li").filter({ hasText: "notes.txt" });
   const [download] = await Promise.all([page.waitForEvent("download"), notesRow.getByRole("button", { name: translate("assets.download") }).click()]);
   check(download.suggestedFilename() === "notes.txt", "download has the wrong filename");
   check((await Bun.file((await download.path())!).text()) === "hello evidence", "downloaded bytes differ");
+  const screenshotDir = "/home/plong/workspace/weft/.local/ai-ux-follow-up/06";
+  await mkdir(screenshotDir, { recursive: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.screenshot({ path: `${screenshotDir}/desktop-1440.png`, fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: `${screenshotDir}/mobile-390.png`, fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  async function notesUnverified() {
+    const warning = attachments.locator("li").filter({ hasText: "notes.txt" }).getByText(translate("assets.unverified"));
+    await warning.waitFor();
+    check(await warning.isVisible(), "unverified attachment warning is not visible");
+  }
 
   // Oversize files and SVG show clear errors.
   const [dropzonePicker] = await Promise.all([
@@ -214,13 +234,28 @@ try {
   await page.getByRole("main").getByRole("button", { name: translate("wiki.new") }).click();
   await page.waitForURL(new RegExp(`/${slug}/wiki/[0-9a-f-]+$`));
   await page.locator(".ProseMirror").waitFor();
+  await page.route("**/actions/get_asset_download_url", async (route) => {
+    const response = await route.fetch();
+    const result = await response.json() as { inline: boolean; [key: string]: unknown };
+    await route.fulfill({ response, json: result.inline ? { ...result, unverified: true } : result });
+  });
   await pasteFile(page, ".ProseMirror", { name: "w.png", type: "image/png", base64: png });
   await page.waitForFunction(() => (document.querySelector('.ProseMirror img[data-testid="inline-image"]') as HTMLImageElement | null)?.naturalWidth);
+  const inlineWarning = page.locator('.ProseMirror .asset-image-unverified');
+  await inlineWarning.waitFor();
+  check((await inlineWarning.textContent()) === translate("assets.unverified"), "Wiki inline image has an unclear unverified marker");
   await page.getByText(translate("wiki.saved")).waitFor({ timeout: 10_000 });
   await page.reload();
   await page.locator('.ProseMirror img[data-testid="inline-image"]').waitFor();
   await page.waitForFunction(() => (document.querySelector('.ProseMirror img[data-testid="inline-image"]') as HTMLImageElement | null)?.naturalWidth);
   check(await loadedImages(page, ".ProseMirror") === 1, "Wiki image did not render after reload");
+  check(await page.locator('.ProseMirror .asset-image-unverified').isVisible(), "Wiki inline image must show when its contents are unverified");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.screenshot({ path: `${screenshotDir}/wiki-inline-unverified-desktop-1440.png`, fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: `${screenshotDir}/wiki-inline-unverified-mobile-390.png`, fullPage: true });
+  check(await page.locator('.ProseMirror .asset-image-unverified').isVisible(), "Wiki inline image warning is not visible at mobile width");
+  await page.setViewportSize({ width: 1440, height: 900 });
   const wikiAttachments = page.getByTestId("wiki-attachments");
   await wikiAttachments.waitFor({ state: "visible" });
   await page.waitForFunction(() => document.querySelector('[data-testid="wiki-attachments"]')?.getAttribute("aria-busy") === "false");
@@ -262,13 +297,6 @@ try {
   check(await wikiDownload.isVisible(), "Wiki attachment download control is missing");
   const [wikiFileDownload] = await Promise.all([page.waitForEvent("download"), wikiDownload.click()]);
   check(wikiFileDownload.suggestedFilename() === "reference.html", "Wiki attachment download did not preserve its filename");
-  const screenshotDir = "/home/plong/workspace/weft/.local/ai-ux-reliability/02-wiki-page-attachments";
-  await mkdir(screenshotDir, { recursive: true });
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await page.screenshot({ path: `${screenshotDir}/wiki-attachments-desktop.png`, fullPage: true });
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: `${screenshotDir}/wiki-attachments-mobile.png`, fullPage: true });
-  await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByRole("button", { name: translate("wiki.exports") }).click();
   await page.getByTestId("wiki-page-lock").click();
   await wikiAttachments.locator('input[type="file"]').waitFor({ state: "detached" });

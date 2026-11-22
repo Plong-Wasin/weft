@@ -381,6 +381,53 @@ test("a long Run streams every transcript message with a unique, increasing seq 
   expect(prompt).toContain("wi-1");
 });
 
+test("a blocked completion resumes the same CLI Session with a safe correction and retries the finish", async () => {
+  const path = await mkdtemp(join(tmpdir(), "weft-secret-completion-retry-")); scratch.push(path);
+  const argsPath = join(path, "args.txt");
+  const countPath = join(path, "count.txt");
+  const secret = "completion-secret-591";
+  const encoded = Buffer.from(secret).toString("base64");
+  await writeFile(join(path, "claude"), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${argsPath}'\nif [ -f '${countPath}' ]; then n=$(cat '${countPath}'); else n=0; fi\nn=$((n + 1))\nprintf '%s' "$n" > '${countPath}'\necho '{"type":"system","subtype":"init","session_id":"session-secret-retry"}'\nif [ "$n" -eq 1 ]; then echo '{"type":"result","result":"encoded ${encoded}"}'; else echo '{"type":"result","result":"Corrected safely."}'; fi\n`);
+  await chmod(join(path, "claude"), 0o755);
+  const controller = new AbortController();
+  const finishes: Array<{ status: string; finalOutput: string }> = [];
+  let claimed = false;
+  class WorkSocket extends EventTarget {
+    readyState = 0;
+    constructor() { super(); setTimeout(() => { this.readyState = 1; this.dispatchEvent(new Event("open")); this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ type: "work_available" }) })); }, 0); }
+    send() {}
+    close() { this.readyState = 3; this.dispatchEvent(new Event("close")); }
+  }
+  await startDaemon({
+    env: { XDG_CONFIG_HOME: await isolatedConfig(), WEFT_TOKEN: "weft_daemon", WEFT_API_URL: "https://weft.example", PATH: `${path}:${Bun.env.PATH}` },
+    fetch: async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/daemon/runs/claim")) {
+        if (claimed) return Response.json([]);
+        claimed = true;
+        return Response.json([{ runId: "run-secret-retry", runtimeId: "rt-1", agentCli: "claude", instructions: "Finish the work.", request: "Complete the requested change.", model: null, token: "weft_run_x", environment: { API_TOKEN: secret }, secretEnvironment: { API_TOKEN: secret }, workspaceId: "ws-1", projectId: "pr-1", workItemId: "wi-1", workItemDisplayId: "ALP-7" }]);
+      }
+      if (url.endsWith("/api/daemon/runs/finish")) {
+        const body = JSON.parse(String(init?.body)) as { status: string; finalOutput: string };
+        finishes.push(body);
+        if (finishes.length === 1) return Response.json({ correctionRequired: true, message: "The Agent's final output was withheld because it contained a configured Runtime secret. Revise it without the secret; the secret value is intentionally omitted." });
+        controller.abort();
+      }
+      return Response.json({ daemonId: "daemon-id", runtimes: [], ok: true, daemonToken: "weft_daemon_test" });
+    },
+    webSocket: () => new WorkSocket() as unknown as WebSocket,
+    signal: controller.signal, safetyPollMs: 60_000,
+  });
+  const [first, second] = finishes;
+  expect(first).toMatchObject({ status: "completed", finalOutput: `encoded ${encoded}` });
+  expect(second).toMatchObject({ status: "completed", finalOutput: "Corrected safely." });
+  expect(await readFile(countPath, "utf8")).toBe("2");
+  const args = await readFile(argsPath, "utf8");
+  expect(args).toContain("--resume session-secret-retry");
+  expect(args).toContain("The Agent's final output was withheld");
+  expect(args).not.toContain(secret);
+});
+
 test("the running Daemon registers again on a timer so workspaces joined later get Runtimes", async () => {
   const path = await mkdtemp(join(tmpdir(), "weft-rereg-")); scratch.push(path);
   await writeFile(join(path, "claude"), "#!/bin/sh\nexit 0\n"); await chmod(join(path, "claude"), 0o755);

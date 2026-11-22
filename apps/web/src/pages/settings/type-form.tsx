@@ -2,6 +2,7 @@ import React from "react";
 import { Palette } from "lucide-react";
 import { searchTypeIcons, translate, typeIconGroups, type MessageKey } from "@weft/shared";
 import { TypeIconMark, themeColour, typeSwatches, type TypeIcon } from "../../work-item-types";
+import { handleImeSafeEnter } from "../../ime";
 
 const t = (key: string) => translate(key as MessageKey);
 const swatchNames = ["red", "orange", "yellow", "green", "cyan", "blue", "violet", "pink", "grey"] as const;
@@ -96,10 +97,8 @@ function IconChoice({ labelId, icon, onPick }: { labelId: string; icon: TypeIcon
   const keys = useChoiceKeys(matches.length, (index) => onPick(matches[index]!.key));
   const shown = typeIconGroups.map((group) => ({ group, entries: matches.filter((entry) => entry.group === group) })).filter((section) => section.entries.length > 0);
   const onSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      if (matches[0]) onPick(matches[0].key);
-    } else if (event.key === "Escape" && query) {
+    if (handleImeSafeEnter(event.nativeEvent, () => { if (matches[0]) onPick(matches[0].key); })) return;
+    if (event.key === "Escape" && query) {
       event.preventDefault();
       event.stopPropagation();
       setQuery("");

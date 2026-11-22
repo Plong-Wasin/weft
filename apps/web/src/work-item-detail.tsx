@@ -1,5 +1,6 @@
 import { accessReasonText } from "./access-reason";
 import React from "react";
+import { handleImeSafeEnter } from "./ime";
 import { Link, useNavigate } from "react-router";
 import { ArrowUpRight, CalendarCheck, CalendarClock, ChevronDown, CircleUserRound, Gauge, Layers, Link2, Maximize2, RefreshCw, Package, Tag, Trash2, Users, Archive, ArchiveRestore, X, CircleDot, Sigma, Shapes, MoreHorizontal, PanelRight } from "lucide-react";
 import { translate, type MessageKey } from "@weft/shared";
@@ -400,7 +401,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       <textarea ref={titleRef} rows={1} aria-label={t("workItems.titleField")} value={title} maxLength={500} readOnly={!canWrite} className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-24 font-semibold leading-tight text-primary [overflow-wrap:anywhere]"
         onChange={(event) => setTitle(event.target.value)}
         onBlur={() => { const next = title.trim(); if (!next) setTitle(item.title); else if (next !== item.title) void change({ title: next }); }}
-        onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); } }} />
+        onKeyDown={(event) => { handleImeSafeEnter(event.nativeEvent, () => event.currentTarget.blur()); }} />
     </div>
     {/* Beside the description (wide page with the panel shown) the Properties panel already holds these, so the bar is for the other layouts. */}
     <div role="group" aria-label={t("workItems.quickProperties")} data-quick-properties className={`flex flex-wrap items-center gap-2 ${mode === "page" && propertiesOpen ? "lg:hidden" : ""} ${mode === "peek" ? "@[800px]:hidden" : ""}`}>

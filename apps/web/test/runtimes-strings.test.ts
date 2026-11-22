@@ -14,6 +14,33 @@ test("profile labels and full-access warnings are available to settings, Agent p
   }
 });
 
+test("sandbox setup explains SRT and Linux host requirements and warns before enforcement can block Full access Agents", async () => {
+  for (const key of ["runtimes.sandboxRequirements", "runtimes.enforceSandboxImpact", "runtimes.enforceSandboxConfirm"]) {
+    expect(resources.en[key as keyof typeof resources.en]).toBeTruthy();
+    expect((resources.th as Record<string, string>)[key]).toBeTruthy();
+  }
+  expect(resources.en["runtimes.sandboxRequirements"]).toContain("npm install --global @anthropic-ai/sandbox-runtime");
+  expect(resources.en["runtimes.sandboxRequirements"]).toContain("On Linux");
+  expect(resources.en["runtimes.sandboxRequirements"]).toContain("bubblewrap (bwrap), socat, and ripgrep (rg)");
+  expect(resources.en["runtimes.sandboxRequirements"]).toContain("unprivileged user namespaces");
+  expect(resources.en["runtimes.sandboxRequirements"]).toContain("Settings do not verify these host requirements");
+  expect(resources.en["runtimes.sandboxRequirements"]).toContain("never falls back to full access");
+  expect(resources.th["runtimes.sandboxRequirements"]).toContain("บน Linux");
+  expect(resources.th["runtimes.sandboxRequirements"]).toContain("bubblewrap (bwrap), socat และ ripgrep (rg)");
+  expect(resources.th["runtimes.sandboxRequirements"]).toContain("Settings ไม่ได้ตรวจสอบข้อกำหนดของเครื่องเหล่านี้");
+  expect(resources.en["runtimes.enforceSandboxConfirm"]).toContain("Full access");
+  for (const key of ["runtimes.enforceSandboxImpact", "runtimes.enforceSandboxConfirm"] as const) {
+    expect(resources.en[key]).toContain("claimed after this change");
+    expect(resources.en[key]).toContain("already dispatched");
+    expect(resources.th[key]).toContain("Runtime รับหลังจากเปลี่ยนค่านี้เท่านั้น");
+    expect(resources.th[key]).toContain("รอให้ Run เหล่านี้เสร็จหรือหยุด");
+  }
+
+  const source = (await import("node:fs")).readFileSync(new URL("../src/pages/settings/runtimes-settings.tsx", import.meta.url), "utf8");
+  expect(source.indexOf('data-testid="runtime-enforcement-warning"')).toBeLessThan(source.indexOf('translate("runtimes.enforceSandbox")'));
+  expect(source).toContain('window.confirm(translate("runtimes.enforceSandboxConfirm"))');
+});
+
 test("deleting a profile asks first, and editing one offers Cancel", async () => {
   const source = (await import("node:fs")).readFileSync(new URL("../src/pages/settings/runtimes-settings.tsx", import.meta.url), "utf8");
   expect(source.indexOf("runtimes.deleteProfileConfirm")).toBeGreaterThan(-1);

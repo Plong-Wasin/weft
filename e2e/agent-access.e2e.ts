@@ -210,11 +210,36 @@ try {
     }
   }
 
+  // A Workspace Admin who owns the Runtime must be able to bind their Agent to a profile.
+  const adminToken = await createApiTokenActions(db).createApiToken.handler({ userId: me.user.id }, { name: "Admin Runtime" });
+  const adminDaemon = await runtimeActions.registerDaemon.handler({ userId: me.user.id, apiTokenId: adminToken.id }, { hostname: "admin-profile-e2e", version: "1", agentClis: ["codex"] });
+  const adminRuntime = adminDaemon.runtimes[0]!;
+  await runtimeActions.shareRuntime.handler({ userId: me.user.id }, { runtimeId: adminRuntime.id });
+  const adminProfile = await runtimeActions.createRuntimeProfile.handler({ userId: me.user.id }, { runtimeId: adminRuntime.id, name: "Admin sandbox", sandbox: "run-folder", filesystemAllowlist: [], networkAllowlist: [] });
+  const adminAgent = await createAgentActions(db).createAgent.handler({ userId: me.user.id }, { workspaceId, name: "Admin Agent", model: "default", runtimeId: adminRuntime.id });
+  await admin.goto(`${web}/${slug}/settings/agents`);
+  const adminAgentRow = admin.locator('[data-agent="Admin Agent"]');
+  const adminProfileSelect = adminAgentRow.getByLabel(translate("agents.runtimeProfile"));
+  await adminProfileSelect.waitFor({ timeout: 5000 });
+  await adminProfileSelect.selectOption(adminProfile.id);
+  await adminAgentRow.getByRole("button", { name: translate("agents.saveProfile"), exact: true }).click();
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const saved = await createAgentActions(db).getAgent.handler({ userId: me.user.id }, { agentId: adminAgent.id });
+    if (saved.runtimeProfileId === adminProfile.id) break;
+    if (attempt === 49) throw new Error("Admin could not bind their Agent to their Runtime profile");
+    await Bun.sleep(100);
+  }
+  await Bun.write(`${evidenceDir}/admin-runtime-profile-desktop.png`, await adminAgentRow.screenshot());
+  await admin.setViewportSize({ width: 390, height: 844 });
+  await Bun.write(`${evidenceDir}/admin-runtime-profile-mobile.png`, await adminAgentRow.screenshot());
+  await admin.setViewportSize({ width: 1440, height: 900 });
+
   // The workspace Admin also edits project access; a second editor's change must survive this stale UI draft.
   const docsProject = await projects.createProject.handler({ userId: me.user.id }, { workspaceId, name: "Docs", key: "DOC", visibility: "public" });
   await createAgentActions(db).setAgentProjectAccess.handler({ userId: me.user.id }, { agentId: codeAgent.id, allProjects: false, projectIds: [] });
   await admin.goto(`${web}/${slug}/settings/agents`);
   const agentRow = admin.locator('[data-agent="Code Helper"]');
+  if (await agentRow.getByLabel(translate("agents.runtimeProfile")).count()) throw new Error("Admin must not change another owner’s Runtime profile");
   const mobileProject = agentRow.getByLabel("MOB · Mobile");
   const projectSave = agentRow.getByRole("button", { name: translate("agents.save"), exact: true }).first();
   await mobileProject.waitFor();

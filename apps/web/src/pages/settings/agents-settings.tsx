@@ -288,6 +288,7 @@ export function WorkspaceAgents() {
             }} />
           : <><AccessEditor agent={agent} projects={projects} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} />
             {manageableAgentIds.includes(agent.id) ? <AgentPeopleAccess agent={agent} members={members} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} /> : <p className="text-12 text-secondary">{translate("agents.runtimeOwnerAccess")}</p>}</>}
+          {manageableAgentIds.includes(agent.id) && agent.runtimeId && <AgentRuntimeProfile agent={agent} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} />}
           {manageableAgentIds.includes(agent.id) && agent.runtimeId && <AgentRuntimeEnvironment agent={agent} onFailed={() => setNote(translate("agents.failed"))} />}
           <fieldset className="grid gap-1 border-0 p-0"><legend className="text-13 font-medium text-secondary">{translate("agents.skills")}</legend>
             {workspaceSkills.length === 0 ? <span className="text-13 text-secondary">{translate("agents.noSkills")}</span> : workspaceSkills.map((skill) => <label key={skill.id} className="flex items-center gap-2" title={skill.description}>

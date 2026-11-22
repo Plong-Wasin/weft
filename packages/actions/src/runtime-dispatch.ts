@@ -208,9 +208,9 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
       // Serialize the start boundary with enforcement changes. Whichever operation obtains this Runtime row lock first
       // defines whether this Run is already running when enforcement is enabled.
       const [runtime] = await tx.select({ enforceSandbox: runtimes.enforceSandbox }).from(runtimes).where(eq(runtimes.id, runtimeId)).for("update");
-      if (!runtime) throw new ActionError("Runtime not found", 404);
+      if (!runtime) throw new ActionError("Run is not dispatched to this Runtime", 409);
       const [candidate] = await tx.select({ runId: runs.id, policy: runs.runtimeSandboxPolicy, profileId: runtimeProfiles.id, profileSandbox: runtimeProfiles.sandbox, filesystemAllowlist: runtimeProfiles.filesystemAllowlist, networkAllowlist: runtimeProfiles.networkAllowlist }).from(runs)
-        .innerJoin(agents, eq(agents.id, runs.agentId)).leftJoin(runtimeProfiles, eq(runtimeProfiles.id, agents.runtimeProfileId))
+        .innerJoin(agents, eq(agents.id, runs.agentId)).leftJoin(runtimeProfiles, and(eq(runtimeProfiles.id, agents.runtimeProfileId), eq(runtimeProfiles.runtimeId, runs.runtimeId)))
         .where(and(eq(runs.id, runId), eq(runs.runtimeId, runtimeId), eq(runs.status, "dispatched")));
       if (!candidate) throw new ActionError("Run is not dispatched to this Runtime", 409);
       const currentPolicy = { profileId: candidate.profileId ?? null, mode: candidate.profileSandbox ?? (runtime.enforceSandbox ? "read-only" : "full"), filesystemAllowlist: candidate.filesystemAllowlist ?? [], networkAllowlist: candidate.networkAllowlist ?? [], enforce: runtime.enforceSandbox };

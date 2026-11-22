@@ -1,6 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
-import { aiRequests, collectionMembers, collections, comments, confirmations, intakeItems, notifications, projectMembers, projects, recurrences, sessions, users, wikiPageShares, workItems, workItemAssignees, wikiPages, workspaceInvites, workspaceMembers, type Database } from "@weft/db";
+import { aiRequests, collectionMembers, collections, comments, confirmations, intakeItems, notifications, projectMembers, projects, recurrences, runs, sessions, users, wikiPageShares, workItems, workItemAssignees, wikiPages, workspaceInvites, workspaceMembers, type Database } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 import { enqueueJob, type JobHandlers } from "./jobs";
@@ -24,6 +24,8 @@ export type NotificationKind = "mention" | "assignment" | "reply" | "intake_acce
 export interface NotifyPayload {
   kind: NotificationKind;
   workItemId?: string;
+  /** A work-item-free scheduled Run a notification should open. */
+  runId?: string;
   wikiPageId?: string;
   commentId?: string;
   actorId: string;
@@ -97,7 +99,8 @@ async function fanOut(database: Database, payload: NotifyPayload, job: { id: str
   }
   const [item] = payload.workItemId ? await database.select().from(workItems).where(and(eq(workItems.id, payload.workItemId), isNull(workItems.deletedAt))) : [];
   const [page] = payload.wikiPageId ? await database.select().from(wikiPages).where(and(eq(wikiPages.id, payload.wikiPageId), isNull(wikiPages.deletedAt))) : [];
-  if (!item && !page) return;
+  const [scheduledRun] = payload.runId ? await database.select({ id: runs.id, workspaceId: runs.workspaceId, workItemId: runs.workItemId }).from(runs).where(and(eq(runs.id, payload.runId), isNull(runs.workItemId))) : [];
+  if (!item && !page && !scheduledRun) return;
   let allowedRecipients = payload.recipientIds;
   if (item) {
     const [intake] = await database.select().from(intakeItems).where(and(eq(intakeItems.workItemId, item.id), sql`${intakeItems.outcome} <> 'accepted'`));
@@ -138,7 +141,7 @@ async function fanOut(database: Database, payload: NotifyPayload, job: { id: str
       if (!parent) return;
     }
   }
-  const workspaceId = item?.workspaceId ?? page!.workspaceId;
+  const workspaceId = item?.workspaceId ?? page?.workspaceId ?? scheduledRun!.workspaceId;
   if (page) {
     const shares = (await database.select({ userId: wikiPageShares.userId }).from(wikiPageShares).where(eq(wikiPageShares.pageId, page.id))).map((row) => row.userId);
     if (page.access === "private") allowedRecipients = allowedRecipients.filter((id) => id === page.ownerId || shares.includes(id));
@@ -158,7 +161,7 @@ async function fanOut(database: Database, payload: NotifyPayload, job: { id: str
     .where(and(eq(workspaceMembers.workspaceId, workspaceId), inArray(workspaceMembers.userId, allowedRecipients), isNull(workspaceMembers.suspendedAt)));
   if (members.length === 0) return;
   const created = await database.insert(notifications).values(members.map(({ userId }) => ({
-    workspaceId, userId, actorId: payload.actorId, kind: payload.kind, workItemId: item?.id ?? null, wikiPageId: page?.id ?? null, commentId: payload.commentId ?? null,
+    workspaceId, userId, actorId: payload.actorId, kind: payload.kind, workItemId: item?.id ?? null, runId: scheduledRun?.id ?? null, wikiPageId: page?.id ?? null, commentId: payload.commentId ?? null,
     detail: payload.kind === "run_skipped" ? payload.detail ?? null : null, jobId: job.id,
   }))).onConflictDoNothing().returning({ userId: notifications.userId });
   for (const { userId } of created) await publish(database, { type: "notification", workspaceId, userId });
@@ -230,7 +233,7 @@ export async function scheduleCleanupJobs(database: Database) {
 
 const uuid = () => Type.String({ format: "uuid" });
 const notificationOutput = Type.Object({
-  id: Type.String(), kind: Type.Union((["mention", "assignment", "reply", "intake_accepted", "intake_rejected", "intake_duplicate", "run_confirmation", "run_skipped", "wake_skipped", "recurrence_paused", "auto_rule", "secret_output_blocked"] as const).map((kind) => Type.Literal(kind))), workItemId: Type.Union([Type.String(), Type.Null()]), wikiPageId: Type.Union([Type.String(), Type.Null()]), pageTitle: Type.Union([Type.String(), Type.Null()]), projectId: Type.Union([Type.String(), Type.Null()]), recurrenceId: Type.Union([Type.String(), Type.Null()]), detail: Type.Union([Type.String(), Type.Null()]),
+  id: Type.String(), kind: Type.Union((["mention", "assignment", "reply", "intake_accepted", "intake_rejected", "intake_duplicate", "run_confirmation", "run_skipped", "wake_skipped", "recurrence_paused", "auto_rule", "secret_output_blocked"] as const).map((kind) => Type.Literal(kind))), workItemId: Type.Union([Type.String(), Type.Null()]), runId: Type.Union([Type.String(), Type.Null()]), wikiPageId: Type.Union([Type.String(), Type.Null()]), pageTitle: Type.Union([Type.String(), Type.Null()]), projectId: Type.Union([Type.String(), Type.Null()]), recurrenceId: Type.Union([Type.String(), Type.Null()]), detail: Type.Union([Type.String(), Type.Null()]),
   displayId: Type.String(), projectKey: Type.Union([Type.String(), Type.Null()]), workItemTitle: Type.String(), commentId: Type.Union([Type.String(), Type.Null()]),
   intakeId: Type.Union([Type.String(), Type.Null()]), intakeOutcome: Type.Union([Type.String(), Type.Null()]),
   actorId: Type.String(), actorName: Type.String(), readAt: Type.Union([Type.String(), Type.Null()]), createdAt: Type.String(),
@@ -241,20 +244,20 @@ export function createNotificationActions(db: Database) {
   async function visibleRows(userId: string, workspaceId: string, unreadOnly: boolean) {
     await requireWorkspaceRole(db, userId, workspaceId, "read");
     const rows = await db.select({
-      id: notifications.id, kind: notifications.kind, workItemId: notifications.workItemId, wikiPageId: notifications.wikiPageId, recurrenceId: notifications.recurrenceId, detail: notifications.detail,
-      projectId: workItems.projectId, projectKey: projects.key, sequence: workItems.sequence, title: workItems.title, deletedAt: workItems.deletedAt,
+      id: notifications.id, kind: notifications.kind, workItemId: notifications.workItemId, runId: notifications.runId, wikiPageId: notifications.wikiPageId, recurrenceId: notifications.recurrenceId, detail: notifications.detail,
+      projectId: workItems.projectId, runProjectId: runs.projectId, runWorkspaceId: runs.workspaceId, projectKey: projects.key, sequence: workItems.sequence, title: workItems.title, deletedAt: workItems.deletedAt,
       intakeId: intakeItems.id, intakeOutcome: intakeItems.outcome,
       recurrenceProjectId: recurrences.projectId,
       pageTitle: wikiPages.title, pageDeletedAt: wikiPages.deletedAt, pageAccess: wikiPages.access, pageOwnerId: wikiPages.ownerId, pageProjectId: wikiPages.projectId,
       commentId: notifications.commentId, actorId: notifications.actorId,
       actorName: users.name, readAt: notifications.readAt, createdAt: notifications.createdAt,
     }).from(notifications)
-      .leftJoin(workItems, eq(workItems.id, notifications.workItemId)).leftJoin(intakeItems, eq(intakeItems.workItemId, workItems.id)).leftJoin(wikiPages, eq(wikiPages.id, notifications.wikiPageId)).leftJoin(recurrences, eq(recurrences.id, notifications.recurrenceId))
-      .leftJoin(projects, sql`${projects.id} = coalesce(${workItems.projectId}, ${wikiPages.projectId})`).innerJoin(users, eq(users.id, notifications.actorId))
+      .leftJoin(workItems, eq(workItems.id, notifications.workItemId)).leftJoin(intakeItems, eq(intakeItems.workItemId, workItems.id)).leftJoin(wikiPages, eq(wikiPages.id, notifications.wikiPageId)).leftJoin(recurrences, eq(recurrences.id, notifications.recurrenceId)).leftJoin(runs, eq(runs.id, notifications.runId))
+      .leftJoin(projects, sql`${projects.id} = coalesce(${workItems.projectId}, ${wikiPages.projectId}, ${runs.projectId})`).innerJoin(users, eq(users.id, notifications.actorId))
       .where(and(eq(notifications.userId, userId), eq(notifications.workspaceId, workspaceId), ...(unreadOnly ? [isNull(notifications.readAt)] : [])))
       .orderBy(desc(notifications.createdAt), desc(notifications.id));
     const visibleProjects = new Map<string, boolean>();
-    for (const projectId of new Set(rows.flatMap((row) => row.projectId ? [row.projectId] : row.recurrenceProjectId ? [row.recurrenceProjectId] : []))) {
+    for (const projectId of new Set(rows.flatMap((row) => row.projectId ? [row.projectId] : row.recurrenceProjectId ? [row.recurrenceProjectId] : row.runId && row.runProjectId ? [row.runProjectId] : []))) {
       visibleProjects.set(projectId, await requireProjectAccess(db, userId, projectId, "read").then(() => true, () => false));
     }
     const visibleItems = new Map<string, boolean>();
@@ -275,7 +278,7 @@ export function createNotificationActions(db: Database) {
     }
     return rows.filter((row) => row.kind === "secret_output_blocked" ? true : row.recurrenceId !== null ? visibleProjects.get(row.recurrenceProjectId!) : (row.workItemId
       ? row.deletedAt === null && visibleItems.get(row.workItemId)
-      : row.wikiPageId !== null && visiblePages.get(row.wikiPageId)));
+      : row.wikiPageId ? visiblePages.get(row.wikiPageId) : row.runId ? Boolean(row.runProjectId && visibleProjects.get(row.runProjectId)) : false));
   }
 
   async function requireVisibleNotification(userId: string, notificationId: string) {
@@ -298,8 +301,8 @@ export function createNotificationActions(db: Database) {
         return {
           unreadCount: all.filter((row) => row.readAt === null).length,
           notifications: shown.map((row) => ({
-            id: row.id, kind: row.kind as NotificationKind, workItemId: row.workItemId, wikiPageId: row.wikiPageId, pageTitle: row.pageTitle,
-            projectId: row.projectId ?? row.pageProjectId ?? row.recurrenceProjectId, projectKey: row.projectKey, recurrenceId: row.recurrenceId, detail: row.detail, displayId: row.projectKey && row.sequence ? `${row.projectKey}-${row.sequence}` : "",
+            id: row.id, kind: row.kind as NotificationKind, workItemId: row.workItemId, runId: row.runId, wikiPageId: row.wikiPageId, pageTitle: row.pageTitle,
+            projectId: row.projectId ?? row.pageProjectId ?? row.recurrenceProjectId ?? row.runProjectId, projectKey: row.projectKey, recurrenceId: row.recurrenceId, detail: row.detail, displayId: row.projectKey && row.sequence ? `${row.projectKey}-${row.sequence}` : "",
             workItemTitle: row.title ?? "", commentId: row.commentId, intakeId: row.intakeId, intakeOutcome: row.intakeOutcome, actorId: row.actorId, actorName: row.actorName,
             readAt: row.readAt ? row.readAt.toISOString() : null, createdAt: row.createdAt.toISOString(),
           })),

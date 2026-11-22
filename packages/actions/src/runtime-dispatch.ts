@@ -187,9 +187,9 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
         if (requiredCapabilities.some((capability) => !daemon.capabilities.includes(capability))) {
           const [failed] = await tx.update(runs).set({ status: "failed", failureReason: "runtime_capability_missing", finishedAt: now() })
             .where(and(eq(runs.id, row.run.id), eq(runs.status, "queued"))).returning({ id: runs.id, agentId: runs.agentId, workItemId: runs.workItemId });
-          if (failed?.workItemId) {
-            await enqueueNotification(tx, { kind: "run_skipped", workItemId: failed.workItemId, commentId: row.run.commentId ?? undefined, actorId: row.agent.userId, recipientIds: [row.run.originatorId], detail: "runtime_capability_missing" });
-            if (failed.agentId) await startFollowUpRun(tx, failed.agentId, failed.workItemId);
+          if (failed) {
+            await enqueueNotification(tx, { kind: "run_skipped", ...(failed.workItemId ? { workItemId: failed.workItemId } : { runId: failed.id }), commentId: row.run.commentId ?? undefined, actorId: row.agent.userId, recipientIds: [row.run.originatorId], detail: "runtime_capability_missing" });
+            if (failed.agentId && failed.workItemId) await startFollowUpRun(tx, failed.agentId, failed.workItemId);
           }
           continue;
         }

@@ -517,6 +517,8 @@ export const notifications = pgTable("notifications", {
   workItemId: uuid("work_item_id").references(() => workItems.id, { onDelete: "cascade" }),
   wikiPageId: uuid("wiki_page_id").references(() => wikiPages.id, { onDelete: "cascade" }),
   commentId: uuid("comment_id").references(() => comments.id, { onDelete: "cascade" }),
+  /** A work-item-free scheduled Run a notification should open. */
+  runId: uuid("run_id").references((): AnyPgColumn => runs.id, { onDelete: "cascade" }),
   recurrenceId: uuid("recurrence_id").references(() => recurrences.id, { onDelete: "cascade" }),
   detail: text("detail"),
   jobId: uuid("job_id").notNull(),

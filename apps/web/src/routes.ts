@@ -50,6 +50,7 @@ export const paths = {
   /** Every keyboard shortcut the app answers to, outside any workspace. */
   shortcuts: () => "/account/shortcuts",
   notifications: (workspace: string) => `/${e(workspace)}/notifications`,
+  scheduledRun: (workspace: string, runId: string) => `/${e(workspace)}/runs/${e(runId)}`,
   wiki: (workspace: string) => `/${e(workspace)}/wiki`,
   wikiPage: (workspace: string, id: string) => `/${e(workspace)}/wiki/${e(id)}`,
   ai: (workspace: string) => `/${e(workspace)}/ai`,

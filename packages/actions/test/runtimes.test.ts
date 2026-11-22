@@ -2,11 +2,11 @@ import { afterAll, expect, test } from "bun:test";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { activities, agents, comments, createDatabase, daemons, jobs, notifications, runMessages, runTokens, runs, runtimes, runtimeProfiles, users, workItems, workspaces } from "@weft/db";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
-import { createApiTokenActions, createCommentActions, createJobHandlers, createRuntimeActions, createRuntimeDispatchActions, handleAgentRunJob, queueRunsForAssignees, sweepRuntimeRuns } from "../src";
+import { createApiTokenActions, createCommentActions, createJobHandlers, createNotificationActions, createRuntimeActions, createRuntimeDispatchActions, createRunActions, handleAgentRunJob, queueRunsForAssignees, sweepRuntimeRuns } from "../src";
 import { createAgentRuntimeEnvironmentActions } from "../src/agent-runtime-environment";
 import { runtimeEnvironmentSecretValues, runtimeEnvironmentValues } from "../src/agent-runtime-environment";
 import { openSecret, sealSecret } from "../src/integration-secrets";
-import { createAgentActions, createMemberActions, createProjectActions, createRunActions, createWorkItemActions } from "../src";
+import { createAgentActions, createMemberActions, createProjectActions, createWorkItemActions } from "../src";
 
 const { client, db } = createDatabase();
 afterAll(async () => client.end());
@@ -291,6 +291,36 @@ test.concurrent("legacy Daemons keep ordinary Runs but safely fail Runs needing 
     await dispatch.claimRuns({ userId: scenario.owner.id, daemonId: scenario.registered.daemonId }, 1);
     noticeJobs = (await tx.select({ payload: jobs.payload }).from(jobs).where(eq(jobs.type, "notify"))).filter(({ payload }) => (payload as { kind?: string }).kind === "run_skipped");
     expect(noticeJobs).toHaveLength(3);
+  });
+});
+
+test.concurrent("a scheduled capability-blocked Run notifies once with a safe direct destination visible only to Project readers", async () => {
+  await withRollback(db, async (tx) => {
+    const scenario = await runtimeScenario(tx, "Admin");
+    await tx.update(runs).set({ status: "completed", finishedAt: new Date() }).where(eq(runs.workItemId, scenario.item.id));
+    await createAgentRuntimeEnvironmentActions(tx).setAgentRuntimeEnvironment.handler({ userId: scenario.owner.id }, { agentId: scenario.agent.id, variables: { SCHEDULED_SECRET: "never-in-notice" } });
+    await createRuntimeActions(tx).registerDaemon.handler({ userId: scenario.owner.id, apiTokenId: scenario.tokenId }, { hostname: "devbox", version: "1.0.0", agentClis: ["claude"] });
+    const [scheduled] = await tx.insert(runs).values({ workspaceId: scenario.workspace.id, projectId: scenario.project.id, workItemId: null, agentId: scenario.agent.id, originatorId: scenario.admin.id }).returning();
+    const dispatch = createRuntimeDispatchActions(tx);
+    expect(await dispatch.claimRuns({ userId: scenario.owner.id, daemonId: scenario.registered.daemonId }, 1)).toEqual([]);
+    expect((await tx.select({ status: runs.status, failureReason: runs.failureReason }).from(runs).where(eq(runs.id, scheduled!.id)))[0]).toEqual({ status: "failed", failureReason: "runtime_capability_missing" });
+
+    const noticeJobs = (await tx.select().from(jobs).where(eq(jobs.type, "notify"))).filter((job) => (job.payload as { kind?: string }).kind === "run_skipped");
+    expect(noticeJobs).toHaveLength(1);
+    expect(noticeJobs[0]!.payload).toMatchObject({ kind: "run_skipped", runId: scheduled!.id, actorId: scenario.agent.userId, recipientIds: [scenario.admin.id], detail: "runtime_capability_missing" });
+    expect(noticeJobs[0]!.payload).not.toHaveProperty("workItemId");
+    expect(JSON.stringify(noticeJobs[0]!.payload)).not.toContain("never-in-notice");
+    await createJobHandlers().notify!(tx, noticeJobs[0]!.payload, { id: noticeJobs[0]!.id, type: "notify" });
+    const inbox = await createNotificationActions(tx).listNotifications.handler({ userId: scenario.admin.id }, { workspaceId: scenario.workspace.id });
+    expect(inbox.notifications).toContainEqual(expect.objectContaining({ kind: "run_skipped", runId: scheduled!.id, workItemId: null, projectId: scenario.project.id, detail: "runtime_capability_missing" }));
+
+    const noProjectAccess = await createMemberFactory(tx, scenario.workspace.id, "Member");
+    await tx.insert(notifications).values({ workspaceId: scenario.workspace.id, userId: noProjectAccess.id, actorId: scenario.agent.userId, kind: "run_skipped", runId: scheduled!.id, detail: "runtime_capability_missing", jobId: crypto.randomUUID() });
+    expect((await createNotificationActions(tx).listNotifications.handler({ userId: noProjectAccess.id }, { workspaceId: scenario.workspace.id })).notifications).toEqual([]);
+    await expect(createRunActions(tx).getRun.handler({ userId: noProjectAccess.id }, { runId: scheduled!.id })).rejects.toMatchObject({ status: 404 });
+
+    await dispatch.claimRuns({ userId: scenario.owner.id, daemonId: scenario.registered.daemonId }, 1);
+    expect((await tx.select().from(jobs).where(eq(jobs.type, "notify"))).filter((job) => (job.payload as { kind?: string }).kind === "run_skipped")).toHaveLength(1);
   });
 });
 

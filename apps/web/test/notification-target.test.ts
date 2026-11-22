@@ -17,3 +17,9 @@ test("Inbox destination carries its notification id without losing target query 
   expect(inboxNotificationIdFromSearch("?currentTab=open&inboxNotificationId=notification-id")).toBe("notification-id");
   expect(withoutInboxNotificationId("?currentTab=open&inboxNotificationId=notification-id")).toBe("?currentTab=open");
 });
+
+test("scheduled Run notifications open the project-permission-checked Run route", () => {
+  const scheduled = { wikiPageId: null, runId: "run-id", projectId: "project", projectKey: "MOB", intakeId: null, intakeOutcome: null, displayId: "", kind: "run_skipped", commentId: null };
+  expect(notificationTarget("team", scheduled)).toBe("/team/runs/run-id");
+  expect(notificationTargetWithInboxId("team", scheduled, "notice-id")).toBe("/team/runs/run-id?inboxNotificationId=notice-id");
+});

@@ -145,6 +145,11 @@ try {
   check((await switcher.locator("span[aria-hidden]").boundingBox())!.height <= 24, "mobile Workspace View title wraps across multiple lines");
   check(await viewHeader.evaluate((element) => element.scrollWidth <= element.clientWidth), "mobile Workspace View header overflows horizontally");
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "mobile page overflows horizontally");
+  const sheet = page.getByRole("region", { name: translate("workspaceViews.table") });
+  await sheet.focus();
+  for (let press = 0; press < 3; press += 1) await page.keyboard.press("ArrowRight");
+  check(await sheet.evaluate((element) => element.scrollLeft > 0), "keyboard focus could not horizontally scroll the Workspace View table");
+  await sheet.evaluate((element) => { element.scrollLeft = 0; (element as HTMLElement).blur(); });
   await page.screenshot({ path: `${shots}/workspace-views-390.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.screenshot({ path: `${shots}/workspace-views-1440.png` });

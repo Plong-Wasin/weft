@@ -1832,6 +1832,7 @@ export const en = {
   "workspaceViews.created": "Created",
   "workspaceViews.subscribed": "Subscribed",
   "workspaceViews.project": "Project",
+  "workspaceViews.table": "Work item table",
   "workspaceViews.switch": "Switch view",
   "workspaceViews.empty": "No work items in this view.",
   "workspaceViews.truncated": "Showing the first 2,000 work items. More match this view; add a filter to narrow the results.",

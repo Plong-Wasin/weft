@@ -156,7 +156,7 @@ export function createAgentActions(db: Database) {
       input: Type.Object({ workspaceId: uuid() }),
       output: Type.Array(Type.Object({ id: Type.String(), name: Type.String(), createdBy: Type.String(), memberOwned: Type.Boolean(), instructions: Type.String(), model: Type.String(), enabled: Type.Boolean(), runtimeId: Type.Union([Type.String(), Type.Null()]), runtimeProfileId: Type.Union([Type.String(), Type.Null()]), runtimeProfileName: Type.Union([Type.String(), Type.Null()]), runtimeProfileSandbox: Type.Union([Type.String(), Type.Null()]), accessUserIds: Type.Array(Type.String()), allProjects: Type.Boolean(), projectIds: Type.Array(Type.String()), cliModel: Type.Union([Type.String(), Type.Null()]), maxConcurrentRuns: Type.Integer(), maxToolCalls: Type.Integer(), maxTokens: Type.Integer(), timeoutSeconds: Type.Integer(), monthlyTokenBudget: Type.Union([Type.Integer(), Type.Null()]) })),
       handler: async (context: Context, input: { workspaceId: string }) => {
-        const viewerRole = await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
+        const viewerRole = await requireWorkspaceRole(db, context.userId, input.workspaceId, "write");
         const rows = await db.select({ id: agents.id, userId: agents.userId, createdBy: agents.createdBy, memberOwned: agents.memberOwned, instructions: agents.instructions, model: agents.model, enabled: agents.enabled, runtimeId: agents.runtimeId, runtimeProfileId: agents.runtimeProfileId, allProjects: agents.allProjects, cliModel: agents.cliModel, maxConcurrentRuns: agents.maxConcurrentRuns, maxToolCalls: agents.maxToolCalls, maxTokens: agents.maxTokens, timeoutSeconds: agents.timeoutSeconds, monthlyTokenBudget: agents.monthlyTokenBudget }).from(agents).where(eq(agents.workspaceId, input.workspaceId));
         const manageable = [] as typeof rows;
         for (const row of rows) if (await canManageAgentAccess(db, { workspaceId: input.workspaceId, runtimeId: row.runtimeId }, context.userId)) manageable.push(row);
@@ -169,7 +169,7 @@ export function createAgentActions(db: Database) {
         ]);
         const profiles = profileIds.length ? await db.select({ id: runtimeProfiles.id, name: runtimeProfiles.name, sandbox: runtimeProfiles.sandbox }).from(runtimeProfiles).where(inArray(runtimeProfiles.id, profileIds)) : [];
         return manageable.map((row) => {
-          const mayConfigure = viewerRole === "Admin" || (row.memberOwned && row.createdBy === context.userId);
+          const mayConfigure = viewerRole === "Admin" || (viewerRole === "Member" && row.memberOwned && row.createdBy === context.userId);
           return {
             ...row, instructions: mayConfigure ? row.instructions : "", model: mayConfigure ? row.model : "default",
             allProjects: mayConfigure ? row.allProjects : false,

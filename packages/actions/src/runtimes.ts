@@ -409,18 +409,21 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
   }
 
   async function setShared(userId: string, runtimeId: string, shared: boolean) {
-    const [runtime] = await db.select({ id: runtimes.id, workspaceId: runtimes.workspaceId, ownerId: runtimes.ownerId, shared: runtimes.shared }).from(runtimes).where(eq(runtimes.id, runtimeId));
-    if (!runtime) throw new ActionError("Runtime not found", 404);
-    if (runtime.ownerId !== userId) throw new ActionError("Only the Runtime owner can change sharing", 403);
-    await requireWorkspaceRole(db, userId, runtime.workspaceId, shared ? "write" : "read");
-    if (runtime.shared === shared) return { id: runtimeId, shared };
-    await db.update(runtimes).set({ shared }).where(eq(runtimes.id, runtimeId));
-    await auditAgentChange(db, { workspaceId: runtime.workspaceId, entityType: "runtime", entityId: runtime.id, field: "shared", oldValue: runtime.shared, newValue: shared, actorId: userId });
-    if (!shared) {
-      const bound = await db.select({ id: agents.id }).from(agents).where(eq(agents.runtimeId, runtime.id));
-      for (const agent of bound) await revokeAgentRuns(db, agent.id, userId, "Runtime sharing was revoked");
-    }
-    return { id: runtimeId, shared };
+    return db.transaction(async (transaction) => {
+      const database = transaction as unknown as Database;
+      const [runtime] = await database.select({ id: runtimes.id, workspaceId: runtimes.workspaceId, ownerId: runtimes.ownerId, shared: runtimes.shared }).from(runtimes).where(eq(runtimes.id, runtimeId)).for("update");
+      if (!runtime) throw new ActionError("Runtime not found", 404);
+      if (runtime.ownerId !== userId) throw new ActionError("Only the Runtime owner can change sharing", 403);
+      await requireWorkspaceRole(database, userId, runtime.workspaceId, shared ? "write" : "read");
+      if (runtime.shared === shared) return { id: runtimeId, shared };
+      await database.update(runtimes).set({ shared }).where(eq(runtimes.id, runtimeId));
+      await auditAgentChange(database, { workspaceId: runtime.workspaceId, entityType: "runtime", entityId: runtime.id, field: "shared", oldValue: runtime.shared, newValue: shared, actorId: userId });
+      if (!shared) {
+        const bound = await database.select({ id: agents.id }).from(agents).where(eq(agents.runtimeId, runtime.id));
+        for (const agent of bound) await revokeAgentRuns(database, agent.id, userId, "Runtime sharing was revoked");
+      }
+      return { id: runtimeId, shared };
+    });
   }
 
   async function ownedRuntime(userId: string, runtimeId: string) {

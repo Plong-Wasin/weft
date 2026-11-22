@@ -149,6 +149,37 @@ test.concurrent("schedule triggers queue one work-item-free Run after downtime a
   });
 });
 
+test.concurrent("unsharing a Runtime cancels queued Runs and prevents assignment and schedule triggers from requeueing them", async () => {
+  await withRollback(db, async (transaction) => {
+    const { agents, admin, member, workspace, alpha, work } = await setup(transaction);
+    await transaction.update(workspaces).set({ allowAutopilot: true }).where(eq(workspaces.id, workspace.id));
+    const apiToken = await createApiTokenActions(transaction).createApiToken.handler({ userId: member.id }, { name: "runtime" });
+    const runtime = (await createRuntimeActions(transaction).registerDaemon.handler({ userId: member.id, apiTokenId: apiToken.id }, { hostname: "member-runtime", version: "1", agentClis: ["codex"] })).runtimes[0]!;
+    const runtimes = createRuntimeActions(transaction);
+    await runtimes.shareRuntime.handler({ userId: member.id }, { runtimeId: runtime.id });
+    const agent = await agents.createAgent.handler({ userId: member.id }, { workspaceId: workspace.id, ...agentInput, runtimeId: runtime.id });
+    await agents.setAgentProjectAccess.handler({ userId: member.id }, { agentId: agent.id, allProjects: false, projectIds: [alpha.id] });
+    await agents.setAgentAccess.handler({ userId: member.id }, { agentId: agent.id, userIds: [member.id, admin.id] });
+    const triggers = createTriggerActions(transaction);
+    const schedule = await triggers.createTrigger.handler({ userId: admin.id }, { agentId: agent.id, projectId: alpha.id, schedule: "daily" });
+    const queuedItem = await work.createWorkItem.handler({ userId: admin.id }, { projectId: alpha.id, title: "Queued before unshare", assigneeIds: [agent.userId] });
+    const [queuedBefore] = await transaction.select().from(runs).where(eq(runs.workItemId, queuedItem.id));
+    expect(queuedBefore?.status).toBe("queued");
+
+    await runtimes.unshareRuntime.handler({ userId: member.id }, { runtimeId: runtime.id });
+    const [revoked] = await transaction.select().from(runs).where(eq(runs.id, queuedBefore!.id));
+    expect(revoked).toMatchObject({ status: "failed", failureReason: "Runtime sharing was revoked" });
+
+    const afterItem = await work.createWorkItem.handler({ userId: admin.id }, { projectId: alpha.id, title: "Assigned after unshare", assigneeIds: [agent.userId] });
+    const [assignmentRun] = await transaction.select().from(runs).where(eq(runs.workItemId, afterItem.id));
+    expect(assignmentRun).toBeUndefined();
+
+    await fireScheduleTrigger(transaction, { triggerId: schedule.id, now: new Date(schedule.nextRunAt!.getTime() + 2 * 24 * 60 * 60 * 1000) });
+    const scheduleRuns = await transaction.select().from(runs).where(eq(runs.triggerId, schedule.id));
+    expect(scheduleRuns).toHaveLength(0);
+  });
+});
+
 test.concurrent("each event queues a Run, Agent actors are ignored, and revoked creators cannot queue", async () => {
   await withRollback(db, async (transaction) => {
     const { agents, admin, member, workspace, alpha, work } = await setup(transaction);
@@ -233,9 +264,8 @@ test.concurrent("an Agent can bind only to a shared Runtime in its workspace, an
     await transaction.insert(runs).values({ workspaceId: workspace.id, projectId: alpha.id, workItemId: prior.id, agentId: agent.id, originatorId: admin.id, status: "completed", inputTokens: 2, finishedAt: new Date() });
     const item = await work.createWorkItem.handler({ userId: admin.id }, { projectId: alpha.id, title: "Runtime-bound", assigneeIds: [agent.userId] });
     const [run] = await transaction.select().from(runs).where(eq(runs.workItemId, item.id));
-    // The 2 tokens of the prior Run already exceed the budget of 1, so the bound Run is refused like a server Run.
-    expect(run).toMatchObject({ status: "skipped", failureReason: "budget_exceeded" });
-    expect(await startRun(transaction, run!.id)).toBe("gone");
+    // An unshared Runtime cannot receive a Run, regardless of the Agent budget.
+    expect(run).toBeUndefined();
   });
 });
 

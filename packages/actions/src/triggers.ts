@@ -6,7 +6,7 @@ import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 import { enqueueJob } from "./jobs";
 import { nextScheduleOccurrence, parseCron, type ScheduleKind } from "./schedules";
-import { agentOwnerCanUseProject, decideAndStartWake, enforceHourlyRunLimits, loadWakeStep, runLabels, wakerOf } from "./runs";
+import { agentOwnerCanUseProject, agentRuntimeCanRun, decideAndStartWake, enforceHourlyRunLimits, loadWakeStep, runLabels, wakerOf } from "./runs";
 import { hasAgentAccess } from "./agent-access";
 import { auditAgentChange } from "./agent-audit";
 
@@ -142,7 +142,7 @@ export async function fireScheduleTrigger(db: Database, input: { triggerId: stri
     const nextRunAt = nextScheduleOccurrence(row.schedule as ScheduleKind, row.expression, now);
     await tx.update(triggers).set({ nextRunAt }).where(eq(triggers.id, row.id));
     const [agent] = await tx.select().from(agents).where(eq(agents.id, row.agentId));
-    if (agent?.enabled && await agentOpenTo(tx, agent, row.projectId) && await agentOwnerCanUseProject(tx, agent, row.projectId)) {
+    if (agent?.enabled && await agentOpenTo(tx, agent, row.projectId) && await agentRuntimeCanRun(tx, agent, true) && await agentOwnerCanUseProject(tx, agent, row.projectId)) {
       if (!(await hasAgentAccess(tx, agent.id, row.creatorId))) {
         await enqueueJob(tx, { type: "schedule_trigger", payload: { triggerId: row.id }, runAt: nextRunAt, dedupeKey: `schedule_trigger:${row.id}:${nextRunAt.toISOString()}` });
         return;

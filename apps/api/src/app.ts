@@ -1,7 +1,7 @@
 import { Elysia } from "elysia";
 import { Type } from "@sinclair/typebox";
 import { cors } from "@elysiajs/cors";
-import { createMailerFromEnv, type Mailer, ActionError, AgentAccessDeniedError, actionRegistry, createActionList, createApiTokenActions, createRuntimeDispatchActions, aiWriteActions, HIDDEN_FROM_AI, skillWriteActions, createWorkspaceAction, registerAction, writeDecision, type ActionContext, type SignalBus, agentOwnerCanUseProject, containsRuntimeSecretValue, lockRuntimeRun, openSecret, recordSecretOutputBlockedNotifications } from "@weft/actions";
+import { createMailerFromEnv, type Mailer, ActionError, AgentAccessDeniedError, actionRegistry, createActionList, createApiTokenActions, createRuntimeDispatchActions, aiWriteActions, HIDDEN_FROM_AI, skillWriteActions, createWorkspaceAction, registerAction, writeDecision, type ActionContext, type SignalBus, agentOwnerCanUseProject, agentRuntimeCanRun, canWriteProject, containsRuntimeSecretValue, lockRuntimeRun, openSecret, recordSecretOutputBlockedNotifications } from "@weft/actions";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { agents, apiTokens, collections, comments, createDatabase, oauthAccessToken, oauthClient, runs, runtimes, users, wikiPages, workItems, type Database } from "@weft/db";
 import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
@@ -491,12 +491,15 @@ export function createApp(
         if (!offered || (typeof bodyWorkspaceId === "string" && bodyWorkspaceId !== caller.agent.workspaceId)) { set.status = 403; return { error: agentActionRefusal(action.name) }; }
         const ownerAccess = await db.transaction(async (transaction) => {
           const tx = transaction as unknown as Database;
-          const [run] = await tx.select({ projectId: runs.projectId, agentId: runs.agentId }).from(runs).where(eq(runs.id, caller.agent!.runId));
+          const [run] = await tx.select({ projectId: runs.projectId, agentId: runs.agentId, originatorId: runs.originatorId, runtimeId: runs.runtimeId }).from(runs).where(eq(runs.id, caller.agent!.runId));
           if (!run?.projectId || !run.agentId) return true;
           const [agent] = await tx.select({ createdBy: agents.createdBy, runtimeId: agents.runtimeId, memberOwned: agents.memberOwned }).from(agents).where(eq(agents.id, run.agentId));
-          return !agent || await agentOwnerCanUseProject(tx, agent, run.projectId);
+          return !!agent && agent.runtimeId === run.runtimeId
+            && await agentRuntimeCanRun(tx, { runtimeId: run.runtimeId })
+            && await canWriteProject(tx, run.originatorId, run.projectId)
+            && await agentOwnerCanUseProject(tx, agent, run.projectId);
         });
-        if (!ownerAccess) { set.status = 403; return { error: "The Runtime owner no longer has write access to this Project, so this Agent Run cannot continue." }; }
+        if (!ownerAccess) { set.status = 403; return { error: "The Originator or Runtime owner no longer has Project write access, or the Runtime is unshared, so this Agent Run cannot continue." }; }
       }
       try {
         // Converter work is charged to the user (a token is only a sub-limit of its user, so many tokens are still one caller); a caller without a user is keyed by address and workspace.
@@ -508,11 +511,13 @@ export function createApp(
           const guarded = await db.transaction(async (transaction) => {
             const tx = transaction as unknown as Database;
             await lockRuntimeRun(tx, caller.agent!.runId);
-            const [run] = await tx.select({ status: runs.status, runtimeEnvironmentSecrets: runs.runtimeEnvironmentSecrets, runtimeId: runs.runtimeId, workspaceId: runs.workspaceId, projectId: runs.projectId, agentId: runs.agentId }).from(runs).where(eq(runs.id, caller.agent!.runId)).for("update");
+            const [run] = await tx.select({ status: runs.status, runtimeEnvironmentSecrets: runs.runtimeEnvironmentSecrets, runtimeId: runs.runtimeId, workspaceId: runs.workspaceId, projectId: runs.projectId, agentId: runs.agentId, originatorId: runs.originatorId }).from(runs).where(eq(runs.id, caller.agent!.runId)).for("update");
             if (!run || !["dispatched", "running"].includes(run.status)) return { kind: "inactive" as const };
             if (run.projectId && run.agentId) {
               const [agent] = await tx.select({ createdBy: agents.createdBy, runtimeId: agents.runtimeId, memberOwned: agents.memberOwned }).from(agents).where(eq(agents.id, run.agentId));
-              if (agent && !(await agentOwnerCanUseProject(tx, agent, run.projectId))) return { kind: "owner_revoked" as const };
+              if (!agent || agent.runtimeId !== run.runtimeId || !(await agentRuntimeCanRun(tx, { runtimeId: run.runtimeId })
+                && await canWriteProject(tx, run.originatorId, run.projectId)
+                && await agentOwnerCanUseProject(tx, agent, run.projectId))) return { kind: "access_revoked" as const };
             }
             if (run.runtimeEnvironmentSecrets) {
               let secrets: string[] = [];
@@ -524,7 +529,7 @@ export function createApp(
             return { kind: "result" as const, result: await executeAction() };
           });
           if (guarded.kind === "inactive") { set.status = 409; return { error: "This Agent Run is no longer active." }; }
-          if (guarded.kind === "owner_revoked") { set.status = 403; return { error: "The Runtime owner no longer has write access to this Project, so this Agent Run cannot continue." }; }
+          if (guarded.kind === "access_revoked") { set.status = 403; return { error: "The Originator or Runtime owner no longer has Project write access, or the Runtime is unshared, so this Agent Run cannot continue." }; }
           if (guarded.kind === "blocked") {
             const [runtime] = guarded.run.runtimeId ? await db.select({ ownerId: runtimes.ownerId }).from(runtimes).where(eq(runtimes.id, guarded.run.runtimeId)) : [];
             await recordSecretOutputBlockedNotifications(db, { workspaceId: guarded.run.workspaceId, runId: caller.agent.runId, actorId: caller.agent.agentUserId, recipientIds: [caller.agent.originatorId, ...(runtime ? [runtime.ownerId] : [])] });

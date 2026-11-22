@@ -996,6 +996,7 @@ export const th: Record<keyof typeof en, string> = {
   "workItems.activity.wake_skipped.over_budget": "พยายามปลุก Agent แต่งบโทเคนรายเดือนหมดแล้ว จึงไม่มี Run เริ่ม",
   "workItems.activity.wake_skipped.no_agent_access": "พยายามปลุก Agent ที่ผู้เริ่ม chain ไม่มีสิทธิ์ใช้ จึงไม่มี Run เริ่ม",
   "workItems.activity.wake_skipped.no_project_write": "พยายามปลุก Agent แต่ผู้เริ่ม chain ไม่มีสิทธิ์เขียนในโปรเจกต์นี้ จึงไม่มี Run เริ่ม",
+  "workItems.activity.wake_skipped.runtime_unshared": "พยายามปลุก Agent แต่ Runtime ไม่ได้แชร์กับเวิร์กสเปซนี้แล้ว จึงไม่มี Run เริ่ม",
   "workItems.activity.wake_skipped.hourly_limit": "พยายามปลุก Agent แต่ถึงขีดจำกัด Run ต่อชั่วโมงแล้ว จึงไม่มี Run เริ่ม",
   "workItems.activity.restored": "กู้งานนี้คืน",
   "workItems.activity.description_restored": "กู้คืนคำอธิบายเวอร์ชันก่อนหน้า",

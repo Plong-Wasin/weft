@@ -159,7 +159,7 @@ export const followUpStatus = "follow_up";
 export const steerableRunStatuses = ["queued", "running", "waiting_confirmation"] as const;
 
 /** Why a wake did not start a Run. A skip never fails the action that asked for the wake (ADR 0013). */
-export const wakeSkipReasons = ["switch_off", "no_project_write", "active_run", "over_budget", "depth_limit", "no_agent_access", "hourly_limit"] as const;
+export const wakeSkipReasons = ["switch_off", "no_project_write", "runtime_unshared", "active_run", "over_budget", "depth_limit", "no_agent_access", "hourly_limit"] as const;
 export type WakeSkipReason = (typeof wakeSkipReasons)[number];
 
 /** What one target of an assignment or mention got: a started Run, a Follow-up Run it waits in (`waiting`), or a skip with its reason. */
@@ -337,7 +337,7 @@ async function refuseWake(database: Database, refused: RefusedWake, reason: Wake
 }
 
 /** Whether a person may write in the project right now. Access is checked at every wake, so a person removed mid-chain is refused. */
-async function canWriteProject(database: Database, userId: string, projectId: string): Promise<boolean> {
+export async function canWriteProject(database: Database, userId: string, projectId: string): Promise<boolean> {
   try {
     await requireProjectAccess(database, userId, projectId, "write");
     return true;
@@ -347,19 +347,20 @@ async function canWriteProject(database: Database, userId: string, projectId: st
   }
 }
 
+/** A Run on a Runtime can be queued only while that Runtime is currently shared with the workspace. */
+export async function agentRuntimeCanRun(database: Database, agent: { runtimeId: string | null }, lock = false): Promise<boolean> {
+  if (!agent.runtimeId) return true;
+  const query = database.select({ shared: runtimes.shared }).from(runtimes).where(eq(runtimes.id, agent.runtimeId));
+  const [runtime] = await (lock ? query.for("share") : query);
+  return runtime?.shared === true;
+}
+
 /** A Runtime Agent created by its current owner remains eligible only while that owner can still write its Project. */
 export async function agentOwnerCanUseProject(database: Database, agent: { createdBy?: string; runtimeId: string | null; memberOwned?: boolean }, projectId: string): Promise<boolean> {
   if (!agent.memberOwned) return true;
   if (!agent.runtimeId || !agent.createdBy) return false;
   const [runtime] = await database.select({ ownerId: runtimes.ownerId, workspaceId: runtimes.workspaceId }).from(runtimes).where(eq(runtimes.id, agent.runtimeId));
   if (runtime?.ownerId !== agent.createdBy) return false;
-  if (!(await canWriteProject(database, agent.createdBy, projectId))) return false;
-  // Serialize against concurrent removal, role changes, archive and suspension so revocation either wins before this Run Action or waits until it commits.
-  await database.select({ id: projects.id }).from(projects).where(and(eq(projects.id, projectId), eq(projects.workspaceId, runtime.workspaceId))).for("share");
-  await database.select({ userId: workspaceMembers.userId }).from(workspaceMembers)
-    .where(and(eq(workspaceMembers.workspaceId, runtime.workspaceId), eq(workspaceMembers.userId, agent.createdBy))).for("share");
-  await database.select({ userId: projectMembers.userId }).from(projectMembers)
-    .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, agent.createdBy))).for("share");
   return canWriteProject(database, agent.createdBy, projectId);
 }
 
@@ -376,6 +377,11 @@ export async function decideAndStartWake(database: Database, input: {
   commentId?: string | null; triggerId?: string | null; chain?: { wokenByRunId: string | null; depth: number };
 }): Promise<WakeOutcome> {
   const { target, workspaceId, projectId, workItemId, commentId, triggerId } = input;
+  if (!(await agentRuntimeCanRun(database, target, true))) {
+    if (input.waker === "agent" && input.step) return refuseWake(database, { step: input.step, target, workspaceId, projectId, workItemId, commentId }, "runtime_unshared");
+    return skippedOutcome(target, "runtime_unshared");
+  }
+  if (input.waker !== "agent" && !(await canWriteProject(database, input.originatorId, projectId))) return skippedOutcome(target, "no_project_write");
   if (!(await agentOwnerCanUseProject(database, target, projectId))) {
     if (input.waker === "agent" && input.step) return refuseWake(database, { step: input.step, target, workspaceId, projectId, workItemId, commentId }, "no_project_write");
     return skippedOutcome(target, "no_project_write");
@@ -482,6 +488,7 @@ export async function queueRunsForAssignees(database: Database, input: { origina
   const outcomes: WakeOutcome[] = [];
   for (const target of targets) {
     if (!writable) { outcomes.push(skippedOutcome(target, "no_project_write")); continue; }
+    if (!(await agentRuntimeCanRun(database, target))) { outcomes.push(skippedOutcome(target, "runtime_unshared")); continue; }
     if (!(await hasAgentAccess(database, target.id, input.originatorId))) {
       throw new AgentAccessDeniedError(`You do not have Agent access to ${target.name}. Ask its owner or an Admin to grant access.`, input.workItemId, target.name);
     }
@@ -609,7 +616,6 @@ export async function revokeAgentRuns(database: Database, agentId: string, actor
       if (!running) {
         await withdrawConfirmations(tx, run.id);
         await emitRunFinished(tx, run.id);
-        if (run.agentId && run.workItemId) await startFollowUpRun(tx, run.agentId, run.workItemId);
       }
       if (run.workItemId) await tx.insert(activities).values({
         workspaceId: run.workspaceId, projectId: run.projectId, entityType: "work_item", entityId: run.workItemId,

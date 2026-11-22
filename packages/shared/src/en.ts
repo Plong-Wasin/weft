@@ -994,6 +994,7 @@ export const en = {
     "workItems.activity.wake_skipped.over_budget": "tried to wake an Agent over its monthly token budget, so no Run started",
     "workItems.activity.wake_skipped.no_agent_access": "tried to wake an Agent that the Originator of the chain may not use, so no Run started",
     "workItems.activity.wake_skipped.no_project_write": "tried to wake an Agent, but the Originator of the chain may not write in this project, so no Run started",
+    "workItems.activity.wake_skipped.runtime_unshared": "tried to wake an Agent, but its Runtime is no longer shared with this workspace, so no Run started",
     "workItems.activity.wake_skipped.hourly_limit": "tried to wake an Agent, but the hourly Run limit is reached, so no Run started",
     "workItems.activity.restored": "restored this work item",
     "workItems.activity.description_restored": "restored an earlier description",

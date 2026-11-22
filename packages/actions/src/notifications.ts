@@ -158,7 +158,8 @@ async function fanOut(database: Database, payload: NotifyPayload, job: { id: str
     .where(and(eq(workspaceMembers.workspaceId, workspaceId), inArray(workspaceMembers.userId, allowedRecipients), isNull(workspaceMembers.suspendedAt)));
   if (members.length === 0) return;
   const created = await database.insert(notifications).values(members.map(({ userId }) => ({
-    workspaceId, userId, actorId: payload.actorId, kind: payload.kind, workItemId: item?.id ?? null, wikiPageId: page?.id ?? null, commentId: payload.commentId ?? null, jobId: job.id,
+    workspaceId, userId, actorId: payload.actorId, kind: payload.kind, workItemId: item?.id ?? null, wikiPageId: page?.id ?? null, commentId: payload.commentId ?? null,
+    detail: payload.kind === "run_skipped" ? payload.detail ?? null : null, jobId: job.id,
   }))).onConflictDoNothing().returning({ userId: notifications.userId });
   for (const { userId } of created) await publish(database, { type: "notification", workspaceId, userId });
   await queueNotificationEmails(database, created.map(({ userId }) => ({

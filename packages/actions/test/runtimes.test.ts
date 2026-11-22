@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { activities, agents, comments, createDatabase, daemons, jobs, notifications, runMessages, runTokens, runs, runtimes, runtimeProfiles, users, workItems, workspaces } from "@weft/db";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
-import { createApiTokenActions, createCommentActions, createRuntimeActions, createRuntimeDispatchActions, handleAgentRunJob, queueRunsForAssignees, sweepRuntimeRuns } from "../src";
+import { createApiTokenActions, createCommentActions, createJobHandlers, createRuntimeActions, createRuntimeDispatchActions, handleAgentRunJob, queueRunsForAssignees, sweepRuntimeRuns } from "../src";
 import { createAgentRuntimeEnvironmentActions } from "../src/agent-runtime-environment";
 import { runtimeEnvironmentSecretValues, runtimeEnvironmentValues } from "../src/agent-runtime-environment";
 import { openSecret, sealSecret } from "../src/integration-secrets";
@@ -256,16 +256,26 @@ test.concurrent("legacy Daemons keep ordinary Runs but safely fail Runs needing 
     const addWork = async (title: string) => (await work.createWorkItem.handler({ userId: scenario.admin.id }, { projectId: scenario.project.id, title, assigneeIds: [agent.userId] })).id;
 
     const legacyItem = await addWork("Legacy capability check");
+    const followUpId = crypto.randomUUID();
+    await tx.insert(runs).values({ id: followUpId, workspaceId: scenario.workspace.id, projectId: scenario.project.id, workItemId: legacyItem, agentId: agent.id, originatorId: scenario.admin.id, status: "follow_up", followUpSince: new Date(0), createdAt: new Date(0) });
     expect(await dispatch.claimRuns({ userId: scenario.owner.id, daemonId: scenario.registered.daemonId }, 1)).toEqual([]);
-    let [failed] = await tx.select({ id: runs.id, status: runs.status, failureReason: runs.failureReason, finalOutput: runs.finalOutput }).from(runs).where(eq(runs.workItemId, legacyItem));
+    let [failed] = await tx.select({ id: runs.id, status: runs.status, failureReason: runs.failureReason, finalOutput: runs.finalOutput }).from(runs).where(and(eq(runs.workItemId, legacyItem), eq(runs.failureReason, "runtime_capability_missing")));
     expect(failed).toMatchObject({ status: "failed", failureReason: "runtime_capability_missing", finalOutput: null });
     failedIds.push(failed!.id);
+    expect((await tx.select({ status: runs.status }).from(runs).where(eq(runs.id, followUpId)))[0]!.status).toBe("queued");
+    let noticeJobs = (await tx.select({ payload: jobs.payload }).from(jobs).where(eq(jobs.type, "notify"))).filter(({ payload }) => (payload as { kind?: string }).kind === "run_skipped");
+    expect(noticeJobs).toHaveLength(1);
+    expect(noticeJobs[0]!.payload).toMatchObject({ kind: "run_skipped", workItemId: legacyItem, actorId: agent.userId, recipientIds: [scenario.admin.id], detail: "runtime_capability_missing" });
+    expect(JSON.stringify(noticeJobs[0]!.payload)).not.toContain("do-not-return-this-value");
+    const notify = createJobHandlers().notify!;
+    await notify(tx, noticeJobs[0]!.payload, { id: crypto.randomUUID(), type: "notify" });
+    expect((await tx.select({ kind: notifications.kind, detail: notifications.detail, userId: notifications.userId }).from(notifications))).toContainEqual({ kind: "run_skipped", detail: "runtime_capability_missing", userId: scenario.admin.id });
 
     // A current Daemon that declares environment support alone still cannot receive a sandbox-dependent Run.
     await createRuntimeActions(tx).registerDaemon.handler({ userId: scenario.owner.id, apiTokenId: scenario.tokenId }, { hostname: "devbox", version: "1.0.0", agentClis: ["claude"], capabilities: ["runtime_environment"] });
     const envOnlyItem = await addWork("Environment without sandbox capability");
     expect(await dispatch.claimRuns({ userId: scenario.owner.id, daemonId: scenario.registered.daemonId }, 1)).toEqual([]);
-    [failed] = await tx.select({ id: runs.id, status: runs.status, failureReason: runs.failureReason, finalOutput: runs.finalOutput }).from(runs).where(eq(runs.workItemId, envOnlyItem));
+    [failed] = await tx.select({ id: runs.id, status: runs.status, failureReason: runs.failureReason, finalOutput: runs.finalOutput }).from(runs).where(and(eq(runs.workItemId, envOnlyItem), eq(runs.failureReason, "runtime_capability_missing")));
     expect(failed).toMatchObject({ status: "failed", failureReason: "runtime_capability_missing", finalOutput: null });
     failedIds.push(failed!.id);
 
@@ -277,6 +287,10 @@ test.concurrent("legacy Daemons keep ordinary Runs but safely fail Runs needing 
     expect(await tx.select().from(runTokens).where(inArray(runTokens.runId, failedIds))).toEqual([]);
     expect((await tx.select({ status: runs.status }).from(runs).where(eq(runs.workItemId, currentItem)))[0]!.status).toBe("dispatched");
     expect((await tx.select({ finalOutput: runs.finalOutput }).from(runs).where(inArray(runs.id, failedIds))).map((row) => row.finalOutput)).toEqual([null, null]);
+
+    await dispatch.claimRuns({ userId: scenario.owner.id, daemonId: scenario.registered.daemonId }, 1);
+    noticeJobs = (await tx.select({ payload: jobs.payload }).from(jobs).where(eq(jobs.type, "notify"))).filter(({ payload }) => (payload as { kind?: string }).kind === "run_skipped");
+    expect(noticeJobs).toHaveLength(3);
   });
 });
 

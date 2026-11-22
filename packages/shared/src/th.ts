@@ -1255,6 +1255,7 @@ export const th: Record<keyof typeof en, string> = {
   "inbox.intakeAccepted": "{actor} รับรายการ Intake ของคุณแล้ว",
   "inbox.intakeRejected": "{actor} ปฏิเสธรายการ Intake ของคุณ",
   "inbox.runSkipped": "{actor} ไม่ได้เริ่มงานของคุณ: งบ token รายเดือนหมดแล้ว",
+  "inbox.runSkipped.runtime_capability_missing": "{actor} เริ่มงานของคุณไม่ได้ เพราะ Daemon บนคอมพิวเตอร์ไม่รองรับ environment หรือการตั้งค่าความปลอดภัยของ Agent",
   "inbox.wakeSkipped.depth_limit": "{actor} ไม่ได้ปลุก Agent ต่อ: Wake chain ถึงความลึก 6 แล้ว",
   "inbox.wakeSkipped.no_agent_access": "{actor} ไม่ได้ปลุก Agent: คุณไม่มีสิทธิ์ใช้ Agent นั้น",
   "inbox.wakeSkipped.no_project_write": "{actor} ไม่ได้ปลุก Agent: คุณไม่มีสิทธิ์เขียนในโปรเจกต์นี้",

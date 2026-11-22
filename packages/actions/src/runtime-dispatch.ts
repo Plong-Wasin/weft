@@ -171,6 +171,13 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
         const [project] = row.run.projectId ? await tx.select({ key: projects.key }).from(projects).where(eq(projects.id, row.run.projectId)) : [];
         const attachedSkills = await tx.select({ name: skills.name, description: skills.description, instructions: skills.instructions }).from(agentSkills).innerJoin(skills, eq(skills.id, agentSkills.skillId)).where(and(eq(agentSkills.agentId, row.agent.id), eq(skills.scope, "workspace")));
         const [profile] = row.agent.runtimeProfileId ? await tx.select().from(runtimeProfiles).where(eq(runtimeProfiles.id, row.agent.runtimeProfileId)) : [];
+        // Over budget: the Run never reaches the Daemon, and its requester hears why, as for a server Run.
+        if (row.agent.monthlyTokenBudget !== null && (await agentMonthlyUsage(tx, row.agent.id, now())) >= row.agent.monthlyTokenBudget) {
+          const [skipped] = await tx.update(runs).set({ status: "skipped", failureReason: "budget_exceeded", finishedAt: now() }).where(and(eq(runs.id, row.run.id), eq(runs.status, "queued"))).returning({ id: runs.id });
+          if (skipped && row.run.workItemId) await enqueueNotification(tx, { kind: "run_skipped", workItemId: row.run.workItemId, commentId: row.run.commentId ?? undefined, actorId: row.agent.userId, recipientIds: [row.run.originatorId] });
+          if (skipped && row.run.workItemId) await startFollowUpRun(tx, row.agent.id, row.run.workItemId);
+          continue;
+        }
         // Historical Daemons ignore fields they do not understand. Fail before creating a run token or returning any configured
         // values when the claimed Run depends on environment injection or sandbox enforcement they did not advertise.
         const requiredCapabilities = [
@@ -178,14 +185,12 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
           ...(row.runtime.enforceSandbox || (profile && profile.sandbox !== "full") ? ["runtime_sandbox"] : []),
         ];
         if (requiredCapabilities.some((capability) => !daemon.capabilities.includes(capability))) {
-          await tx.update(runs).set({ status: "failed", failureReason: "runtime_capability_missing", finishedAt: now() }).where(and(eq(runs.id, row.run.id), eq(runs.status, "queued")));
-          continue;
-        }
-        // Over budget: the Run never reaches the Daemon, and its requester hears why, as for a server Run.
-        if (row.agent.monthlyTokenBudget !== null && (await agentMonthlyUsage(tx, row.agent.id, now())) >= row.agent.monthlyTokenBudget) {
-          const [skipped] = await tx.update(runs).set({ status: "skipped", failureReason: "budget_exceeded", finishedAt: now() }).where(and(eq(runs.id, row.run.id), eq(runs.status, "queued"))).returning({ id: runs.id });
-          if (skipped && row.run.workItemId) await enqueueNotification(tx, { kind: "run_skipped", workItemId: row.run.workItemId, commentId: row.run.commentId ?? undefined, actorId: row.agent.userId, recipientIds: [row.run.originatorId] });
-          if (skipped && row.run.workItemId) await startFollowUpRun(tx, row.agent.id, row.run.workItemId);
+          const [failed] = await tx.update(runs).set({ status: "failed", failureReason: "runtime_capability_missing", finishedAt: now() })
+            .where(and(eq(runs.id, row.run.id), eq(runs.status, "queued"))).returning({ id: runs.id, agentId: runs.agentId, workItemId: runs.workItemId });
+          if (failed?.workItemId) {
+            await enqueueNotification(tx, { kind: "run_skipped", workItemId: failed.workItemId, commentId: row.run.commentId ?? undefined, actorId: row.agent.userId, recipientIds: [row.run.originatorId], detail: "runtime_capability_missing" });
+            if (failed.agentId) await startFollowUpRun(tx, failed.agentId, failed.workItemId);
+          }
           continue;
         }
         const boundary = crypto.randomUUID().replaceAll("-", "");

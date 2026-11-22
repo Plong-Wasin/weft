@@ -29,6 +29,25 @@ async function waitFor(url: string) {
 const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
 // A real 1x1 PNG, so the browser can decode what storage serves back.
 const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+function makePdf() {
+  const stream = "BT\n/F1 16 Tf\n20 80 Td\n(Attachment preview works) Tj\nET\n";
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 160] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}endstream`,
+  ];
+  let document = "%PDF-1.4\n";
+  const offsets = [0];
+  for (const [index, object] of objects.entries()) {
+    offsets.push(Buffer.byteLength(document));
+    document += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  }
+  const xref = Buffer.byteLength(document);
+  document += `xref\n0 ${offsets.length}\n0000000000 65535 f \n${offsets.slice(1).map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(document);
+}
 
 /** Fires a paste event carrying one file into a ProseMirror editor, as the browser does for a clipboard image. */
 async function pasteFile(page: Page, editor: string, file: { name: string; type: string; base64: string }) {
@@ -126,22 +145,74 @@ try {
   await attachPicker.setFiles([
     { name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("hello evidence") },
     { name: "second.txt", mimeType: "text/plain", buffer: Buffer.from("second evidence") },
+    { name: "unsafe.html", mimeType: "text/html", buffer: Buffer.from("<!doctype html><script>document.body.textContent='must stay a download'</script>") },
+    { name: "photo.png", mimeType: "image/png", buffer: Buffer.from(await Bun.file("e2e/fixtures/preview.png").arrayBuffer()) },
+    { name: "sample.webm", mimeType: "video/webm", buffer: Buffer.from(await Bun.file("e2e/fixtures/preview.webm").arrayBuffer()) },
+    { name: "manual.pdf", mimeType: "application/pdf", buffer: makePdf() },
   ]);
   await attachments.getByText("notes.txt").waitFor();
   await attachments.getByText("second.txt").waitFor();
+  await attachments.getByText("unsafe.html").waitFor();
+  for (const filename of ["photo.png", "sample.webm", "manual.pdf"]) await attachments.getByText(filename).waitFor();
   await notesUnverified();
   check(await attachments.locator("img").count() === 0, "non-image attachment rendered inline");
   const notesRow = attachments.locator("li").filter({ hasText: "notes.txt" });
+  check(await notesRow.getByRole("button", { name: `${translate("assets.preview")} notes.txt` }).count() === 0, "unsupported text attachment offered a preview");
+  const unsafeRow = attachments.locator("li").filter({ hasText: "unsafe.html" });
+  check(await unsafeRow.getByRole("button", { name: `${translate("assets.preview")} unsafe.html` }).count() === 0, "active HTML attachment offered a preview");
   const [download] = await Promise.all([page.waitForEvent("download"), notesRow.getByRole("button", { name: translate("assets.download") }).click()]);
   check(download.suggestedFilename() === "notes.txt", "download has the wrong filename");
   check((await Bun.file((await download.path())!).text()) === "hello evidence", "downloaded bytes differ");
-  const screenshotDir = "/home/plong/workspace/weft/.local/ai-ux-follow-up/06";
+  const screenshotDir = "/home/plong/workspace/weft/.local/continuous-improvements/attachment-preview";
   await mkdir(screenshotDir, { recursive: true });
+  const photoRow = attachments.locator("li").filter({ hasText: "photo.png" });
+  await photoRow.getByRole("button", { name: `${translate("assets.preview")} photo.png` }).click();
+  const photoDialog = page.locator("dialog.asset-preview-dialog");
+  await photoDialog.waitFor();
+  await page.waitForFunction(() => (document.querySelector("dialog.asset-preview-dialog img") as HTMLImageElement | null)?.naturalWidth === 640);
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.screenshot({ path: `${screenshotDir}/desktop-1440.png`, fullPage: true });
+  await page.screenshot({ path: `${screenshotDir}/attachments-desktop-1440.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: `${screenshotDir}/mobile-390.png`, fullPage: true });
+  await page.screenshot({ path: `${screenshotDir}/attachments-mobile-390.png`, fullPage: true });
   await page.setViewportSize({ width: 1440, height: 900 });
+  check(await photoDialog.getByRole("button", { name: translate("assets.closePreview") }).isVisible(), "image preview has no visible close action");
+  await photoDialog.getByRole("button", { name: translate("assets.closePreview") }).click();
+  await photoDialog.waitFor({ state: "detached" });
+  const [photoDownload] = await Promise.all([page.waitForEvent("download"), photoRow.getByRole("button", { name: `${translate("assets.download")} photo.png` }).click()]);
+  check(photoDownload.suggestedFilename() === "photo.png", "image attachment download did not preserve its filename");
+
+  const videoRow = attachments.locator("li").filter({ hasText: "sample.webm" });
+  await videoRow.getByRole("button", { name: `${translate("assets.preview")} sample.webm` }).click();
+  const videoDialog = page.locator("dialog.asset-preview-dialog");
+  await videoDialog.locator("video[controls]").waitFor();
+  await page.waitForFunction(() => { const video = document.querySelector("dialog.asset-preview-dialog video") as HTMLVideoElement | null; return !!video && video.readyState >= 1; });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.screenshot({ path: `${screenshotDir}/video-desktop-1440.png`, fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: `${screenshotDir}/video-mobile-390.png`, fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await videoDialog.getByRole("button", { name: translate("assets.closePreview") }).click();
+  await videoDialog.waitFor({ state: "detached" });
+
+  const pdfRow = attachments.locator("li").filter({ hasText: "manual.pdf" });
+  const pdfResponsePromise = page.waitForResponse((response) => response.url().startsWith("http://localhost:9000/") && response.request().resourceType() === "document");
+  await pdfRow.getByRole("button", { name: `${translate("assets.preview")} manual.pdf` }).click();
+  const pdfDialog = page.locator("dialog.asset-preview-dialog");
+  const pdfFrame = pdfDialog.locator("iframe"); await pdfFrame.waitFor();
+  check(await pdfFrame.getAttribute("title") === `${translate("assets.pdfPreview")} manual.pdf`, "PDF preview frame is not accessibly named");
+  const pdfUrl = await pdfFrame.getAttribute("src");
+  check(Boolean(pdfUrl?.startsWith("http://localhost:9000/")), "PDF preview did not use the authorized storage URL");
+  const pdfResponse = await pdfResponsePromise;
+  check(pdfResponse.ok() && (pdfResponse.headers()["content-type"] ?? "").startsWith("application/pdf"), "PDF preview did not receive an inline PDF response");
+  await page.waitForTimeout(800);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.screenshot({ path: `${screenshotDir}/pdf-desktop-1440.png`, fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: `${screenshotDir}/pdf-mobile-390.png`, fullPage: true });
+  await pdfDialog.getByRole("button", { name: translate("assets.closePreview") }).click();
+  await pdfDialog.waitFor({ state: "detached" });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  console.log("case attachment-image-video-pdf-previews: passed");
 
   async function notesUnverified() {
     const warning = attachments.locator("li").filter({ hasText: "notes.txt" }).getByText(translate("assets.unverified"));
@@ -250,10 +321,12 @@ try {
   await page.waitForFunction(() => (document.querySelector('.ProseMirror img[data-testid="inline-image"]') as HTMLImageElement | null)?.naturalWidth);
   check(await loadedImages(page, ".ProseMirror") === 1, "Wiki image did not render after reload");
   check(await page.locator('.ProseMirror .asset-image-unverified').isVisible(), "Wiki inline image must show when its contents are unverified");
+  const wikiScreenshotDir = "/home/plong/workspace/weft/.local/ai-ux-follow-up/06";
+  await mkdir(wikiScreenshotDir, { recursive: true });
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.screenshot({ path: `${screenshotDir}/wiki-inline-unverified-desktop-1440.png`, fullPage: true });
+  await page.screenshot({ path: `${wikiScreenshotDir}/wiki-inline-unverified-desktop-1440.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: `${screenshotDir}/wiki-inline-unverified-mobile-390.png`, fullPage: true });
+  await page.screenshot({ path: `${wikiScreenshotDir}/wiki-inline-unverified-mobile-390.png`, fullPage: true });
   check(await page.locator('.ProseMirror .asset-image-unverified').isVisible(), "Wiki inline image warning is not visible at mobile width");
   await page.setViewportSize({ width: 1440, height: 900 });
   const wikiAttachments = page.getByTestId("wiki-attachments");

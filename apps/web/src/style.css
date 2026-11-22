@@ -291,6 +291,11 @@
 .asset-image-viewer { width: 100vw; height: 100vh; max-width: none; max-height: none; inset: 0; border: 0; padding: 1rem; background: var(--bg-surface-1); color: var(--txt-primary); overflow: auto; }
 .asset-image-viewer::backdrop { background: rgb(0 0 0 / .88); }
 .asset-image-viewer img { display: block; max-width: 92vw; max-height: 82vh; object-fit: contain; margin: 3rem auto 0; transition: transform .15s ease; }
+.asset-preview-dialog { width: min(96vw, 72rem); max-width: none; max-height: 94dvh; border: 1px solid var(--border-subtle); border-radius: .75rem; padding: 0; background: var(--bg-surface-1); color: var(--txt-primary); overflow: auto; }
+.asset-preview-dialog::backdrop { background: rgb(0 0 0 / .72); }
+.asset-preview-content { display: grid; min-height: 12rem; max-height: calc(94dvh - 4.5rem); place-items: center; overflow: auto; }
+.asset-preview-media, .asset-preview-video { display: block; width: 100%; max-width: 100%; max-height: calc(94dvh - 7rem); object-fit: contain; }
+.asset-preview-pdf { display: block; width: 100%; height: min(78dvh, 58rem); border: 0; background: var(--bg-surface-2); }
 .ProseMirror hr { border: 0; border-top: 1px solid var(--border-strong); }
 .slash-menu, .suggest-menu { position: absolute; z-index: 50; max-height: 18rem; min-width: 12rem; overflow: auto; margin: 0; padding: .25rem; list-style: none; border: 1px solid var(--border-strong); border-radius: .375rem; background: var(--bg-surface-1); color: var(--txt-primary); box-shadow: var(--shadow-menu); scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb-hover) transparent; }
 .slash-menu-option, .suggest-option { display: flex; align-items: center; gap: .5rem; cursor: pointer; border-radius: .25rem; padding: .375rem .5rem; }

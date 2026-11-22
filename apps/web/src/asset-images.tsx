@@ -1,5 +1,5 @@
 import { api } from "./api";
-import { Download, Paperclip, Trash2 } from "lucide-react";
+import { Download, Eye, Paperclip, Trash2 } from "lucide-react";
 import React from "react";
 import { Node } from "@tiptap/core";
 import { Plugin } from "@tiptap/pm/state";
@@ -157,6 +157,8 @@ export function AttachmentsPanel({ workItemId, ownerType = "work_item", canWrite
   const [loading, setLoading] = React.useState(true);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [preview, setPreview] = React.useState<{ row: AssetRow; url: string } | null>(null);
+  const [previewingId, setPreviewingId] = React.useState<string | null>(null);
   const [dragging, setDragging] = React.useState(false);
   const [localFailedFiles, setLocalFailedFiles] = React.useState<File[]>([]);
   const retryFiles = failedFiles ?? localFailedFiles;
@@ -184,11 +186,20 @@ export function AttachmentsPanel({ workItemId, ownerType = "work_item", canWrite
     setBusy(false); await load(); onChange?.();
   }
   async function download(row: AssetRow) {
-    const result = await action<{ url: string; filename: string }>("get_asset_download_url", { assetId: row.id });
+    const result = await action<{ url: string; filename: string }>("get_asset_download_url", { assetId: row.id, download: true });
     if (!result) { setError(translate("assets.actionFailed")); return; }
     const link = document.createElement("a");
     link.href = result.url; link.download = result.filename; link.rel = "noopener";
     document.body.append(link); link.click(); link.remove();
+  }
+  async function openPreview(row: AssetRow) {
+    setPreviewingId(row.id); setError(null);
+    try {
+      const result = await action<{ url: string; preview: boolean }>("get_asset_download_url", { assetId: row.id, preview: true });
+      if (!result?.preview) { setError(translate("assets.previewFailed")); return; }
+      setPreview({ row, url: result.url });
+    } catch { setError(translate("assets.previewFailed")); }
+    finally { setPreviewingId(null); }
   }
   async function remove(row: AssetRow) {
     setError((await action("delete_asset", { assetId: row.id })) === null ? translate("assets.actionFailed") : null);
@@ -200,7 +211,7 @@ export function AttachmentsPanel({ workItemId, ownerType = "work_item", canWrite
     onDragOver={(event) => { if (canWrite) { event.preventDefault(); setDragging(true); } }}
     onDragLeave={(event) => { if (!(event.relatedTarget instanceof Element) || !event.currentTarget.contains(event.relatedTarget)) setDragging(false); }}
     onDrop={(event) => { if (!canWrite) return; event.preventDefault(); setDragging(false); void attach([...event.dataTransfer.files]); }}>
-    {/* Files are only ever listed with a download link: nothing here is rendered inline. */}
+    {/* Active HTML and other unsupported formats remain download-only. */}
     {loading && <p role="status" className="m-0 py-2 text-13 text-secondary">{translate("assets.loading")}</p>}
     {!loading && downloadableRows.length === 0 && !error && <p className="m-0 py-2 text-13 text-secondary">{translate("assets.empty")}</p>}
     <ul className="m-0 grid list-none gap-1.5 !pl-0">{downloadableRows.map((row) => <li key={row.id} className="flex items-center gap-2 rounded-md bg-layer-1 px-2.5 py-1.5 text-13">
@@ -209,6 +220,7 @@ export function AttachmentsPanel({ workItemId, ownerType = "work_item", canWrite
       {row.unverified && <small role="status" className="shrink-0 text-12 text-warning-text">{translate("assets.unverified")}</small>}
       <small className="shrink-0 text-12 text-tertiary">{formatSize(row.size)}</small>
       <span className="ml-auto flex shrink-0 gap-0.5">
+        {row.previewable && <button type="button" className="grid size-7 place-items-center rounded-md !bg-transparent !p-0 text-secondary hover:!bg-layer-transparent-hover hover:text-primary" aria-label={`${translate("assets.preview")} ${row.filename}`} title={translate("assets.preview")} aria-busy={previewingId === row.id} disabled={previewingId === row.id} onClick={() => void openPreview(row)}><Eye aria-hidden size={13} /></button>}
         <button type="button" className="grid size-7 place-items-center rounded-md !bg-transparent !p-0 text-secondary hover:!bg-layer-transparent-hover hover:text-primary" aria-label={`${translate("assets.download")} ${row.filename}`} title={translate("assets.download")} onClick={() => void download(row)}><Download aria-hidden size={13} /></button>
         {canWrite && <button type="button" className="grid size-7 place-items-center rounded-md !bg-transparent !p-0 text-secondary hover:!bg-layer-transparent-hover hover:!text-danger-text" aria-label={`${translate("assets.delete")} ${row.filename}`} title={translate("assets.delete")} onClick={() => void remove(row)}><Trash2 aria-hidden size={13} /></button>}
       </span>
@@ -224,5 +236,36 @@ export function AttachmentsPanel({ workItemId, ownerType = "work_item", canWrite
     {busy && <p role="status">{translate("assets.uploading")}</p>}
     {canWrite && retryFiles.length > 0 && <div role="alert" className="grid gap-1 text-13 text-danger-text"><p className="m-0">{translate("assets.uploadFailed")}</p><ul className="m-0 list-disc pl-5">{retryFiles.map((file, index) => <li key={`${file.name}-${index}`}>{file.name}</li>)}</ul><button type="button" className="w-fit rounded-md border border-subtle bg-surface-1 px-2 py-1 text-primary" disabled={busy} onClick={() => void attach([])}>{translate("assets.retryFailed")}</button></div>}
     {error && <p role="alert">{error}</p>}
+    {preview && <AttachmentPreviewDialog preview={preview} onClose={() => setPreview(null)} />}
   </section>;
+}
+
+function AttachmentPreviewDialog({ preview, onClose }: { preview: { row: AssetRow; url: string }; onClose: () => void }) {
+  const dialog = React.useRef<HTMLDialogElement>(null);
+  const titleId = React.useId();
+  React.useEffect(() => {
+    const element = dialog.current;
+    if (!element) return;
+    element.returnValue = "";
+    element.showModal();
+    return () => { if (element.open) element.close("unmount"); };
+  }, []);
+  const { row, url } = preview;
+  let media: React.ReactNode = null;
+  if (["image/png", "image/jpeg", "image/gif", "image/webp"].includes(row.contentType)) {
+    media = <img className="asset-preview-media" src={url} alt={row.filename} width="1280" height="800" />;
+  } else if (["video/mp4", "video/webm"].includes(row.contentType)) {
+    media = <video className="asset-preview-video" src={url} controls preload="metadata" width="1280" height="720" aria-label={`${translate("assets.videoPreview")} ${row.filename}`} />;
+  } else if (row.contentType === "application/pdf") {
+    // The built-in PDF viewer is the only parser here; the server requires a PDF signature before issuing an inline URL.
+    media = <iframe className="asset-preview-pdf" src={`${url}#view=FitH`} title={`${translate("assets.pdfPreview")} ${row.filename}`} referrerPolicy="no-referrer" />;
+  }
+  return <dialog ref={dialog} className="asset-preview-dialog" aria-labelledby={titleId}
+    onClose={() => { if (dialog.current?.returnValue !== "unmount") onClose(); }} onClick={(event) => { if (event.target === event.currentTarget) dialog.current?.close(); }}>
+    <header className="flex items-center gap-3 border-b border-subtle px-4 py-3">
+      <h2 id={titleId} className="m-0 min-w-0 flex-1 truncate text-16 font-semibold text-primary">{row.filename}</h2>
+      <button type="button" autoFocus className="rounded-md border border-subtle bg-surface-1 px-3 py-2 text-primary" aria-label={translate("assets.closePreview")} onClick={() => dialog.current?.close()}>{translate("assets.closePreview")}</button>
+    </header>
+    <div className="asset-preview-content p-3 sm:p-5">{media}</div>
+  </dialog>;
 }

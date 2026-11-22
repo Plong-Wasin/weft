@@ -22,12 +22,26 @@ type OwnerType = "work_item" | "comment" | "wiki_page" | "cycle" | "module";
 const ownerType = Type.Union([Type.Literal("work_item"), Type.Literal("comment"), Type.Literal("wiki_page"), Type.Literal("cycle"), Type.Literal("module")]);
 const assetOutput = Type.Object({
   id: Type.String(), ownerType, ownerId: Type.String(), uploaderId: Type.String(), filename: Type.String(), contentType: Type.String(),
-  size: Type.Number(), inline: Type.Boolean(), unverified: Type.Boolean(), createdAt: Type.String(),
+  size: Type.Number(), inline: Type.Boolean(), previewable: Type.Boolean(), unverified: Type.Boolean(), createdAt: Type.String(),
 });
 const uploadOutput = Type.Object({ assetId: Type.String(), url: Type.String(), fields: Type.Record(Type.String(), Type.String()), maxBytes: Type.Number() });
-const downloadOutput = Type.Object({ url: Type.String(), filename: Type.String(), contentType: Type.String(), inline: Type.Boolean(), unverified: Type.Boolean() });
+const downloadOutput = Type.Object({ url: Type.String(), filename: Type.String(), contentType: Type.String(), inline: Type.Boolean(), preview: Type.Boolean(), unverified: Type.Boolean() });
 
 export const isInlineImage = (contentType: string) => (inlineImageTypes as readonly string[]).includes(contentType);
+const previewableVideoTypes = ["video/mp4", "video/webm"] as const;
+export const isPreviewableAsset = (contentType: string) => isInlineImage(contentType) || contentType === "application/pdf" || (previewableVideoTypes as readonly string[]).includes(contentType);
+
+function hasPreviewSignature(contentType: string, bytes: Uint8Array) {
+  const starts = (...signature: number[]) => signature.every((byte, index) => bytes[index] === byte);
+  if (contentType === "image/png") return starts(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a);
+  if (contentType === "image/jpeg") return starts(0xff, 0xd8, 0xff);
+  if (contentType === "image/gif") return starts(0x47, 0x49, 0x46, 0x38) && (bytes[4] === 0x37 || bytes[4] === 0x39) && bytes[5] === 0x61;
+  if (contentType === "image/webp") return starts(0x52, 0x49, 0x46, 0x46) && String.fromCharCode(...bytes.slice(8, 12)) === "WEBP";
+  if (contentType === "video/mp4") return bytes.length >= 8 && String.fromCharCode(...bytes.slice(4, 8)) === "ftyp";
+  if (contentType === "video/webm") return starts(0x1a, 0x45, 0xdf, 0xa3);
+  if (contentType === "application/pdf") return starts(0x25, 0x50, 0x44, 0x46, 0x2d);
+  return false;
+}
 
 /** Inspect formats we can decode without executing or decompressing user supplied data. */
 export function inspectAssetBytes(contentType: string, bytes: Uint8Array, secrets: string[]): { status: "clean" | "secret" | "unverified" } {
@@ -159,7 +173,7 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
 
   const out = (row: AssetRow) => ({
     id: row.id, ownerType: row.ownerType as OwnerType, ownerId: row.ownerId, uploaderId: row.uploaderId, filename: row.filename,
-    contentType: row.contentType, size: row.size, inline: isInlineImage(row.contentType), unverified: row.unverified, createdAt: row.createdAt.toISOString(),
+    contentType: row.contentType, size: row.size, inline: isInlineImage(row.contentType), previewable: isPreviewableAsset(row.contentType), unverified: row.unverified, createdAt: row.createdAt.toISOString(),
   });
 
   return {
@@ -305,14 +319,19 @@ export function createAssetActions(db: Database, storage?: AssetStorage, limitBy
     },
     getAssetDownloadUrl: {
       name: "get_asset_download_url", kind: "read" as const,
-      input: Type.Object({ assetId: uuid(), download: Type.Optional(Type.Boolean()) }), output: downloadOutput,
-      handler: async (context: Context, input: { assetId: string; download?: boolean }) => {
+      input: Type.Object({ assetId: uuid(), download: Type.Optional(Type.Boolean()), preview: Type.Optional(Type.Boolean()) }), output: downloadOutput,
+      handler: async (context: Context, input: { assetId: string; download?: boolean; preview?: boolean }) => {
         const row = await loadAsset(input.assetId);
         await requireRowAccess(row, context.userId, "read");
         if (row.status !== "uploaded") throw new ActionError("Asset not found", 404);
+        if (input.preview && !isPreviewableAsset(row.contentType)) throw new ActionError("Preview is not available for this file type", 400);
+        if (input.preview && !input.download && !hasPreviewSignature(row.contentType, await store().read(row.storageKey))) {
+          throw new ActionError("File contents do not match the preview type", 400);
+        }
         const inline = !input.download && isInlineImage(row.contentType);
-        const { url } = await store().presignGet({ key: row.storageKey, filename: row.filename, contentType: row.contentType, inline });
-        return { url, filename: row.filename, contentType: row.contentType, inline, unverified: row.unverified };
+        const preview = !input.download && input.preview === true;
+        const { url } = await store().presignGet({ key: row.storageKey, filename: row.filename, contentType: row.contentType, inline: inline || preview });
+        return { url, filename: row.filename, contentType: row.contentType, inline, preview, unverified: row.unverified };
       },
     },
     deleteAsset: {

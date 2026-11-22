@@ -21,13 +21,16 @@ const optionClass = "flex w-full items-center gap-2 rounded-md bg-transparent px
 /** Add or remove values of a set-valued property (assignees, labels, modules) on every selected work item; each pick applies at once. */
 function SetMenu({ label, icon, options, present, onApply }: { label: string; icon: React.ReactNode; options: Option[]; present: Set<string>; onApply: (mode: "add" | "remove", id: string) => Promise<boolean> }) {
   const [mode, setMode] = React.useState<"add" | "remove">("add");
-  const shown = mode === "add" ? options : options.filter((option) => present.has(option.id));
+  const [query, setQuery] = React.useState("");
+  const available = mode === "add" ? options : options.filter((option) => present.has(option.id));
+  const shown = available.filter((option) => option.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   return <Popover label={label} className={chip} panelRole="dialog" panelClassName="grid w-60 max-h-80 gap-1 overflow-auto p-2" trigger={<span className="flex items-center gap-1.5">{icon}<span>{label}</span></span>}>
     {(close) => <>
       <div role="group" aria-label={label} className="grid grid-cols-2 gap-1 pb-1">
         {(["add", "remove"] as const).map((value) => <button key={value} type="button" aria-pressed={mode === value} className={`rounded-md px-2 py-1 text-13 ${mode === value ? "bg-layer-1 font-medium text-primary" : "bg-transparent text-secondary hover:bg-layer-transparent-hover"}`} onClick={() => setMode(value)}>{t(`bulk.${value}`)}</button>)}
       </div>
-      {shown.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-tertiary">{mode === "remove" ? t("bulk.nothingToRemove") : "—"}</p> : <>{[false, true].map((agents) => {
+      <label className="grid gap-1 text-13 text-secondary">{t("picker.search")}<input type="search" autoComplete="off" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+      {available.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-tertiary">{mode === "remove" ? t("bulk.nothingToRemove") : "—"}</p> : shown.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-tertiary">{t("picker.noMatches")}</p> : <>{[false, true].map((agents) => {
         const group = shown.filter((option) => !!option.isAgent === agents);
         if (!group.length) return null;
         return <React.Fragment key={String(agents)}>{shown.some((option) => option.isAgent) && <p className="px-2.5 pb-1 pt-2 text-11 font-semibold uppercase tracking-wide text-tertiary">{agents ? t("agents.group") : t("members.group")}</p>}{group.map((option) => { const unavailable = option.isAgent && option.hasAccess === false; return <button key={option.id} type="button" aria-disabled={unavailable || undefined} title={unavailable ? option.accessReason ?? undefined : undefined} className={`${optionClass} ${option.codeCapable ? "flex-wrap" : ""} ${unavailable ? "cursor-not-allowed opacity-45" : ""}`} onClick={() => !unavailable && void onApply(mode, option.id).then((ok) => ok && close())}>

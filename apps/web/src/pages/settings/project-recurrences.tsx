@@ -1,6 +1,7 @@
 import React from "react";
 import { formatDate, translate, type MessageKey } from "@weft/shared";
 import { action } from "../../api";
+import { MultiSelect } from "../../property-dropdowns";
 import { useProject } from "../../layouts/project-layout";
 import { Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 import { priorities, type Estimate, type Label, type Member, type WorkItem, type WorkState } from "../../types";
@@ -97,7 +98,7 @@ export function ProjectRecurrences() {
         <label>{t("workItems.priority")}<select value={template.priority} onChange={(e) => field("priority", e.target.value as Template["priority"])}>{priorities.map((v) => <option key={v} value={v}>{t("workItems.priority." + v)}</option>)}</select></label>
         <label>{t("workItems.state")}<select value={template.stateId ?? ""} onChange={(e) => field("stateId", e.target.value || undefined)}><option value="">{t("recurrences.defaultState")}</option>{states.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
         <fieldset><legend>{t("workItems.assignees")}</legend>{members.map((m) => <label key={m.userId} className="flex-row"><input type="checkbox" checked={template.assigneeIds.includes(m.userId)} onChange={(e) => toggle("assigneeIds", m.userId, e.target.checked)} />{m.name}</label>)}</fieldset>
-        <fieldset><legend>{t("workItems.labels")}</legend>{labels.map((l) => <label key={l.id} className="flex-row"><input type="checkbox" checked={template.labelIds.includes(l.id)} onChange={(e) => toggle("labelIds", l.id, e.target.checked)} />{l.name}</label>)}</fieldset>
+        <div className="grid gap-1"><span className="text-13 text-secondary">{t("workItems.labels")}</span><MultiSelect label={t("workItems.labels")} searchAlways selected={template.labelIds} summary={<span>{template.labelIds.length ? template.labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ") : t("workItems.noLabels")}</span>} options={labels.map((label) => ({ id: label.id, name: label.name, icon: <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: label.color }} /> }))} onToggle={(id, on) => toggle("labelIds", id, on)} />{labels.length === 0 && <span className="text-13 text-tertiary">—</span>}</div>
         {estimate?.enabled && <label>{t("estimates.title")}<select value={template.estimatePointId ?? ""} onChange={(e) => field("estimatePointId", e.target.value || undefined)}><option value="">{t("recurrences.none")}</option>{estimate.points.map((p) => <option key={p.id} value={p.id}>{p.value}</option>)}</select></label>}
         {project.features.modules && <fieldset><legend>{t("workItems.modules")}</legend>{modules.map((m) => <label key={m.id} className="flex-row"><input type="checkbox" checked={template.moduleIds.includes(m.id)} onChange={(e) => toggle("moduleIds", m.id, e.target.checked)} />{m.name}</label>)}</fieldset>}
         <label>{t("workItems.modal.parent")}<select value={template.parentId ?? ""} onChange={(e) => field("parentId", e.target.value || undefined)}><option value="">{t("recurrences.none")}</option>{items.map((i) => <option key={i.id} value={i.id}>{i.displayId} {i.title}</option>)}</select></label>

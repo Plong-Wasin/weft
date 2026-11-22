@@ -82,7 +82,7 @@ try {
   const requirements = owner.page.getByTestId("runtime-sandbox-requirements");
   await requirements.waitFor();
   const requirementsAtSettings = await requirements.innerText();
-  if (!requirementsAtSettings.includes("SRT") || !requirementsAtSettings.includes("0.0.83") || !requirementsAtSettings.includes("npm install --global @anthropic-ai/sandbox-runtime") || !requirementsAtSettings.includes("never falls back")) {
+  if (!requirementsAtSettings.includes("SRT") || !requirementsAtSettings.includes("0.0.83") || !requirementsAtSettings.includes("npm install --global @anthropic-ai/sandbox-runtime") || !requirementsAtSettings.includes("On Linux") || !requirementsAtSettings.includes("bubblewrap (bwrap), socat, and ripgrep (rg)") || !requirementsAtSettings.includes("unprivileged user namespaces") || !requirementsAtSettings.includes("Settings do not verify these host requirements") || !requirementsAtSettings.includes("never falls back")) {
     throw new Error(`Sandbox requirements are not actionable or fail-closed: ${requirementsAtSettings}`);
   }
   const impact = owner.page.getByTestId("runtime-enforcement-warning");
@@ -167,14 +167,16 @@ try {
   const settingsRequirements = owner.page.getByTestId("runtime-sandbox-requirements");
   await settingsRequirements.waitFor();
   const settingsRequirementsText = await settingsRequirements.innerText();
-  if (!settingsRequirementsText.includes("SRT") || !settingsRequirementsText.includes("0.0.83") || !settingsRequirementsText.includes("npm install --global @anthropic-ai/sandbox-runtime") || !settingsRequirementsText.includes("never falls back")) {
+  if (!settingsRequirementsText.includes("SRT") || !settingsRequirementsText.includes("0.0.83") || !settingsRequirementsText.includes("npm install --global @anthropic-ai/sandbox-runtime") || !settingsRequirementsText.includes("On Linux") || !settingsRequirementsText.includes("bubblewrap (bwrap), socat, and ripgrep (rg)") || !settingsRequirementsText.includes("unprivileged user namespaces") || !settingsRequirementsText.includes("Settings do not verify these host requirements") || !settingsRequirementsText.includes("never falls back")) {
     throw new Error(`Sandbox requirements are not actionable or fail-closed: ${settingsRequirementsText}`);
   }
   if (!await enforcementSetting.isChecked()) throw new Error("Confirmed sandbox enforcement is not shown as enabled");
   await owner.page.setViewportSize({ width: 1440, height: 900 });
-  await Bun.write(`${evidenceDir}/runtime-profiles-settings.png`, await owner.page.screenshot({ fullPage: true }));
+  await settingsRequirements.evaluate((element) => element.scrollIntoView({ block: "center" }));
+  await Bun.write(`${evidenceDir}/runtime-profiles-settings.png`, await owner.page.screenshot());
   await owner.page.setViewportSize({ width: 390, height: 844 });
-  await Bun.write(`${evidenceDir}/runtime-profiles-settings-mobile.png`, await owner.page.screenshot({ fullPage: true }));
+  await settingsRequirements.evaluate((element) => element.scrollIntoView({ block: "center" }));
+  await Bun.write(`${evidenceDir}/runtime-profiles-settings-mobile.png`, await owner.page.screenshot());
   await owner.page.setViewportSize({ width: 1440, height: 900 });
 
   await owner.page.goto(`${web}/${slug}/settings/agents`);

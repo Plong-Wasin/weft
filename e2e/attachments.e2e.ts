@@ -146,12 +146,13 @@ try {
   await page.getByTestId("attachment-dropzone").waitFor();
 
   // One click opens the picker; selecting several files uploads all of them.
+  const webmBytes = Buffer.from(await Bun.file("e2e/fixtures/preview.webm").arrayBuffer());
   await attachPicker.setFiles([
     { name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("hello evidence") },
     { name: "second.txt", mimeType: "text/plain", buffer: Buffer.from("second evidence") },
     { name: "unsafe.html", mimeType: "text/html", buffer: Buffer.from("<!doctype html><script>document.body.textContent='must stay a download'</script>") },
     { name: "photo.png", mimeType: "image/png", buffer: Buffer.from(await Bun.file("e2e/fixtures/preview.png").arrayBuffer()) },
-    { name: "sample.webm", mimeType: "video/webm", buffer: Buffer.from(await Bun.file("e2e/fixtures/preview.webm").arrayBuffer()) },
+    { name: "sample.webm", mimeType: "video/webm", buffer: webmBytes },
     { name: "manual.pdf", mimeType: "application/pdf", buffer: makePdf() },
   ]);
   await attachments.getByText("notes.txt").waitFor();
@@ -186,7 +187,18 @@ try {
   check(photoDownload.suggestedFilename() === "photo.png", "image attachment download did not preserve its filename");
 
   const videoRow = attachments.locator("li").filter({ hasText: "sample.webm" });
+  const videoUrlResponsePromise = page.waitForResponse((response) => response.url().includes("/actions/get_asset_download_url") && response.request().method() === "POST");
   await videoRow.getByRole("button", { name: `${translate("assets.preview")} sample.webm` }).click();
+  const videoPreview = await videoUrlResponsePromise.then((response) => response.json() as Promise<{ url: string; preview: boolean }>);
+  check(videoPreview.preview, "video preview action did not return an authorized preview URL");
+  const videoRange = await page.request.get(videoPreview.url, { headers: { Range: "bytes=0-127" } });
+  check(videoRange.status() === 206, `video storage GET ignored byte range: ${videoRange.status()}`);
+  const videoContentRange = videoRange.headers()["content-range"] ?? "";
+  check(videoContentRange === `bytes 0-127/${webmBytes.byteLength}`, `video storage response has the wrong Content-Range: ${videoContentRange}`);
+  check((videoRange.headers()["content-type"] ?? "").startsWith("video/webm"), "ranged video response has the wrong MIME type");
+  const rangedBytes = new Uint8Array(await videoRange.body());
+  check(rangedBytes[0] === 0x1a && rangedBytes[1] === 0x45 && rangedBytes[2] === 0xdf && rangedBytes[3] === 0xa3, "ranged video response did not contain the requested WebM bytes");
+  console.log(`case video-byte-range: ${videoRange.status()} ${videoContentRange}`);
   const videoDialog = page.locator("dialog.asset-preview-dialog");
   await videoDialog.locator("video[controls]").waitFor();
   await page.waitForFunction(() => { const video = document.querySelector("dialog.asset-preview-dialog video") as HTMLVideoElement | null; return !!video && video.readyState >= 1; });

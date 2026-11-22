@@ -193,7 +193,13 @@ try {
   mkdirSync("/home/plong/workspace/weft/.local/continuous-improvements/labels-keyboard", { recursive: true });
   await page.screenshot({ path: "/home/plong/workspace/weft/.local/continuous-improvements/labels-keyboard/labels-1440.png", fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: "/home/plong/workspace/weft/.local/continuous-improvements/labels-keyboard/labels-390.png", fullPage: true });
+  await page.goto(`${web}/${slug}/projects/POP/intake`);
+  await page.getByRole("button", { name: t("intake.add"), exact: true }).click();
+  const intakeDialog = page.getByRole("dialog");
+  await intakeDialog.getByRole("button", { name: new RegExp(`^${t("workItems.labels")}:`) }).click();
+  await page.getByRole("searchbox", { name: t("picker.search"), exact: true }).fill("Long-tail 243");
+  await panel.getByRole("menuitemcheckbox", { name: /Long-tail 243/ }).waitFor();
+  await page.screenshot({ path: "/home/plong/workspace/weft/.local/continuous-improvements/labels-keyboard/labels-390.png", fullPage: false });
   await page.keyboard.press("Escape");
   console.log("e2e picker-search: search above six options, focus, filter, empty message, arrows, Enter, Escape, Assignee People/Agents, disabled Agent reason and no field on Priority ok");
   await browser.close();

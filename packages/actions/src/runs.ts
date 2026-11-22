@@ -365,6 +365,37 @@ export async function agentOwnerCanUseProject(database: Database, agent: { creat
   return canWriteProject(database, agent.createdBy, projectId);
 }
 
+/** Holds the authorization rows stable until a Run-token read has finished, so a concurrent revoke must serialize before or after it. */
+export async function withAgentRunProjectAuthorization<T>(database: Database, runId: string, read: (state: {
+  active: boolean; allowed: boolean; run: RunRow | null;
+}) => Promise<T>): Promise<T> {
+  return database.transaction(async (transaction) => {
+    const tx = transaction as unknown as Database;
+    const [observed] = await tx.select({ runtimeId: runs.runtimeId, workspaceId: runs.workspaceId, projectId: runs.projectId, agentId: runs.agentId, originatorId: runs.originatorId }).from(runs).where(eq(runs.id, runId));
+    if (!observed) return read({ active: false, allowed: false, run: null });
+    // Runtime changes take the Runtime lock before the Run lock; read guards use this same order as claim/start/unshare.
+    if (observed.runtimeId) await tx.select({ id: runtimes.id }).from(runtimes).where(eq(runtimes.id, observed.runtimeId)).for("share");
+    const [agent] = observed.agentId ? await tx.select({ createdBy: agents.createdBy, runtimeId: agents.runtimeId, memberOwned: agents.memberOwned }).from(agents).where(eq(agents.id, observed.agentId)).for("share") : [];
+    const [project] = observed.projectId ? await tx.select({ id: projects.id, workspaceId: projects.workspaceId }).from(projects).where(eq(projects.id, observed.projectId)).for("share") : [];
+    const userIds = [...new Set([observed.originatorId, ...(agent?.memberOwned && agent.createdBy ? [agent.createdBy] : [])])].sort();
+    const workspaceIds = [...new Set([observed.workspaceId, ...(project ? [project.workspaceId] : [])])].sort();
+    await tx.select({ userId: workspaceMembers.userId }).from(workspaceMembers)
+      .where(and(inArray(workspaceMembers.workspaceId, workspaceIds), inArray(workspaceMembers.userId, userIds))).orderBy(workspaceMembers.workspaceId, workspaceMembers.userId).for("share");
+    if (project) await tx.select({ userId: projectMembers.userId }).from(projectMembers)
+      .where(and(eq(projectMembers.projectId, project.id), inArray(projectMembers.userId, userIds))).orderBy(projectMembers.userId).for("share");
+    // Membership revocation locks workspace/project member rows before cancelling Runs. Take those rows before the Run's advisory and row locks.
+    await lockRuntimeRun(tx, runId);
+    const [run] = await tx.select().from(runs).where(eq(runs.id, runId)).for("update");
+    if (!run || !["dispatched", "running"].includes(run.status)) return read({ active: false, allowed: false, run: run ?? null });
+    if (run.workspaceId !== observed.workspaceId || run.projectId !== observed.projectId || run.agentId !== observed.agentId || run.runtimeId !== observed.runtimeId) return read({ active: true, allowed: false, run });
+    if (!agent || agent.runtimeId !== run.runtimeId || !(await agentRuntimeCanRun(tx, { runtimeId: run.runtimeId }))) return read({ active: true, allowed: false, run });
+    if (!run.projectId) return read({ active: true, allowed: true, run });
+    if (!project || project.workspaceId !== run.workspaceId) return read({ active: true, allowed: false, run });
+    const allowed = await canWriteProject(tx, run.originatorId, run.projectId) && await agentOwnerCanUseProject(tx, agent, run.projectId);
+    return read({ active: true, allowed, run });
+  });
+}
+
 /**
  * The one wake decision (ADR 0013): every path that starts a Run for an Agent calls it, after the caller checked a person's own project write and Agent access.
  * - An Agent's or Autopilot's change (`waker` "agent") wakes only when its Run's Agent has the Can wake Agents switch on (`switch_off` otherwise). Then the chain's Originator, depth and waking Run are taken from that Run, and the wake is refused with an Activity and a notice when the depth would pass `maxWakeDepth` (`depth_limit`), when the Originator may not write in the project (`no_project_write`) or may not use the target Agent (`no_agent_access`). A hourly Run limit that holds the wake is `hourly_limit`.

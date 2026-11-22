@@ -1,7 +1,7 @@
 import { Elysia } from "elysia";
 import { Type } from "@sinclair/typebox";
 import { cors } from "@elysiajs/cors";
-import { createMailerFromEnv, type Mailer, ActionError, AgentAccessDeniedError, actionRegistry, createActionList, createApiTokenActions, createRuntimeDispatchActions, aiWriteActions, HIDDEN_FROM_AI, skillWriteActions, createWorkspaceAction, registerAction, writeDecision, type ActionContext, type SignalBus, agentOwnerCanUseProject, agentRuntimeCanRun, canWriteProject, containsRuntimeSecretValue, lockRuntimeRun, openSecret, recordSecretOutputBlockedNotifications } from "@weft/actions";
+import { createMailerFromEnv, type Mailer, ActionError, AgentAccessDeniedError, actionRegistry, createActionList, createApiTokenActions, createRuntimeDispatchActions, aiWriteActions, HIDDEN_FROM_AI, skillWriteActions, createWorkspaceAction, registerAction, writeDecision, type ActionContext, type SignalBus, agentOwnerCanUseProject, agentRuntimeCanRun, canWriteProject, containsRuntimeSecretValue, lockRuntimeRun, openSecret, recordSecretOutputBlockedNotifications, withAgentRunProjectAuthorization } from "@weft/actions";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { agents, apiTokens, collections, comments, createDatabase, oauthAccessToken, oauthClient, runs, runtimes, users, wikiPages, workItems, type Database } from "@weft/db";
 import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
@@ -499,17 +499,6 @@ export function createApp(
           : !HIDDEN_FROM_AI.has(action.name) && !["list_skills", "list_skill_agents"].includes(action.name);
         const bodyWorkspaceId = (body as { workspaceId?: unknown } | null)?.workspaceId;
         if (!offered || (typeof bodyWorkspaceId === "string" && bodyWorkspaceId !== caller.agent.workspaceId)) { set.status = 403; return { error: agentActionRefusal(action.name) }; }
-        const ownerAccess = await db.transaction(async (transaction) => {
-          const tx = transaction as unknown as Database;
-          const [run] = await tx.select({ projectId: runs.projectId, agentId: runs.agentId, originatorId: runs.originatorId, runtimeId: runs.runtimeId }).from(runs).where(eq(runs.id, caller.agent!.runId));
-          if (!run?.projectId || !run.agentId) return true;
-          const [agent] = await tx.select({ createdBy: agents.createdBy, runtimeId: agents.runtimeId, memberOwned: agents.memberOwned }).from(agents).where(eq(agents.id, run.agentId));
-          return !!agent && agent.runtimeId === run.runtimeId
-            && await agentRuntimeCanRun(tx, { runtimeId: run.runtimeId })
-            && await canWriteProject(tx, run.originatorId, run.projectId)
-            && await agentOwnerCanUseProject(tx, agent, run.projectId);
-        });
-        if (!ownerAccess) { set.status = 403; return { error: "The Originator or Runtime owner no longer has Project write access, or the Runtime is unshared, so this Agent Run cannot continue." }; }
       }
       try {
         // Converter work is charged to the user (a token is only a sub-limit of its user, so many tokens are still one caller); a caller without a user is keyed by address and workspace.
@@ -517,7 +506,16 @@ export function createApp(
         const converterKey = caller.userId ? `user:${caller.userId}` : `ip:${clientAddress(request, Number(Bun.env.TRUSTED_PROXY_HOPS ?? 0))}:${bodyWorkspace}`;
         const executeAction = () => withWrittenFormKey(converterKey, () => (action.handler as (context: ActionContext, input: unknown) => Promise<unknown>)(caller, body), (caller as { apiTokenId?: string }).apiTokenId);
         let result: unknown;
-        if (caller.source === "agent" && caller.agent && action.kind === "write") {
+        if (caller.source === "agent" && caller.agent && action.kind === "read") {
+          const guarded = await withAgentRunProjectAuthorization(db, caller.agent.runId, async (state) => {
+            if (!state.active) return { kind: "inactive" as const };
+            if (!state.allowed) return { kind: "access_revoked" as const };
+            return { kind: "result" as const, result: await executeAction() };
+          });
+          if (guarded.kind === "inactive") { set.status = 409; return { error: "This Agent Run is no longer active." }; }
+          if (guarded.kind === "access_revoked") { set.status = 403; return { error: "The Originator or Runtime owner no longer has Project write access, or the Runtime is unshared, so this Agent Run cannot continue." }; }
+          result = guarded.result;
+        } else if (caller.source === "agent" && caller.agent && action.kind === "write") {
           const guarded = await db.transaction(async (transaction) => {
             const tx = transaction as unknown as Database;
             await lockRuntimeRun(tx, caller.agent!.runId);

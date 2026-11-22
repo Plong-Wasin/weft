@@ -3,8 +3,8 @@ import { activities, confirmations, runs, type Database } from "@weft/db";
 import { lockRuntimeRun, scrubRunMessages } from "./runtime-secret-comments";
 
 /** Revokes every active Run, leaving running Runtime work in stopping until its Daemon acknowledges cancellation. */
-export async function revokeAgentRuns(database: Database, agentId: string, actorId: string, reason: string, originatorId?: string) {
-  const active = await database.select().from(runs).where(and(eq(runs.agentId, agentId), ...(originatorId ? [eq(runs.originatorId, originatorId)] : []), inArray(runs.status, ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input", "follow_up"])));
+export async function revokeAgentRuns(database: Database, agentId: string, actorId: string, reason: string, originatorId?: string, options: { runtimeId?: string; followUp?: boolean; notify?: boolean } = {}) {
+  const active = await database.select().from(runs).where(and(eq(runs.agentId, agentId), ...(originatorId ? [eq(runs.originatorId, originatorId)] : []), ...(options.runtimeId ? [eq(runs.runtimeId, options.runtimeId)] : []), inArray(runs.status, ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input", "follow_up"])));
   const now = new Date();
   for (const run of active) {
     await database.transaction(async (transaction) => {
@@ -22,11 +22,19 @@ export async function revokeAgentRuns(database: Database, agentId: string, actor
           .where(and(eq(confirmations.runId, run.id), eq(confirmations.status, "pending")));
         const { emitRunFinished } = await import("./outbound-webhooks");
         await emitRunFinished(tx, run.id);
+        if (options.followUp && run.workItemId) {
+          const { startFollowUpRun } = await import("./runs");
+          await startFollowUpRun(tx, agentId, run.workItemId);
+        }
       }
       if (run.workItemId) await tx.insert(activities).values({
         workspaceId: run.workspaceId, projectId: run.projectId, entityType: "work_item", entityId: run.workItemId,
         field: "run_revoked", oldValue: { status: current.status }, newValue: { status: updated.status, reason }, actorId, source: "ui",
       });
+      if (options.notify) {
+        const { enqueueNotification } = await import("./notifications");
+        await enqueueNotification(tx, { kind: "run_skipped", ...(run.workItemId ? { workItemId: run.workItemId } : { runId: run.id }), commentId: run.commentId ?? undefined, actorId, recipientIds: [run.originatorId], detail: "runtime_rebound" });
+      }
     });
   }
 }

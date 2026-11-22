@@ -1260,6 +1260,7 @@ export const en = {
     "inbox.intakeRejected": "{actor} rejected your Intake item",
     "inbox.runSkipped": "{actor} did not start your request: its monthly token budget is used up",
     "inbox.runSkipped.runtime_capability_missing": "{actor} could not start your request because its computer's Daemon does not support the Agent's Runtime environment or safety settings",
+    "inbox.runSkipped.runtime_rebound": "{actor} moved the Agent to another Runtime. We asked its old computer to cancel this Run; it may take time to stop.",
     "inbox.openScheduledRun": "Open scheduled Run",
     "inbox.secretOutputBlocked": "An Agent output was withheld because it contained a configured Runtime secret",
     "inbox.wakeSkipped.depth_limit": "{actor} did not wake another Agent: the Wake chain reached depth 6",

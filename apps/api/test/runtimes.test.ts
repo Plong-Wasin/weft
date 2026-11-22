@@ -40,7 +40,7 @@ test.concurrent("the API registers Daemon CLIs and keeps private Runtime rows ou
   });
 });
 
-test.concurrent("a revoked creator Project grant blocks a dispatched Member Agent's direct Run Action", async () => {
+test.concurrent("a revoked Originator Project grant blocks a dispatched Member Agent's direct Run Action", async () => {
   await withRollback(db, async (transaction) => {
     const { app, post, signUp } = await setup(transaction);
     const admin = await signUp();

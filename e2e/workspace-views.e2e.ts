@@ -10,7 +10,7 @@ const apiPort = Number(Bun.env.E2E_API_PORT ?? 3119);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5219);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
-const shots = "/home/plong/workspace/weft/.local/ai-ux-reliability/13-workspace-view-mobile";
+const shots = "/home/plong/workspace/weft/.local/modern-web-fixes";
 mkdirSync(shots, { recursive: true });
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
@@ -145,6 +145,11 @@ try {
   check((await switcher.locator("span[aria-hidden]").boundingBox())!.height <= 24, "mobile Workspace View title wraps across multiple lines");
   check(await viewHeader.evaluate((element) => element.scrollWidth <= element.clientWidth), "mobile Workspace View header overflows horizontally");
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "mobile page overflows horizontally");
+  const sheet = page.getByRole("region", { name: translate("workspaceViews.table") });
+  await sheet.focus();
+  for (let press = 0; press < 3; press += 1) await page.keyboard.press("ArrowRight");
+  check(await sheet.evaluate((element) => element.scrollLeft > 0), "keyboard focus could not horizontally scroll the Workspace View table");
+  await sheet.evaluate((element) => { element.scrollLeft = 0; (element as HTMLElement).blur(); });
   await page.screenshot({ path: `${shots}/workspace-views-390.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.screenshot({ path: `${shots}/workspace-views-1440.png` });

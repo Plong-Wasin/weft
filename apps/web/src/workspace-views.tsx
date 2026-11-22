@@ -52,7 +52,12 @@ function WorkspaceSheet({ items, projects, states, labels, people, workspaceSlug
   };
   return <div className="overflow-hidden rounded-lg border border-subtle">
     {items.length === 0 && <p role="status" className="border-b border-subtle bg-surface-1 px-5 py-3 text-14 text-secondary">{empty}</p>}
-    <div className="overflow-x-auto" data-testid="sheet-scroll">
+    <div role="region" aria-label={t("workspaceViews.table")} tabIndex={0} className="overflow-x-auto focus-visible:outline-2 focus-visible:outline-accent-primary" data-testid="sheet-scroll"
+      onKeyDown={(event) => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        event.preventDefault();
+        event.currentTarget.scrollLeft += (event.key === "ArrowRight" ? 1 : -1) * Math.max(80, event.currentTarget.clientWidth * 0.8);
+      }}>
       <table className="w-full border-separate border-spacing-0 bg-surface-1 text-13">
         <thead><tr className="bg-layer-1 text-12 font-medium text-tertiary">
           <th scope="col" className={`${cell} sticky left-0 z-10 min-w-64 bg-layer-1`}>{t("layout.sheet.workItem")}</th>

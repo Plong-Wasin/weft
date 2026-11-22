@@ -1,4 +1,5 @@
 import React from "react";
+import { handleImeSafeEnter } from "./ime";
 import { CheckSquare, Layers, FileText, ClipboardList, Calendar, Flag, Target, Milestone, Kanban, ListTodo, Briefcase, Folder, BookOpen, Pencil, Timer, Rocket, Puzzle, Users, User, UserCheck, Handshake, GraduationCap, Heart, Smile, HandHelping, Building2, Crown, Inbox, Mail, MessageSquare, Megaphone, Phone, Bell, Send, Share2, Newspaper, Mic, Video, AtSign, Bug, BadgeCheck, CircleCheck, CircleAlert, TriangleAlert, ShieldCheck, Lock, Clock, Zap, Flame, Star, ThumbsUp, Ban, RefreshCw, Hourglass, Package, Box, ShoppingCart, CreditCard, Wallet, Receipt, Gift, Key, Wrench, Hammer, Lightbulb, Camera, MapPin, Truck, Tag, Code, Terminal, Database, Server, Cloud, Globe, Cpu, GitBranch, Smartphone, Monitor, Wifi, Bot, Sparkles, Shield, Leaf, TreePine, Sun, Moon, Droplet, Mountain, Flower2, PawPrint } from "lucide-react";
 import { resolveTypeIcon, translate, typeIcons, type MessageKey, type TypeIcon } from "@weft/shared";
 import { action } from "./api";
@@ -253,7 +254,7 @@ function DraftInput({ id, type, value, disabled, maxLength, onCommit }: { id: st
   React.useEffect(() => setDraft(value), [value]);
   const commit = () => { if (draft !== value) onCommit(draft); };
   return <input id={id} type={type} disabled={disabled} value={draft} maxLength={maxLength} onChange={(event) => setDraft(event.target.value)}
-    onBlur={commit} onKeyDown={(event) => { if (event.key === "Enter" && type !== "number") { event.preventDefault(); commit(); } }} />;
+    onBlur={commit} onKeyDown={(event) => { if (type !== "number") handleImeSafeEnter(event.nativeEvent, commit); }} />;
 }
 
 /** Plain suggestions for the settings page; the server lists them too, so the page never hard-codes a second copy. */

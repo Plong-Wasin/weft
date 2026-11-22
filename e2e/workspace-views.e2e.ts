@@ -10,7 +10,7 @@ const apiPort = Number(Bun.env.E2E_API_PORT ?? 3119);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5219);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
-const shots = "/home/plong/workspace/weft/.local/modern-web-fixes";
+const shots = "/home/plong/workspace/weft/.local/ai-ux-reliability/13-workspace-view-mobile";
 mkdirSync(shots, { recursive: true });
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),

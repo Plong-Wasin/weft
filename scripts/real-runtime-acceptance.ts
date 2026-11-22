@@ -1,13 +1,14 @@
 // Real Runtime acceptance of the Wake chain (agent-wake-chain ticket 09). NOT part of `bun run test:isolated`: it drives a real agent CLI
 // (`claude` or `codex`, found by `weft daemon probe`) through a local Weft server and a local Daemon, and costs model tokens.
 //
-// Usage: bun scripts/real-runtime-acceptance.ts [--cli claude|codex] [--model <cli model>] [--only 1,2,3,4,5] [--out <dir>]
+// Usage: bun scripts/real-runtime-acceptance.ts [--cli claude|codex] [--model <cli model>] [--only 1,2,3,4,5,6] [--out <dir>]
 //   CHROMIUM_PATH=<chrome> for the screenshots. Everything (database, config, session folders, screenshots, log) lives under --out
 //   (default /tmp/weft-acceptance-09). The script prints one line per check and writes `log.md` with what was observed.
 //
 // Scenarios: (1) coder/reviewer ping-pong until the chain stops at depth 6; (2) a comment written during a Run becomes a Follow-up Run;
 // (3) round two resumes the Session in the same folder, a failed Run is followed by a new Session; (4) the coder splits work and is woken
-// when the sub-items close; (5) with the switch off nothing wakes. Folder cleanup after a close is observed on disk.
+// when the sub-items close; (5) with the switch off nothing wakes; (6) a real Codex Run receives an owner-configured non-secret
+// marker and reports only whether the marker variable was present. Folder cleanup after a close is observed on disk.
 import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
@@ -15,7 +16,7 @@ import { join } from "node:path";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { SQL } from "bun";
 import { chromium, type Page } from "playwright";
-import { activities, createDatabase, notifications, runs, workItems } from "../packages/db/src";
+import { activities, createDatabase, notifications, runMessages, runs, workItems } from "../packages/db/src";
 import { createJobHandlers, runNextJob } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
 
@@ -190,6 +191,26 @@ try {
     await page.setViewportSize({ width: 1440, height: 900 });
   };
   const activitiesOf = async (workItemId: string) => (await retrying(() => db.select().from(activities).where(and(eq(activities.entityId, workItemId), eq(activities.entityType, "work_item"))).orderBy(asc(activities.seq))));
+
+  // ---- 6. A real Codex Run sees an owner-configured non-secret marker without echoing its value ----
+  if (only.has("6")) {
+    if (cliKind !== "codex") throw new Error("Scenario 6 must use --cli codex");
+    note("\n## Scenario 6: Runtime-owner environment marker reaches a real Codex Run");
+    const environmentName = `FOLLOWUP_MARKER_${randomBytes(4).toString("hex").toUpperCase()}`;
+    const markerValue = randomBytes(24).toString("hex");
+    if (Bun.env[environmentName] !== undefined) throw new Error("Generated marker name unexpectedly exists in the Daemon environment");
+    await call("set_agent_runtime_environment", { agentId: coder.id, variables: { [environmentName]: markerValue } });
+    await instruct(coder, `${weftHint}\nCheck whether environment variable ${environmentName} is non-empty. Run exactly this shell check: if [ -n "\${${environmentName}:-}" ]; then printf 'MARKER_PRESENT=true\\n'; else printf 'MARKER_PRESENT=false\\n'; fi. Do not print, copy, or describe its value. Then reply with exactly the boolean result from the command.`);
+    const item = await newItem("Verify configured environment reaches Codex");
+    await call("update_work_item", { workItemId: item.id, assigneeIds: [coder.userId] });
+    const rows = await settled(item.id, 1);
+    const row = rows[0]!;
+    const transcript = (await retrying(() => db.select({ output: runMessages.output }).from(runMessages).where(eq(runMessages.runId, row.id)))).map((message) => JSON.stringify(message.output ?? "")).join("\n");
+    const passed = row.status === "completed" && /MARKER_PRESENT=true/i.test(transcript);
+    check(passed, "the real Codex Run reported MARKER_PRESENT=true");
+    check(!transcript.includes(markerValue), "the marker value does not appear in the saved Run transcript");
+    note(`Codex Run ${row.id}: ${row.status}; marker presence=${passed ? "true" : "false"}; marker value omitted`);
+  }
 
   // ---- 1. Ping-pong to the depth limit ----
   if (only.has("1")) {

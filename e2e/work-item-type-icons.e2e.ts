@@ -37,6 +37,17 @@ try {
   const page: Page = await context.newPage();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
+  const action = async <T>(name: string, body: unknown) => {
+    const response = await context.request.post(`${api}/actions/${name}`, { data: body });
+    check(response.ok(), `${name} failed: ${response.status()}`);
+    return await response.json() as T;
+  };
+  const enter = async (locator: ReturnType<typeof page.locator>, options: { isComposing?: boolean; keyCode?: number } = {}) => locator.evaluate((element, eventOptions) => {
+    const event = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, isComposing: eventOptions.isComposing ?? false });
+    if (eventOptions.keyCode !== undefined) Object.defineProperty(event, "keyCode", { value: eventOptions.keyCode });
+    element.dispatchEvent(event);
+    return { defaultPrevented: event.defaultPrevented, focused: document.activeElement === element };
+  }, options);
 
   // Account, workspace and project, as the other type flows do.
   await page.goto(web);
@@ -95,7 +106,12 @@ try {
   await search.press("Escape");
   check(await search.inputValue() === "" && await icons.getByRole("radio").count() >= 60, "Escape clears the search and shows the library again");
   await search.fill("rocket");
-  await search.press("Enter");
+  const composingIconEnter = await enter(search, { isComposing: true });
+  check(!composingIconEnter.defaultPrevented && composingIconEnter.focused && await icons.getByRole("radio", { name: t("types.icon.rocket"), exact: true }).getAttribute("aria-checked") === "false", "composing Enter does not select an icon or prevent native IME handling");
+  const safariIconEnter = await enter(search, { keyCode: 229 });
+  check(!safariIconEnter.defaultPrevented && safariIconEnter.focused && await icons.getByRole("radio", { name: t("types.icon.rocket"), exact: true }).getAttribute("aria-checked") === "false", "keyCode 229 does not select an icon or prevent native IME handling");
+  const normalIconEnter = await enter(search);
+  check(normalIconEnter.defaultPrevented, "ordinary Enter is consumed by icon selection");
   check(await icons.getByRole("radio", { name: t("types.icon.rocket"), exact: true }).getAttribute("aria-checked") === "true", "Enter picks the first match");
 
   // Dark theme, search typed, at 1440 and then 390 px: the open picker with a search in it.
@@ -118,6 +134,17 @@ try {
   await editor.waitFor({ state: "detached" });
   check(await bugRow.locator('[data-type-icon="rocket"]').count() >= 1, "the type row shows the saved icon");
 
+  // Prepare a Bug property and work item so title and draft-property Enter behavior is exercised in the actual detail controls.
+  const me = await (await context.request.get(`${api}/api/me`)).json() as { workspaces: Array<{ id: string }> };
+  const project = (await action<Array<{ id: string }>>("list_projects", { workspaceId: me.workspaces[0]!.id }))[0]!;
+  const bugType = (await action<Array<{ id: string; name: string }>>("list_work_item_types", { projectId: project.id })).find((type) => type.name === "Bug")!;
+  const property = await action<{ id: string }>("create_custom_property", { projectId: project.id, name: "IME notes", kind: "text", typeIds: [bugType.id] });
+  const item = await action<{ displayId: string }>("create_work_item", {
+    projectId: project.id, title: "Original IME title", typeId: bugType.id, properties: [{ propertyId: property.id, value: "before" }],
+  });
+  const original = await action<{ properties: Array<{ propertyId: string; value: string }> }>("get_work_item", { workspaceId: me.workspaces[0]!.id, displayId: item.displayId });
+  check(original.properties.some((value) => value.propertyId === property.id && value.value === "before"), "the IME fixture has its typed property value");
+
   // Create work item: the type chip in the dialog shows the saved icon.
   await page.goto(`${web}${paths.workItems(slug, "MOB")}`);
   await page.getByRole("button", { name: t("workItems.addNew"), exact: true }).first().click();
@@ -139,6 +166,46 @@ try {
   const reloaded = page.getByRole("complementary", { name: t("workItems.properties") });
   await reloaded.locator('[data-type-icon="rocket"]').first().waitFor();
   check(await reloaded.locator('[data-type-icon="rocket"]').count() >= 1, "the work item detail keeps the icon after a reload");
+
+  // The work item title saves on blur; composition Enter must leave it focused and unchanged, while ordinary Enter blurs and saves.
+  await page.goto(`${web}${paths.workItem(slug, item.displayId)}`);
+  const propertiesToggle = page.getByTestId("work-item-properties-toggle");
+  await propertiesToggle.waitFor();
+  if (await propertiesToggle.getAttribute("aria-pressed") !== "true") await propertiesToggle.click();
+  const detail = page.getByRole("complementary", { name: t("workItems.properties") });
+  const notes = detail.locator("[data-property-fields] input");
+  await notes.waitFor({ state: "visible" });
+  const detailState = await detail.evaluate((element) => ({ viewport: innerWidth, className: element.className, display: getComputedStyle(element).display, rect: element.getBoundingClientRect().toJSON() }));
+  check(await notes.count() === 1, `the work item detail shows one draft property field (${JSON.stringify(detailState)})`);
+  const title = page.getByRole("textbox", { name: t("workItems.titleField") }).first();
+  await title.fill("Draft IME title");
+  const composingTitleEnter = await enter(title, { isComposing: true });
+  check(!composingTitleEnter.defaultPrevented && composingTitleEnter.focused, "composing Enter keeps the title focused without preventing native IME handling");
+  const safariTitleEnter = await enter(title, { keyCode: 229 });
+  check(!safariTitleEnter.defaultPrevented && safariTitleEnter.focused, "keyCode 229 keeps the title focused");
+  const unchanged = await action<{ title: string }>("get_work_item", { workspaceId: me.workspaces[0]!.id, displayId: item.displayId });
+  check(unchanged.title === "Original IME title", "composition Enter did not save the title");
+  const titleSave = page.waitForResponse((response) => response.url().includes("/actions/update_work_item") && response.ok());
+  const normalTitleEnter = await enter(title);
+  check(normalTitleEnter.defaultPrevented && !normalTitleEnter.focused, "ordinary Enter prevents its default and blurs the title");
+  await titleSave;
+  const savedTitle = await action<{ title: string }>("get_work_item", { workspaceId: me.workspaces[0]!.id, displayId: item.displayId });
+  check(savedTitle.title === "Draft IME title", "ordinary Enter saved the title on blur");
+
+  // The custom text property commits on Enter; composing Enter must keep its draft local until ordinary Enter is pressed.
+  await notes.fill("draft note");
+  const composingPropertyEnter = await enter(notes, { isComposing: true });
+  check(!composingPropertyEnter.defaultPrevented && composingPropertyEnter.focused, "composing Enter keeps the property draft focused");
+  const safariPropertyEnter = await enter(notes, { keyCode: 229 });
+  check(!safariPropertyEnter.defaultPrevented && safariPropertyEnter.focused, "keyCode 229 keeps the property draft focused");
+  const unchangedProperty = await action<{ properties: Array<{ propertyId: string; value: string }> }>("get_work_item", { workspaceId: me.workspaces[0]!.id, displayId: item.displayId });
+  check(unchangedProperty.properties.find((value) => value.propertyId === property.id)?.value === "before", "composition Enter did not commit the property draft");
+  const propertySave = page.waitForResponse((response) => response.url().includes("/actions/update_work_item") && response.ok());
+  const normalPropertyEnter = await enter(notes);
+  check(normalPropertyEnter.defaultPrevented, "ordinary Enter is consumed by the property commit");
+  await propertySave;
+  const savedProperty = await action<{ properties: Array<{ propertyId: string; value: string }> }>("get_work_item", { workspaceId: me.workspaces[0]!.id, displayId: item.displayId });
+  check(savedProperty.properties.find((value) => value.propertyId === property.id)?.value === "draft note", "ordinary Enter committed the property draft");
   await page.goto(`${web}${paths.projectSettings(slug, "MOB", "features")}`);
   await page.getByRole("heading", { name: t("types.title") }).waitFor();
   check(await bugRow.locator('[data-type-icon="rocket"]').count() >= 1, "the type row keeps the icon after a reload");

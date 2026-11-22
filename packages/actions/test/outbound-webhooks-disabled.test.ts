@@ -28,6 +28,7 @@ test("with webhooks disabled, finish, cancel, acknowledgement and daemon stop wr
   const token = await createApiTokenActions(tx).createApiToken.handler({ userId: member.id }, { name: "daemon" });
   const registered = await createRuntimeActions(tx).registerDaemon.handler({ userId: member.id, apiTokenId: token.id }, { hostname: "disabled-test", version: "1", agentClis: ["codex"] });
   const runtime = registered.runtimes[0]!;
+  await createRuntimeActions(tx).shareRuntime.handler({ userId: member.id }, { runtimeId: runtime.id });
   const agent = await createAgentActions(tx).createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Runtime agent", model: "default", monthlyTokenBudget: null });
   await createAgentActions(tx).setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: true, projectIds: [] });
   await tx.update(agents).set({ runtimeId: runtime.id }).where(eq(agents.id, agent.id));

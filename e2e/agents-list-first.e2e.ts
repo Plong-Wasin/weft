@@ -117,9 +117,11 @@ try {
   await page.getByLabel(translate("agents.name")).fill("Form Bot");
   await page.getByLabel(translate("agents.instructions")).fill("Created from the form.");
   await runsOn.selectOption(online.id);
-  await page.getByRole("button", { name: translate("agents.save"), exact: true }).click();
+  const createForm = page.locator("form").filter({ has: page.getByLabel(translate("agents.instructions")) });
+  check(await createForm.count() === 1, "the New Agent fields do not identify one create form");
+  await createForm.getByRole("button", { name: translate("agents.save"), exact: true }).click();
   await page.locator('[data-agent="Form Bot"]').waitFor();
-  check(await page.getByLabel(translate("agents.name")).count() === 0, "the create form stays open after saving");
+  await createForm.waitFor({ state: "detached" });
   console.log("agents-list-first: creating an Agent closes the form and lists it");
 
   // Editing an Agent keeps working; Limits is folded in the edit form too.
@@ -128,8 +130,10 @@ try {
   const editLimits = formBot.locator("details", { has: page.getByText(translate("agents.limits"), { exact: true }) });
   await editLimits.waitFor();
   check(!(await editLimits.evaluate((node) => (node as HTMLDetailsElement).open)), "Limits is open by default in the edit form");
-  await formBot.getByLabel(translate("agents.name")).fill("Form Bot Renamed");
-  await formBot.getByRole("button", { name: translate("agents.save"), exact: true }).click();
+  const editForm = formBot.locator("form").filter({ hasText: translate("agents.instructions") });
+  check(await editForm.count() === 1, "the Agent editor fields do not identify one edit form");
+  await editForm.getByLabel(translate("agents.name")).fill("Form Bot Renamed");
+  await editForm.getByRole("button", { name: translate("agents.save"), exact: true }).click();
   await page.locator('[data-agent="Form Bot Renamed"]').waitFor();
   console.log("agents-list-first: editing an Agent keeps working with Limits folded");
 

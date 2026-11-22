@@ -8,6 +8,7 @@ const apiPort = Number(Bun.env.E2E_API_PORT ?? 31181);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52181);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
+const evidenceDir = Bun.env.AGENT_ACCESS_SCREENSHOTS ?? "/home/plong/workspace/weft/.local/ai-ux-reliability/11";
 // The dev server, not a build served by `vite preview`: a build writes apps/web/dist, which flows running side by side would overwrite under each other.
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
@@ -86,15 +87,30 @@ try {
   }
   const impact = owner.page.getByTestId("runtime-enforcement-warning");
   await impact.waitFor();
-  if (!(await impact.innerText()).includes("Full access")) throw new Error("Enabling enforcement did not warn about existing Full access Agents");
+  const impactText = await impact.innerText();
+  if (!impactText.includes("Full access") || !impactText.includes("claimed after this change") || !impactText.includes("already dispatched") || !impactText.includes("Wait for these Runs to finish or stop them")) {
+    throw new Error(`Enforcement warning does not explain the claim boundary and existing Runs: ${impactText}`);
+  }
+  await Bun.$`mkdir -p ${evidenceDir}`;
+  await owner.page.setViewportSize({ width: 1440, height: 900 });
+  await impact.evaluate((element) => element.scrollIntoView({ block: "center" }));
+  await Bun.write(`${evidenceDir}/runtime-enforcement-warning-1440.png`, await owner.page.screenshot());
+  await owner.page.setViewportSize({ width: 390, height: 844 });
+  await impact.evaluate((element) => element.scrollIntoView({ block: "center" }));
+  await Bun.write(`${evidenceDir}/runtime-enforcement-warning-390.png`, await owner.page.screenshot());
+  await owner.page.setViewportSize({ width: 1440, height: 900 });
   let cancelledConfirmation = "";
   owner.page.once("dialog", async (dialog) => { cancelledConfirmation = dialog.message(); await dialog.dismiss(); });
   await enforcement.click();
-  if (!cancelledConfirmation.includes("Full access") || await enforcement.isChecked()) throw new Error("Enforcement changed without confirmation or the warning omitted Full access Agents");
+  if (!cancelledConfirmation.includes("Full access") || !cancelledConfirmation.includes("claimed after this change") || !cancelledConfirmation.includes("already dispatched") || !cancelledConfirmation.includes("Wait for these Runs to finish or stop them") || await enforcement.isChecked()) {
+    throw new Error(`Enforcement confirmation did not explain existing Runs or allowed an unconfirmed change: ${cancelledConfirmation}`);
+  }
   let acceptedConfirmation = "";
   owner.page.once("dialog", async (dialog) => { acceptedConfirmation = dialog.message(); await dialog.accept(); });
   await enforcement.click();
-  if (!acceptedConfirmation.includes("Full access")) throw new Error("The enforcement confirmation omitted existing Full access Agents");
+  if (!acceptedConfirmation.includes("Full access") || !acceptedConfirmation.includes("claimed after this change") || !acceptedConfirmation.includes("already dispatched")) {
+    throw new Error(`The enforcement confirmation omitted the claim boundary or existing Full access Runs: ${acceptedConfirmation}`);
+  }
   for (let attempt = 0; attempt < 50; attempt += 1) {
     const listed = await request<Array<{ id: string; enforceSandbox: boolean }>>(owner.page, "list_runtimes", { workspaceId });
     if (listed.find((candidate) => candidate.id === runtime.id)?.enforceSandbox) break;
@@ -123,7 +139,6 @@ try {
   if (await unavailable.getAttribute("aria-checked") !== "false") throw new Error("PM selected unavailable Agent with the keyboard");
   console.log("agent-access: PM sees reason and cannot select Agent by mouse or keyboard");
 
-  const evidenceDir = Bun.env.AGENT_ACCESS_SCREENSHOTS ?? "/home/plong/workspace/weft/.local/ai-ux-reliability/11";
   await Bun.$`mkdir -p ${evidenceDir}`;
   for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 900 }, { width: 390, height: 844 }]) {
     await pm.page.setViewportSize(viewport);

@@ -2,15 +2,16 @@
 // Run with `bun e2e/workspace-views.e2e.ts` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
 import { chromium } from "playwright";
 import { like } from "drizzle-orm";
+import { mkdirSync } from "node:fs";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
-import { reviewShots } from "../tools/visual/paths";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3119);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5219);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
-const shots = reviewShots("11-workspace-views");
+const shots = "/home/plong/workspace/weft/.local/ai-ux-reliability/13-workspace-view-mobile";
+mkdirSync(shots, { recursive: true });
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
   Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
@@ -66,6 +67,11 @@ try {
   await page.getByTestId("sheet-scroll").waitFor();
   for (const id of ["MOB-1", "WEB-1", "WEB-2"]) await page.getByTestId(`row-${id}`).waitFor();
   await page.getByRole("columnheader", { name: translate("workspaceViews.project") }).waitFor();
+  const desktopHeader = page.locator("main header").first();
+  for (const label of ["workspaceViews.switch", "layout.filterQuery.toggle", "layout.display", "views.saveAs", "views.menu"]) {
+    await desktopHeader.getByRole("button", { name: translate(label) }).waitFor();
+  }
+  check(await desktopHeader.evaluate((element) => element.scrollWidth <= element.clientWidth), "desktop Workspace View header overflows horizontally");
   await page.screenshot({ path: `${shots}/workspace-views-1440.png` });
 
   // Assigned shows only my item; Created shows all three (I made them); the switcher lists every built-in.
@@ -129,7 +135,19 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${web}/${slug}/workspace-views/all-issues`);
   await page.getByTestId("row-MOB-1").waitFor();
+  // Workspace View controls remain reachable together with the title on a narrow screen.
+  const viewHeader = page.locator("main header").first();
+  await page.getByRole("heading", { name: translate("workspaceViews.all") }).waitFor();
+  const switcher = viewHeader.getByRole("button", { name: translate("workspaceViews.switch") });
+  for (const label of ["workspaceViews.switch", "layout.filterQuery.toggle", "layout.display", "views.saveAs", "views.menu"]) {
+    await viewHeader.getByRole("button", { name: translate(label) }).waitFor();
+  }
+  check((await switcher.locator("span[aria-hidden]").boundingBox())!.height <= 24, "mobile Workspace View title wraps across multiple lines");
+  check(await viewHeader.evaluate((element) => element.scrollWidth <= element.clientWidth), "mobile Workspace View header overflows horizontally");
+  check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "mobile page overflows horizontally");
   await page.screenshot({ path: `${shots}/workspace-views-390.png` });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.screenshot({ path: `${shots}/workspace-views-1440.png` });
   console.log("e2e workspace-views: ok");
   await browser.close();
 } catch (error) {

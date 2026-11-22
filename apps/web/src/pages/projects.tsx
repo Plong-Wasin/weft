@@ -5,7 +5,7 @@ import { action, actionResult } from "../api";
 import { Link } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { projectsKey } from "../shell/sidebar";
-import { preferenceOf, useProjectPreferences } from "../shell/project-preferences";
+import { matchesProjectSearch, preferenceOf, useProjectPreferences } from "../shell/project-preferences";
 import { paths } from "../routes";
 import { useWorkspace } from "../layouts/workspace-layout";
 import { EmptyState } from "../empty-state";
@@ -19,6 +19,7 @@ export function ProjectsPanel() {
   const [projects, setProjects] = React.useState<Project[] | null>(null);
   const [creating, setCreating] = React.useState(false);
   const [showArchived, setShowArchived] = React.useState(false);
+  const [search, setSearch] = React.useState("");
   const [name, setName] = React.useState("");
   const [key, setKey] = React.useState("");
   const [suggestKey, setSuggestKey] = React.useState(true);
@@ -26,7 +27,8 @@ export function ProjectsPanel() {
   const [shape, setShape] = React.useState<Shape>("simple");
   const [note, setNote] = React.useState<string | null>(null);
   const client = useQueryClient();
-const { prefs, setPreference } = useProjectPreferences(workspace.id);
+  const { prefs, setPreference } = useProjectPreferences(workspace.id);
+  const visibleProjects = (projects ?? []).filter((project) => matchesProjectSearch(project, search));
   const load = React.useCallback(async () => {
     setProjects(await action<Project[]>("list_projects", { workspaceId: workspace.id, archived: showArchived }) ?? []);
     await client.invalidateQueries({ queryKey: projectsKey(workspace.id) });
@@ -73,13 +75,15 @@ const { prefs, setPreference } = useProjectPreferences(workspace.id);
   return <section className="grid gap-4">
     <header className="flex flex-wrap items-center gap-3">
       <h1 className="m-0 flex-1 text-20 font-semibold text-primary">{translate("projects.title")}</h1>
+      <label className="w-full max-w-sm text-13 font-medium text-secondary">{translate("projects.find")}<input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={translate("projects.searchPlaceholder")} /></label>
       <label className="secondary flex items-center gap-2 text-13"><input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />{translate("projects.showArchived")}</label>
       {!creating && <button type="button" className="flex items-center gap-1.5" onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{translate("projects.new")}</button>}
     </header>
     {form}
     {projects !== null && projects.length === 0 && <EmptyState title={translate(showArchived ? "projects.noArchived" : "projects.empty")} description={showArchived ? undefined : translate("projects.emptyHint")}
       action={showArchived || creating ? undefined : <button type="button" onClick={() => setCreating(true)}>{translate("projects.createFirst")}</button>} />}
-    {projects !== null && projects.length > 0 && <ul aria-label={translate("projects.title")} className="m-0 list-none overflow-hidden rounded-lg border border-subtle p-0">{projects.map((project) => <li key={project.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-subtle px-4 py-3 last:border-b-0 hover:bg-layer-transparent-hover">
+    {projects !== null && projects.length > 0 && visibleProjects.length === 0 && <p role="status" className="m-0 text-13 text-secondary">{search.trim() ? translate("projects.noSearchResults") : translate("projects.empty")}</p>}
+    {projects !== null && visibleProjects.length > 0 && <ul aria-label={translate("projects.title")} className="m-0 list-none overflow-hidden rounded-lg border border-subtle p-0">{visibleProjects.map((project) => <li key={project.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-subtle px-4 py-3 last:border-b-0 hover:bg-layer-transparent-hover">
       <Link to={paths.workItems(workspace.slug, project.key)} aria-label={`${project.key} · ${project.name}`} className="flex min-w-40 flex-1 items-center gap-3 text-14 font-medium !text-primary">
         <span className="shrink-0 rounded-md bg-layer-1 px-2 py-0.5 font-code text-12 font-medium text-secondary">{project.key}</span>
         <span className="truncate">{project.name}</span>

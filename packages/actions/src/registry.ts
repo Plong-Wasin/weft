@@ -89,7 +89,7 @@ export function createActionList(db: Database, options: { integrations?: boolean
     projects.addProjectMember, projects.changeProjectMemberRole, projects.removeProjectMember,
     projectPreferences.listProjectPreferences, projectPreferences.setProjectPreference, projectPreferences.setProjectOrder, projectPreferences.resetProjectOrder,
     work.listStates, work.createState, work.updateState, work.reorderStates, work.deleteState, work.createWorkItem,
-    work.listWorkItems, work.listWorkspaceWorkItems, work.moveWorkItem, work.getWorkItem, work.updateWorkItem, work.bulkUpdateWorkItems, work.deleteWorkItem, work.deleteWorkItems, work.listWorkItemDescriptionVersions, work.restoreWorkItemDescriptionVersion, work.listWorkItemActivities,
+    work.listWorkItems, work.listWorkspaceWorkItems, work.listWorkspaceWorkItemsWithMetadata, work.moveWorkItem, work.getWorkItem, work.updateWorkItem, work.bulkUpdateWorkItems, work.deleteWorkItem, work.deleteWorkItems, work.listWorkItemDescriptionVersions, work.restoreWorkItemDescriptionVersion, work.listWorkItemActivities,
     work.listSubWorkItems, archive.archiveWorkItem, archive.bulkArchiveWorkItems, archive.restoreWorkItem, work.listLabels, work.createLabel, work.updateLabel, work.deleteLabel,
     comments.listComments, comments.createComment, comments.updateComment, comments.deleteComment, comments.listMentionableMembers, comments.listCommentVersions, timeline.listTimeline,
     relations.listWorkItemRelations, relations.createWorkItemRelation, relations.removeWorkItemRelation,

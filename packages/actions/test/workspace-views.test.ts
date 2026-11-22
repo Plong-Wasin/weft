@@ -1,5 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
-import { createDatabase, type Database } from "@weft/db";
+import { eq } from "drizzle-orm";
+import { createDatabase, workItemStates, workItems, type Database } from "@weft/db";
 import { builtinViewId, createCommentActions, createProjectActions, createViewActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -36,6 +37,31 @@ test.concurrent("workspace work items never include a private project the caller
     // A filter query and every built-in view stay inside the same boundary.
     expect(await list(other.id, { query: "priority = none" })).toEqual(["Public one"]);
     for (const builtin of ["all", "assigned", "created", "subscribed"]) expect(await list(other.id, { builtin })).not.toContain("Hidden one");
+  });
+});
+
+test.concurrent("workspace Views return 2,000 work items at the limit and disclose additional matches", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, admin, open, work } = await setup(transaction);
+    const [state] = await transaction.select().from(workItemStates).where(eq(workItemStates.projectId, open.id)).limit(1);
+    const rows = Array.from({ length: 2001 }, (_, index) => ({
+      workspaceId: workspace.id, projectId: open.id, sequence: index + 1, title: `Scale item ${index + 1}`,
+      stateId: state!.id, sortOrder: index, createdBy: admin.id,
+    }));
+    for (let offset = 0; offset < 2000; offset += 500) await transaction.insert(workItems).values(rows.slice(offset, offset + 500));
+    const metadataAction = work.listWorkspaceWorkItemsWithMetadata;
+    const legacyAtLimit = await work.listWorkspaceWorkItems.handler({ userId: admin.id }, { workspaceId: workspace.id });
+    expect(Array.isArray(legacyAtLimit)).toBe(true);
+    expect(legacyAtLimit).toHaveLength(2000);
+    const atLimit = await metadataAction.handler({ userId: admin.id }, { workspaceId: workspace.id });
+    expect(atLimit.items).toHaveLength(2000);
+    expect(atLimit.truncated).toBe(false);
+
+    await transaction.insert(workItems).values(rows[2000]!);
+    expect(await work.listWorkspaceWorkItems.handler({ userId: admin.id }, { workspaceId: workspace.id })).toHaveLength(2000);
+    const aboveLimit = await metadataAction.handler({ userId: admin.id }, { workspaceId: workspace.id });
+    expect(aboveLimit.items).toHaveLength(2000);
+    expect(aboveLimit.truncated).toBe(true);
   });
 });
 

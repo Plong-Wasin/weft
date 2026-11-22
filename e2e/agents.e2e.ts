@@ -3,7 +3,7 @@
 // The model is a scripted fake driven by an in-process job loop, so no provider is called. Run with `bun e2e/agents.e2e.ts`.
 import { chromium } from "playwright";
 import { mkdir } from "node:fs/promises";
-import { inArray, like } from "drizzle-orm";
+import { eq, inArray, like } from "drizzle-orm";
 import { agents, createDatabase, jobs, users, workspaces } from "../packages/db/src";
 import { createAgentActions, createApiTokenActions, createJobHandlers, createRuntimeActions, runNextJob, type RunModel } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
@@ -117,6 +117,41 @@ try {
   }
   if ((await page.locator("body").innerText()).includes("fake-e2e-key")) throw new Error("saved environment value appeared in the page");
   await page.setViewportSize({ width: 1440, height: 900 });
+
+  // A real workspace Member joins by invite, then creates an Agent on a Runtime owned by that Member.
+  const invite = await call<{ token: string }>("create_invite", { workspaceId, role: "Member" });
+  const memberContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  const memberPage = await memberContext.newPage();
+  await memberPage.goto(`${web}/invite/${invite.token}`);
+  await memberPage.getByLabel(translate("auth.name")).fill("Runtime Member");
+  await memberPage.getByLabel(translate("auth.email")).fill(`${slug}-member@example.test`);
+  await memberPage.getByLabel(translate("auth.password"), { exact: true }).fill("another-secure-password");
+  await memberPage.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("another-secure-password");
+  await memberPage.getByRole("button", { name: translate("auth.signUp") }).click();
+  await memberPage.getByRole("link", { name: /MOB · Mobile/ }).waitFor();
+  const memberMe = await (await memberPage.request.get(`${api}/api/me`)).json() as { user: { id: string } };
+  const memberToken = await createApiTokenActions(db).createApiToken.handler({ userId: memberMe.user.id }, { name: "member daemon" });
+  const memberRuntime = (await runtimeActions.registerDaemon.handler({ userId: memberMe.user.id, apiTokenId: memberToken.id }, { hostname: "member-owned-runtime", version: "1", agentClis: ["codex"] })).runtimes[0]!;
+  await runtimeActions.shareRuntime.handler({ userId: memberMe.user.id }, { runtimeId: memberRuntime.id });
+  await memberPage.goto(`${web}/${slug}/settings/agents`);
+  await memberPage.getByRole("heading", { name: translate("agents.memberCreateTitle") }).waitFor();
+  await memberPage.getByLabel(translate("agents.name")).fill("Member Code Helper");
+  await memberPage.getByLabel(translate("agents.instructions")).fill("Work only on projects an Admin opens to this Agent.");
+  await memberPage.getByLabel(translate("agents.model")).fill("default");
+  await memberPage.getByLabel(translate("agents.runsOn")).selectOption(memberRuntime.id);
+  if (screenshotDir) {
+    await mkdir(screenshotDir, { recursive: true });
+    await Bun.write(`${screenshotDir}/member-desktop.png`, await memberPage.screenshot());
+    await memberPage.setViewportSize({ width: 390, height: 844 });
+    await Bun.write(`${screenshotDir}/member-mobile.png`, await memberPage.screenshot());
+  }
+  await memberPage.getByRole("button", { name: translate("agents.create") }).click();
+  await memberPage.getByText("Member Code Helper", { exact: true }).first().waitFor();
+  const [createdMemberAgent] = await db.select({ id: agents.id, runtimeId: agents.runtimeId, createdBy: agents.createdBy, canWakeAgents: agents.canWakeAgents, allProjects: agents.allProjects }).from(agents).where(eq(agents.createdBy, memberMe.user.id));
+  if (!createdMemberAgent || createdMemberAgent.runtimeId !== memberRuntime.id || createdMemberAgent.canWakeAgents || createdMemberAgent.allProjects) throw new Error("Member Agent was not created with its own Runtime and least-privilege defaults");
+  const forbiddenUpdate = await memberPage.request.post(`${api}/actions/update_agent`, { data: { agentId: createdMemberAgent.id, name: "Escalated" } });
+  if (forbiddenUpdate.status() !== 403) throw new Error("Member could mutate Agent configuration through the API");
+  await memberContext.close();
   console.log("agents: admin creates an Agent and opens it to all projects");
 
   // Assign from the work item page: the Run shows its status and waits for the Originator's Confirmation.

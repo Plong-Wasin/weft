@@ -20,7 +20,7 @@ type TriggerEvent = "work_item_created" | "work_item_updated" | "state_changed" 
 type TriggerRow = { id: string; projectId: string; eventType: TriggerEvent | null; schedule: "daily" | "weekly" | "monthly" | "cron" | null; expression: string | null; paused: boolean };
 
 type RuntimeProfile = { id: string; runtimeId: string; name: string; sandbox: string; filesystemAllowlist: string[]; networkAllowlist: string[] };
-type RuntimeOption = { id: string; hostname: string; agentCli: string; online: boolean; shared: boolean };
+type RuntimeOption = { id: string; ownerId: string; hostname: string; agentCli: string; online: boolean; shared: boolean };
 type Draft = { name: string; instructions: string; model: string; autopilot: boolean; canWakeAgents: boolean; maxToolCalls: string; maxTokens: string; timeoutSeconds: string; monthlyTokenBudget: string; runtimeId: string; cliModel: string; maxConcurrentRuns: string };
 const emptyDraft: Draft = { name: "", instructions: "", model: "default", autopilot: false, canWakeAgents: false, maxToolCalls: "", maxTokens: "", timeoutSeconds: "", monthlyTokenBudget: "", runtimeId: "", cliModel: "", maxConcurrentRuns: "6" };
 const toDraft = (agent: AgentRecord): Draft => ({
@@ -214,6 +214,7 @@ export function WorkspaceAgents() {
   const [manageableAgentIds, setManageableAgentIds] = React.useState<string[]>([]);
   const [members, setMembers] = React.useState<Member[]>([]);
   const [runtimes, setRuntimes] = React.useState<RuntimeOption[]>([]);
+  const [memberAgent, setMemberAgent] = React.useState({ name: "", instructions: "", model: "default", runtimeId: "" });
   const [projects, setProjects] = React.useState<Project[]>([]);
   const [projectsLoaded, setProjectsLoaded] = React.useState(false);
   const [workspaceSkills, setWorkspaceSkills] = React.useState<Array<{ id: string; name: string; description: string }>>([]);
@@ -231,6 +232,7 @@ export function WorkspaceAgents() {
     const admin = members.find((member) => member.userId === selfId)?.role === "Admin";
     setIsAdmin(admin);
     if (!admin) {
+      setRuntimes(await action<RuntimeOption[]>("list_runtimes", { workspaceId: workspace.id }) ?? []);
       setOwnerAgents(await action<Array<Pick<AgentRecord, "id" | "name" | "runtimeId" | "runtimeProfileId" | "runtimeProfileName" | "runtimeProfileSandbox" | "accessUserIds">>>("list_manageable_agent_access", { workspaceId: workspace.id }) ?? []);
       setAskable(await action<Array<{ id: string; name: string; codeCapable: boolean; ownerName: string | null; hasAccess: boolean }>>("list_agents_for_viewer", { workspaceId: workspace.id }) ?? []);
       return;
@@ -250,6 +252,23 @@ export function WorkspaceAgents() {
   const header = <SettingsHeader title={translate("agents.title")} description={translate("agents.desc")} />;
   if (isAdmin === null) return <section>{header}</section>;
   if (!isAdmin) return <section>{header}
+    <SettingsBlock title={translate("agents.memberCreateTitle")}>
+      <p className="text-13 text-secondary">{translate("agents.memberCreateHelp")}</p>
+      {runtimes.filter((runtime) => runtime.ownerId === selfId && runtime.shared).length === 0
+        ? <p className="text-13 text-secondary">{translate("agents.memberNoRuntime")}</p>
+        : <form className="grid gap-3" onSubmit={async (event) => {
+          event.preventDefault();
+          const result = await action("create_agent", { workspaceId: workspace.id, ...memberAgent, runtimeId: memberAgent.runtimeId });
+          if (result !== null) setMemberAgent({ name: "", instructions: "", model: "default", runtimeId: "" });
+          await guard(result);
+        }}>
+          <label>{translate("agents.name")}<input required maxLength={100} value={memberAgent.name} onChange={(event) => setMemberAgent({ ...memberAgent, name: event.target.value })} /></label>
+          <label>{translate("agents.instructions")}<textarea rows={4} value={memberAgent.instructions} onChange={(event) => setMemberAgent({ ...memberAgent, instructions: event.target.value })} /></label>
+          <label>{translate("agents.model")}<input required value={memberAgent.model} onChange={(event) => setMemberAgent({ ...memberAgent, model: event.target.value })} /></label>
+          <label>{translate("agents.runsOn")}<select required value={memberAgent.runtimeId} onChange={(event) => setMemberAgent({ ...memberAgent, runtimeId: event.target.value })}><option value="">{translate("agents.selectOwnRuntime")}</option>{runtimes.filter((runtime) => runtime.ownerId === selfId && runtime.shared).map((runtime) => <option key={runtime.id} value={runtime.id}>{runtime.hostname} · {runtime.agentCli} · {translate(runtime.online ? "runtimes.online" : "runtimes.offline")}</option>)}</select></label>
+          <button type="submit">{translate("agents.create")}</button>
+        </form>}
+    </SettingsBlock>
     <SettingsBlock title={translate("agents.askableTitle")}>
       <p className="text-13 text-secondary">{translate("agents.askableHelp")}</p>
       {askable.length === 0 ? <p className="text-secondary">{translate("agents.askableEmpty")}</p> : <RowList>{askable.map((agent) => <Row key={agent.id}>

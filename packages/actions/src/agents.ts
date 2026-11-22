@@ -52,7 +52,7 @@ const limitFields = {
 };
 const textFields = { name: Type.String({ minLength: 1, maxLength: 100 }), instructions: Type.String({ maxLength: 20000 }), model: Type.String({ minLength: 1, maxLength: 200 }) };
 
-/** Agent administration: only workspace Admins configure Agents (ADR 0007). The Agent is a bot user, so assignee and mention code keeps working. */
+/** Workspace Admins configure Agents; a non-Guest member may create one only on their own Runtime. */
 export function createAgentActions(db: Database) {
   const tx = (transaction: unknown) => transaction as Database;
 
@@ -225,7 +225,14 @@ export function createAgentActions(db: Database) {
       name: "create_agent", kind: "write" as const,
       input: Type.Object({ workspaceId: uuid(), ...textFields, autopilot: Type.Optional(Type.Boolean()), canWakeAgents: Type.Optional(Type.Boolean()), runtimeId: Type.Optional(Type.Union([uuid(), Type.Null()])), cliModel: Type.Optional(Type.Union([Type.String({ maxLength: 200 }), Type.Null()])), maxConcurrentRuns: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })), ...limitFields }), output: agentOutput,
       handler: async (context: Context, input: { workspaceId: string; name: string; instructions?: string; model: string; autopilot?: boolean; canWakeAgents?: boolean; runtimeId?: string | null; cliModel?: string | null; maxConcurrentRuns?: number } & Limits) => {
-        await requireWorkspaceRole(db, context.userId, input.workspaceId, "admin");
+        const role = await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
+        if (role !== "Admin") {
+          if (role !== "Member" || !input.runtimeId) throw new ActionError("Only a workspace Admin can create a server Agent; Members may create an Agent on their own Runtime", 403);
+          const [runtime] = await db.select({ id: runtimes.id, ownerId: runtimes.ownerId, shared: runtimes.shared }).from(runtimes)
+            .where(and(eq(runtimes.id, input.runtimeId), eq(runtimes.workspaceId, input.workspaceId)));
+          if (!runtime || !runtime.shared || runtime.ownerId !== context.userId) throw new ActionError("A Member may create an Agent only on their own Runtime shared with this workspace", 403);
+          if (input.canWakeAgents === true) throw new ActionError("Only a workspace Admin can allow an Agent to wake other Agents", 403);
+        }
         if (input.autopilot === true && !input.runtimeId) {
           const [workspace] = await db.select({ allowAutopilot: workspaces.allowAutopilot }).from(workspaces).where(eq(workspaces.id, input.workspaceId));
           if (!workspace?.allowAutopilot) throw new ActionError("Autopilot is disabled for this workspace", 400);
@@ -246,7 +253,7 @@ export function createAgentActions(db: Database) {
             workspaceId: input.workspaceId, userId: id, instructions: input.instructions ?? "", model: input.model, createdBy: context.userId,
             maxToolCalls: input.maxToolCalls ?? agentLimitDefaults.maxToolCalls, maxTokens: input.maxTokens ?? agentLimitDefaults.maxTokens,
             timeoutSeconds: input.timeoutSeconds ?? agentLimitDefaults.timeoutSeconds, monthlyTokenBudget: input.monthlyTokenBudget ?? null,
-            autopilot: input.runtimeId ? true : input.autopilot ?? false, canWakeAgents: input.canWakeAgents ?? false,
+            autopilot: input.runtimeId ? true : input.autopilot ?? false, canWakeAgents: role === "Admin" ? input.canWakeAgents ?? false : false,
             runtimeId: input.runtimeId ?? null, runtimeProfileId, cliModel: input.cliModel ?? null, maxConcurrentRuns: input.maxConcurrentRuns ?? 6,
           }).returning();
           await initializeAgentAccess(database, row!.id);

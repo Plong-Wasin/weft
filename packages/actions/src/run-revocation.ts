@@ -2,17 +2,18 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import { activities, agents, confirmations, projects, runs, type Database, workspaceMembers } from "@weft/db";
 import { lockRuntimeRun, scrubRunMessages } from "./runtime-secret-comments";
 
-/** Revokes every active Run, leaving running Runtime work in stopping until its Daemon acknowledges cancellation. */
-export async function revokeAgentRuns(database: Database, agentId: string, actorId: string, reason: string, originatorId?: string, options: { runtimeId?: string | null; projectId?: string; executingOnly?: boolean; followUp?: boolean; notifyDetail?: string } = {}) {
+/** Revokes active Runs; running Runtime work remains stopping until its Daemon cooperatively acknowledges cancellation (the server does not hard-kill the external process). */
+export async function revokeAgentRuns(database: Database, agentId: string, actorId: string, reason: string, originatorId?: string, options: { runtimeId?: string | null; projectId?: string; executingOnly?: boolean; excludeStopping?: boolean; followUp?: boolean; notifyDetail?: string } = {}) {
   const statuses = options.executingOnly ? ["dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input"] : ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input", "follow_up"];
-  const active = await database.select().from(runs).where(and(eq(runs.agentId, agentId), ...(originatorId ? [eq(runs.originatorId, originatorId)] : []), ...(options.runtimeId !== undefined ? [options.runtimeId === null ? isNull(runs.runtimeId) : eq(runs.runtimeId, options.runtimeId)] : []), ...(options.projectId ? [eq(runs.projectId, options.projectId)] : []), inArray(runs.status, statuses)));
+  const eligibleStatuses = options.excludeStopping ? statuses.filter((status) => status !== "stopping") : statuses;
+  const active = await database.select().from(runs).where(and(eq(runs.agentId, agentId), ...(originatorId ? [eq(runs.originatorId, originatorId)] : []), ...(options.runtimeId !== undefined ? [options.runtimeId === null ? isNull(runs.runtimeId) : eq(runs.runtimeId, options.runtimeId)] : []), ...(options.projectId ? [eq(runs.projectId, options.projectId)] : []), inArray(runs.status, eligibleStatuses)));
   const now = new Date();
   for (const run of active) {
     await database.transaction(async (transaction) => {
       const tx = transaction as unknown as Database;
       await lockRuntimeRun(tx, run.id);
       const [current] = await tx.select().from(runs).where(eq(runs.id, run.id)).for("update");
-      if (!current || !["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input", "follow_up"].includes(current.status)) return;
+      if (!current || !eligibleStatuses.includes(current.status)) return;
       const running = ["running", "awaiting_input", "stopping"].includes(current.status);
       if (!running) await scrubRunMessages(tx, run.id, current.runtimeEnvironmentSecrets);
       const [updated] = await tx.update(runs).set({ status: running ? "stopping" : "failed", failureReason: reason, ...(running ? {} : { finishedAt: now, runtimeEnvironmentSecrets: null }) })
@@ -37,6 +38,25 @@ export async function revokeAgentRuns(database: Database, agentId: string, actor
         await enqueueNotification(tx, { kind: "run_skipped", ...(run.workItemId ? { workItemId: run.workItemId } : { runId: run.id }), commentId: run.commentId ?? undefined, actorId, recipientIds: [run.originatorId], detail: options.notifyDetail });
       }
     });
+  }
+}
+
+/** Revokes only Runs whose Originator or Member-Agent creator just lost workspace write access. */
+export async function revokeWorkspaceMemberRuns(database: Database, workspaceId: string, userId: string, actorId: string) {
+  const active = await database.select({ agentId: runs.agentId, projectId: runs.projectId, originatorId: runs.originatorId, createdBy: agents.createdBy, memberOwned: agents.memberOwned })
+    .from(runs).innerJoin(agents, eq(agents.id, runs.agentId))
+    .where(and(eq(runs.workspaceId, workspaceId), inArray(runs.status, ["queued", "dispatched", "running", "waiting_confirmation", "awaiting_input", "follow_up"])));
+  const scopeKey = (agentId: string, projectId: string) => JSON.stringify([agentId, projectId]);
+  const creatorScope = new Set(active.flatMap((run) => run.agentId && run.memberOwned && run.createdBy === userId ? [scopeKey(run.agentId, run.projectId)] : []));
+  const originatorScope = new Set(active.flatMap((run) => run.agentId && run.originatorId === userId ? [scopeKey(run.agentId, run.projectId)] : []));
+  for (const scope of creatorScope) {
+    const [agentId, projectId] = JSON.parse(scope) as [string, string];
+    await revokeAgentRuns(database, agentId, actorId, "Workspace write access was revoked", undefined, { projectId, excludeStopping: true, notifyDetail: "project_access_revoked" });
+  }
+  for (const scope of originatorScope) {
+    if (creatorScope.has(scope)) continue;
+    const [agentId, projectId] = JSON.parse(scope) as [string, string];
+    await revokeAgentRuns(database, agentId, actorId, "Workspace write access was revoked", userId, { projectId, excludeStopping: true, notifyDetail: "project_access_revoked" });
   }
 }
 

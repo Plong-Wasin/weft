@@ -5,7 +5,7 @@ import { agents, projectMembers, projects, runtimes, users, workspaceInvites, wo
 import { agentUserIds, withoutDisabledAgents } from "./agent-access";
 import { pauseCreatorRecurrences } from "./recurrence-pause";
 import { auditAgentChange } from "./agent-audit";
-import { revokeAgentRuns } from "./run-revocation";
+import { revokeAgentRuns, revokeWorkspaceMemberRuns } from "./run-revocation";
 
 export const workspaceRoles = ["Admin", "Member", "Guest"] as const;
 export type WorkspaceRole = (typeof workspaceRoles)[number];
@@ -139,6 +139,9 @@ export function createMemberActions(db: Database, now: () => Date = () => new Da
           }
           await transaction.update(workspaceMembers).set({ role: input.role })
             .where(and(eq(workspaceMembers.workspaceId, input.workspaceId), eq(workspaceMembers.userId, input.userId)));
+          if (target.role !== "Guest" && input.role === "Guest") {
+            await revokeWorkspaceMemberRuns(transaction, input.workspaceId, input.userId, context.userId);
+          }
           if (target.role !== input.role) await auditAgentChange(transaction, {
             workspaceId: input.workspaceId, entityType: "member", entityId: input.workspaceId, field: "role",
             oldValue: { userId: input.userId, role: target.role }, newValue: { userId: input.userId, role: input.role }, actorId: context.userId,
@@ -180,6 +183,7 @@ export function createMemberActions(db: Database, now: () => Date = () => new Da
               for (const agent of bound) await revokeAgentRuns(transaction, agent.id, context.userId, "Runtime sharing was revoked");
             }
           }
+          await revokeWorkspaceMemberRuns(transaction, input.workspaceId, input.userId, context.userId);
           await auditAgentChange(transaction, {
             workspaceId: input.workspaceId, entityType: "member", entityId: input.workspaceId, field: "removed",
             oldValue: { userId: input.userId, role: target.role }, newValue: null, actorId: context.userId,

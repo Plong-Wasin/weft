@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { agents as agentRows, createDatabase, jobs, projectMembers, runTokens, runs, workspaces } from "@weft/db";
 import { createMemberFactory, createWorkspaceFactory } from "../../db/src/test-helpers";
-import { createAgentActions, createApiTokenActions, createProjectActions, createRuntimeActions, createRuntimeDispatchActions, createWorkItemActions, startRun as startServerRun, withAgentRunProjectAuthorization } from "../src";
+import { createAgentActions, createApiTokenActions, createMemberActions, createProjectActions, createRuntimeActions, createRuntimeDispatchActions, createWorkItemActions, startRun as startServerRun, withAgentRunProjectAuthorization } from "../src";
 
 const { client, db } = createDatabase();
 const { client: monitorClient, db: monitorDb } = createDatabase();
@@ -443,4 +443,156 @@ test.serial("server start skips an archived Project Run and advances, then termi
   const notices = await db.select({ payload: jobs.payload }).from(jobs).where(eq(jobs.type, "notify"));
   expect(notices.filter(({ payload }) => payload && typeof payload === "object" && "detail" in payload && payload.detail === "originator_project_access_revoked" && "workItemId" in payload && payload.workItemId === item.id)).toHaveLength(2);
   expect(await db.select({ id: runTokens.runId }).from(runTokens).where(inArray(runTokens.runId, [queued!.id, followUp!.id]))).toEqual([]);
+});
+
+test.serial("demoting a Member revokes only their Originator and Member-Agent creator Runs", async () => {
+  const workspace = await createWorkspaceFactory(db);
+  await db.update(workspaces).set({ allowAutopilot: true }).where(eq(workspaces.id, workspace.id));
+  const admin = await createMemberFactory(db, workspace.id, "Admin");
+  const member = await createMemberFactory(db, workspace.id, "Member");
+  const other = await createMemberFactory(db, workspace.id, "Member");
+  const projects = createProjectActions(db);
+  const project = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Member revocation", key: `MR${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private" });
+  for (const userId of [member.id, other.id]) await projects.addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId, role: "Member" });
+
+  const runtimes = createRuntimeActions(db);
+  const adminToken = await createApiTokenActions(db).createApiToken.handler({ userId: admin.id }, { name: "admin test daemon" });
+  const adminRegistration = await runtimes.registerDaemon.handler({ userId: admin.id, apiTokenId: adminToken.id }, { hostname: "admin-revoke", version: "1", agentClis: ["codex"] });
+  const adminRuntime = adminRegistration.runtimes[0]!;
+  await runtimes.shareRuntime.handler({ userId: admin.id }, { runtimeId: adminRuntime.id });
+  const memberToken = await createApiTokenActions(db).createApiToken.handler({ userId: member.id }, { name: "member test daemon" });
+  const memberRegistration = await runtimes.registerDaemon.handler({ userId: member.id, apiTokenId: memberToken.id }, { hostname: "member-revoke", version: "1", agentClis: ["claude"] });
+  const memberRuntime = memberRegistration.runtimes[0]!;
+  await runtimes.shareRuntime.handler({ userId: member.id }, { runtimeId: memberRuntime.id });
+
+  const agents = createAgentActions(db);
+  const sharedAgent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Unrelated originator Agent", model: "default", runtimeId: adminRuntime.id });
+  await agents.updateAgent.handler({ userId: admin.id }, { agentId: sharedAgent.id, maxConcurrentRuns: 4 });
+  await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: sharedAgent.id, allProjects: false, projectIds: [project.id] });
+  await agents.setAgentAccess.handler({ userId: admin.id }, { agentId: sharedAgent.id, userIds: [admin.id, member.id, other.id] });
+  const memberAgent = await agents.createAgent.handler({ userId: member.id }, { workspaceId: workspace.id, name: "Creator Agent", model: "default", runtimeId: memberRuntime.id });
+  await agents.setAgentProjectAccess.handler({ userId: member.id }, { agentId: memberAgent.id, allProjects: false, projectIds: [project.id] });
+  await agents.setAgentAccess.handler({ userId: member.id }, { agentId: memberAgent.id, userIds: [member.id, other.id] });
+
+  const work = createWorkItemActions(db);
+  const targetItem = await work.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Member originator running", assigneeIds: [sharedAgent.userId] });
+  const unrelatedItem = await work.createWorkItem.handler({ userId: other.id }, { projectId: project.id, title: "Unrelated originator running", assigneeIds: [sharedAgent.userId] });
+  const dispatchedItem = await work.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Member originator dispatched", assigneeIds: [sharedAgent.userId] });
+  const queuedItem = await work.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Member originator queued", assigneeIds: [sharedAgent.userId] });
+  const creatorItem = await work.createWorkItem.handler({ userId: other.id }, { projectId: project.id, title: "Member creator running", assigneeIds: [memberAgent.userId] });
+  const [targetRun] = await db.select({ id: runs.id }).from(runs).where(eq(runs.workItemId, targetItem.id));
+  const [unrelatedRun] = await db.select({ id: runs.id }).from(runs).where(eq(runs.workItemId, unrelatedItem.id));
+  const [dispatchedRun] = await db.select({ id: runs.id }).from(runs).where(eq(runs.workItemId, dispatchedItem.id));
+  const [queuedRun] = await db.select({ id: runs.id }).from(runs).where(eq(runs.workItemId, queuedItem.id));
+  const [creatorRun] = await db.select({ id: runs.id }).from(runs).where(eq(runs.workItemId, creatorItem.id));
+  const createdAt = Date.now() - 20_000;
+  for (const [index, run] of [targetRun, unrelatedRun, dispatchedRun, queuedRun].entries()) await db.update(runs).set({ createdAt: new Date(createdAt + index) }).where(eq(runs.id, run!.id));
+
+  const dispatch = createRuntimeDispatchActions(db);
+  const adminClaims = await dispatch.claimRuns({ userId: admin.id, daemonId: adminRegistration.daemonId }, 3);
+  expect(adminClaims.map(({ workItemId }) => workItemId)).toEqual([targetItem.id, unrelatedItem.id, dispatchedItem.id]);
+  for (const runId of [targetRun!.id, unrelatedRun!.id]) await dispatch.startRun(runId, adminRuntime.id);
+  const [creatorClaim] = await dispatch.claimRuns({ userId: member.id, daemonId: memberRegistration.daemonId }, 1);
+  expect(creatorClaim?.workItemId).toBe(creatorItem.id);
+  await dispatch.startRun(creatorRun!.id, memberRuntime.id);
+
+  await createMemberActions(db).changeMemberRole.handler({ userId: admin.id }, { workspaceId: workspace.id, userId: member.id, role: "Guest" });
+  const statuses = await db.select({ workItemId: runs.workItemId, status: runs.status, failureReason: runs.failureReason }).from(runs)
+    .where(inArray(runs.id, [targetRun!.id, unrelatedRun!.id, dispatchedRun!.id, queuedRun!.id, creatorRun!.id]));
+  const statusByItem = new Map(statuses.map((row) => [row.workItemId, row]));
+  expect(statusByItem.get(targetItem.id)).toMatchObject({ status: "stopping", failureReason: "Workspace write access was revoked" });
+  expect(statusByItem.get(dispatchedItem.id)).toMatchObject({ status: "failed", failureReason: "Workspace write access was revoked" });
+  expect(statusByItem.get(queuedItem.id)).toMatchObject({ status: "failed", failureReason: "Workspace write access was revoked" });
+  expect(statusByItem.get(creatorItem.id)).toMatchObject({ status: "stopping", failureReason: "Workspace write access was revoked" });
+  expect(statusByItem.get(unrelatedItem.id)).toMatchObject({ status: "running", failureReason: null });
+  const notices = await db.select({ payload: jobs.payload }).from(jobs).where(eq(jobs.type, "notify"));
+  expect(notices.filter(({ payload }) => payload && typeof payload === "object" && "detail" in payload && payload.detail === "project_access_revoked" && "workItemId" in payload && [targetItem.id, dispatchedItem.id, queuedItem.id, creatorItem.id].includes(payload.workItemId as string))).toHaveLength(4);
+  const restoredItem = await work.createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "Waiting while Guest", assigneeIds: [sharedAgent.userId] });
+  const [restoredRun] = await db.select({ id: runs.id }).from(runs).where(eq(runs.workItemId, restoredItem.id));
+  await db.update(runs).set({ originatorId: member.id }).where(eq(runs.id, restoredRun!.id));
+  await createMemberActions(db).changeMemberRole.handler({ userId: admin.id }, { workspaceId: workspace.id, userId: member.id, role: "Member" });
+  expect(await db.select({ status: runs.status, failureReason: runs.failureReason }).from(runs).where(eq(runs.id, restoredRun!.id)))
+    .toEqual([{ status: "queued", failureReason: null }]);
+});
+
+test.serial("removing a non-owner Originator cancels only their running work", async () => {
+  const workspace = await createWorkspaceFactory(db);
+  await db.update(workspaces).set({ allowAutopilot: true }).where(eq(workspaces.id, workspace.id));
+  const admin = await createMemberFactory(db, workspace.id, "Admin");
+  const member = await createMemberFactory(db, workspace.id, "Member");
+  const other = await createMemberFactory(db, workspace.id, "Member");
+  const projects = createProjectActions(db);
+  const project = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Member removal", key: `MX${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private" });
+  for (const userId of [member.id, other.id]) await projects.addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId, role: "Member" });
+  const runtimeActions = createRuntimeActions(db);
+  const token = await createApiTokenActions(db).createApiToken.handler({ userId: admin.id }, { name: "removal test daemon" });
+  const registered = await runtimeActions.registerDaemon.handler({ userId: admin.id, apiTokenId: token.id }, { hostname: "removal-test", version: "1", agentClis: ["codex"] });
+  const runtime = registered.runtimes[0]!;
+  await runtimeActions.shareRuntime.handler({ userId: admin.id }, { runtimeId: runtime.id });
+  const agents = createAgentActions(db);
+  const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Removal Agent", model: "default", runtimeId: runtime.id });
+  await agents.updateAgent.handler({ userId: admin.id }, { agentId: agent.id, maxConcurrentRuns: 2 });
+  await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id] });
+  await agents.setAgentAccess.handler({ userId: admin.id }, { agentId: agent.id, userIds: [admin.id, member.id, other.id] });
+  const work = createWorkItemActions(db);
+  const memberItem = await work.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Removed originator", assigneeIds: [agent.userId] });
+  const otherItem = await work.createWorkItem.handler({ userId: other.id }, { projectId: project.id, title: "Unrelated originator", assigneeIds: [agent.userId] });
+  const dispatch = createRuntimeDispatchActions(db);
+  const claims = await dispatch.claimRuns({ userId: admin.id, daemonId: registered.daemonId }, 2);
+  for (const claim of claims) await dispatch.startRun(claim.runId, runtime.id);
+  await createMemberActions(db).removeMember.handler({ userId: admin.id }, { workspaceId: workspace.id, userId: member.id });
+  const [revoked] = await db.select({ status: runs.status, failureReason: runs.failureReason }).from(runs).where(eq(runs.workItemId, memberItem.id));
+  const [unrelated] = await db.select({ status: runs.status, failureReason: runs.failureReason }).from(runs).where(eq(runs.workItemId, otherItem.id));
+  expect(revoked).toEqual({ status: "stopping", failureReason: "Workspace write access was revoked" });
+  expect(unrelated).toEqual({ status: "running", failureReason: null });
+  const notices = await db.select({ payload: jobs.payload }).from(jobs).where(eq(jobs.type, "notify"));
+  expect(notices.filter(({ payload }) => payload && typeof payload === "object" && "detail" in payload && payload.detail === "project_access_revoked" && "workItemId" in payload && payload.workItemId === memberItem.id)).toHaveLength(1);
+});
+
+test.serial("workspace demotion waits for an in-flight authorized Action, then revokes the Run", async () => {
+  const workspace = await createWorkspaceFactory(db);
+  await db.update(workspaces).set({ allowAutopilot: true }).where(eq(workspaces.id, workspace.id));
+  const admin = await createMemberFactory(db, workspace.id, "Admin");
+  const member = await createMemberFactory(db, workspace.id, "Member");
+  const projects = createProjectActions(db);
+  const project = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Demotion concurrency", key: `DC${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private" });
+  await projects.addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: member.id, role: "Member" });
+  const token = await createApiTokenActions(db).createApiToken.handler({ userId: admin.id }, { name: "concurrency test daemon" });
+  const runtimeActions = createRuntimeActions(db);
+  const registered = await runtimeActions.registerDaemon.handler({ userId: admin.id, apiTokenId: token.id }, { hostname: "demotion-concurrency", version: "1", agentClis: ["codex"] });
+  const runtime = registered.runtimes[0]!;
+  await runtimeActions.shareRuntime.handler({ userId: admin.id }, { runtimeId: runtime.id });
+  const agents = createAgentActions(db);
+  const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Demotion concurrency Agent", model: "default", runtimeId: runtime.id });
+  await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id] });
+  await agents.setAgentAccess.handler({ userId: admin.id }, { agentId: agent.id, userIds: [admin.id, member.id] });
+  const item = await createWorkItemActions(db).createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Authorized before demotion", assigneeIds: [agent.userId] });
+  const [claim] = await createRuntimeDispatchActions(db).claimRuns({ userId: admin.id, daemonId: registered.daemonId });
+  await createRuntimeDispatchActions(db).startRun(claim!.runId, runtime.id);
+
+  let release!: () => void;
+  let entered!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const action = withAgentRunProjectAuthorization(db, claim!.runId, async (state) => { entered(); await gate; return state; });
+  let demote: Promise<{ role: string }> | undefined;
+  try {
+    await started;
+    const demoting = createMemberActions(rebindDb).changeMemberRole.handler({ userId: admin.id }, { workspaceId: workspace.id, userId: member.id, role: "Guest" });
+    demote = demoting;
+    const waiting = await waitForLock('"workspace_members"');
+    expect(waiting).toBe(true);
+    release();
+    const [authorized, result] = await Promise.all([action, demoting]);
+    expect(authorized).toMatchObject({ active: true, allowed: true });
+    expect(result.role).toBe("Guest");
+    expect((await db.select({ status: runs.status, failureReason: runs.failureReason }).from(runs).where(eq(runs.id, claim!.runId)))[0])
+      .toEqual({ status: "stopping", failureReason: "Workspace write access was revoked" });
+    expect(item.id).toBeTruthy();
+  } finally {
+    release();
+    await action.catch(() => undefined);
+    if (demote) await demote.catch(() => undefined);
+    await db.delete(workspaces).where(eq(workspaces.id, workspace.id));
+  }
 });

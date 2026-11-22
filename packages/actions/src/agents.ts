@@ -265,6 +265,9 @@ export function createAgentActions(db: Database) {
           const database = tx(transaction);
           const agent = await loadAdminAgent(database, context, input.agentId, true);
           const runtimeId = input.runtimeId === undefined ? agent.runtimeId : input.runtimeId;
+          // A claimed Run may still be bound to the old Runtime. Serialize moves against starts on both sides.
+          const policyRuntimeIds = [...new Set([agent.runtimeId, runtimeId].filter((id): id is string => id !== null))].sort();
+          if (policyRuntimeIds.length) await database.select({ id: runtimes.id }).from(runtimes).where(inArray(runtimes.id, policyRuntimeIds)).orderBy(runtimes.id).for("update");
           const runtimeProfileId = runtimeId === agent.runtimeId ? agent.runtimeProfileId : await resolveProfile(database, runtimeId, null);
           if (input.autopilot === true && !runtimeId) {
             const [workspace] = await database.select({ allowAutopilot: workspaces.allowAutopilot }).from(workspaces).where(eq(workspaces.id, agent.workspaceId));

@@ -536,6 +536,9 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
       if (isUnauthorized(error)) throw new RegistrationUnauthorized((error as Error).message);
       throw error;
     }
+    // Registration may finish after shutdown has already been requested. Do not persist its
+    // credential or let startup continue into WebSocket setup in that case.
+    if (signal.aborted) return registration;
     await adoptCredential(registration);
     rotateNext = false;
     heldRuntimeIds = new Set((registration.runtimes ?? []).map((runtime) => runtime.id));
@@ -564,8 +567,10 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
   while (!signal.aborted) {
     try {
       const agentClis = await detectedClis(env.PATH ?? "");
+      if (signal.aborted) return;
       const signature = agentClis.join(",");
       const registration = await register(agentClis);
+      if (signal.aborted) return;
       authBackoffMs = AUTH_RETRY_MIN_MS;
       if (!credential) throw new Error("Daemon credential was not issued. Run `weft login` to sign in again.");
       registeredClis = signature;

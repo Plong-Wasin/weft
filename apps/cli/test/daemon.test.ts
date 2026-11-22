@@ -126,6 +126,37 @@ test("background start returns while a separate Daemon registers with a fake ser
   }
 }, 30_000);
 
+test("daemon startup does not open a WebSocket when shutdown arrives during registration", async () => {
+  const configHome = await isolatedConfig();
+  const controller = new AbortController();
+  let registrationStarted!: () => void;
+  const started = new Promise<void>((resolve) => { registrationStarted = resolve; });
+  let finishRegistration!: () => void;
+  const registrationResponse = new Promise<void>((resolve) => { finishRegistration = resolve; });
+  let socketCreations = 0;
+  const daemon = startDaemon({
+    env: { XDG_CONFIG_HOME: configHome, WEFT_TOKEN: "weft_cli_test", WEFT_API_URL: "https://weft.example", PATH: "" },
+    fetch: async (input) => {
+      if (String(input).endsWith("/api/daemon/register")) {
+        registrationStarted();
+        await registrationResponse;
+        return Response.json({ daemonId: "daemon-id", runtimes: [], daemonToken: "weft_daemon_test" });
+      }
+      return Response.json({ ok: true });
+    },
+    webSocket: () => { socketCreations++; throw new Error("unexpected WebSocket"); },
+    signal: controller.signal,
+  });
+
+  await started;
+  controller.abort();
+  finishRegistration();
+  await daemon;
+
+  expect(socketCreations).toBe(0);
+  await expect(readFile(join(configHome, "weft", "daemon-credential.json"), "utf8")).rejects.toThrow();
+});
+
 test("Claude and Codex adapters build non-interactive commands and extract streamed final output", () => {
   expect(agentCliAdapters.claude.command({ model: "sonnet", prompt: "do it" })).toContain("bypassPermissions");
   expect(agentCliAdapters.claude.final('{"type":"result","result":"done"}')).toBe("done");

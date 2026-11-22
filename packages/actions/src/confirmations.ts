@@ -18,8 +18,8 @@ export const confirmationTtlMs = 24 * 60 * 60 * 1000;
 /**
  * Write actions the AI may propose: work items, wiki pages, projects and their members, states, labels,
  * comments, notifications, and the phase 2 structures (Cycles, Modules, Intake, Relations, Views, feature
- * toggles). Each is a Write action, so it only ever runs after the user confirms its card. Everything else
- * (project and workspace delete, member roles, invites, API tokens, assets, wiki locks and access) is not offered.
+ * toggles and scoped asset uploads). Each is a Write action, so it only ever runs after the user confirms its card. Everything else
+ * (project and workspace delete, member roles, invites, API tokens, asset deletion, wiki locks and access) is not offered.
  */
 export const aiWriteActions = [
   "create_work_item", "update_work_item", "bulk_update_work_items", "move_work_item", "delete_work_item", "delete_work_items",
@@ -33,6 +33,7 @@ export const aiWriteActions = [
   "create_web_link", "update_web_link", "delete_web_link",
   "create_view", "update_view", "delete_view",
   "create_comment",
+  "request_asset_upload", "complete_asset_upload",
   "set_project_features",
   "create_project", "update_project", "archive_project", "unarchive_project", "rename_project_key", "join_project",
   "add_project_member", "remove_project_member",

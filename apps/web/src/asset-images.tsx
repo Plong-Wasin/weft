@@ -134,18 +134,27 @@ export const readOnlyImages = AssetImage.configure({ upload: null });
 
 type Action = <T>(name: string, body: unknown) => Promise<T | null>;
 
-export function AttachmentsPanel({ workItemId, canWrite, action, onChange, showForm, onCount, pickerRef, failedFiles, onFailedFilesChange }: { workItemId: string; canWrite: boolean; action: Action; onChange?: () => void; showForm: boolean; onCount: (count: number) => void; pickerRef?: React.RefObject<HTMLInputElement | null>; failedFiles?: File[]; onFailedFilesChange?: (files: File[]) => void }) {
-  const owner: OwnerRef = { ownerType: "work_item", ownerId: workItemId };
+export function AttachmentsPanel({ workItemId, ownerType = "work_item", canWrite, action, onChange, showForm, onCount, pickerRef, failedFiles, onFailedFilesChange, testId = "attachments", excludeAssetIds = [] }: { workItemId: string; ownerType?: OwnerRef["ownerType"]; canWrite: boolean; action: Action; onChange?: () => void; showForm: boolean; onCount: (count: number) => void; pickerRef?: React.RefObject<HTMLInputElement | null>; failedFiles?: File[]; onFailedFilesChange?: (files: File[]) => void; testId?: string; excludeAssetIds?: string[] }) {
+  const owner: OwnerRef = { ownerType, ownerId: workItemId };
   const localPickerRef = React.useRef<HTMLInputElement>(null);
   const filePickerRef = pickerRef ?? localPickerRef;
   const [rows, setRows] = React.useState<AssetRow[]>([]);
+  const [loading, setLoading] = React.useState(true);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [dragging, setDragging] = React.useState(false);
   const [localFailedFiles, setLocalFailedFiles] = React.useState<File[]>([]);
   const retryFiles = failedFiles ?? localFailedFiles;
+  const excluded = React.useMemo(() => new Set(excludeAssetIds), [excludeAssetIds]);
+  const downloadableRows = rows.filter((row) => !excluded.has(row.id));
   const updateFailedFiles = (files: File[]) => { setLocalFailedFiles(files); onFailedFilesChange?.(files); };
-  const load = React.useCallback(async () => setRows(await action<AssetRow[]>("list_assets", { ownerType: "work_item", ownerId: workItemId }) ?? []), [action, workItemId]);
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    const result = await action<AssetRow[]>("list_assets", { ownerType, ownerId: workItemId });
+    if (result === null) setError(translate("assets.actionFailed"));
+    else { setRows(result); setError(null); }
+    setLoading(false);
+  }, [action, ownerType, workItemId]);
   React.useEffect(() => { void load(); }, [load]);
   React.useEffect(() => { onCount(rows.length); }, [onCount, rows.length]);
 
@@ -171,13 +180,15 @@ export function AttachmentsPanel({ workItemId, canWrite, action, onChange, showF
     await load(); onChange?.();
   }
 
-  return <section aria-label={translate("assets.title")} data-testid="attachments"
+  return <section aria-label={translate("assets.title")} aria-busy={loading || busy} data-testid={testId}
     onDragEnter={(event) => { if (canWrite) { event.preventDefault(); setDragging(true); } }}
     onDragOver={(event) => { if (canWrite) { event.preventDefault(); setDragging(true); } }}
     onDragLeave={(event) => { if (!(event.relatedTarget instanceof Element) || !event.currentTarget.contains(event.relatedTarget)) setDragging(false); }}
     onDrop={(event) => { if (!canWrite) return; event.preventDefault(); setDragging(false); void attach([...event.dataTransfer.files]); }}>
     {/* Files are only ever listed with a download link: nothing here is rendered inline. */}
-    <ul className="m-0 grid list-none gap-1.5 !pl-0">{rows.map((row) => <li key={row.id} className="flex items-center gap-2 rounded-md bg-layer-1 px-2.5 py-1.5 text-13">
+    {loading && <p role="status" className="m-0 py-2 text-13 text-secondary">{translate("assets.loading")}</p>}
+    {!loading && downloadableRows.length === 0 && !error && <p className="m-0 py-2 text-13 text-secondary">{translate("assets.empty")}</p>}
+    <ul className="m-0 grid list-none gap-1.5 !pl-0">{downloadableRows.map((row) => <li key={row.id} className="flex items-center gap-2 rounded-md bg-layer-1 px-2.5 py-1.5 text-13">
       <Paperclip aria-hidden size={13} className="shrink-0 text-tertiary" />
       <span className="min-w-0 truncate text-primary" title={row.filename}>{row.filename}</span>
       <small className="shrink-0 text-12 text-tertiary">{formatSize(row.size)}</small>

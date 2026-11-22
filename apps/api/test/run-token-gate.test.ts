@@ -1,15 +1,15 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { comments as commentRows, createDatabase, runs, type Database } from "@weft/db";
-import { createAgentActions, createCommentActions, createProjectActions, createRuntimeActions, createTriggerActions, createWorkItemActions } from "@weft/actions";
-import { withRollback } from "../../../packages/db/src/test-helpers";
+import { activities, assets as assetRows, comments as commentRows, createDatabase, runs, type Database } from "@weft/db";
+import { createAgentActions, createCommentActions, createProjectActions, createRuntimeDispatchActions, createRuntimeActions, createTriggerActions, createWikiActions, createWorkItemActions } from "@weft/actions";
+import { createMemberFactory, withRollback } from "../../../packages/db/src/test-helpers";
 import { createApp } from "../src/app";
 
 const { client, db } = createDatabase();
 afterAll(async () => client.end());
 
-async function scenario(transaction: Database, allowAutopilot = true) {
-  const app = createApp(undefined, transaction);
+async function scenario(transaction: Database, allowAutopilot = true, assetStorage?: import("@weft/actions").AssetStorage) {
+  const app = createApp(undefined, transaction, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, assetStorage);
   const post = (path: string, body: unknown, options: { cookie?: string; token?: string } = {}) => app.handle(new Request(`http://localhost${path}`, {
     method: "POST", headers: { "content-type": "application/json", ...(options.cookie ? { cookie: options.cookie } : {}), ...(options.token ? { authorization: `Bearer ${options.token}` } : {}) }, body: JSON.stringify(body),
   }));
@@ -35,6 +35,18 @@ async function scenario(transaction: Database, allowAutopilot = true) {
   return { app, post, owner, workspace, project, agent, item, work, claim, agents };
 }
 
+function memoryStorage() {
+  const files = new Map<string, string>();
+  const storage: import("@weft/actions").AssetStorage = {
+    presignPost: ({ key }) => ({ url: "http://storage.test/", fields: { key } }),
+    head: async (key) => files.has(key) ? { size: Buffer.byteLength(files.get(key)!) } : null,
+    remove: async (key) => { files.delete(key); },
+    copy: async (source, destination) => { const value = files.get(source); if (value === undefined) throw new Error("missing asset"); files.set(destination, value); },
+    presignGet: ({ key }) => ({ url: `http://storage.test/${key}` }),
+  };
+  return { storage, put: (key: string, content: string) => files.set(key, content), read: (url: string) => files.get(new URL(url).pathname.slice(1)) };
+}
+
 test.concurrent("a Runtime Run token refuses deletes with a clear message", async () => {
   await withRollback(db, async (transaction) => {
     const { post, claim, item, agent, workspace } = await scenario(transaction);
@@ -49,6 +61,35 @@ test.concurrent("a Runtime Run token refuses deletes with a clear message", asyn
     expect((await post("/actions/update_work_item", { workItemId: item.id, title: "Renamed" }, { token })).status).toBe(200);
     const stored = await (await post("/actions/get_work_item", { workspaceId: workspace.id, displayId: item.displayId }, { token })).json() as { title: string };
     expect(stored.title).toBe("Renamed");
+  });
+});
+
+test.concurrent("Runtime Run credentials and completion comments identify the Agent and retain Originator authorization", async () => {
+  await withRollback(db, async (transaction) => {
+    const { post, claim, owner, workspace, project, agent } = await scenario(transaction);
+    const member = await createMemberFactory(transaction, workspace.id, "Member");
+    await createProjectActions(transaction).addProjectMember.handler({ userId: owner.id }, { projectId: project.id, userId: member.id, role: "Member" });
+    await createAgentActions(transaction).setAgentAccess.handler({ userId: owner.id }, { agentId: agent.id, userIds: [owner.id, member.id] });
+    const work = createWorkItemActions(transaction);
+    const item = await work.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Credential item", assigneeIds: [agent.userId] });
+    const secondItem = await work.createWorkItem.handler({ userId: member.id }, { projectId: project.id, title: "Completion item", assigneeIds: [agent.userId] });
+    const claimed = await (await claim()).json() as Array<{ runId: string; token: string; workItemId: string }>;
+    const credentialRun = claimed.find((run) => run.workItemId === item.id)!;
+    const completionRun = claimed.find((run) => run.workItemId === secondItem.id)!;
+
+    const created = await post("/actions/create_comment", { workItemId: item.id, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Written with the Run credential" }] }] } }, { token: credentialRun.token });
+    expect(created.status).toBe(200);
+    const comment = await created.json() as { authorId: string; runId: string };
+    expect(comment).toMatchObject({ authorId: agent.userId, runId: credentialRun.runId });
+    expect(await transaction.select({ actorId: activities.actorId, originatorId: activities.originatorId }).from(activities).where(eq(activities.runId, credentialRun.runId))).toContainEqual({ actorId: agent.userId, originatorId: member.id });
+
+    await createRuntimeDispatchActions(transaction).finishRun(completionRun.runId, { status: "completed", finalOutput: "Completed by Runtime" });
+    const [completionComment] = await transaction.select().from(commentRows).where(eq(commentRows.runId, completionRun.runId));
+    expect(completionComment).toMatchObject({ authorId: agent.userId, bodyText: "Completed by Runtime" });
+
+    const otherProject = await createProjectActions(transaction).createProject.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Outside", key: `OU${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private" });
+    const outsideItem = await work.createWorkItem.handler({ userId: owner.id }, { projectId: otherProject.id, title: "Outside" });
+    expect((await post("/actions/create_comment", { workItemId: outsideItem.id, bodyMarkdown: "Must be refused" }, { token: credentialRun.token })).status).not.toBe(200);
   });
 });
 
@@ -113,6 +154,130 @@ test.concurrent("a Runtime Run token gets only the baseline writes until an Admi
     expect((await post("/actions/create_project", { workspaceId: workspace.id, name: "Allowed", key: `AL${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private" }, { token })).status).toBe(200);
     expect((await post("/actions/create_cycle", cycleInput, { token })).status).toBe(200);
     expect((await post("/actions/request_export", { workspaceId: workspace.id, projectIds: [project.id] }, { token })).status).toBe(200);
+  });
+});
+
+test.concurrent("a Runtime Run can upload and retrieve a deliverable on its Work item only with the file action grant", async () => {
+  await withRollback(db, async (transaction) => {
+    const memory = memoryStorage();
+    const { post, claim, owner, project, item, agent, agents } = await scenario(transaction, true, memory.storage);
+    const [claimed] = await (await claim()).json() as Array<{ token: string }>;
+    const token = claimed!.token;
+    const input = { ownerType: "work_item", ownerId: item.id, filename: "diagram.html", contentType: "text/html", size: 32 };
+    expect((await post("/actions/request_asset_upload", input, { token })).status).toBe(403);
+
+    await agents.updateAgent.handler({ userId: owner.id }, { agentId: agent.id, allowFeatureActions: true });
+    const unrelated = await createWorkItemActions(transaction).createWorkItem.handler({ userId: owner.id }, { projectId: project.id, title: "Another item" });
+    expect((await post("/actions/request_asset_upload", { ...input, ownerId: unrelated.id }, { token })).status).toBe(403);
+    expect((await post("/actions/request_asset_upload", { ...input, size: 100_000_000 }, { token })).status).toBe(413);
+
+    const requested = await post("/actions/request_asset_upload", input, { token });
+    expect(requested.status).toBe(200);
+    const upload = await requested.json() as { assetId: string; url: string; fields: Record<string, string> };
+    memory.put(upload.fields.key!, "<!doctype html><title>deliverable</title>");
+    expect((await post("/actions/complete_asset_upload", { assetId: upload.assetId }, { token })).status).toBe(200);
+    const listed = await post("/actions/list_assets", { ownerType: "work_item", ownerId: item.id }, { token });
+    expect(await listed.json()).toMatchObject([{ id: upload.assetId, filename: "diagram.html", contentType: "text/html" }]);
+    const url = await post("/actions/get_asset_download_url", { assetId: upload.assetId, download: true }, { token });
+    const download = await url.json() as { url: string; filename: string; contentType: string; inline: boolean };
+    expect(download).toMatchObject({ filename: "diagram.html", contentType: "text/html", inline: false });
+    expect(memory.read(download.url)).toBe("<!doctype html><title>deliverable</title>");
+    expect((await post("/actions/get_asset_download_url", { assetId: upload.assetId }, { token })).status).toBe(200);
+  });
+});
+
+test.concurrent("a Runtime Run can create a Wiki page and deliver image and file assets only to Wiki pages its Originator can edit", async () => {
+  await withRollback(db, async (transaction) => {
+    const memory = memoryStorage();
+    const { post, claim, owner, workspace, project, agent, agents } = await scenario(transaction, true, memory.storage);
+    const [claimed] = await (await claim()).json() as Array<{ token: string }>;
+    const token = claimed!.token;
+
+    expect((await post("/actions/create_wiki_page", { workspaceId: workspace.id, title: "Not granted" }, { token })).status).toBe(403);
+    expect((await post("/actions/request_asset_upload", {
+      ownerType: "wiki_page", ownerId: crypto.randomUUID(), filename: "blocked.png", contentType: "image/png", size: 1,
+    }, { token })).status).toBe(403);
+    await agents.updateAgent.handler({ userId: owner.id }, { agentId: agent.id, allowFeatureActions: true });
+
+    const created = await post("/actions/create_wiki_page", {
+      workspaceId: workspace.id, title: "Run delivery", contentMarkdown: "Delivery notes",
+    }, { token });
+    expect(created.status).toBe(200);
+    const page = await created.json() as { id: string };
+
+    const upload = async (filename: string, contentType: string, bytes: string) => {
+      const requested = await post("/actions/request_asset_upload", {
+        ownerType: "wiki_page", ownerId: page.id, filename, contentType, size: bytes.length,
+      }, { token });
+      expect(requested.status).toBe(200);
+      const ticket = await requested.json() as { assetId: string; url: string; fields: Record<string, string> };
+      memory.put(ticket.fields.key!, bytes);
+      expect((await post("/actions/complete_asset_upload", { assetId: ticket.assetId }, { token })).status).toBe(200);
+      return ticket.assetId;
+    };
+    const imageId = await upload("diagram.png", "image/png", "image bytes");
+    const fileId = await upload("deliverable.txt", "text/plain", "deliverable contents");
+    const targetResponse = await post("/actions/create_wiki_page", { workspaceId: workspace.id, title: "Reference guide" }, { token });
+    expect(targetResponse.status).toBe(200);
+    const target = await targetResponse.json() as { id: string };
+    const updated = await post("/actions/update_wiki_page", {
+      pageId: page.id,
+      contentMarkdown: `Delivery notes\n\n![[asset:${imageId}|Diagram]]\n\n[[Reference guide|wiki:${target.id}]]`,
+    }, { token });
+    expect(updated.status).toBe(200);
+    expect((await post("/actions/list_assets", { ownerType: "wiki_page", ownerId: page.id }, { token })).status).toBe(200);
+    expect((await post("/actions/get_wiki_page", { pageId: page.id }, { token })).status).toBe(200);
+    const read = await (await post("/actions/get_wiki_page", { pageId: page.id }, { token })).json() as { contentMarkdown: string };
+    expect(read.contentMarkdown).toContain(`![[asset:${imageId}|Diagram]]`);
+    expect(read.contentMarkdown).toContain(`wiki:${target.id}`);
+    expect((await post("/actions/get_asset_download_url", { assetId: imageId }, { token })).status).toBe(200);
+    expect((await post("/actions/get_asset_download_url", { assetId: fileId, download: true }, { token })).status).toBe(200);
+
+    expect((await post("/actions/lock_wiki_page", { pageId: page.id }, { cookie: owner.cookie })).status).toBe(200);
+    expect((await post("/actions/update_wiki_page", { pageId: page.id, contentMarkdown: "Locked change" }, { token })).status).toBe(409);
+    expect((await post("/actions/request_asset_upload", {
+      ownerType: "wiki_page", ownerId: page.id, filename: "locked.txt", contentType: "text/plain", size: 6,
+    }, { token })).status).toBe(409);
+
+    const unrelated = await createWorkItemActions(transaction).createWorkItem.handler({ userId: owner.id }, { projectId: project.id, title: "Outside Run" });
+    const [otherItemAsset] = await transaction.insert(assetRows).values({
+      workspaceId: workspace.id, projectId: project.id, ownerType: "work_item", ownerId: unrelated.id, uploaderId: owner.id,
+      storageKey: `test/${crypto.randomUUID()}`, filename: "other-item.txt", contentType: "text/plain", size: 5, status: "uploaded", uploadedAt: new Date(),
+    }).returning();
+    expect((await post("/actions/list_assets", { ownerType: "work_item", ownerId: unrelated.id }, { token })).status).toBe(200);
+    expect(await (await post("/actions/list_assets", { ownerType: "work_item", ownerId: unrelated.id }, { token })).json()).toMatchObject([{ id: otherItemAsset!.id }]);
+    expect((await post("/actions/get_asset_download_url", { assetId: otherItemAsset!.id }, { token })).status).toBe(200);
+    expect((await post("/actions/request_asset_upload", {
+      ownerType: "work_item", ownerId: unrelated.id, filename: "forbidden.txt", contentType: "text/plain", size: 5,
+    }, { token })).status).toBe(403);
+
+    const projectPage = await createWikiActions(transaction).createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, projectId: project.id, title: "Project notes" });
+    const [projectPageAsset] = await transaction.insert(assetRows).values({
+      workspaceId: workspace.id, projectId: project.id, ownerType: "wiki_page", ownerId: projectPage.id, uploaderId: owner.id,
+      storageKey: `test/${crypto.randomUUID()}`, filename: "project-page.txt", contentType: "text/plain", size: 7, status: "uploaded", uploadedAt: new Date(),
+    }).returning();
+    expect((await post("/actions/list_assets", { ownerType: "wiki_page", ownerId: projectPage.id }, { token })).status).toBe(200);
+    expect((await post("/actions/get_asset_download_url", { assetId: projectPageAsset!.id, download: true }, { token })).status).toBe(200);
+    expect((await post("/actions/request_asset_upload", {
+      ownerType: "wiki_page", ownerId: projectPage.id, filename: "forbidden.txt", contentType: "text/plain", size: 5,
+    }, { token })).status).toBe(403);
+
+    const outsiderId = `wiki-outsider-${crypto.randomUUID()}`;
+    const { users, workspaceMembers } = await import("@weft/db");
+    await transaction.insert(users).values({ id: outsiderId, name: "Wiki outsider", email: `${outsiderId}@example.test` });
+    await transaction.insert(workspaceMembers).values({ workspaceId: workspace.id, userId: outsiderId, role: "Member" });
+    const privateCollection = await createWikiActions(transaction).createCollection.handler({ userId: outsiderId }, { workspaceId: workspace.id, name: "Private", visibility: "private" });
+    const hiddenPage = await createWikiActions(transaction).createWikiPage.handler({ userId: outsiderId }, { workspaceId: workspace.id, collectionId: privateCollection.id, title: "Hidden" });
+    const [hiddenAsset] = await transaction.insert(assetRows).values({
+      workspaceId: workspace.id, projectId: null, ownerType: "wiki_page", ownerId: hiddenPage.id, uploaderId: outsiderId,
+      storageKey: `test/${crypto.randomUUID()}`, filename: "hidden.txt", contentType: "text/plain", size: 6, status: "uploaded", uploadedAt: new Date(),
+    }).returning();
+    const denied = await post("/actions/request_asset_upload", {
+      ownerType: "wiki_page", ownerId: hiddenPage.id, filename: "blocked.txt", contentType: "text/plain", size: 4,
+    }, { token });
+    expect(denied.status).toBe(404);
+    expect((await post("/actions/list_assets", { ownerType: "wiki_page", ownerId: hiddenPage.id }, { token })).status).toBe(404);
+    expect((await post("/actions/get_asset_download_url", { assetId: hiddenAsset!.id }, { token })).status).toBe(404);
   });
 });
 

@@ -22,6 +22,7 @@ import { Avatar } from "./avatar";
 import { priorityOrder } from "./work-item-layout";
 import { useWorkspace } from "./layouts/workspace-layout";
 import { useLocale } from "./locale";
+import { useInboxNotificationOpen } from "./inbox";
 import type { Estimate, Label, Member, Project, WorkItem, WorkState } from "./types";
 import { PropertyFields, TypePicker, droppedByTypeChange, missingRequired, propertiesOfType, useWorkItemTypes, type CustomProperty } from "./work-item-types";
 
@@ -114,6 +115,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const locale = useLocale();
   const integrationsOn = useIntegrationsEnabled();
   const navigate = useNavigate();
+  const inboxOpen = useInboxNotificationOpen();
   const [item, setItem] = React.useState<WorkItem | null | undefined>(undefined);
   const [timelineKey, setTimelineKey] = React.useState(0);
   const [project, setProject] = React.useState<Project | null>(null);
@@ -176,7 +178,8 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const load = React.useCallback(async () => {
     const found = await action<WorkItem>("get_work_item", { workspaceId: workspace.id, displayId });
     setItem(found);
-    if (!found) return;
+    if (!found) { inboxOpen.markUnavailable(); return; }
+    inboxOpen.markLoaded();
     // The server returns the current key: rewrite an old-alias URL to the canonical one (full page only).
     if (mode === "page" && found.displayId !== displayId.toUpperCase()) navigate(`${paths.workItem(workspace.slug, found.displayId)}${window.location.hash}`, { replace: true });
     if (loadedId.current !== found.id) { loadedId.current = found.id; setTitle(found.title); }
@@ -202,7 +205,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     const inModules: string[] = [];
     for (const module of moduleRows) if ((await action<WorkItem[]>("list_work_items", { projectId: found.projectId, moduleId: module.id, archived: !!found.archivedAt }) ?? []).some((row) => row.id === found.id)) inModules.push(module.id);
     setCycleId(inCycle); setModuleIds(inModules);
-  }, [workspace.id, workspace.slug, displayId, navigate, mode]);
+  }, [workspace.id, workspace.slug, displayId, navigate, mode, inboxOpen.markLoaded, inboxOpen.markUnavailable]);
   React.useEffect(() => { loadedId.current = null; void load(); }, [load]);
   React.useEffect(() => { const refresh = () => { void load(); }; window.addEventListener("focus", refresh); return () => window.removeEventListener("focus", refresh); }, [load]);
 

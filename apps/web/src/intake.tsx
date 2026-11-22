@@ -1,7 +1,7 @@
 import React from "react";
 import { ChevronDown, ChevronUp, Clock, Copy, CopyCheck, Inbox, MoreHorizontal, Plus, X } from "lucide-react";
 import { formatDate, translate, type MessageKey } from "@weft/shared";
-import { useSearchParams } from "react-router";
+import { useLocation, useSearchParams } from "react-router";
 import { EmptyState } from "./empty-state";
 import { Popover, menuItemClass } from "./shell/popover";
 import { PriorityIcon } from "./property-dropdowns";
@@ -14,6 +14,7 @@ import { AttachmentsPanel } from "./asset-images";
 import { uploadAsset } from "./asset-upload";
 import { actionResult, api } from "./api";
 import { paths } from "./routes";
+import { useInboxNotificationOpen } from "./inbox";
 
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 const outcomes = ["pending", "snoozed", "accepted", "rejected", "duplicate"] as const;
@@ -391,8 +392,11 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
 
 export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, canDecide, canAdmin, enabled, action }: { workspaceId: string; workspaceSlug?: string; projectKey?: string; projectId: string; canDecide: boolean; canAdmin: boolean; enabled: boolean; action: Call }) {
   const { selfId } = useWorkspace();
+  const location = useLocation();
   const [workspaceAdmin, setWorkspaceAdmin] = React.useState(false);
   const [params, setParams] = useSearchParams();
+  const inboxOpen = useInboxNotificationOpen();
+  const initialInboxTargetId = React.useRef(new URLSearchParams(location.search).get("inboxIssueId"));
   const tab: Tab = params.get("currentTab") === "closed" ? "closed" : "open";
   const selectedId = params.get("inboxIssueId");
   const [items, setItems] = React.useState<IntakeItem[] | null>(null);
@@ -432,6 +436,14 @@ export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, 
     const first = items[0]?.id ?? null;
     if (!items.some((item) => item.id === selectedId) && first !== selectedId) select(first);
   }, [items, selectedId, select]);
+  React.useEffect(() => {
+    const targetId = initialInboxTargetId.current;
+    if (!inboxOpen.notificationId) return;
+    if (!enabled) { inboxOpen.markUnavailable(); return; }
+    if (!items) return;
+    if (targetId && selectedId === targetId && items.some((item) => item.id === targetId)) inboxOpen.markLoaded();
+    else inboxOpen.markUnavailable();
+  }, [items, selectedId, enabled, inboxOpen.notificationId, inboxOpen.markLoaded, inboxOpen.markUnavailable]);
   if (!enabled) return <section><p role="status">{t("intake.off")}</p></section>;
   /** The Open tab has nothing in it: the empty state carries the one Submit action, so the header button steps aside. */
   const emptyOpen = tab === "open" && items?.length === 0;

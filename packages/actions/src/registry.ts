@@ -105,7 +105,7 @@ export function createActionList(db: Database, options: { integrations?: boolean
     wiki.linkWorkItemPage, wiki.unlinkWorkItemPage, wiki.listWorkItemPages, wiki.listWikiPageWorkItems, outlinkActions.listOutlinks, outlinkActions.listBacklinks, outlinkActions.rebuildOutlinks, outlinkActions.rebuildPageMarkdown,
     wiki.createWikiPageComment, wiki.listWikiPageComments, wiki.replyWikiPageComment, wiki.updateWikiPageComment, wiki.resolveWikiPageComment,
     wiki.deleteWikiPage, wiki.duplicateWikiPage, wiki.listWikiPageVersions, wiki.restoreWikiPageVersion, wiki.searchWikiPages, wiki.listWikiPageActivities, wiki.listProjectWikiPages,
-    inbox.listNotifications, inbox.markNotificationRead, inbox.markAllNotificationsRead,
+    inbox.listNotifications, inbox.markNotificationRead, inbox.markNotificationUnread, inbox.markAllNotificationsRead,
     tokens.createApiToken, tokens.listApiTokens, tokens.revokeApiToken, tokens.listAuthorizedApps, tokens.revokeAuthorizedApp,
     cycles.createCycle, cycles.updateCycle, cycles.listCycles, cycles.getCycle, cycles.getCycleBurndown, cycles.checkCycleDates, cycles.addCycleItems, cycles.removeCycleItems, cycles.transferCycleItems, cycles.selectiveTransferCycleItems, cycles.archiveCycle, cycles.unarchiveCycle, cycles.deleteCycle,
     modules.createModule, modules.updateModule, modules.listModules, modules.getModule, modules.getModuleBurndown, modules.getModuleInsights, modules.addModuleItems, modules.removeModuleItems, modules.archiveModule, modules.unarchiveModule, modules.deleteModule,

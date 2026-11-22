@@ -174,6 +174,14 @@ try {
   await list.waitFor({ state: "detached" });
   check(await link(wikiEditor, expectedLabel).count() === 1, `keyboard Enter did not insert the highlighted row as "${expectedLabel}"`);
 
+  // Tab accepts the selected reference while Shift-Tab retains normal editor navigation.
+  await page.keyboard.type(" [[MOB-1");
+  await list.getByRole("option", { name: /Dark mode toggle/ }).first().waitFor();
+  await page.keyboard.press("Tab");
+  await list.waitFor({ state: "detached" });
+  const tabLinkCount = await link(wikiEditor, "MOB-1 Dark mode toggle").count();
+  check(tabLinkCount === 1, `Tab did not insert the selected Work item reference; found ${tabLinkCount}: ${await wikiEditor.innerText()}`);
+
   // "@" still opens the mention list only.
   await page.keyboard.press("Control+a"); await page.keyboard.press("Backspace");
   await page.keyboard.type("@");

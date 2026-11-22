@@ -102,6 +102,16 @@ try {
   await page.goto(`${web}/${slug}/browse/MOB-1`);
   const description = page.getByTestId("description-editor");
   await description.locator(".ProseMirror").waitFor();
+  await description.locator(".ProseMirror").click();
+  await page.keyboard.press("Control+End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("/");
+  const slashMenu = page.getByRole("listbox", { name: translate("editor.slashMenu") });
+  await slashMenu.getByRole("option").first().waitFor();
+  await page.keyboard.press("Tab");
+  await slashMenu.waitFor({ state: "detached" });
+  check(!(await description.locator(".ProseMirror").innerText()).includes("/"), "Tab should accept the selected slash command and remove its trigger text");
+  console.log("editor-assist ok: Tab accepts the selected slash command");
   await exercise(description.locator(".ProseMirror"), description, "Description");
   console.log("editor-assist ok: description");
 

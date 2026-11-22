@@ -116,6 +116,9 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
       const tx = transaction as unknown as Database;
       const [daemon] = await tx.select({ id: daemons.id, hostname: daemons.hostname }).from(daemons).where(and(eq(daemons.id, context.daemonId), eq(daemons.ownerId, context.userId)));
       if (!daemon) throw new ActionError("Daemon not found", 404);
+      // Claims on one Daemon must observe each other's committed capacity checks. Take this before Run row locks so all claimers
+      // use the same lock order; finish/cancel paths need no advisory lock and can still release capacity while a claim waits.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'runtime-claims:' + daemon.id}, 0))`);
       const rows = await tx.select({ run: runs, agent: agents, runtime: runtimes }).from(runs)
         .innerJoin(agents, eq(agents.id, runs.agentId)).innerJoin(runtimes, eq(runtimes.id, agents.runtimeId)).innerJoin(workspaces, eq(workspaces.id, runs.workspaceId))
         .innerJoin(workspaceMembers, and(eq(workspaceMembers.workspaceId, runs.workspaceId), eq(workspaceMembers.userId, runtimes.ownerId)))

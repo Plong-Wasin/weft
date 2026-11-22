@@ -70,9 +70,39 @@ try {
   const runtime = registered.runtimes[0]!;
   await runtimeActions.shareRuntime.handler({ userId: owner.userId }, { runtimeId: runtime.id });
   const runtimeProfile = await runtimeActions.createRuntimeProfile.handler({ userId: owner.userId }, { runtimeId: runtime.id, name: "Run folder only", sandbox: "run-folder", filesystemAllowlist: [], networkAllowlist: ["gitlab.example"] });
-  await runtimeActions.setRuntimeSandboxEnforcement.handler({ userId: owner.userId }, { runtimeId: runtime.id, enforceSandbox: true });
+  const legacyFullAgent = await createAgentActions(db).createAgent.handler({ userId: me.user.id }, { workspaceId, name: "Legacy Full Access", model: "default", runtimeId: runtime.id });
   const profileEditAsAdmin = await runtimeActions.updateRuntimeProfile.handler({ userId: me.user.id }, { profileId: runtimeProfile.id, name: "Weakened", sandbox: "full", filesystemAllowlist: [], networkAllowlist: [] }).then(() => false, () => true);
   if (!profileEditAsAdmin) throw new Error("Workspace Admin changed a Runtime owner's profile");
+  await owner.page.goto(`${web}/${slug}/settings/runtimes`);
+  const runtimeProfilesSummary = owner.page.getByText(new RegExp(`^${translate("runtimes.profiles")}`)).first();
+  await runtimeProfilesSummary.waitFor();
+  await runtimeProfilesSummary.click();
+  const enforcement = owner.page.getByLabel(translate("runtimes.enforceSandbox"));
+  const requirements = owner.page.getByTestId("runtime-sandbox-requirements");
+  await requirements.waitFor();
+  const requirementsAtSettings = await requirements.innerText();
+  if (!requirementsAtSettings.includes("SRT") || !requirementsAtSettings.includes("0.0.83") || !requirementsAtSettings.includes("npm install --global @anthropic-ai/sandbox-runtime") || !requirementsAtSettings.includes("never falls back")) {
+    throw new Error(`Sandbox requirements are not actionable or fail-closed: ${requirementsAtSettings}`);
+  }
+  const impact = owner.page.getByTestId("runtime-enforcement-warning");
+  await impact.waitFor();
+  if (!(await impact.innerText()).includes("Full access")) throw new Error("Enabling enforcement did not warn about existing Full access Agents");
+  let cancelledConfirmation = "";
+  owner.page.once("dialog", async (dialog) => { cancelledConfirmation = dialog.message(); await dialog.dismiss(); });
+  await enforcement.click();
+  if (!cancelledConfirmation.includes("Full access") || await enforcement.isChecked()) throw new Error("Enforcement changed without confirmation or the warning omitted Full access Agents");
+  let acceptedConfirmation = "";
+  owner.page.once("dialog", async (dialog) => { acceptedConfirmation = dialog.message(); await dialog.accept(); });
+  await enforcement.click();
+  if (!acceptedConfirmation.includes("Full access")) throw new Error("The enforcement confirmation omitted existing Full access Agents");
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const listed = await request<Array<{ id: string; enforceSandbox: boolean }>>(owner.page, "list_runtimes", { workspaceId });
+    if (listed.find((candidate) => candidate.id === runtime.id)?.enforceSandbox) break;
+    if (attempt === 49) throw new Error("Confirmed sandbox enforcement was not saved");
+    await Bun.sleep(100);
+  }
+  const legacyProfile = await createAgentActions(db).getAgent.handler({ userId: me.user.id }, { agentId: legacyFullAgent.id });
+  if (legacyProfile.runtimeProfileSandbox !== "full") throw new Error("Enabling enforcement unexpectedly reassigned the existing Full access Agent");
   const codeAgent = await createAgentActions(db).createAgent.handler({ userId: me.user.id }, { workspaceId, name: "Code Helper", model: "default", runtimeId: runtime.id });
   await createAgentActions(db).setAgentProjectAccess.handler({ userId: me.user.id }, { agentId: codeAgent.id, allProjects: true, projectIds: [] });
   const item = await request<{ id: string }>(admin, "create_work_item", { projectId: project.id, title: "Review access" });
@@ -118,11 +148,24 @@ try {
   // Ticket 22: every full profile carries the full-access warning; the warning sits inside the profile row text.
   await owner.page.getByText(translate("runtimes.fullAccessWarning"), { exact: false }).first().waitFor();
   await owner.page.getByLabel(translate("runtimes.enforceSandbox")).waitFor();
+  const enforcementSetting = owner.page.getByLabel(translate("runtimes.enforceSandbox"));
+  const settingsRequirements = owner.page.getByTestId("runtime-sandbox-requirements");
+  await settingsRequirements.waitFor();
+  const settingsRequirementsText = await settingsRequirements.innerText();
+  if (!settingsRequirementsText.includes("SRT") || !settingsRequirementsText.includes("0.0.83") || !settingsRequirementsText.includes("npm install --global @anthropic-ai/sandbox-runtime") || !settingsRequirementsText.includes("never falls back")) {
+    throw new Error(`Sandbox requirements are not actionable or fail-closed: ${settingsRequirementsText}`);
+  }
+  if (!await enforcementSetting.isChecked()) throw new Error("Confirmed sandbox enforcement is not shown as enabled");
   await owner.page.setViewportSize({ width: 1440, height: 900 });
   await Bun.write(`${evidenceDir}/runtime-profiles-settings.png`, await owner.page.screenshot({ fullPage: true }));
+  await owner.page.setViewportSize({ width: 390, height: 844 });
+  await Bun.write(`${evidenceDir}/runtime-profiles-settings-mobile.png`, await owner.page.screenshot({ fullPage: true }));
+  await owner.page.setViewportSize({ width: 1440, height: 900 });
 
   await owner.page.goto(`${web}/${slug}/settings/agents`);
-  await owner.page.locator("strong").getByText("Code Helper", { exact: true }).waitFor();
+  const ownerAgentName = owner.page.locator("strong").getByText("Code Helper", { exact: true });
+  await ownerAgentName.waitFor();
+  const codeAgentRow = ownerAgentName.locator("xpath=../..");
   const memberIds = await request<Array<{ userId: string; name: string }>>(admin, "list_members", { workspaceId });
   const developerId = memberIds.find((member) => member.name === "Developer")!.userId;
   await developer.page.goto(itemUrl);
@@ -131,14 +174,14 @@ try {
   const developerUnavailable = developer.page.getByRole("menuitemcheckbox", { name: /Code Helper Agent Can edit code Ask Runtime Owner for access/ });
   await developerUnavailable.waitFor();
   await developer.page.keyboard.press("Escape");
-  const developerGrant = owner.page.getByLabel(`${translate("agents.mayUse")} Developer`);
-  if (await owner.page.getByRole("button", { name: translate("agents.save"), exact: true }).first().isEnabled()) throw new Error("Unchanged Agent access unexpectedly enabled Save");
-  const accessSave = owner.page.getByRole("button", { name: translate("agents.save"), exact: true }).first();
+  const developerGrant = codeAgentRow.getByLabel(`${translate("agents.mayUse")} Developer`);
+  const accessSave = codeAgentRow.getByRole("button", { name: translate("agents.save"), exact: true }).first();
+  if (await accessSave.isEnabled()) throw new Error("Unchanged Agent access unexpectedly enabled Save");
   const ownerGrants = async () => (await createAgentActions(db).listManageableAgentAccess.handler({ userId: owner.userId }, { workspaceId })).find((agent) => agent.id === codeAgent.id)?.accessUserIds ?? [];
   const pmId = memberIds.find((member) => member.name === "PM")!.userId;
   // The checkbox is controlled by the list the page reloads after each save: wait until the page shows the new state before the next click, or the click toggles from a stale list.
   const settled = async (checked: boolean) => { for (let attempt = 0; attempt < 100 && await developerGrant.isChecked() !== checked; attempt += 1) await Bun.sleep(100); if (await developerGrant.isChecked() !== checked) throw new Error(`Runtime owner access checkbox did not show ${checked ? "checked" : "unchecked"}`); };
-  const pmGrant = owner.page.getByLabel(`${translate("agents.mayUse")} PM`);
+  const pmGrant = codeAgentRow.getByLabel(`${translate("agents.mayUse")} PM`);
   await pmGrant.check({ force: true });
   await pmGrant.uncheck({ force: true });
   await developerGrant.check({ force: true });
@@ -178,11 +221,10 @@ try {
   console.log("agent-access: Runtime owner grants developer access; reopened picker refreshes and developer selects Agent");
 
   await owner.page.goto(`${web}/${slug}/settings/agents`);
-  const ownerAgentName = owner.page.locator("strong").getByText("Code Helper", { exact: true });
   await ownerAgentName.waitFor();
-  const profileSelect = owner.page.getByLabel(translate("agents.runtimeProfile"));
+  const profileSelect = codeAgentRow.getByLabel(translate("agents.runtimeProfile"));
   await profileSelect.waitFor();
-  const saveProfile = owner.page.getByRole("button", { name: translate("agents.saveProfile"), exact: true });
+  const saveProfile = codeAgentRow.getByRole("button", { name: translate("agents.saveProfile"), exact: true });
   const agentProfile = async () => (await createAgentActions(db).listManageableAgentAccess.handler({ userId: owner.userId }, { workspaceId })).find((agent) => agent.id === codeAgent.id)?.runtimeProfileId;
   // The Runtime enforces a sandbox, so a new Agent on it is bound to the safest restricted profile ("Run folder only") from the start; Save stays off until the choice changes.
   if (await agentProfile() !== runtimeProfile.id) throw new Error("Agent on a sandbox-enforcing Runtime was not bound to the restricted profile by default");
@@ -199,11 +241,11 @@ try {
   await saveProfile.click();
   for (let attempt = 0; attempt < 50 && await agentProfile() !== runtimeProfile.id; attempt += 1) await Bun.sleep(100);
   if (await agentProfile() !== runtimeProfile.id) throw new Error("Runtime owner could not bind the Agent back to Run folder only");
-  await owner.page.getByText("Run folder only", { exact: false }).first().waitFor();
+  await codeAgentRow.getByText("Run folder only", { exact: false }).first().waitFor();
   await ownerAgentName.scrollIntoViewIfNeeded();
   for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 900 }, { width: 390, height: 844 }]) {
     await owner.page.setViewportSize(viewport);
-    await owner.page.getByLabel(`${translate("agents.mayUse")} Developer`).scrollIntoViewIfNeeded();
+    await codeAgentRow.getByLabel(`${translate("agents.mayUse")} Developer`).scrollIntoViewIfNeeded();
     for (const theme of ["light", "dark"] as const) {
       await owner.page.evaluate((value) => { localStorage.setItem("weft.theme", value); document.documentElement.setAttribute("data-theme", value); }, theme);
       await Bun.write(`${evidenceDir}/runtime-owner-access-${viewport.width}-${theme}.png`, await owner.page.screenshot({ fullPage: true }));
@@ -264,7 +306,7 @@ try {
   const mine = await db.select({ id: workspaces.id }).from(workspaces).where(like(workspaces.slug, "agacc-%"));
   const bots = mine.length ? await db.select({ userId: agents.userId }).from(agents).where(inArray(agents.workspaceId, mine.map((row) => row.id))) : [];
   await db.delete(jobs);
-  await db.delete(workspaces).where(like(workspaces.slug, "agent-access-%"));
+  await db.delete(workspaces).where(like(workspaces.slug, "agacc-%"));
   if (bots.length) await db.delete(users).where(inArray(users.id, bots.map((row) => row.userId)));
   await db.delete(users).where(like(users.email, "agacc-%@example.test"));
   await client.end();

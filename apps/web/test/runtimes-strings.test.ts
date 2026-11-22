@@ -14,6 +14,20 @@ test("profile labels and full-access warnings are available to settings, Agent p
   }
 });
 
+test("sandbox setup explains SRT requirements and warns before enforcement can block Full access Agents", async () => {
+  for (const key of ["runtimes.sandboxRequirements", "runtimes.enforceSandboxImpact", "runtimes.enforceSandboxConfirm"]) {
+    expect(resources.en[key as keyof typeof resources.en]).toBeTruthy();
+    expect((resources.th as Record<string, string>)[key]).toBeTruthy();
+  }
+  expect(resources.en["runtimes.sandboxRequirements"]).toContain("npm install --global @anthropic-ai/sandbox-runtime");
+  expect(resources.en["runtimes.sandboxRequirements"]).toContain("never falls back to full access");
+  expect(resources.en["runtimes.enforceSandboxConfirm"]).toContain("Full access");
+
+  const source = (await import("node:fs")).readFileSync(new URL("../src/pages/settings/runtimes-settings.tsx", import.meta.url), "utf8");
+  expect(source.indexOf('data-testid="runtime-enforcement-warning"')).toBeLessThan(source.indexOf('translate("runtimes.enforceSandbox")'));
+  expect(source).toContain('window.confirm(translate("runtimes.enforceSandboxConfirm"))');
+});
+
 test("deleting a profile asks first, and editing one offers Cancel", async () => {
   const source = (await import("node:fs")).readFileSync(new URL("../src/pages/settings/runtimes-settings.tsx", import.meta.url), "utf8");
   expect(source.indexOf("runtimes.deleteProfileConfirm")).toBeGreaterThan(-1);

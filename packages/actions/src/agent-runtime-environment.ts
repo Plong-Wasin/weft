@@ -1,4 +1,5 @@
 import { Type } from "@sinclair/typebox";
+import { createHash } from "node:crypto";
 import { and, eq, isNull } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { agents, runtimes } from "@weft/db";
@@ -8,6 +9,7 @@ import { openSecret, sealSecret } from "./integration-secrets";
 const uuid = () => Type.String({ format: "uuid" });
 const variablesSchema = Type.Record(Type.String({ pattern: "^[A-Za-z_][A-Za-z0-9_]*$", maxLength: 100 }), Type.String({ maxLength: 8192, pattern: "^[^\\r\\n]*$" }), { maxProperties: 50 });
 const classificationsSchema = Type.Record(Type.String({ pattern: "^[A-Za-z_][A-Za-z0-9_]*$", maxLength: 100 }), Type.Union([Type.Literal("secret"), Type.Literal("non-secret")]), { maxProperties: 50 });
+const revisionOf = (sealed: string | null) => createHash("sha256").update(sealed ?? "").digest("hex");
 type Context = { userId: string };
 type Entry = { value: string; classification: "secret" | "non-secret" };
 type Stored = { format: "weft-runtime-environment-v2"; variables: Record<string, Entry> };
@@ -53,6 +55,37 @@ export function createAgentRuntimeEnvironmentActions(db: Database) {
       handler: async (context: Context, input: { agentId: string }) => {
         const row = await ownedAgent(context.userId, input.agentId);
         return { variables: row.runtimeEnvironment ? summaries(readRuntimeEnvironment(row.runtimeEnvironment)) : [] };
+      },
+    },
+    getAgentRuntimeEnvironmentEditor: {
+      name: "get_agent_runtime_environment_editor", kind: "read" as const,
+      input: Type.Object({ agentId: uuid() }), output: Type.Object({ revision: Type.String(), variables: classificationOutput }),
+      handler: async (context: Context, input: { agentId: string }) => {
+        const row = await ownedAgent(context.userId, input.agentId);
+        return { revision: revisionOf(row.runtimeEnvironment), variables: row.runtimeEnvironment ? summaries(readRuntimeEnvironment(row.runtimeEnvironment)) : [] };
+      },
+    },
+    updateAgentRuntimeEnvironment: {
+      name: "update_agent_runtime_environment", kind: "write" as const,
+      input: Type.Object({ agentId: uuid(), revision: Type.String({ pattern: "^[a-f0-9]{64}$" }), set: variablesSchema, remove: Type.Array(Type.String({ pattern: "^[A-Za-z_][A-Za-z0-9_]*$", maxLength: 100 }), { maxItems: 50 }) }),
+      output: Type.Object({ saved: Type.Boolean(), revision: Type.String(), variables: classificationOutput }),
+      handler: async (context: Context, input: { agentId: string; revision: string; set: Record<string, string>; remove: string[] }) => {
+        const row = await ownedAgent(context.userId, input.agentId);
+        if (revisionOf(row.runtimeEnvironment) !== input.revision) throw new ActionError("The Agent's Runtime environment changed; reload before saving", 409);
+        if (input.remove.some((name) => Object.hasOwn(input.set, name))) throw new ActionError("An environment variable cannot be changed and removed in the same update", 400);
+        if (Object.keys(input.set).some(reserved) || input.remove.some(reserved)) throw new ActionError("That environment variable is reserved by the Runtime platform", 400);
+        const entries = row.runtimeEnvironment ? readRuntimeEnvironment(row.runtimeEnvironment) : {};
+        for (const name of input.remove) {
+          if (!entries[name]) throw new ActionError("The environment variable no longer exists; reload before removing it", 409);
+          delete entries[name];
+        }
+        for (const [name, value] of Object.entries(input.set)) entries[name] = { value, classification: entries[name]?.classification ?? "secret" };
+        if (Object.keys(entries).length > 50 || Buffer.byteLength(JSON.stringify(entries)) > 32_000) throw new ActionError("Environment settings are too large", 400);
+        const sealed = sealEntries(entries);
+        const updated = await db.update(agents).set({ runtimeEnvironment: sealed })
+          .where(and(eq(agents.id, row.id), eq(agents.runtimeId, row.runtimeId!), row.runtimeEnvironment === null ? isNull(agents.runtimeEnvironment) : eq(agents.runtimeEnvironment, row.runtimeEnvironment))).returning({ id: agents.id });
+        if (!updated.length) throw new ActionError("The Agent's Runtime environment changed; reload before saving", 409);
+        return { saved: true, revision: revisionOf(sealed), variables: summaries(entries) };
       },
     },
     setAgentRuntimeEnvironment: {

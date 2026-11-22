@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { childEnvironment, daemonStatus, login, startDaemon, startDaemonBackground, stopDaemon } from "../src/daemon";
+import { childEnvironment, consumeRedactedOutput, daemonStatus, login, redactRuntimeEnvironment, startDaemon, startDaemonBackground, stopDaemon } from "../src/daemon";
 import { agentCliAdapters } from "../src/agent-cli";
 import { main } from "../src/program";
 
@@ -151,6 +151,52 @@ test("Run child environment never carries the Daemon credential or any WEFT_DAEM
   expect(Object.values(child)).not.toContain("weft_daemon_secret");
   expect(Object.values(child)).not.toContain("weft_cli_personal");
   expect(child.WEFT_TOKEN).toBe("weft_run_child");
+});
+
+test("Runtime environment overrides inherited provider credentials but cannot override platform variables", () => {
+  const host = { PATH: "/host/bin", HOME: "/host", ANTHROPIC_API_KEY: "host-key", WEFT_TOKEN: "host-token" };
+  const child = childEnvironment({ runId: "run", runtimeId: "rt", agentCli: "claude", instructions: "", request: "", model: null, token: "run-token", workspaceId: "ws", environment: { ANTHROPIC_API_KEY: "selected-key", CLAUDE_CONFIG_DIR: "/selected", WEFT_TOKEN: "bad", PATH: "/bad" } }, "https://weft.example", host);
+  expect(child.ANTHROPIC_API_KEY).toBe("selected-key");
+  expect(child.CLAUDE_CONFIG_DIR).toBe("/selected");
+  expect(child.PATH).toBe("/host/bin");
+  expect(child.WEFT_TOKEN).toBe("run-token");
+});
+
+test("selecting a Claude config suppresses an inherited API key unless the Agent explicitly configures one", () => {
+  const host = { PATH: "/host/bin", HOME: "/host", ANTHROPIC_API_KEY: "host-key", WEFT_TOKEN: "host-token" };
+  const base = { runId: "run", runtimeId: "rt", agentCli: "claude" as const, instructions: "", request: "", model: null, token: "run-token", workspaceId: "ws" };
+  const selectedAccount = childEnvironment({ ...base, environment: { CLAUDE_CONFIG_DIR: "/selected" } }, "https://weft.example", host);
+  expect(selectedAccount.CLAUDE_CONFIG_DIR).toBe("/selected");
+  expect(selectedAccount).not.toHaveProperty("ANTHROPIC_API_KEY");
+
+  const explicitKey = childEnvironment({ ...base, environment: { CLAUDE_CONFIG_DIR: "/selected", ANTHROPIC_API_KEY: "agent-key" } }, "https://weft.example", host);
+  expect(explicitKey.ANTHROPIC_API_KEY).toBe("agent-key");
+
+  const emptyKey = childEnvironment({ ...base, environment: { CLAUDE_CONFIG_DIR: "/selected", ANTHROPIC_API_KEY: "  " } }, "https://weft.example", host);
+  expect(emptyKey).not.toHaveProperty("ANTHROPIC_API_KEY");
+
+  const legacy = childEnvironment(base, "https://weft.example", host);
+  expect(legacy.ANTHROPIC_API_KEY).toBe("host-key");
+
+  const codex = childEnvironment({ ...base, agentCli: "codex", environment: { CLAUDE_CONFIG_DIR: "/selected" } }, "https://weft.example", host);
+  expect(codex.ANTHROPIC_API_KEY).toBe("host-key");
+});
+
+test("Runtime environment values are redacted from CLI output before it is saved", () => {
+  expect(redactRuntimeEnvironment('{"message":"selected-api-key","other":"safe"}', { ANTHROPIC_API_KEY: "selected-api-key" })).toBe('{"message":"[REDACTED]","other":"safe"}');
+  expect(redactRuntimeEnvironment('{"message":"selected\\\"key"}', { ANTHROPIC_API_KEY: 'selected"key' })).toBe('{"message":"[REDACTED]"}');
+  expect(redactRuntimeEnvironment("inherited-key", undefined, { ANTHROPIC_API_KEY: "inherited-key" })).toBe("[REDACTED]");
+  expect(redactRuntimeEnvironment("openai-key run-token", undefined, { OPENAI_API_KEY: "openai-key", WEFT_TOKEN: "run-token" })).toBe("[REDACTED] [REDACTED]");
+});
+
+test("stream output redaction catches a JSON-escaped configured secret split across chunks", async () => {
+  const secret = 'quoted"api\\key';
+  const encoded = JSON.stringify({ message: secret });
+  const chunks = [encoded.slice(0, 18), encoded.slice(18, 27), encoded.slice(27) + "\n"];
+  const stream = new ReadableStream<Uint8Array>({ start(controller) { for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk)); controller.close(); } });
+  const lines: string[] = [];
+  await consumeRedactedOutput(stream, { ANTHROPIC_API_KEY: secret }, {}, async (line) => { lines.push(line); });
+  expect(lines).toEqual(['{"message":"[REDACTED]"}']);
 });
 
 test("weft daemon start says to run weft login when the CLI token is missing", async () => {

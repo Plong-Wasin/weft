@@ -4,6 +4,16 @@ import type { Database } from "@weft/db";
 import { activities, agentAccess, agentProjects, agentSkills, agents, daemons, projects, runs, runtimes, runtimeProfiles, skills, users, workspaceMembers, workspaces } from "@weft/db";
 import { agentMonthlyUsage } from "./agent-budget";
 import { agentLimitCeilings, agentLimitDefaults, canManageAgentAccess, initializeAgentAccess, syncAgentProjects } from "./agent-access";
+
+/** Apply only this editor's changes to the current set, preserving grants changed by another editor since its snapshot. */
+function mergeAccessSet(base: string[], desired: string[], current: string[]) {
+  const baseSet = new Set(base);
+  const desiredSet = new Set(desired);
+  const merged = new Set(current);
+  for (const id of baseSet) if (!desiredSet.has(id)) merged.delete(id);
+  for (const id of desiredSet) if (!baseSet.has(id)) merged.add(id);
+  return [...merged];
+}
 import { enqueueJob } from "./jobs";
 import { cancelAgentRuns, revokeAgentRuns } from "./runs";
 import { auditAgentChange } from "./agent-audit";
@@ -274,7 +284,7 @@ export function createAgentActions(db: Database) {
             allowMemberActions: input.allowMemberActions ?? agent.allowMemberActions,
             allowFeatureActions: input.allowFeatureActions ?? agent.allowFeatureActions,
             allowExportActions: input.allowExportActions ?? agent.allowExportActions,
-            runtimeId, runtimeProfileId, cliModel: input.cliModel === undefined ? agent.cliModel : input.cliModel, maxConcurrentRuns: input.maxConcurrentRuns ?? agent.maxConcurrentRuns,
+            runtimeId, runtimeEnvironment: runtimeId !== agent.runtimeId ? null : agent.runtimeEnvironment, runtimeProfileId, cliModel: input.cliModel === undefined ? agent.cliModel : input.cliModel, maxConcurrentRuns: input.maxConcurrentRuns ?? agent.maxConcurrentRuns,
           }).where(eq(agents.id, agent.id));
           if (runtimeId !== agent.runtimeId) {
             await database.delete(agentAccess).where(eq(agentAccess.agentId, agent.id));
@@ -343,33 +353,38 @@ export function createAgentActions(db: Database) {
     },
     setAgentProjectAccess: {
       name: "set_agent_project_access", kind: "write" as const,
-      input: Type.Object({ agentId: uuid(), allProjects: Type.Boolean(), projectIds: Type.Array(uuid()) }), output: agentOutput,
-      handler: async (context: Context, input: { agentId: string; allProjects: boolean; projectIds: string[] }) => db.transaction(async (transaction) => {
+      input: Type.Object({ agentId: uuid(), allProjects: Type.Boolean(), projectIds: Type.Array(uuid()), baseAllProjects: Type.Optional(Type.Boolean()), baseProjectIds: Type.Optional(Type.Array(uuid())) }), output: agentOutput,
+      handler: async (context: Context, input: { agentId: string; allProjects: boolean; projectIds: string[]; baseAllProjects?: boolean; baseProjectIds?: string[] }) => db.transaction(async (transaction) => {
         const database = tx(transaction);
         const agent = await loadAdminAgent(database, context, input.agentId, true);
-        const ids = input.allProjects ? [] : [...new Set(input.projectIds)];
+        const allProjects = input.baseAllProjects !== undefined && input.allProjects === input.baseAllProjects ? agent.allProjects : input.allProjects;
+        const ids = allProjects ? [] : input.baseProjectIds
+          ? mergeAccessSet(input.baseProjectIds, input.projectIds, (await database.select({ projectId: agentProjects.projectId }).from(agentProjects).where(eq(agentProjects.agentId, agent.id))).map((row) => row.projectId))
+          : [...new Set(input.projectIds)];
         if (ids.length > 0) {
           const found = await database.select({ id: projects.id }).from(projects).where(and(eq(projects.workspaceId, agent.workspaceId), inArray(projects.id, ids)));
           if (found.length !== ids.length) throw new ActionError("Projects must belong to the Agent's workspace", 400);
         }
-        await database.update(agents).set({ allProjects: input.allProjects }).where(eq(agents.id, agent.id));
+        await database.update(agents).set({ allProjects }).where(eq(agents.id, agent.id));
         await database.delete(agentProjects).where(eq(agentProjects.agentId, agent.id));
         if (ids.length > 0) await database.insert(agentProjects).values(ids.map((projectId) => ({ agentId: agent.id, projectId })));
-        await syncAgentProjects(database, { ...agent, allProjects: input.allProjects });
+        await syncAgentProjects(database, { ...agent, allProjects });
         await initializeAgentAccess(database, agent.id);
-        await auditAgentChange(database, { workspaceId: agent.workspaceId, entityType: "agent", entityId: agent.id, field: "projects", oldValue: { allProjects: agent.allProjects }, newValue: { allProjects: input.allProjects, projectIds: ids }, actorId: context.userId });
+        await auditAgentChange(database, { workspaceId: agent.workspaceId, entityType: "agent", entityId: agent.id, field: "projects", oldValue: { allProjects: agent.allProjects }, newValue: { allProjects, projectIds: ids }, actorId: context.userId });
         return presentOne(database, agent.id);
       }),
     },
     setAgentAccess: {
       name: "set_agent_access", kind: "write" as const,
-      input: Type.Object({ agentId: uuid(), userIds: Type.Array(Type.String({ minLength: 1 })) }), output: agentOutput,
-      handler: async (context: Context, input: { agentId: string; userIds: string[] }) => db.transaction(async (transaction) => {
+      input: Type.Object({ agentId: uuid(), userIds: Type.Array(Type.String({ minLength: 1 })), baseUserIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }))) }), output: agentOutput,
+      handler: async (context: Context, input: { agentId: string; userIds: string[]; baseUserIds?: string[] }) => db.transaction(async (transaction) => {
         const database = tx(transaction);
         const [agent] = await database.select().from(agents).where(eq(agents.id, input.agentId)).for("update");
         if (!agent) throw new ActionError("Agent not found", 404);
         if (!(await canManageAgentAccess(database, agent, context.userId))) throw new ActionError("Only the Runtime owner can manage access to this Code-capable Agent; an Admin manages other Agents", 403);
-        const ids = [...new Set(input.userIds)];
+        const ids = input.baseUserIds
+          ? mergeAccessSet(input.baseUserIds, input.userIds, (await database.select({ userId: agentAccess.userId }).from(agentAccess).where(eq(agentAccess.agentId, agent.id))).map((row) => row.userId))
+          : [...new Set(input.userIds)];
         if (ids.length) {
           const people = await database.select({ userId: workspaceMembers.userId }).from(workspaceMembers)
             .innerJoin(users, eq(users.id, workspaceMembers.userId)).where(and(eq(workspaceMembers.workspaceId, agent.workspaceId), inArray(workspaceMembers.userId, ids), eq(users.isAgent, false)));

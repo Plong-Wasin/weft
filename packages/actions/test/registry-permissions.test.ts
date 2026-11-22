@@ -17,7 +17,7 @@ afterAll(async () => client.end());
  */
 
 /** Actions that only touch the caller's own data, so they legitimately succeed for any signed-in user. */
-const ownDataActions = new Set(["create_api_token", "list_api_tokens", "revoke_api_token", "list_authorized_apps", "revoke_authorized_app", "get_my_locale", "set_my_locale", "list_notifications", "mark_notification_read", "mark_all_notifications_read", "unread_notification_count", "list_my_sessions", "revoke_my_session", "sign_out_everywhere", "acknowledge_security_notice", "get_my_email_preferences", "set_my_email_preferences"]);
+const ownDataActions = new Set(["create_api_token", "list_api_tokens", "revoke_api_token", "list_authorized_apps", "revoke_authorized_app", "get_my_locale", "set_my_locale", "list_notifications", "mark_notification_read", "mark_notification_unread", "mark_all_notifications_read", "unread_notification_count", "list_my_sessions", "revoke_my_session", "sign_out_everywhere", "acknowledge_security_notice", "get_my_email_preferences", "set_my_email_preferences"]);
 /** Succeeds or fails on a bearer secret rather than on membership. */
 const bearerSecretActions = new Set(["accept_invite", "register_daemon"]);
 
@@ -144,7 +144,8 @@ test.concurrent("sanity: with these inputs a workspace Admin reaches past the pe
     // join_project is refused to everyone for a private project, Admin included: a business rule, not a gate.
     // Runtime profiles are changed only by the Runtime owner (ticket 22): an Admin on someone else's computer is refused by design, a business rule, not a gate.
     // undo_auto_rule_change needs a real automatic change: the probe's id is not found, so the Action answers 404 (a business rule, not a gate).
-    expect(refused).toEqual(["undo_auto_rule_change", "join_project", "cancel_asset_upload", "set_agent_runtime_profile", "update_runtime_profile", "delete_runtime_profile"]);
+    // The fixture Agent has no Runtime; environment settings require a bound Runtime owner.
+    expect(refused).toEqual(["undo_auto_rule_change", "join_project", "cancel_asset_upload", "set_agent_runtime_profile", "get_agent_runtime_environment", "set_agent_runtime_environment", "update_runtime_profile", "delete_runtime_profile"]);
   });
 });
 

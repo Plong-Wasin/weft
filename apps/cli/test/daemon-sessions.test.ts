@@ -24,6 +24,11 @@ echo "CWD $(pwd)" >> "${log}"
 case " $* " in
   *" --resume sess-gone "*) echo "No conversation found with session ID: sess-gone" >&2; exit 1 ;;
 esac
+if [ "$CLAUDE_CONFIG_DIR" = "/invalid-account" ]; then
+  echo "AUTH $CLAUDE_CONFIG_DIR \${ANTHROPIC_API_KEY:-missing}" >> "${log}"
+  echo "Authentication failed for selected Claude account" >&2
+  exit 1
+fi
 case " $* " in
   *" --resume sess-1 "*) remembered=$(cat memory.txt 2>/dev/null || echo missing) ;;
   *) remembered=none; echo "round one" > memory.txt ;;
@@ -36,11 +41,11 @@ echo "{\\"type\\":\\"result\\",\\"result\\":\\"remembered: $remembered\\",\\"ses
 type Recorded = { path: string; body: any };
 
 /** A claimed Run with the fields the Daemon reads; the session plan is what the server sent at claim. */
-function claimedRun(session: { folder: string; resumeSessionId: string | null; reason: string } | null | undefined, runId = "run-1") {
-  return { runId, runtimeId: "rt-1", agentCli: "claude" as const, instructions: "Do it", request: "Request", model: null, token: "weft_run_x", workspaceId: "ws-1", projectId: "pr-1", workItemId: "wi-1", workItemDisplayId: "ALP-7", skills: [], timeoutSeconds: 60, session };
+function claimedRun(session: { folder: string; resumeSessionId: string | null; reason: string } | null | undefined, runId = "run-1", environment?: Record<string, string>) {
+  return { runId, runtimeId: "rt-1", agentCli: "claude" as const, instructions: "Do it", request: "Request", model: null, token: "weft_run_x", workspaceId: "ws-1", projectId: "pr-1", workItemId: "wi-1", workItemDisplayId: "ALP-7", skills: [], timeoutSeconds: 60, session, environment };
 }
 
-async function setup(retired: string[] = []) {
+async function setup(retired: string[] = [], hostEnvironment: Record<string, string> = {}) {
   const bin = await scratchDirectory("weft-session-bin-");
   const sessionsRoot = await scratchDirectory("weft-sessions-");
   const log = join(bin, "claude.log");
@@ -52,8 +57,8 @@ async function setup(retired: string[] = []) {
     if (path.endsWith("/api/daemon/session-folders/check")) return { retired };
     return { ok: true };
   };
-  const environment = { env: { PATH: `${bin}:${Bun.env.PATH}`, HOME: bin }, sessionsRoot };
-  const run = (session: Parameters<typeof claimedRun>[0], runId?: string) => executeRun(environment, call, "https://weft.example", claimedRun(session, runId) as any, new Map());
+  const environment = { env: { PATH: `${bin}:${Bun.env.PATH}`, HOME: bin, ...hostEnvironment }, sessionsRoot };
+  const run = (session: Parameters<typeof claimedRun>[0], runId?: string, runtimeEnvironment?: Record<string, string>) => executeRun(environment, call, "https://weft.example", claimedRun(session, runId, runtimeEnvironment) as any, new Map());
   const argsOf = async () => (await readFile(log, "utf8")).split("\n").filter((line) => line.startsWith("ARGS"));
   return { sessionsRoot, log, call, calls, run, argsOf, folderPath: (folder: string) => join(sessionsRoot, folder) };
 }
@@ -95,6 +100,15 @@ test("a CLI that rejects the resume does not fail the Run: it retries as a new S
   expect(args).toHaveLength(2);
   expect(args[0]).toContain("--resume sess-gone");
   expect(args[1]).not.toContain("--resume");
+});
+
+test("a configured Claude account that fails authentication fails the Run without falling back to the host account", async () => {
+  const ctx = await setup([], { ANTHROPIC_API_KEY: "host-default-key" });
+  await mkdir(ctx.folderPath(FOLDER), { recursive: true });
+  await ctx.run({ folder: FOLDER, resumeSessionId: null, reason: "first" }, "run-invalid-account", { CLAUDE_CONFIG_DIR: "/invalid-account" });
+  expect(finishOf(ctx.calls)).toMatchObject({ status: "failed", failureReason: "cli_exit" });
+  expect(await readFile(ctx.log, "utf8")).toContain("AUTH /invalid-account missing");
+  expect(await readFile(ctx.log, "utf8")).not.toContain("host-default-key");
 });
 
 test("a Run on the Weft server or without a work item never gets a folder or a Session", async () => {

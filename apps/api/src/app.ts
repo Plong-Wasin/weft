@@ -88,7 +88,7 @@ export function createApp(
 ) {
   const integrations = features.integrations ?? integrationsEnabled();
   const outboundWebhooks = features.outboundWebhooks ?? outboundWebhooksEnabled();
-  const aiSwitch: AiState = features.ai === undefined ? aiState(Bun.env) : features.ai ? { enabled: true, reason: null } : { enabled: false, reason: "switched_off" };
+  const aiSwitch: AiState = features.ai === undefined ? aiState({ ...process.env, ...aiOptions.aiEnv }) : features.ai ? { enabled: true, reason: null } : { enabled: false, reason: "switched_off" };
   const limitSettings: RateLimitSettings = { ...rateLimitSettings(), ...limits.settings };
   const limitClock = limits.now ?? Date.now;
   const trustedProxyHops = aiOptions.trustedProxyHops ?? Number(Bun.env.TRUSTED_PROXY_HOPS ?? 0);

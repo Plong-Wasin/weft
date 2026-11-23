@@ -24,7 +24,7 @@ import { MenuItem, Popover } from "./shell/popover";
 import { Dialog, DialogActions } from "./dialog";
 import { TableControls } from "./table-controls";
 import { addRowAfter, goToNextCell } from "@tiptap/pm/tables";
-import { TextSelection } from "@tiptap/pm/state";
+import { PluginKey, TextSelection } from "@tiptap/pm/state";
 import type { WikiPaperSize } from "./wiki-pdf";
 import { WikiBubbleMenu } from "./wiki-bubble-menu";
 import { WikiBlockControls } from "./wiki-block-controls";
@@ -90,12 +90,15 @@ async function call<T>(name: string, body: unknown): Promise<T | null> {
 
 
 function pageMentions(people: React.RefObject<Member[]>) {
+  // The key is shared with the list, so an outside pointer-down can exit this suggestion.
+  const pluginKey = new PluginKey("mentionSuggestion");
   return Mention.configure({
     HTMLAttributes: { class: "mention" },
     suggestion: {
       char: "@",
+      pluginKey,
       items: ({ query }: { query: string }) => (people.current ?? []).filter((person) => person.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())).sort((a, b) => Number(!!a.isAgent) - Number(!!b.isAgent) || a.name.localeCompare(b.name)).slice(0, 8).map(({ userId, name, isAgent, codeCapable }) => ({ id: userId, label: name, isAgent, codeCapable })),
-      render: mentionRender("wiki.mentionMembers"),
+      render: mentionRender("wiki.mentionMembers", pluginKey),
     },
   });
 }

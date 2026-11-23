@@ -16,6 +16,11 @@ test("Thai strings keep the placeholders of the English string", () => {
   }
 });
 
+test("Intake rejected status uses the same outcome word as the tab in English and Thai", () => {
+  expect(resources.en["intake.status.rejected"]).toBe(resources.en["intake.tab.rejected"]);
+  expect(resources.th["intake.status.rejected"]).toBe(resources.th["intake.tab.rejected"]);
+});
+
 test("Thai strings are actually translated (contain Thai script) except brand, language name, acronym and format-only strings", () => {
   const untranslated = (Object.keys(resources.en) as Array<keyof typeof resources.en>)
     .filter((key) => !/[฀-๿]/.test(resources.th[key]) && resources.th[key] === resources.en[key]);

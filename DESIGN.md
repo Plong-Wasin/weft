@@ -4,6 +4,18 @@ This document records the design system as the web app ships it today. It was de
 
 Product context and terms: see the product brief and the glossary at the repo root. UI copy uses glossary terms (Work item, Project, Cycle, Module, Intake, Wiki page) and avoids the terms the glossary lists as alternatives.
 
+## Direction
+
+The product owner wants a tool that can do many things and still feels easy and uncluttered, in the spirit of Height. Plane is the structural base only (ADR-0019); the look below is the target, and the sections after it describe what ships today.
+
+- **Capability stays, clutter goes.** Every capability remains reachable; it is not all visible at once.
+- **One primary action per row, card and screen.** The other actions live one step away: a "more" menu, or on hover and focus. They are always reachable by keyboard and by touch, so nothing depends on hover alone.
+- **Separate with space and type, not boxes.** Use whitespace, weight and size to group. A border or card must carry meaning (a container the person acts on, a boundary of a danger zone), not decorate.
+- **Quiet by default.** Neutral surfaces. The accent colour marks the primary action and focus; the status colours mark status only.
+- **Conversation reads as a calm stream.** Comments, activity and the AI chat are stacked, lightly separated entries with the reply field next to what is being replied to.
+- **Keyboard is the fast path.** The command palette and shortcuts reach every frequent action; every menu item also has a keyboard path.
+- **Destructive actions ask.** Delete and similar actions confirm and sit apart from the safe ones.
+
 ## Tokens
 
 - All colour and most scale values are CSS custom properties defined once, in the token sheet, and read by Tailwind utilities in the main style sheet.

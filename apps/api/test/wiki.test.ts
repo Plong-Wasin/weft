@@ -92,7 +92,7 @@ test.concurrent("published Wiki links expose content only and are revoked by ren
     expect(JSON.stringify(published)).not.toContain("member-secret-id");
     expect(JSON.stringify(published)).not.toContain("secret-id");
     expect(JSON.stringify(published)).not.toContain("asset-block-secret");
-    expect(published).toEqual({ title: "Public guide", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "visible words " }, { type: "text", text: "@member" }, { type: "text", text: " " }, { type: "text", text: "DOC-19" }] }] } });
+    expect(published).toEqual({ title: "Public guide", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "visible words " }, { type: "text", text: "@member" }, { type: "text", text: " " }, { type: "text", text: "[work item]" }] }] } });
     const [collection] = await transaction.select().from(collections).where(eq(collections.id, (await transaction.select({ collectionId: wikiPages.collectionId }).from(wikiPages).where(eq(wikiPages.id, page.id)))[0]!.collectionId!));
     await post("set_collection_visibility", { collectionId: collection!.id, visibility: "private" }, owner);
     expect((await app.handle(new Request(`http://localhost/published/${first.token}`))).status).toBe(404);
@@ -119,6 +119,39 @@ test.concurrent("published Wiki links expose content only and are revoked by ren
     const deletedLink = await (await post("publish_wiki_page", { pageId: deleted.id }, owner)).json() as { token: string };
     await post("delete_wiki_page", { pageId: deleted.id }, owner);
     expect((await app.handle(new Request(`http://localhost/published/${deletedLink.token}`))).status).toBe(404);
+  });
+});
+
+test.concurrent("published Wiki content hides references to work items in private Projects", async () => {
+  await withRollback(db, async (transaction) => {
+    const app = createApp(undefined, transaction);
+    const post = async (name: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost/actions/${name}`, {
+      method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+    }));
+    const signUp = async () => (await app.handle(new Request("http://localhost/api/auth/sign-up/email", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Owner", email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" }),
+    }))).headers.get("set-cookie")!.split(";")[0]!;
+    const owner = await signUp();
+    const workspace = await (await post("create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, owner)).json() as { id: string };
+    const project = await (await post("create_project", { workspaceId: workspace.id, name: "Secret project", key: `SEC${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private" }, owner)).json() as { id: string };
+    const item = await (await post("create_work_item", { projectId: project.id, title: "Secret work item title" }, owner)).json() as { id: string };
+    const shelf = await (await post("create_collection", { workspaceId: workspace.id, name: "Guides" }, owner)).json() as { id: string };
+    const page = await (await post("create_wiki_page", { workspaceId: workspace.id, collectionId: shelf.id, title: "Public guide" }, owner)).json() as { id: string };
+    await transaction.update(wikiPages).set({ content: { type: "doc", content: [{ type: "paragraph", content: [
+      { type: "text", text: "Ordinary text " },
+      { type: "mention", attrs: { id: `work-item:${item.id}`, label: "Secret work item title" } },
+      { type: "text", text: "Secret work item title", marks: [{ type: "link", attrs: { href: `weft://work-item/${item.id}`, kind: "work-item", targetId: item.id, target: "Secret work item title" } }] },
+      { type: "text", text: " External link", marks: [{ type: "link", attrs: { href: "https://example.test/path" } }] },
+    ] }] } }).where(eq(wikiPages.id, page.id));
+    const published = await (await post("publish_wiki_page", { pageId: page.id }, owner)).json() as { token: string };
+    const response = await app.handle(new Request(`http://localhost/published/${published.token}`));
+    expect(response.status).toBe(200);
+    const body = JSON.stringify(await response.json());
+    expect(body).not.toContain("Secret work item title");
+    expect(body).not.toContain(item.id);
+    expect(body).toContain("Ordinary text ");
+    expect(body).toContain("https://example.test/path");
+    expect(body).toContain("External link");
   });
 });
 

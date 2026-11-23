@@ -280,7 +280,7 @@ export function createNotificationActions(db: Database) {
       projectId: workItems.projectId, runProjectId: runs.projectId, runWorkspaceId: runs.workspaceId, projectKey: projects.key, sequence: workItems.sequence, title: workItems.title, deletedAt: workItems.deletedAt,
       intakeId: intakeItems.id, intakeOutcome: intakeItems.outcome,
       recurrenceProjectId: recurrences.projectId,
-      pageTitle: wikiPages.title, pageDeletedAt: wikiPages.deletedAt, pageAccess: wikiPages.access, pageOwnerId: wikiPages.ownerId, pageProjectId: wikiPages.projectId,
+      pageTitle: wikiPages.title, pageDeletedAt: wikiPages.deletedAt, pageAccess: wikiPages.access, pageOwnerId: wikiPages.ownerId, pageProjectId: wikiPages.projectId, pageCollectionId: wikiPages.collectionId,
       commentId: notifications.commentId, actorId: notifications.actorId,
       actorName: users.name, readAt: notifications.readAt, createdAt: notifications.createdAt,
     }).from(notifications)
@@ -301,7 +301,17 @@ export function createNotificationActions(db: Database) {
       const [share] = row.pageAccess === "private" && row.pageOwnerId !== userId && !row.pageProjectId
         ? await db.select({ userId: wikiPageShares.userId }).from(wikiPageShares).where(and(eq(wikiPageShares.pageId, row.wikiPageId), eq(wikiPageShares.userId, userId)))
         : [];
-      if (row.pageDeletedAt || (row.pageAccess === "private" && row.pageOwnerId !== userId && !share)) visiblePages.set(row.wikiPageId, false);
+      let hiddenByCollection = false;
+      if (!row.pageProjectId && row.pageCollectionId) {
+        const [collection] = await db.select({ visibility: collections.visibility, ownerId: collections.ownerId }).from(collections)
+          .where(and(eq(collections.id, row.pageCollectionId), isNull(collections.deletedAt)));
+        if (collection?.visibility === "private" && collection.ownerId !== userId && !share) {
+          const [member] = await db.select({ userId: collectionMembers.userId }).from(collectionMembers)
+            .where(and(eq(collectionMembers.collectionId, row.pageCollectionId), eq(collectionMembers.userId, userId)));
+          hiddenByCollection = !member;
+        }
+      }
+      if (row.pageDeletedAt || hiddenByCollection || (row.pageAccess === "private" && row.pageOwnerId !== userId && !share)) visiblePages.set(row.wikiPageId, false);
       else if (!row.pageProjectId) visiblePages.set(row.wikiPageId, true);
       else {
         const [member] = await db.select({ userId: projectMembers.userId }).from(projectMembers).where(and(eq(projectMembers.projectId, row.pageProjectId), eq(projectMembers.userId, userId)));

@@ -8,6 +8,7 @@ import { createQueryClient } from "./query-client";
 import { initLocale } from "./locale";
 import { initTheme } from "./theme";
 import { paths } from "./routes";
+import { useAiState } from "./ai-flag";
 import { HomeRedirect, RootLayout } from "./layouts/root-layout";
 import { WorkspaceLayout } from "./layouts/workspace-layout";
 import { ProjectLayout } from "./layouts/project-layout";
@@ -62,6 +63,13 @@ function WorkspaceNotFound() {
   return <section className="grid gap-3 p-6"><p role="alert">{translate("app.notFound")}</p><Link to={paths.projects(workspaceSlug)}>{translate("projects.back")}</Link></section>;
 }
 
+/** AI routes exist only while AI is on: with AI off they are unknown routes, and nothing shows until the config has answered. */
+function AiGate({ children }: { children: React.ReactNode }) {
+  const state = useAiState();
+  if (state === "unknown") return null;
+  return state === "on" ? <>{children}</> : <WorkspaceNotFound />;
+}
+
 function AppRoutes() {
   return <Routes>
     <Route path="p/:token" element={<PublishedWikiPage />} />
@@ -105,8 +113,8 @@ function AppRoutes() {
         <Route path="notifications" element={<NotificationsRoute />} />
         <Route path="wiki" element={<WikiRoute />} />
         <Route path="wiki/:pageId" element={<WikiRoute />} />
-        <Route path="ai" element={<AiRoute />} />
-        <Route path="ai/:chatId" element={<AiRoute />} />
+        <Route path="ai" element={<AiGate><AiRoute /></AiGate>} />
+        <Route path="ai/:chatId" element={<AiGate><AiRoute /></AiGate>} />
         <Route path="settings" element={<SettingsLayout />}>
           <Route index element={<WorkspaceGeneral />} />
           <Route path="members" element={<WorkspaceMembers />} />
@@ -120,7 +128,7 @@ function AppRoutes() {
           <Route path="connect-ai" element={<ConnectAiSettings />} />
           <Route path="api-tokens" element={<ApiTokensPage />} />
           <Route path="usage" element={<WorkspaceUsage />} />
-          <Route path="ai" element={<WorkspaceAi />} />
+          <Route path="ai" element={<AiGate><WorkspaceAi /></AiGate>} />
           <Route path="integrations" element={<IntegrationsRoute />} />
           <Route path="webhooks" element={<OutboundWebhooksRoute />} />
           <Route path="projects/:projectKey" element={<ProjectSettingsLayout />}>

@@ -1,4 +1,4 @@
-// Browser cases for tickets 10 and 22: the selection toolbar is one compact row above (or below) the selection, its colour button holds Text color and Highlight, and with AI not configured the AI actions stay visible with no card, their explanation shows on press.
+// Browser cases for tickets 10 and 22: the selection toolbar is one compact row above (or below) the selection, its colour button holds Text color and Highlight, and with AI off (no provider key) no AI menu is shown.
 import { chromium, type Browser, type Locator } from "playwright";
 import { translate } from "../packages/shared/src";
 
@@ -58,8 +58,9 @@ try {
   await call("create_wiki_page", { workspaceId, title: "Toolbar page", content: { type: "doc", content: [...filler, { type: "paragraph", content: [{ type: "text", text: "Lower target text" }] }, ...trailing] } });
   const pages = await call<Array<{ id: string; title: string }>>("list_wiki_pages", { workspaceId });
   const wiki = pages.find((row) => row.title === "Toolbar page")!;
-  const aiStatus = await (await context.request.post(`${api}/api/ai/status`, { data: { workspaceId } })).json() as { configured: boolean };
-  check(aiStatus.configured === false, "this flow assumes AI is not configured in the test environment");
+  // With no provider key AI is off, so /api/ai/status answers 404 and the web app shows no AI menu.
+  const aiStatus = await context.request.post(`${api}/api/ai/status`, { data: { workspaceId } });
+  check(aiStatus.status() === 404, "this flow assumes no provider key in the test environment");
 
   await page.goto(`${web}/${slug}/wiki/${wiki.id}`);
   const wikiEditor = page.getByTestId("wiki-editor").locator(".ProseMirror");
@@ -207,31 +208,14 @@ try {
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   console.log("PASS toolbar surface and shadow come from theme tokens in light and dark");
 
-  // AI not configured: selecting text shows the AI actions with no card over the selection; pressing one shows the explanation in the menu.
-  const notConfiguredText = translate("assist.notConfigured");
+  // AI off (no provider key counts as off, so the server reports AI off): selecting text shows the formatting toolbar and no AI menu.
   const aiMenu = page.getByRole("toolbar", { name: translate("assist.menu"), exact: true });
-  const rephrase = aiMenu.getByRole("button", { name: translate("assist.task.rephrase"), exact: true });
-  await rephrase.waitFor();
-  check(await aiMenu.getByRole("button", { name: translate("assist.task.summarize"), exact: true }).count() === 1, "AI actions are not visible while AI is not configured");
-  check(await page.getByRole("status").filter({ hasText: notConfiguredText }).count() === 0, "selecting text opened the AI-not-configured card");
-  check(await rephrase.getAttribute("title") === notConfiguredText, "AI action has no tooltip with the not-configured explanation");
-  if (Bun.env.E2E_SHOT_DIR) await page.screenshot({ path: `${Bun.env.E2E_SHOT_DIR}/wiki-ai-not-configured-selection.png` });
-  console.log("PASS selecting text with AI not configured shows the AI actions and no AI card");
-
-  await rephrase.click();
-  const explanation = aiMenu.getByRole("status").filter({ hasText: notConfiguredText });
-  await explanation.waitFor();
-  check(await page.getByRole("status").filter({ hasText: notConfiguredText }).count() === 1, "pressing an AI action showed the explanation outside the AI menu");
-  check(await page.getByText(translate("assist.loading"), { exact: true }).count() === 0, "pressing an AI action with AI not configured started a run");
-  if (Bun.env.E2E_SHOT_DIR) await page.screenshot({ path: `${Bun.env.E2E_SHOT_DIR}/wiki-ai-not-configured-pressed.png` });
-  console.log("PASS pressing an AI action shows the not-configured explanation in the menu");
-
-  // A new selection hides the explanation again.
-  await wikiEditor.getByText("Filler line 30", { exact: true }).click();
-  await page.keyboard.press("End");
-  await page.keyboard.press("Shift+Home");
-  await explanation.waitFor({ state: "detached" });
-  console.log("PASS the explanation hides on a new selection");
+  await wikiEditor.getByText("Lower target text", { exact: true }).click();
+  await page.keyboard.press("Shift+ArrowLeft");
+  await bubble.waitFor();
+  check(await aiMenu.count() === 0, "the AI menu is shown while AI is off");
+  check(await page.getByRole("status").filter({ hasText: translate("assist.notConfigured") }).count() === 0, "an AI-not-configured note is shown while AI is off");
+  console.log("PASS with AI off, selecting text shows no AI menu");
 
   console.log("e2e selection-toolbar: ok");
   await browser.close();

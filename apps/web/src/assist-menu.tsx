@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { Editor } from "@tiptap/react";
 import { translate, type MessageKey } from "@weft/shared";
 import { aiStatusKey, requestAiStatus } from "./ai-status";
+import { AiOnly } from "./ai-flag";
 import { ASSIST_TASKS, createAssistSession, hasNonTextContent, insertBelow, markAssistRange, replaceSelection, getAssistRange, type AssistTask, type AssistView } from "./editor-assist";
 
 const buttonClass = "secondary !px-2 !py-1 !text-12";
@@ -59,7 +60,7 @@ function useSelectionKey(editor: Editor): string {
 /** AI assist bubble menu for any Tiptap editor that has the `AiAssist` extension. Render it inside a `relative` wrapper around the editor. */
 export function AssistMenu({ editor, workspaceId }: { editor: Editor | null; workspaceId: string }) {
   if (!editor) return null;
-  return <AssistMenuFor editor={editor} workspaceId={workspaceId} />;
+  return <AiOnly><AssistMenuFor editor={editor} workspaceId={workspaceId} /></AiOnly>;
 }
 
 function AssistMenuFor({ editor, workspaceId }: { editor: Editor; workspaceId: string }) {

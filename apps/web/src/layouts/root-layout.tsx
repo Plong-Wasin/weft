@@ -1,4 +1,5 @@
 import { setIntegrationsEnabled } from "../integrations-flag";
+import { setAiEnabled } from "../ai-flag";
 import { setOutboundWebhooksEnabled } from "../outbound-webhooks-flag";
 import React from "react";
 import { Navigate, Outlet, useMatch, useNavigate, useOutletContext } from "react-router";
@@ -111,9 +112,10 @@ export function RootLayout() {
   React.useEffect(() => {
     void (async () => {
       const response = await fetch(`${api}/api/config`).catch(() => null);
-      const config = response?.ok ? await response.json() as { defaultLocale?: string | null; minPasswordLength?: number; emailEnabled?: boolean; integrationsEnabled?: boolean; outboundWebhooksEnabled?: boolean } : {};
+      const config = response?.ok ? await response.json() as { defaultLocale?: string | null; minPasswordLength?: number; emailEnabled?: boolean; integrationsEnabled?: boolean; outboundWebhooksEnabled?: boolean; ai?: { enabled?: boolean } } : {};
       setIntegrationsEnabled(config.integrationsEnabled === true);
       setOutboundWebhooksEnabled(config.outboundWebhooksEnabled === true);
+      setAiEnabled(config.ai?.enabled === true);
       const language = config.defaultLocale ?? null;
       setEmailEnabled(config.emailEnabled === true);
       setMinPasswordLength(Number.isInteger(config.minPasswordLength) && (config.minPasswordLength ?? 0) > 0 ? config.minPasswordLength! : 10);

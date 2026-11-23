@@ -1,4 +1,5 @@
 import { useIntegrationsEnabled } from "../integrations-flag";
+import { AiOnly } from "../ai-flag";
 import { adminState } from "../admin-state";
 import { useOutboundWebhooksEnabled } from "../outbound-webhooks-flag";
 import React from "react";
@@ -211,7 +212,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
         <ul className="grid gap-0.5">{favorites.map((page) => <li key={page.id}><NavLink to={page.projectId ? paths.page(workspace.slug, (data ?? []).find((project) => project.id === page.projectId)?.key ?? "", page.id) : paths.wikiPage(workspace.slug, page.id)} className={itemClass}><FileText aria-hidden size={14} /><span className="truncate">{page.title}</span></NavLink></li>)}</ul>
       </>}
     </>}
-    {section === "ai" && <AiSidebar workspace={workspace} activeId={aiChatId} />}
+    {section === "ai" && <AiOnly><AiSidebar workspace={workspace} activeId={aiChatId} /></AiOnly>}
     {inProjectSettings && projectKey && <>
       <NavLink to={paths.workspaceSettings(workspace.slug)} className={(state) => `${itemClass(state)} mb-2`}><ArrowLeft aria-hidden size={14} className="shrink-0" />{translate("sidebar.backToWorkspace")}</NavLink>
       <SettingsProjectNav workspace={workspace} projects={[...projectSort.starred, ...projectSort.others]} projectKey={projectKey} />
@@ -229,7 +230,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       <NavLink to={paths.workspaceSkills(workspace.slug)} className={itemClass}>{translate("settings.skills")}</NavLink>
       <NavLink to={paths.workspaceExports(workspace.slug)} className={itemClass}>{translate("settings.exports")}</NavLink>
       {isWorkspaceAdmin && <NavLink to={paths.workspaceUsage(workspace.slug)} className={itemClass}>{translate("settings.usage")}</NavLink>}
-      <NavLink to={paths.workspaceAi(workspace.slug)} className={itemClass}>{translate("aiStatus.title")}</NavLink>
+      <AiOnly><NavLink to={paths.workspaceAi(workspace.slug)} className={itemClass}>{translate("aiStatus.title")}</NavLink></AiOnly>
       {integrationsOn && <NavLink to={paths.workspaceIntegrations(workspace.slug)} className={itemClass}>{translate("integrations.title")}</NavLink>}
       {webhooksOn && <NavLink to={paths.workspaceWebhooks(workspace.slug)} className={itemClass}>{translate("outboundWebhooks.nav")}</NavLink>}
       <NavLink to={paths.workspaceProjectOrder(workspace.slug)} className={itemClass}>{translate("settings.projectOrder")}</NavLink>

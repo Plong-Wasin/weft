@@ -11,6 +11,7 @@ import { TimelinePanel } from "./comments-panel";
 import { RunsPanel } from "./runs-panel";
 import { RelationsPanel } from "./relations-panel";
 import { SidecarTrigger } from "./sidecar";
+import { AiOnly } from "./ai-flag";
 import { Popover, menuItemClass } from "./shell/popover";
 import { AttachmentsPanel } from "./asset-images";
 import { WebLinksPanel } from "./web-links-panel";
@@ -324,7 +325,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
         <span className="shrink-0 font-medium text-primary">{item.displayId}</span>
       </nav>}
     {mode === "page" && <div className="ml-auto flex items-center gap-2">
-      <span className="[&_button]:whitespace-nowrap"><SidecarTrigger context={{ type: "work_item", id: item.displayId, title: item.title }} /></span>
+      <span className="[&_button]:whitespace-nowrap"><AiOnly><SidecarTrigger context={{ type: "work_item", id: item.displayId, title: item.title }} /></AiOnly></span>
       <span className="hidden lg:block"><button type="button" className="icon-button-ghost" data-testid="work-item-properties-toggle" aria-pressed={propertiesOpen} aria-label={t(propertiesOpen ? "workItems.properties.hide" : "workItems.properties.show")} title={t(propertiesOpen ? "workItems.properties.hide" : "workItems.properties.show")} onClick={togglePropertiesPanel}><PanelRight aria-hidden size={16} /></button></span>
       <Popover label={t("workItems.more")} align="right" className="!size-10 shrink-0 border border-subtle bg-surface-1 p-0 sm:hidden" trigger={<MoreHorizontal aria-hidden size={18} />}>
         {(close) => <>

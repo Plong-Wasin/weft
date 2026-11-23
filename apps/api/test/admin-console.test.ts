@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { accounts, createDatabase, sessions, users, workspaceMembers, workspaces } from "@weft/db";
+import { accounts, cliDevices, createDatabase, sessions, users, workspaceMembers, workspaces } from "@weft/db";
 import { eq } from "drizzle-orm";
 import { createApp } from "../src/app";
 
@@ -178,12 +178,16 @@ test.concurrent("session management is refused to API tokens, and an Admin token
     const h = harness(transaction, created);
     const { admin, member, workspace } = await workspaceWithMember(h, created);
     const token = await (await h.call("/actions/create_api_token", { name: "script" }, { cookie: member.cookie })).json() as { token: string; id: string };
+    const deviceToken = await (await h.call("/actions/create_api_token", { name: "CLI @ managed" }, { cookie: member.cookie })).json() as { id: string };
+    await transaction.insert(cliDevices).values({ deviceId: crypto.randomUUID(), ownerId: member.id, hostname: "managed", tokenId: deviceToken.id });
     const bearer = { authorization: `Bearer ${token.token}` };
     expect((await h.call("/actions/list_my_sessions", {}, bearer)).status).toBe(403);
     expect((await h.call("/actions/sign_out_everywhere", {}, bearer)).status).toBe(403);
 
     const listed = await (await h.call("/actions/list_member_api_tokens", { workspaceId: workspace.id, userId: member.id }, { cookie: admin.cookie })).json() as Array<{ id: string; status: string }>;
     expect(listed).toContainEqual(expect.objectContaining({ id: token.id, status: "active" }));
+    expect(listed.map((row) => row.id)).not.toContain(deviceToken.id);
+    expect((await h.call("/actions/revoke_member_api_token", { workspaceId: workspace.id, userId: member.id, tokenId: deviceToken.id }, { cookie: admin.cookie })).status).toBe(409);
 
     // A stranger's token is not visible to this workspace's Admin, even with the right ids.
     const stranger = await h.signUp("Stranger");

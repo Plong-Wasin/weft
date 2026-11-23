@@ -3,10 +3,10 @@ import { setAiEnabled } from "../ai-flag";
 import { setOutboundWebhooksEnabled } from "../outbound-webhooks-flag";
 import React from "react";
 import { Navigate, Outlet, useMatch, useNavigate, useOutletContext } from "react-router";
-import { translate } from "@weft/shared";
+import { getLocale, translate } from "@weft/shared";
 import { action, api } from "../api";
 import { useLiveUpdates } from "../live-updates";
-import { LanguageSwitch, adoptUserLocale, initLocale, useLocale } from "../locale";
+import { LanguageSwitch, adoptUserLocale, initLocale, resolveSessionLocale, useLocale } from "../locale";
 import { paths } from "../routes";
 import type { Current, Workspace } from "../types";
 import { AuthScreen } from "./auth-screen";
@@ -98,7 +98,10 @@ export function RootLayout() {
     if (window.location.pathname === paths.passwordChange()) navigate("/", { replace: true });
     let data: Current | null = loaded;
     if (!data) { setCurrent(null); return; }
-    adoptUserLocale(data.user.locale, data.user.localeSaved !== false);
+    const sessionLocale = resolveSessionLocale(data.user, getLocale());
+    adoptUserLocale(sessionLocale.apply);
+    // Best effort: a failed save leaves the language on this device only, and the next load tries again.
+    if (sessionLocale.persist) void action("set_my_locale", { locale: sessionLocale.apply });
     if (inviteToken) {
       const joined = await action<{ slug: string }>("accept_invite", { token: inviteToken });
       // Reload the user so the joined workspace is in the list before the workspace route opens.
@@ -140,7 +143,7 @@ export function RootLayout() {
   if (resetPending) return <ForcedPasswordReset minPasswordLength={minPasswordLength} notice={resetNotice} languageSwitch={languageSwitch} signOut={signOut} onDone={refresh} />;
   if (current === undefined) return null;
   if (window.location.pathname === paths.resetPassword()) return <ResetPasswordScreen minPasswordLength={minPasswordLength} api={api} languageSwitch={languageSwitch} />;
-  if (current === null) return <AuthScreen api={api} inviteToken={inviteToken} onSignedIn={refresh} languageSwitch={languageSwitch} minPasswordLength={minPasswordLength} emailEnabled={emailEnabled} />;
+  if (current === null) return <AuthScreen api={api} inviteToken={inviteToken} onSignedIn={refresh} languageSwitch={languageSwitch} minPasswordLength={minPasswordLength} emailEnabled={emailEnabled} contextualNotice={window.location.pathname === "/cli/authorize" ? translate("cliDevice.signedOut") : undefined} />;
   if (inviteToken) return <OnboardingShell>
     <h1 className="text-20 font-semibold">{translate("invite.title")}</h1>
     <p role={inviteError ? "alert" : "status"} className={`text-14 ${inviteError ? "text-danger-text" : "text-secondary"}`}>{inviteError ?? translate("invite.joining")}</p>

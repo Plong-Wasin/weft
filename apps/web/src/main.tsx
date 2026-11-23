@@ -30,6 +30,7 @@ import { AccountApiTokensRoute, ApiTokensPage } from "./pages/settings/api-token
 import { SessionsPage } from "./pages/account-security";
 import { AccountNotificationsPage } from "./pages/settings/email-settings";
 import { OAuthConsentPage } from "./pages/oauth-consent";
+import { CliDeviceApprovalPage } from "./pages/cli-device-approval";
 import { ShortcutsPage } from "./pages/shortcuts-page";
 import { ProjectWorkItems } from "./pages/project-work-items";
 import { WorkspaceViewRoute } from "./pages/workspace-view-route";
@@ -76,6 +77,7 @@ function AppRoutes() {
     <Route element={<RootLayout />}>
       <Route path="oauth/sign-in" element={null} />
       <Route path="oauth/consent" element={<OAuthConsentPage />} />
+      <Route path="cli/authorize" element={<CliDeviceApprovalPage />} />
       <Route path="account/api-tokens" element={<AccountApiTokensRoute />} />
       <Route path="account/sessions" element={<SessionsPage />} />
       <Route path="account/password" element={null} />

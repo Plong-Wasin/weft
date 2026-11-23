@@ -1,6 +1,6 @@
 import { Type } from "@sinclair/typebox";
-import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
-import { aiRequests, collectionMembers, collections, comments, confirmations, intakeItems, notifications, projectMembers, projects, recurrences, runs, sessions, users, wikiPageShares, workItems, workItemAssignees, wikiPages, workspaceInvites, workspaceMembers, type Database } from "@weft/db";
+import { and, desc, eq, inArray, isNull, lte, lt, sql } from "drizzle-orm";
+import { aiRequests, apiTokens, cliDeviceAuthorizations, collectionMembers, collections, comments, confirmations, intakeItems, notifications, projectMembers, projects, recurrences, runs, sessions, users, wikiPageShares, workItems, workItemAssignees, wikiPages, workspaceInvites, workspaceMembers, type Database } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
 import { enqueueJob, type JobHandlers } from "./jobs";
@@ -18,6 +18,7 @@ import type { MailLocale } from "./email-templates";
 import { webOriginFromEnv, type Mailer } from "./mail";
 import { outboundDeliveryJobHandler, outboundJobType, purgeOutboundDeliveries } from "./outbound-webhooks";
 import { outboundWebhooksEnabled } from "./outbound-webhooks-flag";
+import { lockCliDeviceLifecycle } from "./api-tokens";
 
 export type NotificationKind = "mention" | "assignment" | "reply" | "intake_accepted" | "intake_rejected" | "intake_duplicate" | "run_confirmation" | "run_skipped" | "wake_skipped" | "recurrence_paused" | "auto_rule" | "secret_output_blocked";
 
@@ -170,7 +171,7 @@ async function fanOut(database: Database, payload: NotifyPayload, job: { id: str
   })));
 }
 
-export const cleanupJobTypes = ["cleanup_invites", "cleanup_sessions", "cleanup_confirmations", "cleanup_ai_requests", "cleanup_exports", "cleanup_notification_emails", "cleanup_integration_deliveries", "cleanup_stale_runtimes"] as const;
+export const cleanupJobTypes = ["cleanup_invites", "cleanup_sessions", "cleanup_confirmations", "cleanup_ai_requests", "cleanup_exports", "cleanup_notification_emails", "cleanup_integration_deliveries", "cleanup_stale_runtimes", "cleanup_cli_device_authorizations"] as const;
 
 /** Every job type the worker handles. */
 /** Sends a signal through the job's transaction, so it goes out only if the notifications commit. */
@@ -220,8 +221,39 @@ export function createJobHandlers(publish: SignalPublisher = publishSignal, runt
     cleanup_integration_deliveries: (database) => purgeIntegrationDeliveries(database, runtime.now?.()),
     // Hourly: removes Runtimes offline for more than seven days with no enabled Agent bound and no unfinished Run (see purgeStaleRuntimes).
     cleanup_stale_runtimes: async (database) => { await purgeStaleRuntimes(database, runtime.now?.() ?? new Date()); },
+    // Device authorization records are audit history. Expired candidates are revoked, while the records remain.
+    cleanup_cli_device_authorizations: async (database) => { await expireCliDeviceAuthorizations(database, runtime.now?.() ?? new Date()); },
     ...(outboundWebhooksEnabled() ? { cleanup_outbound_webhook_deliveries: async (database: Database) => { await purgeOutboundDeliveries(database, runtime.now?.()); } } : {}),
   };
+}
+
+/** Revoke unfinalized credentials at their authorization deadline without changing completed device credentials. */
+export async function expireCliDeviceAuthorizations(database: Database, now = new Date(), onlyId?: string) {
+  let count = 0;
+  for (;;) {
+    const expired = await database.select({ id: cliDeviceAuthorizations.id, userId: cliDeviceAuthorizations.userId, deviceId: cliDeviceAuthorizations.deviceId })
+      .from(cliDeviceAuthorizations)
+      .where(and(lte(cliDeviceAuthorizations.expiresAt, now), inArray(cliDeviceAuthorizations.status, ["pending", "approved", "exchanged", "rotating"]), ...(onlyId ? [eq(cliDeviceAuthorizations.id, onlyId)] : [])))
+      .limit(500);
+    if (!expired.length) break;
+    for (const item of expired) {
+      await database.transaction(async (transaction) => {
+        if (item.userId) await lockCliDeviceLifecycle(transaction as unknown as Database, item.userId, item.deviceId);
+        const [authorization] = await transaction.select({ id: cliDeviceAuthorizations.id, tokenId: cliDeviceAuthorizations.tokenId })
+          .from(cliDeviceAuthorizations).where(and(
+            eq(cliDeviceAuthorizations.id, item.id), lte(cliDeviceAuthorizations.expiresAt, now),
+            inArray(cliDeviceAuthorizations.status, ["pending", "approved", "exchanged", "rotating"]),
+          )).for("update");
+        if (!authorization) return;
+        if (authorization.tokenId) await transaction.update(apiTokens).set({ revokedAt: now })
+          .where(and(eq(apiTokens.id, authorization.tokenId), isNull(apiTokens.revokedAt)));
+        await transaction.update(cliDeviceAuthorizations).set({ status: "expired" })
+          .where(eq(cliDeviceAuthorizations.id, authorization.id));
+        count++;
+      });
+    }
+  }
+  return count;
 }
 
 /** Enqueues one cleanup job per kind unless one is already open. Returns how many were added. */

@@ -1,5 +1,5 @@
-import { and, eq, inArray, isNull } from "drizzle-orm";
-import { activities, agents, confirmations, projects, runs, type Database, workspaceMembers } from "@weft/db";
+import { and, eq, inArray, isNull, or } from "drizzle-orm";
+import { activities, agents, confirmations, projects, runs, runtimes, type Database, workspaceMembers } from "@weft/db";
 import { lockRuntimeRun, scrubRunMessages } from "./runtime-secret-comments";
 
 /** Revokes active Runs; running Runtime work remains stopping until its Daemon cooperatively acknowledges cancellation (the server does not hard-kill the external process). */
@@ -37,6 +37,40 @@ export async function revokeAgentRuns(database: Database, agentId: string, actor
         const { enqueueNotification } = await import("./notifications");
         await enqueueNotification(tx, { kind: "run_skipped", ...(run.workItemId ? { workItemId: run.workItemId } : { runId: run.id }), commentId: run.commentId ?? undefined, actorId, recipientIds: [run.originatorId], detail: options.notifyDetail });
       }
+    });
+  }
+}
+
+/** Cancel work assigned to a revoked CLI device while keeping remote stop confirmation explicit. */
+export async function revokeCliDeviceRuns(database: Database, daemonIds: string[], actorId: string, reason = "cli_device_revoked") {
+  if (daemonIds.length === 0) return;
+  const runtimeIds = database.select({ id: runtimes.id }).from(runtimes).where(inArray(runtimes.daemonId, daemonIds));
+  const boundAgentIds = database.select({ id: agents.id }).from(agents).where(inArray(agents.runtimeId, runtimeIds));
+  const active = await database.select().from(runs).where(and(
+    inArray(runs.status, ["queued", "dispatched", "running", "waiting_confirmation", "awaiting_input", "follow_up", "stopping"]),
+    or(inArray(runs.runtimeId, runtimeIds), inArray(runs.agentId, boundAgentIds)),
+  ));
+  for (const run of active) {
+    await lockRuntimeRun(database, run.id);
+    const [current] = await database.select().from(runs).where(eq(runs.id, run.id)).for("update");
+    if (!current || !["queued", "dispatched", "running", "waiting_confirmation", "awaiting_input", "follow_up", "stopping"].includes(current.status)) continue;
+    const remoteMayBeRunning = ["dispatched", "running", "waiting_confirmation", "awaiting_input", "stopping"].includes(current.status);
+    if (!remoteMayBeRunning) await scrubRunMessages(database, run.id, current.runtimeEnvironmentSecrets);
+    const [updated] = await database.update(runs).set({
+      status: remoteMayBeRunning ? "stopping" : "cancelled",
+      failureReason: reason,
+      ...(remoteMayBeRunning ? {} : { finishedAt: new Date(), runtimeEnvironmentSecrets: null }),
+    }).where(eq(runs.id, run.id)).returning({ status: runs.status });
+    if (!updated) continue;
+    if (!remoteMayBeRunning) {
+      await database.update(confirmations).set({ status: "rejected", result: { withdrawn: true, reason: "run_cancelled" }, resolvedAt: new Date() })
+        .where(and(eq(confirmations.runId, run.id), eq(confirmations.status, "pending")));
+      const { emitRunFinished } = await import("./outbound-webhooks");
+      await emitRunFinished(database, run.id);
+    }
+    if (run.workItemId) await database.insert(activities).values({
+      workspaceId: run.workspaceId, projectId: run.projectId, entityType: "work_item", entityId: run.workItemId,
+      field: "run_revoked", oldValue: { status: current.status }, newValue: { status: updated.status, reason }, actorId, source: "ui",
     });
   }
 }

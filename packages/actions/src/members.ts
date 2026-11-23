@@ -143,6 +143,10 @@ export function createMemberActions(db: Database, now: () => Date = () => new Da
           if (target.role !== "Guest" && input.role === "Guest") {
             await revokeWorkspaceMemberRuns(transaction, input.workspaceId, input.userId, context.userId);
           }
+          if (input.role === "Guest") {
+            const workspaceProjects = await transaction.select({ id: projects.id }).from(projects).where(eq(projects.workspaceId, input.workspaceId));
+            await clearModuleRoles(transaction, { projectIds: workspaceProjects.map((project) => project.id), userId: input.userId });
+          }
           if (target.role !== input.role) await auditAgentChange(transaction, {
             workspaceId: input.workspaceId, entityType: "member", entityId: input.workspaceId, field: "role",
             oldValue: { userId: input.userId, role: target.role }, newValue: { userId: input.userId, role: input.role }, actorId: context.userId,

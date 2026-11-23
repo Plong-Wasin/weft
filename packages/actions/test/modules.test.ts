@@ -83,6 +83,19 @@ test.concurrent("changing a Project role to Guest clears Module roles only in th
   });
 });
 
+test.concurrent("a workspace Admin keeps Module roles when removed from a Project", async () => {
+  await withRollback(db, async (transaction) => {
+    const { modules, projects, admin, member, project } = await setup(transaction);
+    await projects.addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: admin.id, role: "Admin" });
+    await projects.changeProjectMemberRole.handler({ userId: admin.id }, { projectId: project.id, userId: member.id, role: "Admin" });
+    const target = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Admin roles", leadId: admin.id, memberIds: [admin.id] });
+
+    await projects.removeProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: admin.id });
+
+    expect(await modules.getModule.handler({ userId: admin.id }, { moduleId: target.id })).toMatchObject({ leadId: admin.id, memberIds: [admin.id] });
+  });
+});
+
 test.concurrent("Module descriptions are optional Written form Markdown and can be edited and cleared", async () => {
   await withRollback(db, async (transaction) => {
     const { modules, member, project, item } = await setup(transaction);

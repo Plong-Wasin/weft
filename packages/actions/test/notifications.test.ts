@@ -234,6 +234,36 @@ test.concurrent("page mentions are limited to page readers and link to the page 
   });
 });
 
+test.concurrent("revoking private Collection access hides existing Wiki page notifications", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, author, other, inbox } = await setup(transaction);
+    const { createWikiActions } = await import("../src");
+    const wiki = createWikiActions(transaction);
+    const collection = await wiki.createCollection.handler({ userId: author.id }, { workspaceId: workspace.id, name: "Private", visibility: "private" });
+    const page = await wiki.createWikiPage.handler({ userId: author.id }, { workspaceId: workspace.id, collectionId: collection.id, title: "Collection page" });
+    await wiki.shareCollection.handler({ userId: author.id }, { collectionId: collection.id, userId: other.id });
+    await wiki.updateWikiPage.handler({ userId: author.id }, { pageId: page.id, content: doc({ mention: other.id }) });
+    await drain(transaction);
+
+    const before = await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id });
+    expect(before.notifications.some((notice) => notice.wikiPageId === page.id && notice.pageTitle === "Collection page")).toBe(true);
+    expect(before.unreadCount).toBe(1);
+
+    await wiki.revokeCollectionShare.handler({ userId: author.id }, { collectionId: collection.id, userId: other.id });
+    const after = await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id });
+    expect(after.notifications.some((notice) => notice.wikiPageId === page.id)).toBe(false);
+    expect(after.unreadCount).toBe(0);
+
+    const publicCollection = await wiki.createCollection.handler({ userId: author.id }, { workspaceId: workspace.id, name: "Public", visibility: "public" });
+    const publicPage = await wiki.createWikiPage.handler({ userId: author.id }, { workspaceId: workspace.id, collectionId: publicCollection.id, title: "Public page" });
+    await wiki.updateWikiPage.handler({ userId: author.id }, { pageId: publicPage.id, content: doc({ mention: other.id }) });
+    await drain(transaction);
+    const afterPublic = await inbox.listNotifications.handler({ userId: other.id }, { workspaceId: workspace.id });
+    expect(afterPublic.notifications.some((notice) => notice.wikiPageId === publicPage.id)).toBe(true);
+    expect(afterPublic.unreadCount).toBe(1);
+  });
+});
+
 test.concurrent("assigning a member notifies them; self-assignment and unchanged assignees do not", async () => {
   await withRollback(db, async (transaction) => {
     const { workspace, author, other, third, project, items, item, inbox } = await setup(transaction);

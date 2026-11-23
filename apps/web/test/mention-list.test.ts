@@ -48,14 +48,30 @@ test("the shared rich-text mention extension filters, groups and marks inaccessi
   expect(suggestion.render).toBeDefined();
 });
 
+test("structured mentions render with an at sign and shared styling while plain at text stays ordinary", () => {
+  const extension = mentionExtension({ current: [] });
+  const html = extension.options.renderHTML({
+    options: extension.options,
+    node: { attrs: { id: "person-1", label: "Ada" } } as never,
+    suggestion: { char: "@" } as never,
+  });
+  expect(html).toEqual(["span", expect.objectContaining({ class: "mention" }), "@Ada"]);
+
+  const styles = src("style.css");
+  expect(styles).toMatch(/\.mention\s*\{[^}]*color:\s*var\(--txt-accent-primary\)[^}]*font-weight:\s*600/s);
+  expect(styles).not.toMatch(/(?:\.ProseMirror\s+)?\.mention[^}]*cursor:\s*pointer/);
+  expect(src("comments-panel.tsx")).toContain('Mention.configure({ HTMLAttributes: { class: "mention" } })');
+});
+
 test("Wiki and rich-text editors use the shared mention popup behavior", () => {
   const wiki = src("wiki.tsx");
-  expect(wiki).toContain("render: mentionRender(\"wiki.mentionMembers\")");
+  expect(wiki).toContain("render: mentionRender(\"wiki.mentionMembers\", pluginKey)");
+  expect(wiki).toContain('HTMLAttributes: { class: "mention" }');
   for (const name of ["comments-panel.tsx", "description-editor.tsx"]) {
     const text = src(name);
     expect(text).toContain('from "./mention-extension"');
     expect(text).toContain("mention: mentionExtension(peopleRef)");
   }
-  expect(src("mention-extension.ts")).toContain("render: mentionRender(\"wiki.mentionMembers\")");
+  expect(src("mention-extension.ts")).toContain("render: mentionRender(\"wiki.mentionMembers\", pluginKey)");
   expect(src("editor-extensions.ts")).toContain("suggestRender<");
 });

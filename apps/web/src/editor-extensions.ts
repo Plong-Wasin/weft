@@ -228,15 +228,17 @@ const colonEmojiChoices: Array<{ emoji: string; name: MessageKey }> = [
 ];
 
 /** Emoji suggestions appear after a colon and are also available from the slash menu. They use the same list as the "@" mentions. */
+const emojiSuggestionKey = new PluginKey("emojiSuggestions");
 export const EmojiSuggestions = Extension.create({
   name: "emojiSuggestions",
   addProseMirrorPlugins() {
     return [Suggestion<(typeof colonEmojiChoices)[number], (typeof colonEmojiChoices)[number]>({
-      editor: this.editor, char: ":", pluginKey: new PluginKey("emojiSuggestions"), allowedPrefixes: [" ", "(", "["],
+      editor: this.editor, char: ":", pluginKey: emojiSuggestionKey, allowedPrefixes: [" ", "(", "["],
       items: ({ query }) => colonEmojiChoices.filter((choice) => !query || translate(choice.name).toLowerCase().startsWith(query.toLowerCase())),
       command: ({ editor, range, props }) => editor.chain().focus().deleteRange(range).insertContent(props.emoji).run(),
       render: suggestRender<(typeof colonEmojiChoices)[number]>({
         label: "wiki.insert.emoji",
+        pluginKey: emojiSuggestionKey,
         content: (choice) => {
           const glyph = document.createElement("span");
           glyph.className = "suggest-option-emoji";

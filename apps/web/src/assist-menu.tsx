@@ -3,6 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import type { Editor } from "@tiptap/react";
 import { translate, type MessageKey } from "@weft/shared";
 import { aiStatusKey, requestAiStatus } from "./ai-status";
+import { AiOnly } from "./ai-flag";
+import { suggestionOpen } from "./editor-extensions";
 import { ASSIST_TASKS, createAssistSession, hasNonTextContent, insertBelow, markAssistRange, replaceSelection, getAssistRange, type AssistTask, type AssistView } from "./editor-assist";
 
 const buttonClass = "secondary !px-2 !py-1 !text-12";
@@ -59,7 +61,7 @@ function useSelectionKey(editor: Editor): string {
 /** AI assist bubble menu for any Tiptap editor that has the `AiAssist` extension. Render it inside a `relative` wrapper around the editor. */
 export function AssistMenu({ editor, workspaceId }: { editor: Editor | null; workspaceId: string }) {
   if (!editor) return null;
-  return <AssistMenuFor editor={editor} workspaceId={workspaceId} />;
+  return <AiOnly><AssistMenuFor editor={editor} workspaceId={workspaceId} /></AiOnly>;
 }
 
 function AssistMenuFor({ editor, workspaceId }: { editor: Editor; workspaceId: string }) {
@@ -98,6 +100,28 @@ function AssistMenuFor({ editor, workspaceId }: { editor: Editor; workspaceId: s
   React.useEffect(() => () => { session.discard(); }, [session]);
 
   const clear = () => { editor.view.dispatch(markAssistRange(editor.state.tr, null)); session.discard(); };
+  // The task picker hides on an outside pointer-down and comes back with a new selection. The preview is not hidden by a click:
+  // it stays until Discard, Replace, Insert or Escape.
+  const [pickerHidden, setPickerHidden] = React.useState(false);
+  React.useEffect(() => setPickerHidden(false), [key]);
+  const idle = view.status === "idle";
+  React.useEffect(() => {
+    if (!idle) return;
+    const onPointerDown = (event: MouseEvent) => { if (!root.current?.contains(event.target as Node)) setPickerHidden(true); };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [idle]);
+  const pickerShown = idle && hasSelection && !pickerHidden;
+  // Escape closes the preview (discarding it) or else the task picker. Bubble phase, after ProseMirror, which prevents the default of every Escape
+  // in the editor, so the default is not checked here. An open suggestion list or table menu stops the event before it reaches this listener.
+  React.useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || suggestionOpen(editor)) return;
+      if (!idle) { event.preventDefault(); clear(); } else if (pickerShown) { event.preventDefault(); setPickerHidden(true); }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  });
   const run = (task: AssistTask, targetLanguage?: string) => {
     const range = view.status === "idle" ? { from: editor.state.selection.from, to: editor.state.selection.to } : getAssistRange(editor.state) ?? view.range;
     const text = editor.state.doc.textBetween(range.from, range.to, "\n\n");
@@ -124,7 +148,7 @@ function AssistMenuFor({ editor, workspaceId }: { editor: Editor; workspaceId: s
   return <div ref={root} className="absolute z-20" style={{ top: place.top, left: place.left }} onMouseDown={(event) => { if (!(event.target instanceof HTMLInputElement) && !(event.target instanceof Element && event.target.closest("[data-testid=assist-result], summary"))) event.preventDefault(); }}>
     {view.status !== "idle"
       ? <AssistPreview view={view} canReplace={canReplace} onRun={run} onReplace={() => accept(replaceSelection)} onInsertBelow={() => accept(insertBelow)} onDiscard={clear} />
-      : hasSelection && <div role="toolbar" aria-label={translate("assist.menu")} className="assist-menu-surface rounded-lg border border-subtle bg-surface-1 p-1.5">
+      : pickerShown && <div role="toolbar" aria-label={translate("assist.menu")} className="assist-menu-surface rounded-lg border border-subtle bg-surface-1 p-1.5">
         <TaskPicker onRun={run} unavailable={notConfigured ? translate("assist.notConfigured") : undefined} onUnavailable={() => setExplain(true)} />
         {notConfigured && explain && <p role="status" className="m-0 mt-1 w-64 max-w-full px-1 py-0.5 text-13 text-secondary">{translate("assist.notConfigured")}</p>}
       </div>}

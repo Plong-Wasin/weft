@@ -18,7 +18,7 @@ function scripted(...answers: string[]) {
 }
 
 async function setup(database: Database, model: MockLanguageModelV4, aiOptions: { aiAssistRequestsPerMinute?: number } = {}) {
-  const app = createApp(undefined, database, undefined, model, undefined, aiOptions);
+  const app = createApp(undefined, database, undefined, model, undefined, aiOptions, undefined, undefined, undefined, undefined, { ai: true });
   const call = (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
     method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
   }));

@@ -3,6 +3,7 @@
 // Run with `bun e2e/api-tokens.e2e.ts` (set DATABASE_URL, E2E_API_PORT, E2E_WEB_PORT, CHROMIUM_PATH as in docs/agents/testing.md).
 // Screenshots go to the review folder for this ticket (reviewShots("api-tokens")).
 import { chromium } from "playwright";
+import { SQL } from "bun";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
 
@@ -60,6 +61,8 @@ try {
   await page.goto(`${web}/account/api-tokens`);
   await page.waitForURL(`${web}/${slug}/settings/api-tokens`);
   await page.getByRole("heading", { name: translate("tokens.title"), exact: true }).waitFor();
+  await page.getByRole("heading", { name: translate("devices.title"), exact: true }).waitFor();
+  await page.getByRole("heading", { name: translate("tokens.activeTitle"), exact: true }).waitFor();
   check(await sidebar.getByRole("link", { name: translate("tokens.title"), exact: true }).getAttribute("aria-current") === "page", "API tokens is not the current sidebar item");
   check(await page.getByRole("link", { name: translate("tokens.connectAiLink") }).getAttribute("href") === `/${slug}/settings/connect-ai`, "Connect AI link is missing or wrong");
   console.log("api-tokens ok: shell navigation and Connect AI link");
@@ -76,8 +79,92 @@ try {
   await page.screenshot({ path: `${shots}/list-390.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
 
-  // Empty lists keep their messages.
+  // Empty groups explain what is managed here.
+  await page.getByText(translate("devices.empty")).waitFor();
+  await page.getByText(translate("tokens.personalEmpty")).waitFor();
   await page.getByText(translate("apps.empty")).waitFor();
+
+  // Seed inactive credentials through the session actions, plus one unassociated legacy Daemon credential.
+  const seeded = await page.evaluate(async (apiOrigin) => {
+    const request = async (name: string, body: unknown) => {
+      const response = await fetch(`${apiOrigin}/actions/${name}`, { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      if (!response.ok) throw new Error(`${name} failed: ${response.status}`);
+      return await response.json() as { id: string };
+    };
+    for (let index = 0; index < 21; index += 1) {
+      const token = await request("create_api_token", { name: `History ${String(index).padStart(2, "0")}` });
+      await request("revoke_api_token", { tokenId: token.id });
+    }
+    const nonExpiring = await request("create_api_token", { name: "Non-expiring credential" });
+    const legacy = await request("create_api_token", { name: "Legacy Daemon" });
+    return { legacyId: legacy.id, nonExpiringId: nonExpiring.id };
+  }, api);
+  const database = new SQL(Bun.env.DATABASE_URL!);
+  try { await database`update api_tokens set daemon_only = true where id = ${seeded.legacyId}`; }
+  finally { await database.close(); }
+  await page.reload();
+  const nonExpiringRow = page.getByRole("listitem").filter({ hasText: "Non-expiring credential" });
+  await nonExpiringRow.waitFor();
+  check((await nonExpiringRow.innerText()).includes(translate("tokens.never")), "a non-expiring Personal API token is not clearly identified");
+  check((await nonExpiringRow.innerText()).includes(translate("tokens.notUsed")), "an unused Personal API token does not explain its last activity");
+  const legacyRow = page.getByRole("listitem").filter({ hasText: "Legacy Daemon" });
+  await legacyRow.getByRole("button", { name: translate("tokens.revoke"), exact: true }).waitFor();
+  check(await legacyRow.count() === 1, "the unassociated legacy Daemon credential is not shown once in account settings");
+  page.once("dialog", (confirm) => void confirm.accept());
+  await legacyRow.getByRole("button", { name: translate("tokens.revoke"), exact: true }).click();
+  const tokenHistorySummary = translate("tokens.history").replace("{count}", "22");
+  const tokenHistory = page.locator("details").filter({ has: page.getByText(tokenHistorySummary, { exact: true }) });
+  await tokenHistory.waitFor();
+  check(await tokenHistory.getAttribute("open") === null, "credential history is expanded by default");
+  await tokenHistory.locator("summary").click();
+  check(await tokenHistory.getByRole("listitem").count() === 20, "credential history did not start with a bounded 20-record page");
+  await tokenHistory.getByRole("button", { name: translate("tokens.loadMore"), exact: true }).click();
+  await tokenHistory.getByRole("listitem").nth(21).waitFor();
+  check(await tokenHistory.getByRole("listitem").count() === 22, "loading more credentials did not append the remaining history records");
+  check(await tokenHistory.getByTestId("credential-history-status").count() === 22, "credential history omitted status labels");
+  check((await tokenHistory.getByRole("listitem").filter({ hasText: "Legacy Daemon" }).innerText()).includes(translate("tokens.revokedAt")), "revoked credential history does not identify its relevant date");
+  await page.screenshot({ path: `${shots}/history-paged-1440.png` });
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.screenshot({ path: `${shots}/history-paged-390.png` });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  console.log("api-tokens ok: legacy credentials remain revocable and inactive history loads in bounded pages");
+
+  // Enroll a device through the same authorization exchange as a remote CLI, then verify account settings can identify and revoke it.
+  const enrolled = await page.evaluate(async (apiOrigin) => {
+    const request = async (url: string, init?: RequestInit) => fetch(`${apiOrigin}${url}`, { credentials: "include", ...init });
+    const started = await request("/api/cli/device-authorization", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ deviceId: crypto.randomUUID(), hostname: "E2E Workstation" }) });
+    if (!started.ok) throw new Error(`device authorization start failed: ${started.status}`);
+    const authorization = await started.json() as { deviceSecret: string; userCode: string };
+    const reviewed = await request(`/api/cli/device-authorization?code=${encodeURIComponent(authorization.userCode)}`);
+    if (!reviewed.ok) throw new Error(`device authorization review failed: ${reviewed.status}`);
+    const decided = await request("/api/cli/device-authorization/decision", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code: authorization.userCode, decision: "approve" }) });
+    if (!decided.ok) throw new Error(`device authorization approval failed: ${decided.status}`);
+    const exchanged = await request("/api/cli/device-authorization/exchange", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ deviceSecret: authorization.deviceSecret }) });
+    if (!exchanged.ok) throw new Error(`device authorization exchange failed: ${exchanged.status}`);
+    const credential = await exchanged.json() as { token: string; exchangeId: string };
+    const finalized = await request("/api/cli/device-authorization/finalize", { method: "POST", headers: { authorization: `Bearer ${credential.token}`, "content-type": "application/json" }, body: JSON.stringify({ exchangeId: credential.exchangeId }) });
+    if (!finalized.ok) throw new Error(`device authorization finalize failed: ${finalized.status}`);
+    return true;
+  }, api);
+  check(enrolled, "could not enroll the browser-flow CLI device");
+  await page.reload();
+  const deviceRow = page.getByRole("listitem").filter({ hasText: "E2E Workstation" });
+  await deviceRow.getByText("E2E Workstation").waitFor();
+  check(await deviceRow.getByText("E2E Workstation").count() === 1, "device row is missing or duplicated");
+  check((await deviceRow.innerText()).includes(translate("devices.lastActivity")), "an active CLI device does not show its last activity");
+  await page.screenshot({ path: `${shots}/device-list-1440.png` });
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.screenshot({ path: `${shots}/device-list-390.png` });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  page.once("dialog", (confirm) => void confirm.accept());
+  await deviceRow.getByRole("button", { name: translate("devices.revoke"), exact: true }).click();
+  await page.getByText(translate("devices.history").replace("{count}", "1")).click();
+  await page.getByRole("listitem").filter({ hasText: "E2E Workstation" }).getByTestId("device-history-status").getByText(translate("devices.status.revoked"), { exact: true }).waitFor();
+  await page.screenshot({ path: `${shots}/device-revoked-1440.png` });
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.screenshot({ path: `${shots}/device-revoked-390.png` });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  console.log("api-tokens ok: device listed and revoked from account settings");
 
   // Presets: MCP is the default and fills the name and a 30-day expiry; CLI fills its own name; Custom keeps the typed values.
   await page.getByRole("button", { name: translate("tokens.add"), exact: true }).click();
@@ -133,11 +220,13 @@ try {
   await dialog.waitFor({ state: "detached" });
   console.log("api-tokens ok: token not shown again after closing");
 
-  // Existing behaviour: the new token is listed by name and prefix, and can be revoked.
-  await page.getByRole("listitem").filter({ hasText: "MCP" }).getByText(translate("tokens.status.active")).waitFor();
+  // The new token is listed under Personal API tokens and moves into collapsed history when revoked.
+  const tokenRow = page.getByRole("listitem").filter({ hasText: "MCP" });
+  await tokenRow.getByText("MCP").waitFor();
   page.once("dialog", (confirm) => void confirm.accept());
-  await page.getByRole("listitem").filter({ hasText: "MCP" }).getByRole("button", { name: translate("tokens.revoke"), exact: true }).click();
-  await page.getByRole("listitem").filter({ hasText: "MCP" }).getByText(translate("tokens.status.revoked")).waitFor();
+  await tokenRow.getByRole("button", { name: translate("tokens.revoke"), exact: true }).click();
+  await page.getByText(translate("tokens.history").replace("{count}", "23")).click();
+  await page.getByRole("listitem").filter({ hasText: "MCP" }).getByTestId("credential-history-status").getByText(translate("tokens.status.revoked"), { exact: true }).waitFor();
   await page.screenshot({ path: `${shots}/revoked-1440.png` });
   await page.setViewportSize({ width: 390, height: 900 });
   await page.screenshot({ path: `${shots}/revoked-390.png` });

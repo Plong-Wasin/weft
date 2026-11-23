@@ -112,6 +112,34 @@ async function derivedMarkdownOf(content: unknown, prepared: { document: unknown
   return writtenFormOf(content ?? null);
 }
 
+
+/**
+ * Sort order for a page placed right before or after a sibling. It takes the midpoint of the neighbours in the
+ * same parent, Collection and scope, and renumbers those siblings only when the midpoint no longer fits between them.
+ */
+async function placeBeside(database: Database, page: { id: string; parentId: string | null; projectId: string | null; collectionId: string | null; workspaceId: string }, siblingId: string, position: "before" | "after"): Promise<number> {
+  const siblings = await database.select({ id: wikiPages.id, sortOrder: wikiPages.sortOrder }).from(wikiPages).where(and(
+    eq(wikiPages.workspaceId, page.workspaceId),
+    page.parentId ? eq(wikiPages.parentId, page.parentId) : isNull(wikiPages.parentId),
+    page.projectId ? eq(wikiPages.projectId, page.projectId) : isNull(wikiPages.projectId),
+    page.collectionId ? eq(wikiPages.collectionId, page.collectionId) : isNull(wikiPages.collectionId),
+    isNull(wikiPages.deletedAt), ne(wikiPages.id, page.id),
+  )).orderBy(asc(wikiPages.sortOrder), asc(wikiPages.createdAt), asc(wikiPages.id));
+  const at = siblings.findIndex((row) => row.id === siblingId);
+  const insertAt = position === "before" ? at : at + 1;
+  const lower = siblings[insertAt - 1]?.sortOrder;
+  const upper = siblings[insertAt]?.sortOrder;
+  const middle = lower === undefined && upper === undefined ? 0 : lower === undefined ? upper! - 1 : upper === undefined ? lower + 1 : (lower + upper) / 2;
+  if (lower === undefined || upper === undefined || (lower < middle && middle < upper)) return middle;
+  // The neighbours are too close for another midpoint: give every sibling a whole-number slot, in the new order.
+  const ordered = [...siblings.slice(0, insertAt).map((row) => row.id), page.id, ...siblings.slice(insertAt).map((row) => row.id)];
+  for (const [index, id] of ordered.entries()) {
+    const current = siblings.find((row) => row.id === id);
+    if (id !== page.id && current?.sortOrder !== index + 1) await database.update(wikiPages).set({ sortOrder: index + 1 }).where(eq(wikiPages.id, id));
+  }
+  return insertAt + 1;
+}
+
 export function createWikiActions(db: Database, now: () => Date = () => new Date(), storage: AssetStorage = createS3Storage()) {
   const summary = (page: PageRow, ownerName: string | null = null) => ({
     id: page.id, projectId: page.projectId, collectionId: page.collectionId, parentId: page.parentId, title: page.title, access: page.access as WikiAccess, archived: page.archivedAt !== null, locked: page.lockedAt !== null, ownerId: page.ownerId, ownerName, sortOrder: page.sortOrder,
@@ -568,7 +596,8 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const workspaceRole = await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
         const rows = await db.select({ page: wikiPages, ownerName: users.name }).from(wikiPageShares)
           .innerJoin(wikiPages, eq(wikiPages.id, wikiPageShares.pageId)).leftJoin(users, eq(users.id, wikiPages.ownerId))
-          .where(and(eq(wikiPageShares.userId, context.userId), eq(wikiPages.workspaceId, input.workspaceId), isNull(wikiPages.projectId), isNull(wikiPages.deletedAt), isNull(wikiPages.archivedAt)));
+          .where(and(eq(wikiPageShares.userId, context.userId), eq(wikiPages.workspaceId, input.workspaceId), isNull(wikiPages.projectId), isNull(wikiPages.deletedAt), isNull(wikiPages.archivedAt)))
+          .orderBy(asc(wikiPages.sortOrder), asc(wikiPages.createdAt), asc(wikiPages.id));
         const visible = [];
         for (const { page, ownerName } of rows) {
           try { await load(db, context.userId, page.id, "read"); let canEdit = false; try { await load(db, context.userId, page.id, "write"); canEdit = true; } catch (error) { if (!(error instanceof ActionError)) throw error; } visible.push({ ...summary(page, ownerName), canEdit, canMoveAcrossCollections: workspaceRole === "Admin" }); }
@@ -814,9 +843,9 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
     },
     moveWikiPage: {
       name: "move_wiki_page", kind: "write" as const,
-      input: Type.Object({ pageId: uuid(), parentId: nullable(uuid()), sortOrder: Type.Optional(Type.Number()) }),
+      input: Type.Object({ pageId: uuid(), parentId: nullable(uuid()), sortOrder: Type.Optional(Type.Number()), siblingId: Type.Optional(uuid()), position: Type.Optional(Type.Union([Type.Literal("before"), Type.Literal("after")])) }),
       output: summaryOutput,
-      handler: async (context: Context, input: { pageId: string; parentId: string | null; sortOrder?: number }) => db.transaction(async (tx) => {
+      handler: async (context: Context, input: { pageId: string; parentId: string | null; sortOrder?: number; siblingId?: string; position?: "before" | "after" }) => db.transaction(async (tx) => {
         const database = tx as unknown as Database;
         const { page } = await load(database, context.userId, input.pageId, "write");
         await assertUnlocked(page);
@@ -833,8 +862,19 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           const [parent] = await database.select({ access: wikiPages.access }).from(wikiPages).where(eq(wikiPages.id, input.parentId));
           if (parent?.access === "private" && page.ownerId !== context.userId) throw new ActionError("Only your own pages can be moved under a private page", 403);
         }
+        if ((input.siblingId === undefined) !== (input.position === undefined)) throw new ActionError("A sibling position needs both siblingId and position", 400);
+        let sortOrder = input.sortOrder;
+        if (input.siblingId !== undefined && input.position !== undefined) {
+          if (input.siblingId === page.id) throw new ActionError("A page cannot sit beside itself", 400);
+          const { page: sibling } = await load(database, context.userId, input.siblingId, "read");
+          if ((sibling.parentId ?? null) !== input.parentId) throw new ActionError("A sibling must share the new parent", 400);
+          if ((sibling.projectId ?? null) !== (page.projectId ?? null) || (sibling.collectionId ?? null) !== (page.collectionId ?? null)) {
+            throw new ActionError("A page and its sibling must have the same scope and Collection", 400);
+          }
+          sortOrder = await placeBeside(database, page, sibling.id, input.position);
+        }
         const [updated] = await database.update(wikiPages).set({
-          parentId: input.parentId, ...(input.sortOrder !== undefined ? { sortOrder: input.sortOrder } : {}), updatedAt: now(),
+          parentId: input.parentId, ...(sortOrder !== undefined ? { sortOrder } : {}), updatedAt: now(),
         }).where(eq(wikiPages.id, page.id)).returning();
         if (page.parentId !== input.parentId) await logActivity(database, context, page, "moved", page.parentId, input.parentId);
         return summary(updated!);

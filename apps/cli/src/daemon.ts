@@ -1,8 +1,9 @@
-import { access, chmod, mkdir, mkdtemp, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { Database } from "bun:sqlite";
 import { agentCliAdapters, type AgentCliKind } from "./agent-cli";
 import { prepareSandbox, type SandboxProfile } from "./sandbox";
 import { CLI_VERSION } from "./version";
@@ -14,7 +15,9 @@ export interface DaemonEnvironment {
   stdout?: (text: string) => void;
   stderr?: (text: string) => void;
   openBrowser?: (url: string) => Promise<void> | void;
-  webSocket?: (url: string) => WebSocket;
+  /** Test seam for an atomic config replacement failing on the host filesystem. */
+  replaceConfig?: (temporaryPath: string, configPath: string) => Promise<void>;
+  webSocket?: (url: string, options?: DaemonWebSocketOptions) => WebSocket;
   sleep?: (ms: number) => Promise<void>;
   signal?: AbortSignal;
   heartbeatMs?: number;
@@ -28,6 +31,8 @@ export interface DaemonEnvironment {
   safetyPollMs?: number;
   backgroundSpawn?: (argv: string[], options: Parameters<typeof Bun.spawn>[1]) => { pid: number; unref(): void };
 }
+
+interface DaemonWebSocketOptions { headers: Record<string, string> }
 
 export interface DaemonRecord { pid: number; startedAt: string; apiUrl: string; agentClis: string[]; logPath: string }
 
@@ -47,8 +52,15 @@ async function writeDaemonCredential(env: Record<string, string | undefined>, to
   const { directory, credential } = daemonPaths(env);
   await mkdir(directory, { recursive: true, mode: 0o700 });
   await chmod(directory, 0o700);
-  await writeFile(credential, `${JSON.stringify({ token }, null, 2)}\n`, { mode: 0o600 });
-  await chmod(credential, 0o600);
+  const temporary = join(directory, `.daemon-credential-${crypto.randomUUID()}.tmp`);
+  try {
+    await writeFile(temporary, `${JSON.stringify({ token }, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+    await chmod(temporary, 0o600);
+    await rename(temporary, credential);
+  } catch (error) {
+    await rm(temporary, { force: true });
+    throw error;
+  }
 }
 
 export async function readDaemonRecord(env: Record<string, string | undefined>) {
@@ -73,7 +85,10 @@ export async function daemonStatus(environment: DaemonEnvironment = {}) {
 
 export async function startDaemonBackground(environment: DaemonEnvironment = {}) {
   const env = environment.env ?? Bun.env;
-  const token = env.WEFT_TOKEN ?? (await readCliConfig(env)).token;
+  const config = await readCliConfig(env);
+  const apiUrl = daemonApiUrl(env, config);
+  assertDaemonCredentialServer(env, config, apiUrl);
+  const token = env.WEFT_TOKEN ?? config.token;
   if (!token) throw new Error("You are not signed in. Run `weft login`, then try `weft daemon start` again.");
   const prior = await readDaemonRecord(env);
   if (prior && processExists(prior.pid)) throw new Error(`Daemon is already running (process ${prior.pid}). Run \`weft daemon status\` or \`weft daemon stop\`.`);
@@ -88,8 +103,6 @@ export async function startDaemonBackground(environment: DaemonEnvironment = {})
     throw new Error(`Daemon start is already in progress. Run \`weft daemon status\` in a moment.`);
   }
   try {
-    const config = await readCliConfig(env);
-    const apiUrl = (env.WEFT_API_URL ?? config.apiUrl ?? "http://localhost:3000").replace(/\/$/, "");
     const agentClis = await detectedClis(env.PATH ?? "");
     const fd = await open(paths.log, "a", 0o600);
     await fd.close();
@@ -126,50 +139,352 @@ function settingsPath(env: Record<string, string | undefined>) {
   return join(base, "weft", "config.json");
 }
 
+/** Keep a first-login identity stable across processes without changing the installed credential config. */
+async function cliDeviceId(env: Record<string, string | undefined>, config: CliConfig) {
+  return withCliConfigLock(env, async () => {
+    const saved = await readCliConfig(env);
+    if (saved.deviceId) return saved.deviceId;
+    const identityPath = `${settingsPath(env)}.device-id`;
+    try {
+      const identity = (await readFile(identityPath, "utf8")).trim();
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(identity)) return identity;
+    } catch { /* first sign-in for this config directory */ }
+    const identity = config.deviceId ?? crypto.randomUUID();
+    await writeFile(identityPath, `${identity}\n`, { mode: 0o600 });
+    await chmod(identityPath, 0o600);
+    return identity;
+  });
+}
+
 export async function readCliConfig(env: Record<string, string | undefined>) {
-  try { return JSON.parse(await readFile(settingsPath(env), "utf8")) as { token?: string; apiUrl?: string }; }
+  try { return JSON.parse(await readFile(settingsPath(env), "utf8")) as CliConfig; }
   catch { return {}; }
+}
+
+/** The server used by a Daemon, with an explicit environment selection ahead of saved config. */
+export function daemonApiUrl(env: Record<string, string | undefined>, config: CliConfig) {
+  return validatedAuthApiUrl(env.WEFT_API_URL ?? config.apiUrl ?? "http://localhost:3000");
+}
+
+/** A saved credential may only be sent to the Weft installation that issued it. */
+export function assertDaemonCredentialServer(env: Record<string, string | undefined>, config: CliConfig, apiUrl: string) {
+  if (env.WEFT_TOKEN) return; // an explicit token is supplied for this invocation
+  assertSavedCredentialServer(config, apiUrl);
+}
+
+function sameOrigin(left: string, right: string) {
+  return new URL(validatedAuthApiUrl(left)).origin === new URL(validatedAuthApiUrl(right)).origin;
+}
+
+function assertSavedCredentialServer(config: CliConfig, apiUrl: string) {
+  if (!config.token) return;
+  const pending = config.pendingCredential;
+  if (pending && config.apiUrl && !sameOrigin(pending.apiUrl, config.apiUrl)) {
+    throw new Error(`A sign-in for ${pending.apiUrl} is still awaiting server confirmation while your saved credential belongs to ${config.apiUrl}. Run weft login --api-url ${config.apiUrl} to recover it before selecting another server. No saved credential was sent.`);
+  }
+  if (!config.apiUrl) {
+    throw new Error(`Your saved legacy Weft sign-in has no recorded server, so its identity cannot be verified safely. Run weft login --api-url ${apiUrl} to approve a sign-in there, or provide a server-specific token with --token or WEFT_TOKEN. The saved sign-in was not sent.`);
+  }
+  const savedServer = validatedAuthApiUrl(config.apiUrl);
+  if (!sameOrigin(savedServer, apiUrl)) {
+    throw new Error(`Your saved Weft sign-in is for ${savedServer}, but this command targets ${apiUrl}. Run weft login --api-url ${apiUrl} to sign in there, or set WEFT_TOKEN to a token for that server. Your saved sign-in was not sent.`);
+  }
+}
+
+type PendingCredential = { token: string; exchangeId: string; apiUrl: string; deviceId: string };
+type CliConfig = { token?: string; apiUrl?: string; deviceId?: string; pendingRenewal?: string; pendingCredential?: PendingCredential };
+
+async function saveCliConfig(env: Record<string, string | undefined>, value: CliConfig, replace: (temporaryPath: string, configPath: string) => Promise<void> = rename) {
+  const config = settingsPath(env);
+  const directory = join(config, "..");
+  const temporary = join(directory, `.config-${crypto.randomUUID()}.tmp`);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await chmod(directory, 0o700);
+  try {
+    await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+    await chmod(temporary, 0o600);
+    await replace(temporary, config);
+    await chmod(config, 0o600);
+  } catch (error) { await rm(temporary, { force: true }); throw error; }
+}
+
+/** SQLite's process-safe transaction lock is released by the OS if a CLI process crashes. */
+export async function withCliConfigLock<T>(env: Record<string, string | undefined>, action: () => Promise<T>): Promise<T> {
+  const directory = daemonPaths(env).directory;
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await chmod(directory, 0o700);
+  const lockDbPath = `${settingsPath(env)}.lockdb`;
+  const lockDb = new Database(lockDbPath);
+  await chmod(lockDbPath, 0o600);
+  lockDb.exec("PRAGMA busy_timeout = 0");
+  let acquired = false;
+  try {
+    for (let attempt = 0; attempt < 1200; attempt += 1) {
+      try { lockDb.exec("BEGIN IMMEDIATE"); acquired = true; break; }
+      catch (error) {
+        if (!String(error).includes("SQLITE_BUSY") && !String(error).includes("database is locked")) throw error;
+        await Bun.sleep(25);
+      }
+    }
+    if (!acquired) throw new Error("Timed out waiting for another Weft credential operation.");
+    const result = await action();
+    lockDb.exec("COMMIT");
+    acquired = false;
+    return result;
+  } finally {
+    if (acquired) { try { lockDb.exec("ROLLBACK"); } catch { /* transaction already ended */ } }
+    lockDb.close();
+  }
+}
+
+export function validatedAuthApiUrl(value: string) {
+  let url: URL;
+  try { url = new URL(value); }
+  catch { throw new Error(`Invalid Weft server URL: ${value}. Use an HTTPS URL, or HTTP on localhost for development.`); }
+  if (url.username || url.password || url.search || url.hash) throw new Error("The Weft server URL must not contain credentials, a query, or a fragment.");
+  const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const loopback = hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "::1" || /^127(?:\.\d{1,3}){3}$/.test(hostname);
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
+    throw new Error("Weft requests that send credentials require HTTPS. HTTP is allowed only on localhost for development.");
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("The Weft server URL must use HTTPS (or HTTP on localhost for development).");
+  return url.toString().replace(/\/$/, "");
+}
+
+async function finalizePendingCredential(env: Record<string, string | undefined>, saved: CliConfig, fetcher: FetchLike, replace?: (temporaryPath: string, configPath: string) => Promise<void>, signal?: AbortSignal): Promise<CliConfig> {
+  const pending = saved.pendingCredential;
+  if (!pending) return saved;
+  const finalized = await fetcher(`${pending.apiUrl}/api/cli/device-authorization/finalize`, {
+    method: "POST", headers: { authorization: `Bearer ${pending.token}`, "content-type": "application/json" }, body: JSON.stringify({ exchangeId: pending.exchangeId }),
+    redirect: "error",
+    ...(signal ? { signal } : {}),
+  }).catch(() => null);
+  if (finalized?.status === 410) {
+    const { pendingCredential: _pending, ...previous } = saved;
+    await saveCliConfig(env, previous, replace);
+    return previous;
+  }
+  if (!finalized?.ok) return saved;
+  const { pendingCredential: _pending, pendingRenewal: _legacyPending, ...rest } = saved;
+  const committed = { ...rest, token: pending.token, apiUrl: pending.apiUrl, deviceId: pending.deviceId };
+  await saveCliConfig(env, committed, replace);
+  return committed;
+}
+
+type DeviceCancellation = "cancelled" | "completed" | null;
+
+async function cancelDeviceAuthorization(fetcher: FetchLike, apiUrl: string, deviceSecret: string): Promise<DeviceCancellation> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const response = await fetcher(`${apiUrl}/api/cli/device-authorization/cancel`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ deviceSecret }), signal: AbortSignal.timeout(3000), redirect: "error",
+    }).catch(() => null);
+    if (response?.ok) {
+      const result = await response.json().catch(() => null) as { status?: string } | null;
+      if (result?.status === "cancelled" || result?.status === "completed") return result.status;
+    }
+    if (attempt < 2) await Bun.sleep(25);
+  }
+  return null;
+}
+
+/** Renew an enrolled device while retaining the last committed config until finalize succeeds. */
+export async function renewCliCredential(environment: DaemonEnvironment = {}, requestedApiUrl?: string) {
+  const env = environment.env ?? Bun.env;
+  if (env.WEFT_TOKEN) return undefined; // Explicit Personal API tokens are never enrolled or rotated.
+  const fetcher = environment.fetch ?? fetch;
+  return withCliConfigLock(env, async () => {
+    let saved = await readCliConfig(env);
+    // Legacy configs do not record an issuing server. Keep them available to callers,
+    // but never guess an origin or send the token during renewal.
+    if (saved.token && !saved.apiUrl && !saved.pendingCredential) return saved.token;
+    const apiUrl = validatedAuthApiUrl(requestedApiUrl ?? env.WEFT_API_URL ?? saved.apiUrl ?? saved.pendingCredential?.apiUrl ?? "http://localhost:3000");
+    if (saved.pendingCredential) {
+      if (!sameOrigin(saved.pendingCredential.apiUrl, apiUrl)) {
+        throw new Error(`A sign-in for ${saved.pendingCredential.apiUrl} is awaiting server confirmation. Recover it there before selecting ${apiUrl}. No saved credential was sent.`);
+      }
+      saved = await finalizePendingCredential(env, saved, fetcher, environment.replaceConfig);
+      if (saved.pendingCredential) throw new Error(`A sign-in for ${saved.pendingCredential.apiUrl} is awaiting server confirmation. Retry there with weft login --api-url ${saved.pendingCredential.apiUrl}; the prior credential was not sent.`);
+    }
+    assertSavedCredentialServer(saved, apiUrl);
+    if (saved.pendingRenewal) {
+      // Recover configurations written by earlier CLI versions, which stored the candidate as token.
+      const finalized = await fetcher(`${apiUrl}/api/cli/device-authorization/finalize`, {
+        method: "POST", headers: { authorization: `Bearer ${saved.token}`, "content-type": "application/json" }, body: JSON.stringify({ exchangeId: saved.pendingRenewal }), redirect: "error",
+      }).catch(() => null);
+      if (finalized?.ok) { const { pendingRenewal: _pending, ...clean } = saved; saved = clean; await saveCliConfig(env, saved, environment.replaceConfig); }
+      else return saved.token;
+    }
+    if (!saved.token || !saved.deviceId) return saved.token;
+    const renewed = await fetcher(`${apiUrl}/api/cli/device-credentials/renew`, {
+      method: "POST", headers: { authorization: `Bearer ${saved.token}`, "content-type": "application/json" }, body: "{}", redirect: "error",
+    }).catch(() => null);
+    if (!renewed?.ok) return saved.token;
+    const result = await renewed.json().catch(() => null) as { status?: string; token?: string; exchangeId?: string } | null;
+    if (result?.status !== "rotated" || !result.token || !result.exchangeId) return saved.token;
+    const replacementToken = result.token;
+    saved = { ...saved, pendingCredential: { token: replacementToken, exchangeId: result.exchangeId, apiUrl, deviceId: saved.deviceId } };
+    try { await saveCliConfig(env, saved, environment.replaceConfig); }
+    catch { return saved.token; }
+    saved = await finalizePendingCredential(env, saved, fetcher, environment.replaceConfig);
+    return saved.token;
+  });
 }
 
 export async function login(environment: DaemonEnvironment = {}) {
   const env = environment.env ?? Bun.env;
-  const apiUrl = (env.WEFT_API_URL ?? "http://localhost:3000").replace(/\/$/, "");
-  const state = crypto.randomUUID();
-  let finishCallback: ((token: string) => void) | undefined;
-  const tokenPromise = new Promise<string>((resolve) => { finishCallback = resolve; });
-  const server = Bun.serve({
-    hostname: "127.0.0.1", port: 0,
-    fetch(request) {
-      const url = new URL(request.url);
-      if (url.pathname !== "/callback" || url.searchParams.get("state") !== state || !url.searchParams.get("token")) return new Response("Invalid sign-in callback", { status: 400 });
-      finishCallback?.(url.searchParams.get("token")!);
-      return new Response("Sign-in complete. You can close this browser tab.", { headers: { "content-type": "text/plain; charset=utf-8" } });
-    },
-  });
-  try {
-    const callback = `http://127.0.0.1:${server.port}/callback`;
-    const auth = new URL(`${apiUrl}/api/cli/login`);
-    auth.searchParams.set("callback", callback);
-    auth.searchParams.set("state", state);
-    auth.searchParams.set("hostname", env.WEFT_HOSTNAME ?? hostname());
-    const open = environment.openBrowser ?? (async (url: string) => {
-      const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
-      Bun.spawn(process.platform === "win32" ? [command, "/c", "start", "", url] : [command, url], { stdout: "ignore", stderr: "ignore" });
-    });
-    await open(auth.toString());
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<never>((_, reject) => { timeoutId = setTimeout(() => reject(new Error("Sign-in timed out")), 5 * 60_000); });
-    const token = await Promise.race([tokenPromise, timeout]);
-    if (timeoutId) clearTimeout(timeoutId);
-    const config = settingsPath(env);
-    await mkdir(join(config, ".."), { recursive: true, mode: 0o700 });
-    await chmod(join(config, ".."), 0o700);
-    await writeFile(config, `${JSON.stringify({ token, apiUrl }, null, 2)}\n`, { mode: 0o600 });
-    await chmod(config, 0o600);
-    output(environment, `Signed in to ${apiUrl}. Token saved to ${config}\n`);
-  } finally {
-    server.stop(true);
+  const config = settingsPath(env);
+  const previous = await readCliConfig(env);
+  const apiUrl = validatedAuthApiUrl(env.WEFT_API_URL ?? previous.apiUrl ?? previous.pendingCredential?.apiUrl ?? "http://localhost:3000");
+  // Complete a previously saved exchange before beginning another login. This also
+  // recovers a finalize response that was lost after the server committed it.
+  if (previous.pendingCredential && !sameOrigin(previous.pendingCredential.apiUrl, apiUrl)) {
+    throw new Error(`A sign-in for ${previous.pendingCredential.apiUrl} is awaiting server confirmation. Recover it there before starting a sign-in for ${apiUrl}.`);
   }
+  if (previous.token && previous.apiUrl && sameOrigin(previous.apiUrl, apiUrl)) await renewCliCredential(environment, apiUrl);
+  const deviceId = await cliDeviceId(env, previous);
+  const fetcher = environment.fetch ?? fetch;
+  const start = await fetcher(`${apiUrl}/api/cli/device-authorization`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ deviceId, hostname: env.WEFT_HOSTNAME ?? hostname() }),
+    redirect: "error",
+  });
+  if (!start.ok) throw new Error(`Could not start sign-in with ${apiUrl} (${start.status}). Check the server address and try again.`);
+  const request = await start.json() as { deviceSecret: string; userCode: string; verificationUrl: string; expiresAt: string; interval: number };
+  output(environment, `To sign in, open ${request.verificationUrl}\nEnter code: ${request.userCode}\nThe browser must be able to reach this Weft server. If it cannot, use a Personal API token with --token or WEFT_TOKEN. This request expires in 5 minutes.\n`);
+  const open = environment.openBrowser ?? (async (url: string) => {
+    const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
+    Bun.spawn(process.platform === "win32" ? [command, "/c", "start", "", url] : [command, url], { stdout: "ignore", stderr: "ignore" });
+  });
+  try { await open(request.verificationUrl); }
+  catch { output(environment, "Could not open a browser here. Use the URL and code above on another device.\n"); }
+  output(environment, "Waiting for approval… Press Ctrl+C to cancel.\n");
+  const sleep = environment.sleep ?? wait;
+  const deadline = Date.now() + 5 * 60_000;
+  let status = "pending";
+  const cancelIfRequested = async () => {
+    if (!environment.signal?.aborted) return false;
+    const cancellation = await cancelDeviceAuthorization(fetcher, apiUrl, request.deviceSecret);
+    if (cancellation === "completed") {
+      output(environment, "Sign-in completed before cancellation reached the server.\n");
+      return false;
+    }
+    if (cancellation === "cancelled") output(environment, "Sign-in cancelled. Your previous sign-in is unchanged.\n");
+    else output(environment, "Cancellation could not be confirmed. The previous sign-in is unchanged; the request will expire automatically.\n");
+    return true;
+  };
+  while (status === "pending" && Date.now() < deadline) {
+    if (await cancelIfRequested()) return;
+    await sleep(Math.max(500, request.interval * 1000));
+    if (await cancelIfRequested()) return;
+    let response: Response;
+    try {
+      response = await fetcher(`${apiUrl}/api/cli/device-authorization/poll`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ deviceSecret: request.deviceSecret }), signal: environment.signal, redirect: "error" });
+    } catch (error) {
+      if (await cancelIfRequested()) return;
+      throw error;
+    }
+    if (await cancelIfRequested()) return;
+    if (!response.ok) throw new Error(`Could not check sign-in status (${response.status}). Your previous sign-in is unchanged; run \`weft login\` to try again.`);
+    status = ((await response.json()) as { status: string }).status;
+    if (await cancelIfRequested()) return;
+  }
+  if (status === "pending") status = "expired";
+  if (status === "denied") throw new Error("Sign-in was denied. Your previous sign-in is unchanged.");
+  if (status === "cancelled") throw new Error("Sign-in was cancelled. Your previous sign-in is unchanged.");
+  if (status === "expired") throw new Error("Sign-in request expired. Run `weft login` to get a new code. Your previous sign-in is unchanged.");
+  if (status !== "approved") throw new Error("Sign-in request could not be completed. Your previous sign-in is unchanged; run `weft login` to try again.");
+  if (await cancelIfRequested()) return;
+  let exchanged: Response;
+  try {
+    exchanged = await fetcher(`${apiUrl}/api/cli/device-authorization/exchange`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ deviceSecret: request.deviceSecret }), signal: environment.signal, redirect: "error",
+    });
+  } catch (error) {
+    const cancellation = await cancelDeviceAuthorization(fetcher, apiUrl, request.deviceSecret);
+    if (environment.signal?.aborted) {
+      if (cancellation === "cancelled") output(environment, "Sign-in cancelled. Your previous sign-in is unchanged.\n");
+      else if (cancellation === "completed") output(environment, "Sign-in completed before cancellation reached the server.\n");
+      else output(environment, "Cancellation could not be confirmed. Your previous sign-in is unchanged; the request will expire automatically.\n");
+      return;
+    }
+    if (cancellation === "cancelled") throw new Error("Credential exchange response was lost; the unused credential was revoked and your previous sign-in is unchanged. Run `weft login` to try again.");
+    throw new Error("Credential exchange response was lost and cancellation could not be confirmed. Your previous sign-in is unchanged; wait for the request to expire, then run `weft login` again.");
+  }
+  if (await cancelIfRequested()) return;
+  if (!exchanged.ok) {
+    const cancellation = await cancelDeviceAuthorization(fetcher, apiUrl, request.deviceSecret);
+    if (cancellation === "cancelled") throw new Error("Sign-in was approved, but credential exchange failed. The unused credential was revoked and your previous sign-in is unchanged; run `weft login` to try again.");
+    throw new Error("Sign-in was approved, but credential exchange failed and cancellation could not be confirmed. Your previous sign-in is unchanged; wait for the request to expire, then run `weft login` again.");
+  }
+  let credential: { token: string; exchangeId: string };
+  try { credential = await exchanged.json() as { token: string; exchangeId: string }; }
+  catch (error) {
+    // A lost or malformed exchange body can leave a server-side, unfinalized credential.
+    if (await cancelDeviceAuthorization(fetcher, apiUrl, request.deviceSecret) === "cancelled") {
+      throw new Error("Credential exchange response was lost; the unused credential was revoked and your previous sign-in is unchanged. Run `weft login` to try again.");
+    }
+    throw new Error("Credential exchange response was lost and cancellation could not be confirmed. Your previous sign-in is unchanged; wait for the request to expire, then run `weft login` again.");
+  }
+  if (environment.signal?.aborted) {
+    const cancellation = await cancelDeviceAuthorization(fetcher, apiUrl, request.deviceSecret);
+    if (cancellation === "cancelled") { output(environment, "Sign-in cancelled. Your previous sign-in is unchanged.\n"); return; }
+    if (cancellation === "completed") { output(environment, "Sign-in completed before cancellation reached the server.\n"); return; }
+    output(environment, "Cancellation could not be confirmed. Your previous sign-in is unchanged; the request will expire automatically.\n");
+    return;
+  }
+  try {
+    const finalized = await withCliConfigLock(env, async () => {
+      const saved = await readCliConfig(env);
+      const pending: CliConfig = {
+        ...saved,
+        pendingCredential: { token: credential.token, exchangeId: credential.exchangeId, apiUrl, deviceId },
+      };
+      await saveCliConfig(env, pending, environment.replaceConfig);
+      if (environment.signal?.aborted) {
+        const cancellation = await cancelDeviceAuthorization(fetcher, apiUrl, request.deviceSecret);
+        if (cancellation === "cancelled") {
+          const { pendingCredential: _pending, ...rest } = pending;
+          await saveCliConfig(env, rest, environment.replaceConfig);
+          return false;
+        }
+        if (cancellation === "completed") {
+          const completed = await finalizePendingCredential(env, pending, fetcher, environment.replaceConfig);
+          return !completed.pendingCredential;
+        }
+        return false;
+      }
+      const completed = await finalizePendingCredential(env, pending, fetcher, environment.replaceConfig, environment.signal);
+      if (!completed.pendingCredential && completed.token !== credential.token) {
+        throw new Error("This sign-in exchange expired before it was finalized. Your previous sign-in is unchanged; run `weft login` again.");
+      }
+      if (environment.signal?.aborted) {
+        const cancellation = await cancelDeviceAuthorization(fetcher, apiUrl, request.deviceSecret);
+        if (cancellation === "cancelled") {
+          const { pendingCredential: _pending, ...rest } = pending;
+          await saveCliConfig(env, rest, environment.replaceConfig);
+          return false;
+        }
+        if (cancellation === "completed") {
+          const recovered = await finalizePendingCredential(env, pending, fetcher, environment.replaceConfig);
+          return !recovered.pendingCredential;
+        }
+      }
+      return !completed.pendingCredential;
+    });
+    if (!finalized) {
+      if (environment.signal?.aborted) {
+        const saved = await readCliConfig(env);
+        if (saved.pendingCredential?.exchangeId === credential.exchangeId) throw new Error("Sign-in cancellation could not be confirmed. The pending credential remains saved for safe recovery; run `weft login` again when the server is reachable.");
+        output(environment, "Sign-in cancelled. Your previous sign-in is unchanged.\n");
+        return;
+      }
+      throw new Error("Sign-in was approved, but the server did not confirm the credential. Your existing config and the pending credential remain saved; run `weft login` again when the server is reachable to recover the sign-in.");
+    }
+  } catch (error) {
+    if (error instanceof Error && (error.message.startsWith("Sign-in was approved, but the server did not confirm") || error.message.startsWith("This sign-in exchange expired"))) throw error;
+    throw new Error("Sign-in was approved, but the credential could not be saved or confirmed. Your existing config and any pending credential were preserved for recovery; check the config directory permissions and run `weft login` again.");
+  }
+  output(environment, `Signed in to ${apiUrl}. Token saved to ${config}\n`);
 }
 
 export async function detectedClis(path = Bun.env.PATH ?? "") {
@@ -184,7 +499,8 @@ export async function detectedClis(path = Bun.env.PATH ?? "") {
 }
 
 async function post(fetcher: FetchLike, apiUrl: string, token: string, path: string, body: unknown, extraHeaders: Record<string, string> = {}) {
-  const response = await fetcher(`${apiUrl.replace(/\/$/, "")}${path}`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "x-weft-source": "cli", ...extraHeaders }, body: JSON.stringify(body) });
+  const secureApiUrl = validatedAuthApiUrl(apiUrl);
+  const response = await fetcher(`${secureApiUrl}${path}`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "x-weft-source": "cli", ...extraHeaders }, body: JSON.stringify(body), redirect: "error" });
   if (!response.ok) throw new Error(`${response.status}: ${(await response.text()) || response.statusText}`);
   return response.json();
 }
@@ -328,7 +644,7 @@ async function sweepSessionFolders(root: string, call: DaemonCall, now = Date.no
   await pruneSessionFolders(root, { now, active: activeSessionFolders, retired: new Set(retired) });
 }
 
-export async function executeRun(environment: DaemonEnvironment, call: DaemonCall, apiUrl: string, run: ClaimedRun, cancellations: Map<string, () => void>) {
+export async function executeRun(environment: DaemonEnvironment, call: DaemonCall, apiUrl: string, run: ClaimedRun, cancellations: Map<string, () => void>, pendingCancellationIds: Set<string> = new Set()) {
   const adapter = agentCliAdapters[run.agentCli];
   // A session folder comes from the server only when the Run has a work item; the name must be a UUID so the path stays inside the root.
   const plan = run.session && SESSION_FOLDER_NAME.test(run.session.folder) ? run.session : undefined;
@@ -393,6 +709,7 @@ export async function executeRun(environment: DaemonEnvironment, call: DaemonCal
       stopCurrent = stop;
       const runTimer = setTimeout(() => { timedOut = true; stop(); }, environment.runTimeoutMs ?? (run.timeoutSeconds ?? 1800) * 1000);
       cancellations.set(run.runId, () => { if (cancelled) return; cancelled = true; child.kill("SIGTERM"); setTimeout(() => { if (child.exitCode === null) child.kill("SIGKILL"); }, 10_000).unref(); });
+      if (pendingCancellationIds.has(run.runId)) cancellations.get(run.runId)?.();
       const flushTimer = setInterval(() => { void flush().catch(() => {}); }, 1_000);
       const consume = async (stream: ReadableStream<Uint8Array>) => {
         await consumeRedactedOutput(stream, run.secretEnvironment ?? run.environment, childEnv, async (line) => {
@@ -426,10 +743,14 @@ export async function executeRun(environment: DaemonEnvironment, call: DaemonCal
     }
     if (outcome.spawnFailed) return;
     const { code, cancelled, timedOut } = outcome;
-    if (inactive && !reportedUsage && !reportedModel) { cancellations.delete(run.runId); return; }
+    if (inactive && !reportedUsage && !reportedModel) { cancellations.delete(run.runId); pendingCancellationIds.delete(run.runId); return; }
     const acknowledgeCancellation = async () => {
       while (!environment.signal?.aborted) {
-        try { await call("/api/daemon/runs/cancel-ack", { runId: run.runId, usage: reportedUsage, model: reportedModel ?? run.model ?? null }); break; }
+        try {
+          await call("/api/daemon/runs/cancel-ack", { runId: run.runId, usage: reportedUsage, model: reportedModel ?? run.model ?? null });
+          pendingCancellationIds.delete(run.runId);
+          break;
+        }
         catch { await (environment.sleep ?? wait)(1_000); }
       }
       cancellations.delete(run.runId);
@@ -503,6 +824,8 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
   const runtimeEnvironment = { ...environment, signal };
   const env = environment.env ?? Bun.env;
   const config = await readCliConfig(env);
+  const apiUrl = daemonApiUrl(env, config);
+  assertDaemonCredentialServer(env, config, apiUrl);
   // The CLI token only registers the Daemon; /api/daemon/* uses the Daemon credential from its own file.
   if (!(env.WEFT_TOKEN ?? config.token)) throw new Error("You are not signed in. Run `weft login`, then try `weft daemon start` again.");
   let credential = await readDaemonCredential(env);
@@ -514,10 +837,13 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
     credential = registration.daemonToken;
     await writeDaemonCredential(env, registration.daemonToken);
   };
-  const apiUrl = (env.WEFT_API_URL ?? config.apiUrl ?? "http://localhost:3000").replace(/\/$/, "");
   const fetcher = environment.fetch ?? fetch;
   const sleep = environment.sleep ?? wait;
-  const makeSocket = environment.webSocket ?? ((url) => new WebSocket(url));
+  const makeSocket = environment.webSocket ?? ((url, options) => {
+    // Bun supports custom client handshake headers; the standard DOM WebSocket type does not expose Bun's options object.
+    const BunWebSocket = WebSocket as unknown as new (url: string, options: DaemonWebSocketOptions) => WebSocket;
+    return new BunWebSocket(url, options!);
+  });
   let backoffMs = 1_000;
   let authBackoffMs = AUTH_RETRY_MIN_MS;
   let registeredClis = "";
@@ -525,11 +851,26 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
   let heldRuntimeIds = new Set<string>();
   // Lives across reconnects: a cancel arriving on a new socket must still reach Runs claimed on an old one.
   const cancellations = new Map<string, () => void>();
+  // Cancellation ids survive a registration outage until the corresponding local process
+  // appears and acknowledges its stop.
+  const pendingCancellationIds = new Set<string>();
+  const recoverPendingCancellations = async () => {
+    const daemonCredential = currentCredential();
+    if (!daemonCredential) return;
+    try {
+      const result = await post(fetcher, apiUrl, daemonCredential, "/api/daemon/runs/cancellations", {}) as { runIds?: unknown };
+      if (!Array.isArray(result.runIds)) return;
+      for (const runId of result.runIds) if (typeof runId === "string") {
+        pendingCancellationIds.add(runId);
+        cancellations.get(runId)?.();
+      }
+    } catch { /* only a revoked credential can use this recovery endpoint */ }
+  };
   /** Registers this Daemon; asks for a new credential when none is held or the last one was refused. */
   const register = async (agentClis: string[]) => {
     let registration: { daemonId: string; daemonToken?: string; runtimes?: Array<{ id: string }> };
     // Read at every attempt: `weft login` while the Daemon runs replaces the CLI token, and the next retry must use it.
-    const personalToken = env.WEFT_TOKEN ?? (await readCliConfig(env)).token ?? "";
+    const personalToken = env.WEFT_TOKEN ?? await renewCliCredential(environment, apiUrl) ?? (await readCliConfig(env)).token ?? "";
     try {
       registration = await post(fetcher, apiUrl, personalToken, "/api/daemon/register", { hostname: env.WEFT_HOSTNAME ?? hostname(), version: CLI_VERSION, agentClis, rotate: !credential || rotateNext }, { "x-weft-capabilities": "runtime_environment,runtime_sandbox" }) as { daemonId: string; daemonToken?: string; runtimes?: Array<{ id: string }> };
     } catch (error) {
@@ -577,9 +918,8 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
       let lastRegisteredAt = Date.now();
       const openedWith = currentCredential();
       const wsUrl = new URL(`${apiUrl.replace(/^http/, "ws")}/api/daemon`);
-      wsUrl.searchParams.set("token", openedWith);
       await new Promise<void>((resolve, reject) => {
-        const socket = makeSocket(wsUrl.toString());
+        const socket = makeSocket(wsUrl.toString(), { headers: { Authorization: `Bearer ${openedWith}` } });
         let settled = false;
         let connectedAt: number | undefined;
         let claiming = false;
@@ -589,7 +929,7 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
           try {
             const response = await callDaemon("/api/daemon/runs/claim", {}) as ClaimedRun[];
             // Each Run runs in its own task so a long Run never blocks the next claim.
-            for (const run of response) void executeRun(runtimeEnvironment, callDaemon, apiUrl, run, cancellations).catch((error) => output(environment, `Run ${run.runId} failed: ${(error as Error).message}\n`));
+            for (const run of response) void executeRun(runtimeEnvironment, callDaemon, apiUrl, run, cancellations, pendingCancellationIds).catch((error) => output(environment, `Run ${run.runId} failed: ${(error as Error).message}\n`));
           } catch { /* the next work signal or safety poll retries the claim */ }
           finally { claiming = false; }
         };
@@ -635,6 +975,7 @@ export async function startDaemon(environment: DaemonEnvironment = {}) {
     } catch (error) {
       if (signal.aborted) return;
       if (error instanceof RegistrationUnauthorized) {
+        await recoverPendingCancellations();
         const hint = "Your weft sign-in was refused, so the Daemon cannot register. Run `weft login` to sign in again. The Daemon keeps retrying, less often each time.";
         output(environment, `${hint}\n`);
         errorOutput(environment, `${hint}\n`);

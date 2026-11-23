@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { apiTokens, createDatabase, oauthAccessToken, oauthClient, oauthConsent, oauthRefreshToken } from "@weft/db";
+import { apiTokens, cliDevices, createDatabase, oauthAccessToken, oauthClient, oauthConsent, oauthRefreshToken } from "@weft/db";
 import { createUserFactory, withRollback } from "../../db/src/test-helpers";
 import { ActionError, createApiTokenActions } from "../src";
 
@@ -57,6 +57,61 @@ test.concurrent("a revoked token stops authenticating", async () => {
     await tokens.revokeApiToken.handler({ userId: owner.id }, { tokenId: created.id });
     expect(await tokens.authenticate(created.token)).toBeNull();
     expect((await tokens.listApiTokens.handler({ userId: owner.id }, {}))[0]!.revokedAt).not.toBeNull();
+  });
+});
+
+test.concurrent("an enrolled CLI device renews its inactivity window on use, while an idle device expires after 90 days", async () => {
+  await withRollback(db, async (transaction) => {
+    const tokens = createApiTokenActions(transaction);
+    const owner = await createUserFactory(transaction);
+    const active = await tokens.createApiToken.handler({ userId: owner.id }, { name: "CLI @ active" });
+    const idle = await tokens.createApiToken.handler({ userId: owner.id }, { name: "CLI @ idle" });
+    const activeTokenHash = Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(active.token))).toString("hex");
+    const idleTokenHash = Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(idle.token))).toString("hex");
+    const [activeRow] = await transaction.select().from(apiTokens).where(eq(apiTokens.tokenHash, activeTokenHash));
+    const [idleRow] = await transaction.select().from(apiTokens).where(eq(apiTokens.tokenHash, idleTokenHash));
+    const now = new Date();
+    await transaction.insert(cliDevices).values([
+      { deviceId: crypto.randomUUID(), ownerId: owner.id, hostname: "active", tokenId: activeRow!.id, lastUsedAt: new Date(now.getTime() - 30 * 24 * 60 * 60_000) },
+      { deviceId: crypto.randomUUID(), ownerId: owner.id, hostname: "idle", tokenId: idleRow!.id, lastUsedAt: new Date(now.getTime() - 91 * 24 * 60 * 60_000) },
+    ]);
+    await transaction.update(apiTokens).set({ expiresAt: new Date(now.getTime() + 24 * 60 * 60_000) }).where(eq(apiTokens.id, activeRow!.id));
+    // An enrolled credential near its old expiry renews to a 90-day inactivity window on use.
+    expect(await tokens.authenticateWithToken(active.token)).toEqual({ userId: owner.id, tokenId: activeRow!.id });
+    const renewed = (await transaction.select().from(apiTokens).where(eq(apiTokens.id, activeRow!.id)))[0]!;
+    const device = (await transaction.select().from(cliDevices).where(eq(cliDevices.tokenId, activeRow!.id)))[0]!;
+    expect(renewed.expiresAt!.getTime()).toBeGreaterThan(Date.now() + 89 * 24 * 60 * 60_000);
+    expect(device.lastUsedAt.getTime()).toBeGreaterThan(now.getTime() - 1_000);
+    // Once the device is beyond the inactivity window its credential is rejected, even if a row remains.
+    await transaction.update(apiTokens).set({ expiresAt: new Date(now.getTime() - 91 * 24 * 60 * 60_000) }).where(eq(apiTokens.id, idleRow!.id));
+    expect(await tokens.authenticateWithToken(idle.token)).toBeNull();
+  });
+});
+
+test.concurrent("controlled device activity renews the 90-day window while legacy API tokens keep their original expiry", async () => {
+  await withRollback(db, async (transaction) => {
+    const owner = await createUserFactory(transaction);
+    const enrolled = await createApiTokenActions(transaction).createApiToken.handler({ userId: owner.id }, { name: "Enrolled CLI" });
+    const legacy = await createApiTokenActions(transaction).createApiToken.handler({ userId: owner.id }, { name: "Legacy CLI" });
+    const hash = async (token: string) => Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token))).toString("hex");
+    const [enrolledRow] = await transaction.select().from(apiTokens).where(eq(apiTokens.tokenHash, await hash(enrolled.token)));
+    const [legacyRow] = await transaction.select().from(apiTokens).where(eq(apiTokens.tokenHash, await hash(legacy.token)));
+    const start = new Date("2026-01-01T00:00:00Z");
+    await transaction.insert(cliDevices).values({ deviceId: crypto.randomUUID(), ownerId: owner.id, hostname: "active", tokenId: enrolledRow!.id, lastUsedAt: start });
+    await transaction.update(apiTokens).set({ expiresAt: new Date(start.getTime() + 90 * 24 * 60 * 60_000) }).where(eq(apiTokens.id, enrolledRow!.id));
+    await transaction.update(apiTokens).set({ expiresAt: new Date(start.getTime() + 90 * 24 * 60 * 60_000) }).where(eq(apiTokens.id, legacyRow!.id));
+    let now = new Date(start);
+    const tokens = createApiTokenActions(transaction, { now: () => new Date(now) });
+    expect(await tokens.authenticateWithToken(enrolled.token)).toMatchObject({ userId: owner.id });
+    now = new Date(start.getTime() + 89 * 24 * 60 * 60_000);
+    expect(await tokens.authenticateWithToken(enrolled.token)).toMatchObject({ userId: owner.id });
+    const renewed = (await transaction.select().from(apiTokens).where(eq(apiTokens.id, enrolledRow!.id)))[0]!;
+    expect(renewed.expiresAt!.getTime()).toBe(start.getTime() + 179 * 24 * 60 * 60_000);
+    now = new Date(start.getTime() + 180 * 24 * 60 * 60_000);
+    expect(await tokens.authenticateWithToken(enrolled.token)).toBeNull();
+    expect(await tokens.authenticateWithToken(legacy.token)).toBeNull();
+    const unchangedLegacy = (await transaction.select().from(apiTokens).where(eq(apiTokens.id, legacyRow!.id)))[0]!;
+    expect(unchangedLegacy.expiresAt!.getTime()).toBe(start.getTime() + 90 * 24 * 60 * 60_000);
   });
 });
 

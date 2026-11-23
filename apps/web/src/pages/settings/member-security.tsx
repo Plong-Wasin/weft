@@ -13,7 +13,7 @@ export type MemberAccount = {
 type MemberToken = { id: string; name: string; kind: "personal" | "daemon"; prefix: string; createdAt: string; lastUsedAt: string | null; expiresAt: string | null; status: "active" | "expired" | "revoked" };
 type AuditRow = { id: string; at: string; actorId: string | null; actorName: string | null; kind: string; entityId: string; field: string; oldValue: unknown; newValue: unknown };
 
-export const auditKindKeys = ["agent", "runtime", "trigger", "skill", "workspace", "member", "api_token"] as const;
+export const auditKindKeys = ["agent", "runtime", "trigger", "skill", "workspace", "member", "api_token", "cli_device"] as const;
 
 /** Admin list of people with their status, last activity and the account actions. Agents are not listed here. */
 export function MemberSecurityList({ workspaceId, selfId, onChanged }: { workspaceId: string; selfId: string; onChanged: () => Promise<void> }) {

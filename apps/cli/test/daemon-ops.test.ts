@@ -197,6 +197,31 @@ test("autostart says it is unavailable on other systems instead of guessing", as
   expect(await autostartStatus({ env: { HOME: "/tmp" }, platform: "win32" })).toMatchObject({ enabled: false, platform: "unsupported" });
 });
 
+test("an explicit api-url is written into the autostart service before it starts", async () => {
+  const configHome = await temp("weft-autostart-url-");
+  const configDir = join(configHome, "weft"); await mkdir(configDir, { recursive: true });
+  await writeFile(join(configDir, "config.json"), JSON.stringify({ token: "server-b-token", apiUrl: "https://server-b.example" }));
+  const unitPath = join(configHome, "systemd", "user", "weft-daemon.service");
+  await mkdir(join(unitPath, ".."), { recursive: true });
+  await writeFile(unitPath, "old service");
+  const env = { XDG_CONFIG_HOME: configHome, HOME: configHome, WEFT_API_URL: "https://server-b.example", PATH: "/usr/bin" };
+  const calls: string[][] = [];
+  const run: ProcessRunner = async (argv) => {
+    calls.push(argv);
+    if (argv[2] === "start") {
+      await writeFile(join(configDir, "daemon.json"), JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), apiUrl: env.WEFT_API_URL, agentClis: [], logPath: join(configDir, "daemon.log") }));
+    }
+    return { exitCode: 0, stdout: "", stderr: "", timedOut: false };
+  };
+  const result = await startDaemonForUser({ env, platform: "linux", run, execPath: "/usr/bin/bun", scriptPath: "/opt/weft/index.ts" });
+  const unit = await readFile(unitPath, "utf8");
+  expect(unit).toContain('Environment="WEFT_API_URL=https://server-b.example"');
+  expect(calls).toEqual([["systemctl", "--user", "daemon-reload"], ["systemctl", "--user", "start", "weft-daemon.service"]]);
+  expect("managedBy" in result && result.managedBy).toBe("autostart");
+  expect(result.pid).toBe(process.pid);
+  await rm(join(configDir, "daemon.json"));
+});
+
 // ---------------------------------------------------------------- restart against a fake server
 
 test("restart stops the running Daemon and starts it again, in text and JSON", async () => {

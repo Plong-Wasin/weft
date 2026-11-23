@@ -61,7 +61,7 @@ test("membership actions follow the member grant, not the project grant", () => 
 
 test("account, security and Agent-configuring actions are never available to an Agent, whatever the grants", () => {
   for (const action of [
-    "create_api_token", "revoke_api_token", "list_api_tokens", "list_member_api_tokens", "revoke_member_api_token",
+    "create_api_token", "revoke_api_token", "list_api_tokens", "list_managed_credentials", "list_cli_devices", "revoke_cli_device", "list_member_api_tokens", "revoke_member_api_token",
     "force_password_reset", "sign_out_everywhere", "sign_out_member", "suspend_member", "revoke_my_session", "list_my_sessions",
     "create_invite", "accept_invite", "revoke_invite", "set_my_email_preferences", "create_work_item_integration", "rotate_work_item_integration_secret",
     "list_authorized_apps", "revoke_authorized_app", "register_daemon", "create_agent", "update_agent", "enable_agent", "disable_agent", "set_agent_access",

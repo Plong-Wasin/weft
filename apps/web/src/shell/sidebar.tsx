@@ -16,6 +16,7 @@ import type { Member, Project, Workspace } from "../types";
 import { useWorkspace } from "../layouts/workspace-layout";
 import { AiSidebar } from "../ai-chat";
 import { sectionOf } from "./app-rail";
+import { workspaceMembersQuery } from "../workspace-role";
 import { WikiSidebar } from "./wiki-sidebar";
 import { dropWithinGroup, filterProjectGroups, matchesProjectSearch, moveWithinGroup, preferenceOf, sortProjects, useProjectPreferences, type ProjectPreference } from "./project-preferences";
 
@@ -153,7 +154,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
   const { selfId } = useWorkspace();
   const [projectQuery, setProjectQuery] = React.useState("");
   // Analytics is for workspace Admins and Members; a Guest gets no entry (the Actions refuse a Guest anyway).
-  const { data: members } = useQuery({ queryKey: ["workspace-members", workspace.id], queryFn: async () => await action<Member[]>("list_members", { workspaceId: workspace.id }) ?? [], enabled: section === "work" || section === "settings" });
+  const { data: members } = useQuery({ ...workspaceMembersQuery(workspace.id), enabled: section === "work" || section === "settings" });
   const canSeeAnalytics = (members ?? []).some((member) => member.userId === selfId && member.role !== "Guest");
   const isWorkspaceAdmin = adminState(members ?? null, selfId) === "admin";
   const aiChatId = section === "ai" ? pathname.split("/")[3] ?? "" : "";

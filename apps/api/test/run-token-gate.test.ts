@@ -89,9 +89,35 @@ test.concurrent("Runtime Run credentials and completion comments identify the Ag
     const [completionComment] = await transaction.select().from(commentRows).where(eq(commentRows.runId, completionRun.runId));
     expect(completionComment).toMatchObject({ authorId: agent.userId, bodyText: "Completed by Runtime" });
 
+    await createAgentActions(transaction).setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id] });
     const otherProject = await createProjectActions(transaction).createProject.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Outside", key: `OU${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private" });
     const outsideItem = await work.createWorkItem.handler({ userId: owner.id }, { projectId: otherProject.id, title: "Outside" });
     expect((await post("/actions/create_comment", { workItemId: outsideItem.id, bodyMarkdown: "Must be refused" }, { token: credentialRun.token })).status).not.toBe(200);
+  });
+});
+
+test.concurrent("a Run token can write only in Projects the Agent belongs to, including other Workspaces", async () => {
+  await withRollback(db, async (transaction) => {
+    const { post, claim, owner, workspace, project, agent, agents, work } = await scenario(transaction);
+    await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id] });
+    const projectActions = createProjectActions(transaction);
+    const otherProject = await projectActions.createProject.handler({ userId: owner.id }, {
+      workspaceId: workspace.id, name: "Originator only", key: `OY${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private",
+    });
+    const otherItem = await work.createWorkItem.handler({ userId: owner.id }, { projectId: otherProject.id, title: "Originator only item" });
+    const secondWorkspace = await (await post("/actions/create_workspace", { name: "Another team", slug: `other-${crypto.randomUUID()}` }, { cookie: owner.cookie })).json() as { id: string };
+    const foreignProject = await projectActions.createProject.handler({ userId: owner.id }, {
+      workspaceId: secondWorkspace.id, name: "Foreign", key: `FR${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private",
+    });
+    const foreignItem = await work.createWorkItem.handler({ userId: owner.id }, { projectId: foreignProject.id, title: "Foreign item" });
+    const [claimed] = await (await claim()).json() as Array<{ token: string }>;
+    const token = claimed!.token;
+
+    expect((await post("/actions/create_work_item", { projectId: project.id, title: "Agent project" }, { token })).status).toBe(200);
+    expect((await post("/actions/create_work_item", { projectId: otherProject.id, title: "Must fail" }, { token })).status).toBe(404);
+    expect((await post("/actions/update_work_item", { workItemId: otherItem.id, title: "Must fail" }, { token })).status).toBe(404);
+    expect((await post("/actions/create_comment", { workItemId: otherItem.id, bodyMarkdown: "Must fail" }, { token })).status).toBe(404);
+    expect((await post("/actions/update_work_item", { workItemId: foreignItem.id, title: "Must fail" }, { token })).status).toBe(403);
   });
 });
 

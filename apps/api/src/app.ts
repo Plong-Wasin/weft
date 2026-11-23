@@ -785,7 +785,10 @@ export function createApp(
         // Converter work is charged to the user (a token is only a sub-limit of its user, so many tokens are still one caller); a caller without a user is keyed by address and workspace.
         const bodyWorkspace = (body as { workspaceId?: string } | null)?.workspaceId ?? "";
         const converterKey = caller.userId ? `user:${caller.userId}` : `ip:${clientAddress(request, Number(Bun.env.TRUSTED_PROXY_HOPS ?? 0))}:${bodyWorkspace}`;
-        const executeAction = () => withWrittenFormKey(converterKey, () => (action.handler as (context: ActionContext, input: unknown) => Promise<unknown>)(caller, body), (caller as { apiTokenId?: string }).apiTokenId);
+        // Project checks inside Actions must see the Agent's memberships. The Run guard above
+        // separately verifies that its Originator and Runtime owner still authorize the Run.
+        const actionCaller = caller.agent ? { ...caller, userId: caller.agent.agentUserId } : caller;
+        const executeAction = () => withWrittenFormKey(converterKey, () => (action.handler as (context: ActionContext, input: unknown) => Promise<unknown>)(actionCaller, body), (caller as { apiTokenId?: string }).apiTokenId);
         let result: unknown;
         if (caller.source === "agent" && caller.agent && action.kind === "read") {
           const guarded = await withAgentRunProjectAuthorization(db, caller.agent.runId, async (state) => {

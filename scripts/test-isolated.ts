@@ -41,7 +41,7 @@ const timingSensitive = /written-form-(limits|round7)|migrate-schema-only|apps\/
 const slow = /written-form-(fair-queue|probation|pool-fairness|fuzz|worker)|migration-backfill/;
 
 /** The files that take longest in the default run (measured 2026-11-16, 20-40 s each): they start first, so the run never ends on one of them. */
-const startFirst = /rate-limits|stored-read-cap|round7-reads|read-handlers-under-key|apps\/live\/test\/server/;
+const startFirst = /rate-limits|stored-read-cap|round7-reads|read-handlers-under-key|apps\/live\/test\/server|apps\/web\/test\/pwa-build/;
 
 /** Every test file bun would pick up: the slowest known first, then the rest largest first (big files tend to be slow). */
 async function testFiles(): Promise<string[]> {
@@ -116,6 +116,7 @@ async function runFile(file: string, bunArgs: string[], totals: { pass: number; 
 }
 
 async function runFileOn(database: string, file: string, bunArgs: string[], totals: { pass: number; fail: number; tests: number; failedFiles: number }): Promise<string> {
+  const started = performance.now();
   const run = Bun.spawn(["bun", "test", "--concurrent", ...bunArgs, file], { env: envFor(urlFor(database)), stdout: "pipe", stderr: "pipe" });
   const [out, err] = await Promise.all([new Response(run.stdout).text(), new Response(run.stderr).text()]);
   const exitCode = await run.exited;
@@ -134,7 +135,7 @@ async function runFileOn(database: string, file: string, bunArgs: string[], tota
     console.log(redactedDiagnostics ? redactedDiagnostics.split("\n").map((line) => `  ${escapeControlChars(line)}`).join("\n") : "  The test process exited without diagnostic output.");
     console.log("::endgroup::");
   }
-  return `===== ${file} (exit ${exitCode})\n${output}\n`;
+  return `===== ${file} (exit ${exitCode}, ${((performance.now() - started) / 1000).toFixed(2)}s)\n${output}\n`;
 }
 
 /** Prevent test-controlled filenames/output from becoming GitHub Actions workflow commands. */

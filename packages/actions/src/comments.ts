@@ -8,6 +8,7 @@ import { ActionError, requireWorkspaceRole } from "./members";
 import { assertNotArchived, liveWorkItems } from "./triage";
 import { enqueueNotification, recordSecretOutputBlockedNotifications } from "./notifications";
 import { accessibleProjects, requireProjectAccess } from "./projects";
+import { agentProjectIds } from "./agent-project-scope";
 import { requireWikiPageAccess } from "./wiki";
 import { agentUserIds, withoutDisabledAgents } from "./agent-access";
 import { queueRunsForAssignees, wakeOutcomeOutput, wakerOf } from "./runs";
@@ -53,6 +54,8 @@ export async function commentMarkdownOptions(database: Database, userId: string,
     }
   }
 
+  const titleLabels = [...labels].filter((label) => !/^[A-Za-z][A-Za-z0-9]{1,11}-\d+$/.test(label));
+  const agentProjects = stableItems.size || titleLabels.length || stablePages.size ? await agentProjectIds(database, workspaceId) : null;
   if (stableItems.size) {
     const requestedLabels = new Map(tokens.flatMap((match) => {
       const identity = /^(?:work-item):([^\s|]+)$/i.exec(match[2]?.trim() ?? "");
@@ -63,7 +66,7 @@ export async function commentMarkdownOptions(database: Database, userId: string,
       .leftJoin(projectMembers, and(eq(projectMembers.projectId, projects.id), eq(projectMembers.userId, userId)))
       .where(and(inArray(workItems.id, [...stableItems]), eq(projects.workspaceId, workspaceId), isNull(workItems.deletedAt)));
     for (const row of rows) {
-      if (workspaceRole === "Admin" || row.visibility === "public" || row.memberId) references.push({ kind: "work-item", id: row.id, label: requestedLabels.get(row.id) || `${row.key}-${row.sequence}` });
+      if ((workspaceRole === "Admin" || row.visibility === "public" || row.memberId) && (!agentProjects || agentProjects.has(row.projectId))) references.push({ kind: "work-item", id: row.id, label: requestedLabels.get(row.id) || `${row.key}-${row.sequence}` });
     }
     if (currentProjectId && [...stableItems].some((id) => !references.some((reference) => reference.kind === "work-item" && reference.id === id))) {
       const suggestions = await database.select({ id: workItems.id, sequence: workItems.sequence, key: projects.key }).from(workItems).innerJoin(projects, eq(projects.id, workItems.projectId))
@@ -72,7 +75,6 @@ export async function commentMarkdownOptions(database: Database, userId: string,
     }
   }
 
-  const titleLabels = [...labels].filter((label) => !/^[A-Za-z][A-Za-z0-9]{1,11}-\d+$/.test(label));
   const pageConditions = [
     ...(titleLabels.length ? [inArray(sql`lower(${wikiPages.title})`, titleLabels.map((label) => label.toLocaleLowerCase()))] : []),
     ...(stablePages.size ? [inArray(wikiPages.id, [...stablePages])] : []),
@@ -90,7 +92,7 @@ export async function commentMarkdownOptions(database: Database, userId: string,
       const shared = ["view", "comment", "edit"].includes(String(shareRole));
       if (page.access === "private" && page.ownerId !== userId && !shared) continue;
       if (page.projectId) {
-        if (!project || !featuresOf(project).pages || workspaceRole !== "Admin" && project.visibility !== "public" && !memberId) continue;
+        if (!project || !featuresOf(project).pages || workspaceRole !== "Admin" && project.visibility !== "public" && !memberId || agentProjects && !agentProjects.has(page.projectId)) continue;
       } else {
         if (collection?.visibility === "private" && collection.ownerId !== userId && !collectionMemberId && !shared) continue;
         if (page.ownerId !== userId && !shared && page.access !== "public") continue;

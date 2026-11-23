@@ -11,6 +11,7 @@ import type { Database } from "@weft/db";
 import { activities, agents, assets, collectionMembers, collections, comments, projectMembers, projects, users, wikiPageFavorites, wikiPageShares, wikiPageTemplates, wikiPageVersions, wikiPages, workItemPages, workItems, workspaceMembers } from "@weft/db";
 import { ActionError, requireWorkspaceRole, type WorkspaceRole } from "./members";
 import { accessibleProjects, requireProjectAccess } from "./projects";
+import { agentProjectIds } from "./agent-project-scope";
 import { assertFeatureEnabled } from "./features";
 import { validateRichTextAssets } from "./rich-text-validation";
 import { escapeLike } from "./search";
@@ -1306,6 +1307,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const query = input.query.trim();
         if (query.length === 0) return [];
         const pattern = `%${escapeLike(query)}%`;
+        const agentProjects = await agentProjectIds(db, input.workspaceId);
         const rows = await db.select({ page: wikiPages, projectKey: projects.key }).from(wikiPages).leftJoin(projects, eq(projects.id, wikiPages.projectId)).where(and(
           eq(wikiPages.workspaceId, input.workspaceId), isNull(wikiPages.deletedAt), isNull(wikiPages.archivedAt),
           sql`(${wikiPages.projectId} is null or exists (select 1 from projects p where p.id = ${wikiPages.projectId} and p.pages_enabled = true))`,
@@ -1321,7 +1323,8 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           sql`(${wikiPages.title} ilike ${pattern} or ${wikiPages.contentText} ilike ${pattern}
             or to_tsvector('english', ${wikiPages.title} || ' ' || ${wikiPages.contentText}) @@ plainto_tsquery('english', ${query}))`,
         )).orderBy(sql`(${wikiPages.title} ilike ${pattern}) desc`, asc(wikiPages.sortOrder), asc(wikiPages.createdAt), asc(wikiPages.id)).limit(input.limit ?? 25);
-        return rows.map(({ page: row, projectKey }) => ({ id: row.id, title: row.title, snippet: snippetOf(row.contentText, query), access: row.access as WikiAccess, projectId: row.projectId ?? null, projectKey: projectKey ?? null }));
+        return rows.filter(({ page }) => !page.projectId || !agentProjects || agentProjects.has(page.projectId))
+          .map(({ page: row, projectKey }) => ({ id: row.id, title: row.title, snippet: snippetOf(row.contentText, query), access: row.access as WikiAccess, projectId: row.projectId ?? null, projectKey: projectKey ?? null }));
       },
     },
   };

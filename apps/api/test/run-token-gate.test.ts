@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
-import { activities, assets as assetRows, comments as commentRows, createDatabase, runs, workItems, type Database } from "@weft/db";
-import { createAgentActions, createAgentRuntimeEnvironmentActions, createAiTools, createCommentActions, createCycleActions, createExportActions, createModuleActions, createProjectActions, createRuntimeDispatchActions, createRuntimeActions, createTriggerActions, createWebLinkActions, createWikiActions, createWorkItemActions, lockRuntimeRun, withAgentProjectScope } from "@weft/actions";
+import { activities, assets as assetRows, comments as commentRows, createDatabase, notifications as notificationRows, runs, workItems, type Database } from "@weft/db";
+import { createAgentActions, createAgentRuntimeEnvironmentActions, createAiTools, createCommentActions, commentMarkdownOptions, createConfirmationStore, createCycleActions, createExportActions, createModuleActions, createProjectActions, createRuntimeDispatchActions, createRuntimeActions, createTriggerActions, createWebLinkActions, createWikiActions, createWorkItemActions, lockRuntimeRun, withAgentProjectScope } from "@weft/actions";
 import { createMemberFactory, withRollback } from "../../../packages/db/src/test-helpers";
 import { createApp } from "../src/app";
 
@@ -138,6 +138,134 @@ test.concurrent("a Run token cannot update a Web Link in a Project the Agent doe
     const refused = await post("/actions/update_web_link", { webLinkId: outsideLink.id, title: "Should not change" }, { token: claimed!.token });
     expect(refused.status).toBe(404);
     expect((await post("/actions/update_web_link", { webLinkId: insideLink.id, title: "Allowed change" }, { token: claimed!.token })).status).toBe(200);
+  });
+});
+
+test.concurrent("request_export as an Agent is limited to Projects the Agent belongs to", async () => {
+  await withRollback(db, async (transaction) => {
+    const { post, claim, owner, workspace, project, agent, agents } = await scenario(transaction);
+    const outside = await createProjectActions(transaction).createProject.handler({ userId: owner.id }, {
+      workspaceId: workspace.id, name: "Originator only", key: `EX${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private",
+    });
+    await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id] });
+    await agents.updateAgent.handler({ userId: owner.id }, { agentId: agent.id, allowExportActions: true });
+    const [claimed] = await (await claim()).json() as Array<{ token: string }>;
+
+    expect((await post("/actions/request_export", { workspaceId: workspace.id, projectIds: [outside.id] }, { token: claimed!.token })).status).toBe(404);
+    const defaultChoice = await (await post("/actions/request_export", { workspaceId: workspace.id }, { token: claimed!.token })).json() as { projectIds: string[] };
+    expect(defaultChoice.projectIds).toEqual([project.id]);
+  });
+});
+
+test.concurrent("a Run token cannot join a Project outside the Agent's scope", async () => {
+  await withRollback(db, async (transaction) => {
+    const { post, claim, owner, workspace, project, agent, agents } = await scenario(transaction);
+    const outside = await createProjectActions(transaction).createProject.handler({ userId: owner.id }, {
+      workspaceId: workspace.id, name: "Public outside", key: `JP${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "public",
+    });
+    await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id] });
+    await agents.updateAgent.handler({ userId: owner.id }, { agentId: agent.id, allowProjectActions: true });
+    const [claimed] = await (await claim()).json() as Array<{ token: string }>;
+
+    expect((await post("/actions/join_project", { projectId: outside.id }, { token: claimed!.token })).status).toBe(404);
+  });
+});
+
+test.concurrent("Run-token Wiki search omits pages in Projects outside the Agent's scope", async () => {
+  await withRollback(db, async (transaction) => {
+    const { post, claim, owner, workspace, project, agent, agents } = await scenario(transaction);
+    const outside = await createProjectActions(transaction).createProject.handler({ userId: owner.id }, {
+      workspaceId: workspace.id, name: "Wiki outside", key: `WS${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "public",
+    });
+    const page = await createWikiActions(transaction).createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, projectId: outside.id, title: "Distinctive agent search result" });
+    await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id] });
+    await agents.updateAgent.handler({ userId: owner.id }, { agentId: agent.id, allowFeatureActions: true });
+    const [claimed] = await (await claim()).json() as Array<{ token: string }>;
+
+    const results = await (await post("/actions/search_wiki_pages", { workspaceId: workspace.id, query: "Distinctive agent search result" }, { token: claimed!.token })).json() as Array<{ id: string }>;
+    expect(results.map((result) => result.id)).not.toContain(page.id);
+  });
+});
+
+test.concurrent("Run-token notifications omit Wiki pages in Projects outside the Agent's scope", async () => {
+  await withRollback(db, async (transaction) => {
+    const { post, claim, owner, workspace, project, agent, agents } = await scenario(transaction);
+    const outside = await createProjectActions(transaction).createProject.handler({ userId: owner.id }, {
+      workspaceId: workspace.id, name: "Notified outside", key: `NT${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "public",
+    });
+    const page = await createWikiActions(transaction).createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, projectId: outside.id, title: "Hidden notification page" });
+    await transaction.insert(notificationRows).values({ workspaceId: workspace.id, userId: owner.id, actorId: owner.id, kind: "mention", wikiPageId: page.id, jobId: crypto.randomUUID() });
+    await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id] });
+    await agents.updateAgent.handler({ userId: owner.id }, { agentId: agent.id, allowFeatureActions: true });
+    const [claimed] = await (await claim()).json() as Array<{ token: string }>;
+
+    const inbox = await (await post("/actions/list_notifications", { workspaceId: workspace.id }, { token: claimed!.token })).json() as { notifications: Array<{ wikiPageId: string | null }> };
+    expect(inbox.notifications.map((notification) => notification.wikiPageId)).not.toContain(page.id);
+  });
+});
+
+test.concurrent("stable Work item references in Agent-written comments respect Agent Project scope", async () => {
+  await withRollback(db, async (transaction) => {
+    const { owner, workspace, project, agent, agents, work } = await scenario(transaction);
+    const outside = await createProjectActions(transaction).createProject.handler({ userId: owner.id }, {
+      workspaceId: workspace.id, name: "Reference outside", key: `RF${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "public",
+    });
+    const target = await work.createWorkItem.handler({ userId: owner.id }, { projectId: outside.id, title: "Hidden target" });
+    await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id] });
+
+    const resolved = await withAgentProjectScope({ agentUserId: agent.userId, workspaceId: workspace.id }, () =>
+      commentMarkdownOptions(transaction, owner.id, workspace.id, project.id, `[[Hidden target|work-item:${target.id}]]`),
+    );
+    expect(resolved.references.map((reference) => reference.id)).not.toContain(target.id);
+  });
+});
+
+test.concurrent("confirmation of a Run proposal enforces the Agent Project scope", async () => {
+  await withRollback(db, async (transaction) => {
+    const { post, claim, owner, workspace, project, agent, agents, work } = await scenario(transaction);
+    const outside = await createProjectActions(transaction).createProject.handler({ userId: owner.id }, {
+      workspaceId: workspace.id, name: "Confirmation outside", key: `CF${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private",
+    });
+    const outsideItem = await work.createWorkItem.handler({ userId: owner.id }, { projectId: outside.id, title: "Outside" });
+    const link = await createWebLinkActions(transaction).createWebLink.handler({ userId: owner.id }, { workItemId: outsideItem.id, url: "https://example.test/confirmation" });
+    await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id] });
+    const [claimed] = await (await claim()).json() as Array<{ runId: string }>;
+    const store = createConfirmationStore(transaction);
+    const card = await store.propose({ userId: owner.id, workspaceId: workspace.id, runId: claimed!.runId, action: "update_web_link", input: { webLinkId: link.id, title: "Must be refused" } });
+
+    expect(await store.confirm(owner.id, card.id)).toMatchObject({ status: "failed", error: "Project not found" });
+  });
+});
+
+test.concurrent("a Run token cannot read a workspace-level Wiki page from another workspace", async () => {
+  await withRollback(db, async (transaction) => {
+    const { post, claim, owner, workspace, project, agent, agents } = await scenario(transaction);
+    const secondWorkspace = await (await post("/actions/create_workspace", { name: "Second team", slug: `other-${crypto.randomUUID()}` }, { cookie: owner.cookie })).json() as { id: string };
+    const page = await createWikiActions(transaction).createWikiPage.handler({ userId: owner.id }, { workspaceId: secondWorkspace.id, title: "Other workspace page" });
+    await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id] });
+    await agents.updateAgent.handler({ userId: owner.id }, { agentId: agent.id, allowFeatureActions: true });
+    const [claimed] = await (await claim()).json() as Array<{ token: string }>;
+
+    expect((await post("/actions/get_wiki_page", { pageId: page.id }, { token: claimed!.token })).status).toBe(404);
+  });
+});
+
+test.concurrent("a slow Agent scope does not leak into a concurrent human Project call", async () => {
+  await withRollback(db, async (transaction) => {
+    const { owner, workspace, project, agent, agents, work } = await scenario(transaction);
+    const outside = await createProjectActions(transaction).createProject.handler({ userId: owner.id }, {
+      workspaceId: workspace.id, name: "Human-only", key: `HM${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private",
+    });
+    const outsideItem = await work.createWorkItem.handler({ userId: owner.id }, { projectId: outside.id, title: "Human item" });
+    await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id] });
+    const slowAgentCall = withAgentProjectScope({ agentUserId: agent.userId, workspaceId: workspace.id }, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      await createCommentActions(transaction).createComment.handler({ userId: owner.id }, { workItemId: outsideItem.id, bodyMarkdown: "Agent must fail" });
+    });
+    const humanCall = createCommentActions(transaction).createComment.handler({ userId: owner.id }, { workItemId: outsideItem.id, bodyMarkdown: "Human succeeds" });
+
+    await expect(slowAgentCall).rejects.toMatchObject({ status: 404 });
+    await expect(humanCall).resolves.toMatchObject({ bodyText: "Human succeeds" });
   });
 });
 

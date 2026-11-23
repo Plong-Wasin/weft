@@ -259,9 +259,7 @@ export function createProjectActions(db: Database) {
       name: "join_project", kind: "write" as const,
       input: Type.Object(projectInput), output: projectOutput,
       handler: async (context: { userId: string }, input: { projectId: string }) => {
-        const [project] = await db.select().from(projects).where(eq(projects.id, input.projectId));
-        if (!project) throw new ActionError("Project not found", 404);
-        const workspaceRole = await requireWorkspaceRole(db, context.userId, project.workspaceId, "read");
+        const { project, workspaceRole } = await requireProjectAccess(db, context.userId, input.projectId, "read");
         if (project.visibility !== "public") throw new ActionError("Project not found", 404);
         if (project.archivedAt) throw new ActionError("Project is archived", 400);
         const role: WorkspaceRole = workspaceRole === "Guest" ? "Guest" : "Member";

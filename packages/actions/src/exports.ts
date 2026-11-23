@@ -368,8 +368,10 @@ export function createExportActions(db: Database, runtime: ExportRuntime = {}) {
         const allowed = chosen.length ? await memberProjects(db, context.userId, input.workspaceId, chosen) : await allMemberProjects(db, context.userId, input.workspaceId);
         // A project the caller does not belong to reads as missing, so a private project is not revealed.
         if (chosen.length && allowed.length !== chosen.length) throw new ActionError("Project not found", 404);
+        const agentProjects = await agentProjectIds(db, input.workspaceId);
+        if (chosen.length && agentProjects && allowed.some((project) => !agentProjects.has(project.id))) throw new ActionError("Project not found", 404);
         // The stored choice is always the concrete list, so the dedupe key of "all" follows the projects the caller has now.
-        const projectIds = allowed.map((project) => project.id).sort();
+        const projectIds = allowed.filter((project) => !agentProjects || agentProjects.has(project.id)).map((project) => project.id).sort();
         if (projectIds.length === 0) throw new ActionError("You do not belong to any project", 400);
         const format = input.format ?? "csv";
         // A member may have a few Exports open at once; an identical open one is still reported by the dedupe below.

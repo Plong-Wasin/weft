@@ -11,6 +11,7 @@ import { wakeRun } from "./runs";
 import { requireWikiPageAccess } from "./wiki";
 import { liveWorkItems } from "./triage";
 import { wikiContentOf } from "./wiki-content";
+import { withAgentProjectScope } from "./agent-project-scope";
 
 /** A Confirmation card stays valid for 24 hours. */
 export const confirmationTtlMs = 24 * 60 * 60 * 1000;
@@ -224,7 +225,10 @@ export function createConfirmationStore(db: Database, options: { now?: () => Dat
       if (!claimed) return { status: "already_resolved" };
       let result: unknown;
       try {
-        result = await action.handler(await confirmedContext(db, userId, row), input as never);
+        const context = await confirmedContext(db, userId, row);
+        result = row.runId && context.agent
+          ? await withAgentProjectScope({ agentUserId: context.agent.agentUserId, workspaceId: row.workspaceId }, () => action.handler(context, input as never))
+          : await action.handler(context, input as never);
       } catch (error) {
         // The action did not complete: never leave the card "confirmed" without a result. Unexpected errors still surface as server errors.
         if (error instanceof ActionError) return failWith(error);

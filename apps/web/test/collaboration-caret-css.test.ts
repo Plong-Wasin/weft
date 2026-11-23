@@ -10,4 +10,7 @@ test("another editor's caret name floats above a thin caret instead of flowing i
   expect(rule(".collaboration-carets__caret")).toContain("position: relative");
   expect(rule(".collaboration-carets__label")).toContain("position: absolute");
   expect(rule(".collaboration-carets__label")).toContain("pointer-events: none");
+  // The name fades after a moment so it does not sit over the text.
+  expect(rule(".collaboration-carets__label")).toContain("animation: caret-name-fade");
+  expect(css).toContain("@keyframes caret-name-fade");
 });

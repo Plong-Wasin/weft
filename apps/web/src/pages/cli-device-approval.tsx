@@ -1,6 +1,7 @@
 import React from "react";
 import { translate } from "@weft/shared";
 import { api } from "../api";
+import { cliDeviceApprovalErrorMessage } from "../cli-device-approval-error";
 import { AuthShell, primaryButton } from "../layouts/auth-shell";
 
 type RequestInfo = { hostname: string; account: { name: string; email: string }; access: string; expiresAt: string };
@@ -20,11 +21,11 @@ export function CliDeviceApprovalPage() {
     fetch(`${api}/api/cli/device-authorization?code=${encodeURIComponent(code)}`, { credentials: "include", cache: "no-store" })
       .then(async (response) => {
         const data = await response.json().catch(() => null) as (RequestInfo & { error?: string }) | null;
-        if (!response.ok || !data) throw new Error(data?.error ?? "This sign-in request is invalid or expired.");
+        if (!response.ok || !data) throw new Error(data?.error ?? translate("cliDevice.loadFailed"));
         return data;
       })
       .then((data) => { if (active) setInfo(data); })
-      .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : translate("cliDevice.loadFailed")); });
+      .catch((reason: unknown) => { if (active) setError(cliDeviceApprovalErrorMessage("load", reason)); });
     return () => { active = false; };
   }, [code]);
 
@@ -40,7 +41,7 @@ export function CliDeviceApprovalPage() {
       setInfo(null);
       window.history.replaceState({}, "", window.location.pathname);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not complete this decision.");
+      setError(cliDeviceApprovalErrorMessage("decision", reason));
     } finally { setSubmitting(false); }
   }
 
@@ -60,7 +61,7 @@ export function CliDeviceApprovalPage() {
       <p className="mt-4 text-14 text-secondary">{translate("cliDevice.warning")}</p>
       <div className="mt-6 grid gap-3">
         <button className={primaryButton} disabled={submitting} onClick={() => void decide("approve")}>{translate("cliDevice.approve")}</button>
-        <button type="button" className="!h-10 rounded-md border border-subtle bg-transparent px-3 text-14 font-medium text-primary hover:bg-layer-1-hover focus-visible:outline focus-visible:outline-2" disabled={submitting} onClick={() => void decide("deny")}>{translate("cliDevice.deny")}</button>
+        <button type="button" className="min-h-11 rounded-md border border-subtle bg-transparent px-3 text-14 font-medium text-primary hover:bg-layer-1-hover focus-visible:outline focus-visible:outline-2" disabled={submitting} onClick={() => void decide("deny")}>{translate("cliDevice.deny")}</button>
       </div>
     </>}
   </AuthShell>;

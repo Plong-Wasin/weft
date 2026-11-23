@@ -76,8 +76,30 @@ function CommentEditor({ workspaceId, workItemId, people, initial, submitLabel, 
   </div>;
 }
 
+function compactCommentBody(body: unknown): unknown {
+  if (!body || typeof body !== "object" || !Array.isArray((body as { content?: unknown }).content)) return body;
+  const document = body as { content: Array<{ type?: string; text?: unknown; content?: unknown[] }>; [key: string]: unknown };
+  const atoms = new Set(["assetImage", "hardBreak", "horizontalRule", "mention"]);
+  const containers = new Set(["blockquote", "bulletList", "callout", "codeBlock", "heading", "listItem", "orderedList", "paragraph", "table", "tableCell", "tableHeader", "tableRow", "taskItem", "taskList"]);
+  const isEmptyBlock = (node: { type?: string; text?: unknown; content?: unknown[] }): boolean => {
+    if (!node || typeof node !== "object") return false;
+    if (node.type === "text") return typeof node.text === "string" && node.text.length === 0;
+    if (atoms.has(node.type ?? "")) return false;
+    if (containers.has(node.type ?? "")) {
+      if (node.content === undefined) return true;
+      return Array.isArray(node.content) && node.content.every((child) => child && typeof child === "object" && isEmptyBlock(child as { type?: string; text?: unknown; content?: unknown[] }));
+    }
+    return false;
+  };
+  let first = 0;
+  let last = document.content.length;
+  while (first < last && isEmptyBlock(document.content[first]!)) first += 1;
+  while (last > first && isEmptyBlock(document.content[last - 1]!)) last -= 1;
+  return first === 0 && last === document.content.length ? body : { ...document, content: document.content.slice(first, last) };
+}
+
 function CommentBody({ body }: { body: unknown }) {
-  const editor = useEditor({ extensions: [...surfaceEditorExtensions({ surface: "full", mention: Mention.configure({ HTMLAttributes: { class: "mention" } }), image: readOnlyImages }), SafeLinkClick], content: normalizeAssetImages(body), editable: false });
+  const editor = useEditor({ extensions: [...surfaceEditorExtensions({ surface: "full", mention: Mention.configure({ HTMLAttributes: { class: "mention" } }), image: readOnlyImages }), SafeLinkClick], content: normalizeAssetImages(compactCommentBody(body)), editable: false });
   return <div className="comment-body"><EditorContent editor={editor} /></div>;
 }
 

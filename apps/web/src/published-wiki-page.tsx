@@ -1,25 +1,40 @@
 import React from "react";
 import { useParams } from "react-router";
 import { EditorContent, useEditor } from "@tiptap/react";
+import { translate } from "@weft/shared";
 import { surfaceEditorExtensions } from "./editor-extensions";
 
 const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
 
+type LoadState = "loading" | "missing" | "failed";
+
+/** Only a 404 answer means the page is gone; any other status is a failure worth retrying. */
+export function publishedLoadState(status: number): "missing" | "failed" { return status === 404 ? "missing" : "failed"; }
+
+export function PublishedPageStatus({ state, onRetry }: { state: LoadState; onRetry: () => void }) {
+  if (state === "loading") return <main className="mx-auto max-w-3xl p-8"><p role="status">{translate("published.loading")}</p></main>;
+  if (state === "missing") return <main className="mx-auto max-w-3xl p-8">{translate("published.notFound")}</main>;
+  return <main className="mx-auto max-w-3xl p-8"><p role="alert">{translate("published.loadFailed")}</p><button type="button" className="mt-4 rounded border px-3 py-1" onClick={onRetry}>{translate("published.retry")}</button></main>;
+}
+
 export function PublishedWikiPage() {
   const { token = "" } = useParams();
   const [page, setPage] = React.useState<{ title: string; content: object } | null>(null);
-  const [missing, setMissing] = React.useState(false);
+  const [failure, setFailure] = React.useState<"missing" | "failed" | null>(null);
+  const [attempt, setAttempt] = React.useState(0);
   React.useEffect(() => {
     let active = true;
+    setFailure(null);
     void fetch(`${api}/published/${encodeURIComponent(token)}`).then(async (response) => {
-      if (!response.ok) throw new Error("missing");
-      return await response.json() as { title: string; content: object };
-    }).then((result) => { if (active) setPage(result); }).catch(() => { if (active) setMissing(true); });
+      if (!response.ok) { if (active) setFailure(publishedLoadState(response.status)); return; }
+      const result = await response.json() as { title: string; content: object };
+      if (active) setPage(result);
+    }).catch(() => { if (active) setFailure("failed"); });
     return () => { active = false; };
-  }, [token]);
+  }, [token, attempt]);
   const editor = useEditor({ extensions: surfaceEditorExtensions({ surface: "full" }), content: page?.content ?? "", editable: false });
   React.useEffect(() => { if (editor && page) editor.commands.setContent(page.content); }, [editor, page]);
-  if (missing) return <main className="mx-auto max-w-3xl p-8">Published page not found</main>;
-  if (!page || !editor) return <main className="mx-auto max-w-3xl p-8">Loading…</main>;
+  if (failure) return <PublishedPageStatus state={failure} onRetry={() => setAttempt((n) => n + 1)} />;
+  if (!page || !editor) return <PublishedPageStatus state="loading" onRetry={() => {}} />;
   return <main className="mx-auto max-w-3xl p-8" data-testid="published-wiki-page"><h1 className="mb-6 text-3xl font-semibold">{page.title}</h1><div className="wiki-editor"><EditorContent editor={editor} /></div></main>;
 }

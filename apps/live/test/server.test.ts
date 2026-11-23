@@ -298,7 +298,7 @@ test.concurrent("live edits still persist after the page title is renamed during
     const owner = await createMemberFactory(transaction, workspace.id, "Admin");
     const wiki = createWikiActions(transaction);
     const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Before", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "start" }] }] } });
-    const server = createLiveServer({ db: transaction, authenticate: async (token) => token === owner.id ? owner.id : null });
+    const server = createLiveServer({ db: transaction, maxDebounce: 50, authenticate: async (token) => token === owner.id ? owner.id : null });
     await server.listen();
     const session = createHocuspocusProvider(server.url, page.id, owner.id);
     try {
@@ -307,7 +307,7 @@ test.concurrent("live edits still persist after the page title is renamed during
       await wiki.updateWikiPage.handler({ userId: owner.id }, { pageId: page.id, title: "After" });
       (session.doc.getXmlFragment("default").get(0) as Y.XmlElement).get(0);
       session.doc.transact(() => ((session.doc.getXmlFragment("default").get(0) as Y.XmlElement).get(0) as Y.XmlText).insert(5, " kept"));
-      await Bun.sleep(2_600);
+      await waitForCondition(async () => (await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id)))[0]?.contentText.includes("kept") ?? false);
       const [persisted] = await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id));
       expect(persisted?.title).toBe("After");
       expect(persisted?.contentText).toContain("kept");
@@ -322,7 +322,7 @@ test.concurrent("a member mention typed in a live session queues one notificatio
     const reader = await createMemberFactory(transaction, workspace.id, "Member");
     const wiki = createWikiActions(transaction);
     const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Mentions", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hello " }] }] } });
-    const server = createLiveServer({ db: transaction, authenticate: async (token) => token === owner.id ? owner.id : null });
+    const server = createLiveServer({ db: transaction, maxDebounce: 50, authenticate: async (token) => token === owner.id ? owner.id : null });
     await server.listen();
     const session = createHocuspocusProvider(server.url, page.id, owner.id);
     try {
@@ -331,7 +331,7 @@ test.concurrent("a member mention typed in a live session queues one notificatio
       mention.setAttribute("id", reader.id);
       mention.setAttribute("label", "Reader");
       session.doc.transact(() => (session.doc.getXmlFragment("default").get(0) as Y.XmlElement).insert(1, [mention]));
-      await Bun.sleep(2_600);
+      await waitForCondition(async () => (await transaction.select().from(jobs).where(eq(jobs.type, "notify"))).some((job) => JSON.stringify(job.payload).includes(page.id) && JSON.stringify(job.payload).includes(reader.id)));
       const queued = await transaction.select().from(jobs).where(eq(jobs.type, "notify"));
       const mentions = queued.filter((job) => JSON.stringify(job.payload).includes(page.id) && JSON.stringify(job.payload).includes(reader.id));
       expect(mentions.length).toBe(1);
@@ -346,7 +346,7 @@ test.concurrent("a mention the page cannot notify does not discard the live save
     const outsider = await createMemberFactory(transaction, workspace.id, "Member");
     const wiki = createWikiActions(transaction);
     const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Private", access: "private", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hello " }] }] } });
-    const server = createLiveServer({ db: transaction, authenticate: async (token) => token === owner.id ? owner.id : null });
+    const server = createLiveServer({ db: transaction, maxDebounce: 50, authenticate: async (token) => token === owner.id ? owner.id : null });
     await server.listen();
     const session = createHocuspocusProvider(server.url, page.id, owner.id);
     const failures: unknown[] = [];
@@ -358,7 +358,7 @@ test.concurrent("a mention the page cannot notify does not discard the live save
       mention.setAttribute("id", outsider.id);
       mention.setAttribute("label", "Outsider");
       session.doc.transact(() => (session.doc.getXmlFragment("default").get(0) as Y.XmlElement).insert(1, [mention]));
-      await Bun.sleep(2_600);
+      await waitForCondition(async () => JSON.stringify((await transaction.select({ content: wikiPages.content }).from(wikiPages).where(eq(wikiPages.id, page.id)))[0]?.content).includes("mention"));
       const [stored] = await transaction.select({ content: wikiPages.content }).from(wikiPages).where(eq(wikiPages.id, page.id));
       expect(JSON.stringify(stored!.content)).toContain("mention");
       expect(failures).toEqual([]);
@@ -485,6 +485,13 @@ test.concurrent("a legacy version outside the editor schema is skipped instead o
 const textDoc = (text: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
 const typeInto = (session: { doc: Y.Doc }, text: string) =>
   session.doc.transact(() => ((session.doc.getXmlFragment("default").get(0) as Y.XmlElement).get(0) as Y.XmlText).insert(0, text));
+const waitForCondition = async (condition: () => Promise<boolean>) => {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    if (await condition()) return;
+    await Bun.sleep(20);
+  }
+  throw new Error("condition was not met within 2 seconds");
+};
 test.concurrent("live Yjs saves rebuild visible Outlinks and preserve hidden existing targets", async () => {
   await withRollback(db, async (transaction) => {
     const workspace = await createWorkspaceFactory(transaction);
@@ -497,7 +504,7 @@ test.concurrent("live Yjs saves rebuild visible Outlinks and preserve hidden exi
     const link = (label: string, id: string) => ({ type: "text", text: label, marks: [{ type: "link", attrs: { href: `weft://wiki/${id}`, kind: "wiki", targetId: id, target: label } }] });
     const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Source", content: { type: "doc", content: [{ type: "paragraph", content: [link("Old", oldTarget.id), { type: "text", text: " " }, link("Hidden", hiddenTarget.id)] }] } });
     expect(await transaction.select({ targetId: outlinks.targetId }).from(outlinks).where(eq(outlinks.sourceId, page.id))).toMatchObject([{ targetId: oldTarget.id }, { targetId: hiddenTarget.id }]);
-    const server = createLiveServer({ db: transaction, authenticate: async (token) => token === writer.id ? writer.id : null });
+    const server = createLiveServer({ db: transaction, maxDebounce: 50, authenticate: async (token) => token === writer.id ? writer.id : null });
     await server.listen();
     const session = createHocuspocusProvider(server.url, page.id, writer.id);
     try {
@@ -508,7 +515,7 @@ test.concurrent("live Yjs saves rebuild visible Outlinks and preserve hidden exi
         text.delete(0, text.length);
         text.insert(0, "New\uE000", { link: { href: `weft://wiki/${newTarget.id}`, kind: "wiki", targetId: newTarget.id, target: "New" } });
       });
-      await Bun.sleep(2_600);
+      await waitForCondition(async () => (await transaction.select({ targetId: outlinks.targetId }).from(outlinks).where(eq(outlinks.sourceId, page.id))).some(({ targetId }) => targetId === newTarget.id));
       const [saved] = await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id));
       expect(JSON.stringify(saved?.content)).toContain("\uE000");
       const targetIds = (await transaction.select({ targetId: outlinks.targetId }).from(outlinks).where(eq(outlinks.sourceId, page.id))).map(({ targetId }) => targetId).sort();
@@ -551,7 +558,7 @@ test.concurrent("a lock reaches connected editors at once and edits typed in the
     const wiki = createWikiActions(transaction);
     const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Locked live", content: textDoc("start") });
     const bus = createSignalBus(Bun.env.DATABASE_URL);
-    const server = createLiveServer({ db: transaction, bus, authenticate: async (token) => token });
+    const server = createLiveServer({ db: transaction, bus, maxDebounce: 50, authenticate: async (token) => token });
     await server.listen();
     const writerSession = createHocuspocusProvider(server.url, page.id, writer.id);
     const observer = createHocuspocusProvider(server.url, page.id, owner.id);
@@ -582,7 +589,7 @@ test.concurrent("a lock reaches connected editors at once and edits typed in the
       expect(readOnlyFlags()).toEqual([false, false]);
       // A real save after unlock must not bring the lock-window text back.
       typeInto(observer, "after-unlock ");
-      await Bun.sleep(2_600);
+      await waitForCondition(async () => (await stored()).contentText.includes("after-unlock"));
       const row = await stored();
       expect(row.contentText).toContain("after-unlock");
       expect(row.contentText).not.toContain("locked-typing");
@@ -596,7 +603,7 @@ test.concurrent("a save skipped under a lock leaves the row untouched and discar
     const owner = await createMemberFactory(transaction, workspace.id, "Admin");
     const wiki = createWikiActions(transaction);
     const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Skip save", content: textDoc("start") });
-    const server = createLiveServer({ db: transaction, authenticate: async (token) => token });
+    const server = createLiveServer({ db: transaction, maxDebounce: 50, authenticate: async (token) => token });
     await server.listen();
     const typist = createHocuspocusProvider(server.url, page.id, owner.id);
     const observer = createHocuspocusProvider(server.url, page.id, owner.id);
@@ -614,7 +621,7 @@ test.concurrent("a save skipped under a lock leaves the row untouched and discar
       await observer.waitFor(() => !JSON.stringify(observer.doc.getXmlFragment("default").toJSON()).includes("typed-late"));
       await wiki.unlockWikiPage.handler({ userId: owner.id }, { pageId: page.id });
       typeInto(observer, "later ");
-      await Bun.sleep(2_600);
+      await waitForCondition(async () => (await stored()).contentText.includes("later"));
       const row = await stored();
       expect(row.contentText).not.toContain("typed-late");
       expect(row.contentText).toContain("later");
@@ -630,7 +637,7 @@ test.concurrent("a writer who typed in the lock window keeps persisting after un
     const wiki = createWikiActions(transaction);
     const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Lock window writer", content: textDoc("start") });
     const bus = createSignalBus(Bun.env.DATABASE_URL);
-    const server = createLiveServer({ db: transaction, bus, authenticate: async (token) => token });
+    const server = createLiveServer({ db: transaction, bus, maxDebounce: 50, authenticate: async (token) => token });
     await server.listen();
     const writerSession = createHocuspocusProvider(server.url, page.id, writer.id);
     const observer = createHocuspocusProvider(server.url, page.id, owner.id);
@@ -658,7 +665,7 @@ test.concurrent("a writer who typed in the lock window keeps persisting after un
       expect(text(resynced)).not.toContain("locked-typing");
       typeInto(resynced, "after-unlock ");
       await observer.waitFor(() => text(observer).includes("after-unlock"));
-      await Bun.sleep(2_600);
+      await waitForCondition(async () => (await stored()).contentText.includes("after-unlock"));
       const row = await stored();
       expect(row.contentText).toContain("after-unlock");
       expect(row.contentText).not.toContain("locked-typing");

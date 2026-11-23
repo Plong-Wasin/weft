@@ -419,6 +419,30 @@ test.concurrent("the stored sibling order is what the shared and project lists r
   });
 });
 
+test.concurrent("a page moved beside a sibling under a different parent lands in that parent's order", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, wiki, create } = await setup(tx);
+    const move = (input: Record<string, unknown>) => wiki.moveWikiPage.handler({ userId: alice.id }, input as never);
+    // Old parent holds two children with high orders, so a wrong list would give a visibly wrong number.
+    const oldParent = await create(alice.id, "Old parent");
+    const nested = await create(alice.id, "Nested", { parentId: oldParent.id });
+    const other = await create(alice.id, "Other child", { parentId: oldParent.id });
+    expect(other.id).not.toBe(nested.id);
+    const x = await create(alice.id, "X");
+    const y = await create(alice.id, "Y");
+    const z = await create(alice.id, "Z");
+    // Nested leaves its parent and goes between Y and Z at the top level.
+    await move({ pageId: nested.id, parentId: null, siblingId: y.id, position: "after" });
+    const top = (await wiki.listWikiPages.handler({ userId: alice.id }, { workspaceId: workspace.id })).filter((row) => row.parentId === null).map((row) => row.title);
+    expect(top.filter((title) => ["X", "Y", "Nested", "Z"].includes(title))).toEqual(["X", "Y", "Nested", "Z"]);
+    // And the other way: top-level Z goes before Other child inside the old parent.
+    await move({ pageId: z.id, parentId: oldParent.id, siblingId: other.id, position: "before" });
+    const inside = (await wiki.listWikiPages.handler({ userId: alice.id }, { workspaceId: workspace.id })).filter((row) => row.parentId === oldParent.id).map((row) => row.title);
+    expect(inside).toEqual(["Z", "Other child"]);
+    expect(x.id).not.toBe(y.id);
+  });
+});
+
 test.concurrent("moves a page before or after a sibling with the position parameter, and every list keeps the order", async () => {
   await withRollback(db, async (tx) => {
     const { workspace, alice, bob, guest, wiki, create, titles } = await setup(tx);

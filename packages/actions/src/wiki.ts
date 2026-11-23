@@ -871,7 +871,8 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           if ((sibling.projectId ?? null) !== (page.projectId ?? null) || (sibling.collectionId ?? null) !== (page.collectionId ?? null)) {
             throw new ActionError("A page and its sibling must have the same scope and Collection", 400);
           }
-          sortOrder = await placeBeside(database, page, sibling.id, input.position);
+          // The siblings are those of the NEW parent, so place against the page as it will be after the move.
+          sortOrder = await placeBeside(database, { ...page, parentId: input.parentId }, sibling.id, input.position);
         }
         const [updated] = await database.update(wikiPages).set({
           parentId: input.parentId, ...(sortOrder !== undefined ? { sortOrder } : {}), updatedAt: now(),

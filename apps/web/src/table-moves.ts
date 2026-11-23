@@ -28,6 +28,21 @@ export function tableWidth(table: ProseMirrorNode): number {
   return placeCells(table).width;
 }
 
+/** The grid column where the `cellIndex`-th cell of a row starts, or null when the row has no such cell. */
+export function gridColumnOfCell(table: ProseMirrorNode, row: number, cellIndex: number): number | null {
+  const own = placeCells(table).cells.filter((cell) => cell.row === row).sort((a, b) => a.column - b.column);
+  return own[cellIndex]?.column ?? null;
+}
+
+/** The index, among the cells that start in `row`, of the cell covering `gridColumn`; clamped into the row, or null for an empty row. */
+export function cellIndexAtGridColumn(table: ProseMirrorNode, row: number, gridColumn: number): number | null {
+  const own = placeCells(table).cells.filter((cell) => cell.row === row).sort((a, b) => a.column - b.column);
+  if (own.length === 0) return null;
+  const covering = own.findIndex((cell) => gridColumn >= cell.column && gridColumn < cell.column + cell.colspan);
+  if (covering >= 0) return covering;
+  return gridColumn < own[0]!.column ? 0 : own.length - 1;
+}
+
 /**
  * The table after one row or column moves from `from` to `to` (both final positions in the table), or null when the move would
  * split a merged cell: a cell whose rows (for a row) or columns (for a column) would no longer sit next to each other.

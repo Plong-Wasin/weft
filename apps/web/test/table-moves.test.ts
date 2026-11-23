@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { Schema, type Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { planTableMove } from "../src/table-moves";
+import { cellIndexAtGridColumn, gridColumnOfCell, planTableMove } from "../src/table-moves";
 
 const schema = new Schema({
   nodes: {
@@ -83,4 +83,26 @@ test("a row move carries a row span with its row when the span is moved whole", 
   // Moving row 2 (outside the span rows 0 and 1) to the top does not touch A.
   const spanned = table([[["A", { rowspan: 2 }], "B"], ["C"], ["D", "E"]]);
   expect(rowTexts(planTableMove(spanned, "row", 2, 0))).toEqual([["D", "E"], ["A", "B"], ["C"]]);
+});
+
+test("a first-row cell index maps to its grid column, and a grid column to the cell that covers it", () => {
+  // Row 0 is [H spans columns 0-1][X]; row 1 has three plain cells.
+  const merged = table([[["H", { colspan: 2 }], "X"], ["a", "b", "c"]]);
+  expect(gridColumnOfCell(merged, 0, 0)).toBe(0);
+  expect(gridColumnOfCell(merged, 0, 1)).toBe(2);
+  expect(gridColumnOfCell(merged, 1, 2)).toBe(2);
+  expect(cellIndexAtGridColumn(merged, 0, 1)).toBe(0);
+  expect(cellIndexAtGridColumn(merged, 0, 2)).toBe(1);
+  expect(cellIndexAtGridColumn(merged, 1, 2)).toBe(2);
+  // A row covered by a row span has fewer cells; the index stays inside the row.
+  const covered = table([[["A", { rowspan: 2 }], "B", "C"], ["D", "E"]]);
+  expect(cellIndexAtGridColumn(covered, 1, 0)).toBe(0);
+  expect(cellIndexAtGridColumn(covered, 1, 2)).toBe(1);
+});
+
+test("the column under a grip moves by its grid column when the first row has a merged cell", () => {
+  const merged = table([[["H", { colspan: 2 }], "X"], ["a", "b", "c"]]);
+  // The grip over X is cell 1, grid column 2. X moves in front of the merged cell, which stays whole.
+  const from = gridColumnOfCell(merged, 0, 1)!;
+  expect(rowTexts(planTableMove(merged, "column", from, 0))).toEqual([["X", "H"], ["c", "a", "b"]]);
 });

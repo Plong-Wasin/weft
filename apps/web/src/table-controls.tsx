@@ -6,7 +6,7 @@ import type { Transaction } from "@tiptap/pm/state";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Copy, Eraser, GripHorizontal, GripVertical, Heading, Plus, Table2, Trash2 } from "lucide-react";
 import { translate } from "@weft/shared";
 import { suggestionOpen } from "./editor-extensions";
-import { planTableMove, tableWidth, type TableAxis } from "./table-moves";
+import { cellIndexAtGridColumn, gridColumnOfCell, planTableMove, tableWidth, type TableAxis } from "./table-moves";
 
 /** Hover and caret controls for Wiki, description and Comment tables: `+` at the right and bottom edges, grips at the column tops, row lefts and the table corner. */
 
@@ -161,6 +161,8 @@ export function TableControls({ editor, editable }: { editor: Editor | null; edi
     const startX = event.clientX, startY = event.clientY;
     let active = false;
     let current: Drag | null = null;
+    // A column grip is indexed by the first row's cell; the move works on grid columns, which differ when that row has a merged cell.
+    const gridIndex = axis === "column" ? (() => { const table = locateTable(editor, el)?.node; return table ? gridColumnOfCell(table, 0, index) ?? index : index; })() : index;
     const finish = (commit: boolean) => {
       window.removeEventListener("pointermove", onDragMove);
       window.removeEventListener("pointerup", onDragUp);
@@ -170,14 +172,14 @@ export function TableControls({ editor, editable }: { editor: Editor | null; edi
       if (!active) return;
       dragEndedAt.current = Date.now();
       const located = commit && current?.boundary != null ? locateTable(editor, el) : null;
-      if (located && current) moveTableLine(editor, located, axis, index, current.to, caretPlace(editor));
+      if (located && current) moveTableLine(editor, located, axis, gridIndex, current.to, caretPlace(editor));
     };
     const onDragMove = (moveEvent: PointerEvent) => {
       if (!active) {
         if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < 4) return;
         active = true;
       }
-      current = dropAt(editor, el, axis, index, moveEvent.clientX, moveEvent.clientY);
+      current = dropAt(editor, el, axis, gridIndex, moveEvent.clientX, moveEvent.clientY);
       setDrag(current);
     };
     const onDragUp = () => finish(true);
@@ -297,9 +299,11 @@ function menuItems(menu: Resolved): MenuItem[] {
     return items;
   }
   const count = tableWidth(node);
+  // menu.index is the first row's cell index; moves work on grid columns, which differ when that row has a merged cell.
+  const grid = gridColumnOfCell(node, 0, menu.index) ?? menu.index;
   const moves: MenuItem[] = [];
-  if (menu.index > 0) moves.push({ action: "moveColumnLeft", icon: ArrowLeft, disabled: planTableMove(node, "column", menu.index, menu.index - 1) === null });
-  if (menu.index < count - 1) moves.push({ action: "moveColumnRight", icon: ArrowRight, disabled: planTableMove(node, "column", menu.index, menu.index + 1) === null });
+  if (grid > 0) moves.push({ action: "moveColumnLeft", icon: ArrowLeft, disabled: planTableMove(node, "column", grid, grid - 1) === null });
+  if (grid < count - 1) moves.push({ action: "moveColumnRight", icon: ArrowRight, disabled: planTableMove(node, "column", grid, grid + 1) === null });
   const items: MenuItem[] = [
     { action: "insertColumnLeft", icon: ArrowLeft }, { action: "insertColumnRight", icon: ArrowRight }, ...moves, { action: "duplicateColumn", icon: Copy }, { action: "clearColumn", icon: Eraser }, { action: "deleteColumn", icon: Trash2, danger: true },
   ];
@@ -464,7 +468,7 @@ function cellTextPos(table: ProseMirrorNode, tablePos: number, row: number, col:
   for (let index = 0; index < row; index++) pos += table.child(index).nodeSize;
   pos += 1;
   const cells = table.child(row);
-  for (let index = 0; index < col; index++) pos += cells.child(index).nodeSize;
+  for (let index = 0; index < Math.min(col, cells.childCount - 1); index++) pos += cells.child(index).nodeSize;
   return pos + 2;
 }
 
@@ -476,8 +480,8 @@ export function runTableAction(editor: Editor, { pos, node }: Located, row: numb
     case "insertRowBelow": return editor.chain().setTextSelection(select()).addRowAfter().run();
     case "moveRowUp": return moveTableLine(editor, { pos, node }, "row", row, row - 1, { row, col });
     case "moveRowDown": return moveTableLine(editor, { pos, node }, "row", row, row + 1, { row, col });
-    case "moveColumnLeft": return moveTableLine(editor, { pos, node }, "column", col, col - 1, { row, col });
-    case "moveColumnRight": return moveTableLine(editor, { pos, node }, "column", col, col + 1, { row, col });
+    case "moveColumnLeft": { const grid = gridColumnOfCell(node, 0, col) ?? col; return moveTableLine(editor, { pos, node }, "column", grid, grid - 1, { row, col }); }
+    case "moveColumnRight": { const grid = gridColumnOfCell(node, 0, col) ?? col; return moveTableLine(editor, { pos, node }, "column", grid, grid + 1, { row, col }); }
     case "insertColumnLeft": return editor.chain().setTextSelection(select()).addColumnBefore().run();
     case "insertColumnRight": return editor.chain().setTextSelection(select()).addColumnAfter().run();
     case "deleteRow": return editor.chain().setTextSelection(select()).deleteRow().run();
@@ -496,7 +500,8 @@ export function runTableAction(editor: Editor, { pos, node }: Located, row: numb
 export function moveTableLine(editor: Editor, located: Located, axis: TableAxis, from: number, to: number, caret: { row: number; col: number }): boolean {
   const moved = planTableMove(located.node, axis, from, to);
   if (!moved) return false;
-  const row = axis === "row" ? to : caret.row, col = axis === "column" ? to : caret.col;
+  // `from` and `to` of a column move are grid columns; the caret wants the index of the cell now covering that column.
+  const row = axis === "row" ? to : caret.row, col = axis === "column" ? cellIndexAtGridColumn(moved, row, to) ?? to : caret.col;
   replaceTable(editor, located.pos, located.node, moved, row, col);
   return true;
 }

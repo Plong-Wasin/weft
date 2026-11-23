@@ -2,7 +2,7 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { convertToModelMessages, generateText, jsonSchema, stepCountIs, streamText, tool, type LanguageModel, type UIMessage } from "ai";
 import { Type } from "@sinclair/typebox";
-import type { Elysia } from "elysia";
+import { Elysia } from "elysia";
 import { ActionError, createActionList, createAiTools, createChatStore, createConfirmationStore, isChatMode, proposalOutcome, type ChatMode, requireProjectAccess, requireWorkspaceRole, type ActionContext, type ChatMessage, type SignalBus } from "@weft/actions";
 import { confirmations as confirmationRows, skills, users, workspaces, workspaceMembers, type Database } from "@weft/db";
 import { isLocale, type Locale } from "@weft/shared";
@@ -199,11 +199,6 @@ const continuationTimeoutMs = 120_000;
 /** Chat routes are written directly (streaming is not an Action). Every chat is keyed by its owner. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>, options: AiRoutesOptions): void {
-  // AI off (WEFT_AI_ENABLED=false or no provider key): every /api/ai route answers 404, the same as a feature that is switched off.
-  if (options.enabled === false) {
-    app.all("/api/ai/*", ({ set }) => { set.status = 404; return { error: "Not found" }; });
-    return;
-  }
   const { db } = options;
   // Run tokens only reach /actions/*: an agent CLI must not confirm cards or start chats as its Originator.
   const resolveCaller = async (request: Request) => { const caller = await options.resolveCaller(request); return caller?.source === "agent" ? null : caller; };
@@ -244,7 +239,19 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
     return null;
   }
 
-  app
+  // The AI routes live in their own instance so the AI-off guard below covers only them, never a route registered after this call.
+  const ai = new Elysia();
+  // AI off (WEFT_AI_ENABLED=false or no provider key): every model route answers 404, the same as a feature that is switched off.
+  // The Confirmation routes stay: they call no model, and a Runtime Agent's deletion still waits there for a person (ADR 0009).
+  if (options.enabled === false) {
+    // onRequest runs before body validation, so a malformed body gets the same 404 as a valid one.
+    ai.onRequest(({ request }) => {
+      const path = new URL(request.url).pathname;
+      if (!path.startsWith("/api/ai/") || path.startsWith("/api/ai/confirmations/")) return;
+      return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: { "content-type": "application/json" } });
+    });
+  }
+  ai
     .post("/api/ai/status", async ({ body, request, set }) => {
       const caller = await member(request, body.workspaceId, set);
       if ("error" in caller) return caller;
@@ -505,5 +512,6 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
         if (continuation) continuationsRunning.delete(chat.id);
         throw error;
       }
-    }, { body: Type.Object({ id: Type.String({ format: "uuid" }), workspaceId: Type.String({ format: "uuid" }), messages: Type.Array(messageSchema), continuation: Type.Optional(Type.Boolean()), mode: Type.Optional(Type.Union([Type.Literal("ask"), Type.Literal("build"), Type.Literal("autopilot")])), webSearch: Type.Optional(Type.Boolean()), skillId: Type.Optional(Type.String({ format: "uuid" })), context: Type.Optional(Type.Object({ type: Type.Union([Type.Literal("work_item"), Type.Literal("wiki_page")]), id: Type.String({ maxLength: 64 }), title: Type.String({ maxLength: 500 }) })) }) });
+    }, { body: Type.Object({ id: Type.String({ format: "uuid" }), workspaceId: Type.String({ format: "uuid" }), messages: Type.Array(messageSchema), continuation: Type.Optional(Type.Boolean()), mode: Type.Optional(Type.Union([Type.Literal("ask"), Type.Literal("build"), Type.Literal("autopilot")])), webSearch: Type.Optional(Type.Boolean()), skillId: Type.Optional(Type.String({ format: "uuid" })), context: Type.Optional(Type.Object({ type: Type.Union([Type.Literal("work_item"), Type.Literal("wiki_page")]), id: Type.String({ maxLength: 64 }), title: Type.String({ maxLength: 500 }) })) }) });;
+  app.use(ai);
 }

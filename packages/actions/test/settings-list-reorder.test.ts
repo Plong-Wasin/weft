@@ -67,3 +67,12 @@ test.concurrent("reorder_custom_properties stores the order that list_custom_pro
     expect(await status(types.reorderCustomProperties.handler({ userId: admin.id }, { projectId: project.id, propertyIds: [first.id] }))).toBe(400);
   });
 });
+
+test.concurrent("reorder_custom_properties and reorder_work_item_types are refused while the Work item types feature is off", async () => {
+  await withRollback(db, async (transaction) => {
+    const { admin, project, types } = await setup(transaction);
+    await createProjectActions(transaction).setProjectFeatures.handler({ userId: admin.id }, { projectId: project.id, features: { types: false } });
+    expect(await status(types.reorderCustomProperties.handler({ userId: admin.id }, { projectId: project.id, propertyIds: [] }))).toBeGreaterThanOrEqual(400);
+    expect(await status(types.reorderWorkItemTypes.handler({ userId: admin.id }, { projectId: project.id, typeIds: [] }))).toBeGreaterThanOrEqual(400);
+  });
+});

@@ -71,3 +71,17 @@ test.concurrent("with AI off a Runtime Agent Run still claims and calls ordinary
     expect(await read.json()).toMatchObject({ id: item.id });
   });
 });
+
+// A Runtime Agent's deletion still waits for a person's Confirmation (ADR 0009), and that Confirmation is answered on these routes: AI off must not strand it.
+test.concurrent("with AI off the Confirmation routes stay reachable while the model routes answer 404", async () => {
+  await withRollback(db, async (tx) => {
+    const app = appWithAi(tx, false);
+    const id = randomUUID();
+    for (const path of ["/api/ai/confirmations/get", "/api/ai/confirmations/confirm", "/api/ai/confirmations/reject"]) {
+      const anonymous = await app.handle(new Request(`http://localhost${path}`, json({ id })));
+      expect(anonymous.status, path).toBe(401);
+    }
+    const model = await app.handle(new Request("http://localhost/api/ai/status", json({ workspaceId: id })));
+    expect(model.status).toBe(404);
+  });
+});

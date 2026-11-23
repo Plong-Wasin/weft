@@ -360,6 +360,7 @@ export function createWorkItemTypeActions(db: Database) {
       input: Type.Object({ ...projectInput, propertyIds: Type.Array(uuid(), { maxItems: 100 }) }), output: Type.Array(propertyOutput),
       handler: async (context: Context, input: { projectId: string; propertyIds: string[] }) => {
         const { project } = await requireProjectAccess(db, context.userId, input.projectId, "admin");
+        assertFeatureEnabled(project, "types");
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
           await database.execute(sql`select pg_advisory_xact_lock(hashtext(${`properties:${project.id}`}))`);

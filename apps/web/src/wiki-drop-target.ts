@@ -1,4 +1,6 @@
-export type WikiDropTarget = { id: string; collectionId: string; parentId: string | null; descendants: ReadonlySet<string>; canEdit: boolean };
+export type WikiDropTarget = { id: string; collectionId: string; parentId: string | null; descendants: ReadonlySet<string>; canEdit: boolean;
+  /** True when the page shows at the top level only because its parent is not in the list (hidden from this reader). Nothing can sit beside it. */
+  orphan?: boolean };
 /** Where a row is dropped: the middle nests under it; the top and bottom edges place the page beside it. */
 export type WikiDropPosition = "nest" | "before" | "after";
 export type WikiDropDecision = { kind: "nest" | "before" | "after" | "top-level" | "move-collection"; parentId: string | null; collectionId: string } | null;
@@ -12,6 +14,7 @@ export function wikiDropDecision(source: WikiDropTarget, target: WikiDropTarget 
   }
   if (source.descendants.has(target.id)) return null;
   if (target.collectionId !== source.collectionId) return canMoveAcrossCollections ? { kind: "move-collection", parentId: null, collectionId: target.collectionId } : null;
+  if (position !== "nest" && target.orphan) return null;
   if (position === "nest") return { kind: "nest", parentId: target.id, collectionId: source.collectionId };
   return { kind: position, parentId: target.parentId, collectionId: source.collectionId };
 }

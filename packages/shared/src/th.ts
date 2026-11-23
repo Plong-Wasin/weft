@@ -1988,6 +1988,8 @@ export const th: Record<keyof typeof en, string> = {
   "wikiSidebar.dropTopLevel": "ย้ายเป็นหน้าหลัก",
   "wikiSidebar.dropBefore": "วางก่อนหน้านี้",
   "wikiSidebar.dropAfter": "วางหลังหน้านี้",
+  "wikiSidebar.movedBefore": "ย้ายไปก่อน {name} แล้ว",
+  "wikiSidebar.movedAfter": "ย้ายไปหลัง {name} แล้ว",
   "sidebar.favorites": "รายการโปรด",
   "sidebar.workspace": "พื้นที่ทำงาน",
   "sidebar.starred": "ที่ติดดาว",

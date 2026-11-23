@@ -38,3 +38,11 @@ test("A pointer over a Wiki row maps its top and bottom quarters to before and a
   expect(wikiDropPosition(40, 40)).toBe("after");
   expect(wikiDropPosition(5, 0)).toBe("nest");
 });
+
+test("nothing can be placed beside a page whose parent is hidden, but it can still be nested into", () => {
+  const source = { id: "a", collectionId: "c", parentId: null, descendants: new Set<string>(), canEdit: true };
+  const orphan = { id: "b", collectionId: "c", parentId: "hidden", descendants: new Set<string>(), canEdit: true, orphan: true };
+  expect(wikiDropDecision(source, orphan, false, "before")).toBeNull();
+  expect(wikiDropDecision(source, orphan, false, "after")).toBeNull();
+  expect(wikiDropDecision(source, orphan, false, "nest")?.kind).toBe("nest");
+});

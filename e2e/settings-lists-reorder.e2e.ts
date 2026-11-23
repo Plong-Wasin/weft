@@ -112,7 +112,6 @@ try {
   const labelOptions = await page.getByRole("menuitemcheckbox").allTextContents();
   check(JSON.stringify(labelOptions.map((name) => name.trim()).filter((name) => ["Alpha", "Bravo", "Charlie"].includes(name))) === JSON.stringify(["Alpha", "Charlie", "Bravo"]), `labels picker order is ${labelOptions.join(",")}`);
   await page.keyboard.press("Escape");
-  await page.keyboard.press("Escape");
   console.log("PASS labels picker shows the stored order");
 
   // 2. Work item types and 3. custom properties both live on the Features page of project settings.
@@ -146,6 +145,17 @@ try {
   check(await page.locator("[data-grip]").count() >= 5, "expected grips in the reorderable settings lists");
   check(await page.locator("[data-grip]:disabled").count() === 0, "a grip in settings is disabled for the Admin");
   console.log("PASS every settings grip is backed and enabled for the Admin");
+
+  // Pickers: the create modal's type picker lists the types in the stored order (Request, Task, Bug).
+  await page.goto(`${web}${paths.workItems(slug, "MOB")}`);
+  await page.getByRole("button", { name: t("workItems.addNew"), exact: true }).first().click();
+  const typeModal = page.getByRole("dialog", { name: t("workItems.modal.title") });
+  await typeModal.getByRole("button", { name: new RegExp(`^${t("types.type")}`) }).click();
+  const typeOptions = (await page.getByRole("menuitemradio").allTextContents()).map((name) => name.trim()).filter((name) => ["Request", "Task", "Bug"].includes(name));
+  check(JSON.stringify(typeOptions) === JSON.stringify(["Request", "Task", "Bug"]), `type picker order is ${typeOptions.join(",")}`);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  console.log("PASS type picker shows the stored order");
 
   // Panel: the work item shows its custom properties in the stored order.
   await page.goto(`${web}${paths.workItem(slug, "MOB-1")}`);

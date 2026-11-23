@@ -78,6 +78,7 @@ export function createSearchActions(db: Database) {
           join projects p on p.id = w.project_id
           where w.workspace_id = ${input.workspaceId}
             and w.id in (select ${workItems.id} from ${workItems} where ${listableWorkItem()})
+            and (${input.projectId ? sql`true` : sql`p.archived_at is null`})
             and ${visible}
             and ${scope}
             and (${query.length === 0 ? sql`true` : sql`false`} or

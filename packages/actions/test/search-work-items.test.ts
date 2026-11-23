@@ -38,6 +38,17 @@ test.concurrent("finds work items by title and description text in English", asy
   });
 });
 
+test.concurrent("workspace search skips archived Projects but explicit Project search still reads them", async () => {
+  await withRollback(db, async (transaction) => {
+    const { member, create, find, projects, project, search, workspace } = await setup(transaction);
+    await create("Archived project match");
+    expect(await find(member.id, "archived project match")).toEqual(["Archived project match"]);
+    await projects.archiveProject.handler({ userId: member.id }, { projectId: project.id });
+    expect(await find(member.id, "archived project match")).toEqual([]);
+    expect((await search.searchWorkItems.handler({ userId: member.id }, { workspaceId: workspace.id, projectId: project.id, query: "archived project match" })).map((row) => row.title)).toEqual(["Archived project match"]);
+  });
+});
+
 test.concurrent("search does not scan unindexed comment text", async () => {
   await withRollback(db, async (transaction) => {
     const env = await setup(transaction);

@@ -288,7 +288,7 @@ export function createWorkItemActions(db: Database) {
 
   /** Shared implementation for the legacy array Action and the Workspace View metadata Action. */
   async function listWorkspaceWorkItems(context: Context, input: WorkspaceListInput) {
-    const accessible = await accessibleProjects(db, context.userId, input.workspaceId);
+    const accessible = (await accessibleProjects(db, context.userId, input.workspaceId)).filter((project) => !project.archivedAt);
     if (accessible.length === 0) return { items: [], truncated: false };
     const markdownOptions = await workItemMarkdownOptions(db, context.userId, input.workspaceId);
     const conditions = [inArray(workItems.projectId, accessible.map((project) => project.id)), listableWorkItem()];

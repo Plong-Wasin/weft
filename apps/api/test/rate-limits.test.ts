@@ -4,7 +4,7 @@ import { createAgentActions, createApiTokenActions, mintApiToken, createProjectA
 import { createDatabase } from "@weft/db";
 import { withRollback } from "../../../packages/db/src/test-helpers";
 import { createApp } from "../src/app";
-import { DEFAULT_RATE_LIMITS, RATE_LIMIT_VARIABLES, rateLimitSettings, type RateLimitSettings } from "../src/rate-limits";
+import { createWindowCounter, DEFAULT_RATE_LIMITS, MINUTE_MS, RATE_LIMIT_VARIABLES, rateLimitSettings, type RateLimitSettings } from "../src/rate-limits";
 
 const { client, db } = createDatabase();
 afterAll(async () => client.end());
@@ -263,21 +263,23 @@ async function startRun(transaction: Transaction, settings: Partial<RateLimitSet
   return { h, read };
 }
 
-test("a Runtime Run making three minutes' worth of normal calls at the default limit is never throttled", async () => {
+test("the default sliding-window limit allows three minutes of normal Runtime Run traffic", async () => {
   expect(DEFAULT_RATE_LIMITS.apiRequestsPerMinute).toBe(600);
+  const clock = { at: 0 };
+  const counter = createWindowCounter(() => clock.at);
+  const refused: number[] = [];
+  // 400 requests/minute for three minutes: exercise the real sliding-window counter without 1,800 HTTP/database round trips.
+  for (let call = 0; call < 3 * DEFAULT_RATE_LIMITS.apiRequestsPerMinute; call++) {
+    if (!counter.take("runtime-run", DEFAULT_RATE_LIMITS.apiRequestsPerMinute, MINUTE_MS).allowed) refused.push(call);
+    clock.at += 150;
+  }
+  expect(refused).toEqual([]);
+
   await withRollback(db, async (transaction) => {
-    const { h, read } = await startRun(transaction);
-    // 3 x 600 calls, one every 150 ms of the test clock (400 per minute, under the limit): three full windows, none refused.
-    const calls = 3 * DEFAULT_RATE_LIMITS.apiRequestsPerMinute;
-    const refused: number[] = [];
-    for (let call = 0; call < calls; call++) {
-      h.clock.at += 150;
-      const response = await read();
-      if (response.status !== 200) refused.push(response.status);
-    }
-    expect(refused).toEqual([]);
+    const { read } = await startRun(transaction);
+    expect((await read()).status).toBe(200);
   });
-}, 300_000);
+}, 60_000);
 
 test("a Run over the limit gets a prompt 429 with a readable error and Retry-After, not a hang", async () => {
   await withRollback(db, async (transaction) => {

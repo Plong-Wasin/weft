@@ -104,9 +104,11 @@ export function createModuleActions(db: Database) {
     const inProject = await database.select({ userId: projectMembers.userId }).from(projectMembers).where(and(
       eq(projectMembers.projectId, project.id), inArray(projectMembers.userId, ids), inArray(projectMembers.role, ["Admin", "Member"]),
     ));
-    const admins = await database.select({ userId: workspaceMembers.userId }).from(workspaceMembers)
-      .where(and(eq(workspaceMembers.workspaceId, project.workspaceId), eq(workspaceMembers.role, "Admin"), inArray(workspaceMembers.userId, ids)));
-    const ok = new Set([...inProject, ...admins].map((row) => row.userId));
+    const workspaceRoles = await database.select({ userId: workspaceMembers.userId, role: workspaceMembers.role }).from(workspaceMembers)
+      .where(and(eq(workspaceMembers.workspaceId, project.workspaceId), inArray(workspaceMembers.userId, ids)));
+    const workspaceRoleByUser = new Map(workspaceRoles.map((row) => [row.userId, row.role]));
+    const ok = new Set(inProject.filter((row) => workspaceRoleByUser.get(row.userId) === "Admin" || workspaceRoleByUser.get(row.userId) === "Member").map((row) => row.userId));
+    for (const [userId, role] of workspaceRoleByUser) if (role === "Admin") ok.add(userId);
     if (ids.some((id) => !ok.has(id))) throw new ActionError("Lead and members must belong to this project", 400);
   }
 
@@ -188,7 +190,9 @@ export function createModuleActions(db: Database) {
             descriptionPatch.descriptionMarkdown = description.markdown; descriptionPatch.descriptionDoc = description.document;
           }
           const leadId = input.leadId === undefined ? current.leadId : input.leadId;
-          await assertPeople(database, project, [...(input.leadId ? [input.leadId] : []), ...(input.memberIds ?? [])]);
+          const existingMembers = input.memberIds ? await database.select({ userId: moduleMembers.userId }).from(moduleMembers).where(eq(moduleMembers.moduleId, current.id)) : [];
+          const addedMembers = input.memberIds?.filter((userId) => !existingMembers.some((row) => row.userId === userId)) ?? [];
+          await assertPeople(database, project, [...(input.leadId && input.leadId !== current.leadId ? [input.leadId] : []), ...addedMembers]);
           await assertLeadIsPerson(database, input.leadId);
           const [row] = await database.update(modules).set({ name: input.name ?? current.name, status: input.status ?? current.status, leadId, startDate, endDate, ...descriptionPatch }).where(eq(modules.id, current.id)).returning();
           if (input.memberIds) {

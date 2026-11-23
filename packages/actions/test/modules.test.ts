@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
-import { activities, assets, createDatabase, moduleItems, modules as moduleRows, workItems, workItemStates, workspaces, type Database } from "@weft/db";
+import { activities, assets, createDatabase, moduleItems, moduleMembers, modules as moduleRows, workItems, workItemStates, workspaces, type Database } from "@weft/db";
 import { createCycleActions, createIntakeActions, createMemberActions, createModuleActions, createProjectActions, createRelationActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -158,6 +158,29 @@ test.concurrent("Module leads and members must have a project write role", async
 
     const valid = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Writable people", leadId: member.id, memberIds: [member.id] });
     expect(valid).toMatchObject({ leadId: member.id, memberIds: [member.id] });
+  });
+});
+
+test.concurrent("Module leads and members cannot be workspace Guests with Project Member access", async () => {
+  await withRollback(db, async (transaction) => {
+    const { modules, projects, member, guest, admin, project } = await setup(transaction);
+    await projects.addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: guest.id, role: "Member" });
+    const code = (promise: Promise<unknown>) => promise.then(() => 200, (error: { status: number }) => error.status);
+
+    expect(await code(modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Guest lead", leadId: guest.id }))).toBe(400);
+    expect(await code(modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Guest member", memberIds: [guest.id] }))).toBe(400);
+
+    const existing = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Existing member" });
+    await transaction.insert(moduleMembers).values({ moduleId: existing.id, userId: guest.id });
+    const legacyMemberIds = (await modules.getModule.handler({ userId: member.id }, { moduleId: existing.id })).memberIds;
+    expect(await code(modules.updateModule.handler({ userId: member.id }, { moduleId: existing.id, status: "in-progress", memberIds: legacyMemberIds }))).toBe(200);
+    expect(await code(modules.updateModule.handler({ userId: member.id }, { moduleId: existing.id, leadId: guest.id }))).toBe(400);
+    expect(await code(modules.updateModule.handler({ userId: member.id }, { moduleId: existing.id, memberIds: [guest.id] }))).toBe(200);
+    await modules.updateModule.handler({ userId: member.id }, { moduleId: existing.id, memberIds: [] });
+    expect(await code(modules.updateModule.handler({ userId: member.id }, { moduleId: existing.id, memberIds: [guest.id] }))).toBe(400);
+
+    const valid = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Valid people", leadId: admin.id, memberIds: [member.id] });
+    expect(valid).toMatchObject({ leadId: admin.id, memberIds: [member.id] });
   });
 });
 

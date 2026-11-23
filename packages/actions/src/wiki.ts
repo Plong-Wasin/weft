@@ -28,6 +28,8 @@ export type WikiAccess = (typeof wikiAccess)[number];
 export const wikiShareRoles = ["view", "comment", "edit"] as const;
 export type WikiShareRole = (typeof wikiShareRoles)[number];
 
+const wikiPageNotFound = () => currentAgentProjectScope() ? "Not found" : "Wiki page not found";
+
 /** Autosave writes a new version only when the latest one is at least this old. */
 export const versionIntervalMs = 5 * 60_000;
 
@@ -84,19 +86,19 @@ export async function requireWikiPageAccess(db: Database, userId: string, pageId
   if (!page.projectId && page.collectionId) {
     const [collection] = await db.select().from(collections).where(and(eq(collections.id, page.collectionId), isNull(collections.deletedAt)));
     const [shared] = await db.select({ userId: collectionMembers.userId }).from(collectionMembers).where(and(eq(collectionMembers.collectionId, page.collectionId), eq(collectionMembers.userId, userId)));
-    if (collection?.visibility === "private" && collection.ownerId !== userId && !shared && !shareRole) throw new ActionError("Wiki page not found", 404);
+    if (collection?.visibility === "private" && collection.ownerId !== userId && !shared && !shareRole) throw new ActionError(wikiPageNotFound(), 404);
   }
   const role = await requireWorkspaceRole(db, userId, page.workspaceId, "read");
   let canWrite = role !== "Guest";
   if (page.projectId) {
     const access = await requireProjectAccess(db, userId, page.projectId, requirement);
     const [member] = await db.select({ userId: projectMembers.userId }).from(projectMembers).where(and(eq(projectMembers.projectId, page.projectId), eq(projectMembers.userId, userId)));
-    if (!member || access.project.workspaceId !== page.workspaceId) throw new ActionError("Wiki page not found", 404);
+    if (!member || access.project.workspaceId !== page.workspaceId) throw new ActionError(wikiPageNotFound(), 404);
     assertFeatureEnabled(access.project, "pages");
     canWrite = canWrite && (access.workspaceRole === "Admin" || access.projectRole !== "Guest");
   }
-  if (page.access === "private" && page.ownerId !== userId && !shareRole) throw new ActionError("Wiki page not found", 404);
-  if (!page.projectId && page.ownerId !== userId && shareRole === null && page.access !== "public") throw new ActionError("Wiki page not found", 404);
+  if (page.access === "private" && page.ownerId !== userId && !shareRole) throw new ActionError(wikiPageNotFound(), 404);
+  if (!page.projectId && page.ownerId !== userId && shareRole === null && page.access !== "public") throw new ActionError(wikiPageNotFound(), 404);
   if (!page.projectId && page.ownerId !== userId && shareRole) canWrite = shareRole === "edit";
   if (requirement === "write" && !canWrite) throw new ActionError("Forbidden", 403);
   return page;
@@ -207,7 +209,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
     if (!page.projectId && page.collectionId) {
       const [collection] = await database.select().from(collections).where(and(eq(collections.id, page.collectionId), isNull(collections.deletedAt)));
       const [shared] = await database.select({ userId: collectionMembers.userId }).from(collectionMembers).where(and(eq(collectionMembers.collectionId, page.collectionId), eq(collectionMembers.userId, userId)));
-      if (collection?.visibility === "private" && collection.ownerId !== userId && !shared && !shareRole) throw new ActionError("Wiki page not found", 404);
+      if (collection?.visibility === "private" && collection.ownerId !== userId && !shared && !shareRole) throw new ActionError(wikiPageNotFound(), 404);
     }
     const role = await requireWorkspaceRole(database, userId, page.workspaceId, "read");
     let projectWriteAccess: { workspaceId: string; archivedAt: Date | null; projectRole: string | null; hasMembership: boolean } | undefined;
@@ -215,12 +217,12 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       const projectAccess = await requireProjectAccess(database, userId, page.projectId, requirement === "read" ? "read" : "write");
       const [membership] = await database.select({ userId: projectMembers.userId }).from(projectMembers)
         .where(and(eq(projectMembers.projectId, page.projectId), eq(projectMembers.userId, userId)));
-      if (projectAccess.project.workspaceId !== page.workspaceId || (!membership && !(options.allowWorkspaceAdmin && projectAccess.workspaceRole === "Admin"))) throw new ActionError("Wiki page not found", 404);
+      if (projectAccess.project.workspaceId !== page.workspaceId || (!membership && !(options.allowWorkspaceAdmin && projectAccess.workspaceRole === "Admin"))) throw new ActionError(wikiPageNotFound(), 404);
       assertFeatureEnabled(projectAccess.project, "pages");
       projectWriteAccess = { workspaceId: projectAccess.project.workspaceId, archivedAt: projectAccess.project.archivedAt, projectRole: projectAccess.projectRole, hasMembership: Boolean(membership || (options.allowWorkspaceAdmin && projectAccess.workspaceRole === "Admin")) };
     }
-    if (page.access === "private" && page.ownerId !== userId && !shareRole) throw new ActionError("Wiki page not found", 404);
-    if (!page.projectId && page.ownerId !== userId && shareRole === null && page.access !== "public") throw new ActionError("Wiki page not found", 404);
+    if (page.access === "private" && page.ownerId !== userId && !shareRole) throw new ActionError(wikiPageNotFound(), 404);
+    if (!page.projectId && page.ownerId !== userId && shareRole === null && page.access !== "public") throw new ActionError(wikiPageNotFound(), 404);
     if (requirement === "owner" && page.ownerId !== userId) throw new ActionError("Forbidden", 403);
     const canWrite = canWriteWikiPage({ workspaceRole: role as WorkspaceRole, userId, page, shareRole, project: projectWriteAccess });
     if (requirement === "write" && !canWrite) throw new ActionError("Forbidden", 403);
@@ -231,7 +233,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
     if (!parentId) return;
     if (parentId === selfId) throw new ActionError("A page cannot be its own parent", 400);
     const parent = await load(database, userId, parentId, "read");
-    if (parent.page.workspaceId !== workspaceId) throw new ActionError("Wiki page not found", 404);
+    if (parent.page.workspaceId !== workspaceId) throw new ActionError(wikiPageNotFound(), 404);
     // Walk up from the new parent: reaching the page itself would make a cycle.
     for (let cursor: string | null = parent.page.parentId, hops = 0; cursor && hops < 1000; hops++) {
       if (cursor === selfId) throw new ActionError("A page cannot move under its own descendant", 400);
@@ -699,7 +701,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       handler: async (context: Context, input: { pageId: string }) => db.transaction(async (tx) => {
         const database = tx as unknown as Database;
         const [page] = await database.select().from(wikiPages).where(and(eq(wikiPages.id, input.pageId), isNull(wikiPages.deletedAt))).for("update");
-        if (!page) throw new ActionError("Wiki page not found", 404);
+        if (!page) throw new ActionError(wikiPageNotFound(), 404);
         const role = await requireWorkspaceRole(database, context.userId, page.workspaceId, "read");
         if (page.ownerId !== context.userId && role !== "Admin") throw new ActionError("Forbidden", 403);
         if (!page.lockedAt) {
@@ -716,7 +718,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
       handler: async (context: Context, input: { pageId: string }) => db.transaction(async (tx) => {
         const database = tx as unknown as Database;
         const [page] = await database.select().from(wikiPages).where(and(eq(wikiPages.id, input.pageId), isNull(wikiPages.deletedAt))).for("update");
-        if (!page) throw new ActionError("Wiki page not found", 404);
+        if (!page) throw new ActionError(wikiPageNotFound(), 404);
         const role = await requireWorkspaceRole(database, context.userId, page.workspaceId, "read");
         if (page.ownerId !== context.userId && role !== "Admin") throw new ActionError("Forbidden", 403);
         if (page.lockedAt) {

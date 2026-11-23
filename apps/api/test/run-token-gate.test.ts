@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
-import { activities, assets as assetRows, comments as commentRows, createDatabase, notifications as notificationRows, runs, workItems, type Database } from "@weft/db";
+import { activities, assets as assetRows, comments as commentRows, confirmations, createDatabase, notifications as notificationRows, runs, workItems, type Database } from "@weft/db";
 import { createAgentActions, createAgentRuntimeEnvironmentActions, createAiTools, createCommentActions, commentMarkdownOptions, createConfirmationStore, createCycleActions, createExportActions, createModuleActions, createProjectActions, createRuntimeDispatchActions, createRuntimeActions, createTriggerActions, createWebLinkActions, createWikiActions, createWorkItemActions, lockRuntimeRun, withAgentProjectScope, type Signal, type SignalBus } from "@weft/actions";
 import { createMemberFactory, withRollback } from "../../../packages/db/src/test-helpers";
 import { createApp } from "../src/app";
@@ -301,20 +301,53 @@ test.concurrent("stable Work item references in Agent-written comments respect A
   });
 });
 
-test.concurrent("confirmation of a Run proposal enforces the Agent Project scope", async () => {
+test.concurrent("Run proposals enforce Agent Project scope before storing target snapshots", async () => {
   await withRollback(db, async (transaction) => {
     const { post, claim, owner, workspace, project, agent, agents, work } = await scenario(transaction);
     const outside = await createProjectActions(transaction).createProject.handler({ userId: owner.id }, {
       workspaceId: workspace.id, name: "Confirmation outside", key: `CF${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private",
     });
     const outsideItem = await work.createWorkItem.handler({ userId: owner.id }, { projectId: outside.id, title: "Outside" });
-    const link = await createWebLinkActions(transaction).createWebLink.handler({ userId: owner.id }, { workItemId: outsideItem.id, url: "https://example.test/confirmation" });
+    const cycle = await createCycleActions(transaction).createCycle.handler({ userId: owner.id }, { projectId: outside.id, name: "Outside cycle", startDate: "2026-01-01", endDate: "2026-01-07" });
+    const module = await createModuleActions(transaction).createModule.handler({ userId: owner.id }, { projectId: outside.id, name: "Outside module" });
     await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id] });
     const [claimed] = await (await claim()).json() as Array<{ runId: string }>;
     const store = createConfirmationStore(transaction);
-    const card = await store.propose({ userId: owner.id, workspaceId: workspace.id, runId: claimed!.runId, action: "update_web_link", input: { webLinkId: link.id, title: "Must be refused" } });
+    for (const proposal of [
+      { action: "update_work_item", input: { workItemId: outsideItem.id, title: "Must be refused" } },
+      { action: "update_cycle", input: { cycleId: cycle.id, name: "Must be refused" } },
+      { action: "update_module", input: { moduleId: module.id, name: "Must be refused" } },
+    ]) {
+      await expect(store.propose({ userId: owner.id, workspaceId: workspace.id, runId: claimed!.runId, ...proposal })).rejects.toMatchObject({ status: 404 });
+    }
+    expect(await transaction.select().from(confirmations).where(eq(confirmations.runId, claimed!.runId))).toHaveLength(0);
 
-    expect(await store.confirm(owner.id, card.id)).toMatchObject({ status: "failed", error: "Project not found" });
+    await expect(store.propose({ userId: owner.id, workspaceId: workspace.id, runId: claimed!.runId, action: "update_work_item", input: { workItemId: (await work.createWorkItem.handler({ userId: owner.id }, { projectId: project.id, title: "In scope" })).id, title: "Allowed" } })).resolves.toMatchObject({ status: "pending" });
+  });
+});
+
+test.concurrent("Run-token Work item and Wiki lookups hide out-of-scope targets like missing targets", async () => {
+  await withRollback(db, async (transaction) => {
+    const { post, claim, owner, workspace, agent, agents, work } = await scenario(transaction);
+    const outside = await createProjectActions(transaction).createProject.handler({ userId: owner.id }, {
+      workspaceId: workspace.id, name: "Oracle outside", key: `OR${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "public",
+    });
+    const outsideItem = await work.createWorkItem.handler({ userId: owner.id }, { projectId: outside.id, title: "Hidden item" });
+    const outsidePage = await createWikiActions(transaction).createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, projectId: outside.id, title: "Hidden page" });
+    await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: false, projectIds: [] });
+    await agents.updateAgent.handler({ userId: owner.id }, { agentId: agent.id, allowFeatureActions: true });
+    const [claimed] = await (await claim()).json() as Array<{ token: string }>;
+    const token = claimed!.token;
+
+    const hiddenItem = await post("/actions/get_work_item", { workspaceId: workspace.id, displayId: outsideItem.displayId }, { token });
+    const missingItem = await post("/actions/get_work_item", { workspaceId: workspace.id, displayId: `${outside.key}-999999` }, { token });
+    expect([hiddenItem.status, await hiddenItem.json()]).toEqual([404, { error: "Not found" }]);
+    expect([missingItem.status, await missingItem.json()]).toEqual([404, { error: "Not found" }]);
+
+    const hiddenPage = await post("/actions/get_wiki_page", { pageId: outsidePage.id }, { token });
+    const missingPage = await post("/actions/get_wiki_page", { pageId: crypto.randomUUID() }, { token });
+    expect([hiddenPage.status, await hiddenPage.json()]).toEqual([404, { error: "Not found" }]);
+    expect([missingPage.status, await missingPage.json()]).toEqual([404, { error: "Not found" }]);
   });
 });
 
@@ -392,7 +425,7 @@ test.concurrent("server Agent Autopilot tools enforce Agent Project membership",
     });
     const result = JSON.parse(String(await tools.find((tool) => tool.name === "update_web_link")!.execute({ webLinkId: outsideLink.id, title: "Must not update" }))) as { status?: number; error?: string };
     expect(result.status).toBe(404);
-    expect(result.error).toBe("Project not found");
+    expect(result.error).toBe("Not found");
   });
 });
 

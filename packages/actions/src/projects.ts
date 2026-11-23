@@ -32,20 +32,20 @@ type Requirement = "read" | "write" | "admin";
 /** Project permission layer. Workspace Admins pass every check; a private project looks missing (404) to non-members. */
 export async function requireProjectAccess(db: Database, userId: string, projectId: string, requirement: Requirement, options: { allowArchived?: boolean } = {}) {
   const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
-  if (!project) throw new ActionError("Project not found", 404);
   const agentScope = currentAgentProjectScope();
+  if (!project) throw new ActionError(agentScope ? "Not found" : "Project not found", 404);
   if (agentScope) {
-    if (project.workspaceId !== agentScope.workspaceId) throw new ActionError("Project not found", 404);
+    if (project.workspaceId !== agentScope.workspaceId) throw new ActionError("Not found", 404);
     const [agentMembership] = await db.select({ projectId: projectMembers.projectId }).from(projectMembers)
       .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, agentScope.agentUserId)));
-    if (!agentMembership) throw new ActionError("Project not found", 404);
+    if (!agentMembership) throw new ActionError("Not found", 404);
   }
   const workspaceRole = await requireWorkspaceRole(db, userId, project.workspaceId, "read");
   const [member] = await db.select({ role: projectMembers.role }).from(projectMembers)
     .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, userId)));
   const projectRole = (member?.role ?? null) as WorkspaceRole | null;
   const isWorkspaceAdmin = workspaceRole === "Admin";
-  if (project.visibility === "private" && !projectRole && !isWorkspaceAdmin) throw new ActionError("Project not found", 404);
+  if (project.visibility === "private" && !projectRole && !isWorkspaceAdmin) throw new ActionError(agentScope ? "Not found" : "Project not found", 404);
   if (requirement !== "read") {
     if (workspaceRole === "Guest") throw new ActionError("Forbidden", 403);
     const needed = requirement === "admin" ? roleLevel.Admin : roleLevel.Member;

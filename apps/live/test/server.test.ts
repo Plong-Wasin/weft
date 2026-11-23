@@ -298,7 +298,7 @@ test.concurrent("live edits still persist after the page title is renamed during
     const owner = await createMemberFactory(transaction, workspace.id, "Admin");
     const wiki = createWikiActions(transaction);
     const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Before", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "start" }] }] } });
-    const server = createLiveServer({ db: transaction, maxDebounce: 50, authenticate: async (token) => token === owner.id ? owner.id : null });
+    const server = createLiveServer({ db: transaction, authenticate: async (token) => token === owner.id ? owner.id : null });
     await server.listen();
     const session = createHocuspocusProvider(server.url, page.id, owner.id);
     try {
@@ -322,7 +322,7 @@ test.concurrent("a member mention typed in a live session queues one notificatio
     const reader = await createMemberFactory(transaction, workspace.id, "Member");
     const wiki = createWikiActions(transaction);
     const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Mentions", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hello " }] }] } });
-    const server = createLiveServer({ db: transaction, maxDebounce: 50, authenticate: async (token) => token === owner.id ? owner.id : null });
+    const server = createLiveServer({ db: transaction, authenticate: async (token) => token === owner.id ? owner.id : null });
     await server.listen();
     const session = createHocuspocusProvider(server.url, page.id, owner.id);
     try {
@@ -346,7 +346,8 @@ test.concurrent("a mention the page cannot notify does not discard the live save
     const outsider = await createMemberFactory(transaction, workspace.id, "Member");
     const wiki = createWikiActions(transaction);
     const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Private", access: "private", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hello " }] }] } });
-    const server = createLiveServer({ db: transaction, maxDebounce: 50, authenticate: async (token) => token === owner.id ? owner.id : null });
+    const warnings: string[] = [];
+    const server = createLiveServer({ db: transaction, authenticate: async (token) => token === owner.id ? owner.id : null, warn: (message) => warnings.push(message) });
     await server.listen();
     const session = createHocuspocusProvider(server.url, page.id, owner.id);
     const failures: unknown[] = [];
@@ -358,9 +359,10 @@ test.concurrent("a mention the page cannot notify does not discard the live save
       mention.setAttribute("id", outsider.id);
       mention.setAttribute("label", "Outsider");
       session.doc.transact(() => (session.doc.getXmlFragment("default").get(0) as Y.XmlElement).insert(1, [mention]));
-      await waitForCondition(async () => JSON.stringify((await transaction.select({ content: wikiPages.content }).from(wikiPages).where(eq(wikiPages.id, page.id)))[0]?.content).includes("mention"));
+      await waitForCondition(async () => warnings.some((message) => message.includes(`Skipped content effects for wiki page ${page.id}`)));
       const [stored] = await transaction.select({ content: wikiPages.content }).from(wikiPages).where(eq(wikiPages.id, page.id));
       expect(JSON.stringify(stored!.content)).toContain("mention");
+      expect(warnings.some((message) => message.includes("Mentioned user cannot see this page"))).toBe(true);
       expect(failures).toEqual([]);
     } finally { process.off("unhandledRejection", onRejection); session.destroy(); await server.destroy(); }
   });
@@ -486,11 +488,12 @@ const textDoc = (text: string) => ({ type: "doc", content: [{ type: "paragraph",
 const typeInto = (session: { doc: Y.Doc }, text: string) =>
   session.doc.transact(() => ((session.doc.getXmlFragment("default").get(0) as Y.XmlElement).get(0) as Y.XmlText).insert(0, text));
 const waitForCondition = async (condition: () => Promise<boolean>) => {
-  for (let attempt = 0; attempt < 100; attempt++) {
+  // Covers Hocuspocus's 2 s maximum debounce and normal content conversion.
+  for (let attempt = 0; attempt < 250; attempt++) {
     if (await condition()) return;
     await Bun.sleep(20);
   }
-  throw new Error("condition was not met within 2 seconds");
+  throw new Error("condition was not met within 5 seconds");
 };
 test.concurrent("live Yjs saves rebuild visible Outlinks and preserve hidden existing targets", async () => {
   await withRollback(db, async (transaction) => {
@@ -504,7 +507,7 @@ test.concurrent("live Yjs saves rebuild visible Outlinks and preserve hidden exi
     const link = (label: string, id: string) => ({ type: "text", text: label, marks: [{ type: "link", attrs: { href: `weft://wiki/${id}`, kind: "wiki", targetId: id, target: label } }] });
     const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Source", content: { type: "doc", content: [{ type: "paragraph", content: [link("Old", oldTarget.id), { type: "text", text: " " }, link("Hidden", hiddenTarget.id)] }] } });
     expect(await transaction.select({ targetId: outlinks.targetId }).from(outlinks).where(eq(outlinks.sourceId, page.id))).toMatchObject([{ targetId: oldTarget.id }, { targetId: hiddenTarget.id }]);
-    const server = createLiveServer({ db: transaction, maxDebounce: 50, authenticate: async (token) => token === writer.id ? writer.id : null });
+    const server = createLiveServer({ db: transaction, authenticate: async (token) => token === writer.id ? writer.id : null });
     await server.listen();
     const session = createHocuspocusProvider(server.url, page.id, writer.id);
     try {
@@ -558,7 +561,7 @@ test.concurrent("a lock reaches connected editors at once and edits typed in the
     const wiki = createWikiActions(transaction);
     const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Locked live", content: textDoc("start") });
     const bus = createSignalBus(Bun.env.DATABASE_URL);
-    const server = createLiveServer({ db: transaction, bus, maxDebounce: 50, authenticate: async (token) => token });
+    const server = createLiveServer({ db: transaction, bus, authenticate: async (token) => token });
     await server.listen();
     const writerSession = createHocuspocusProvider(server.url, page.id, writer.id);
     const observer = createHocuspocusProvider(server.url, page.id, owner.id);
@@ -603,7 +606,7 @@ test.concurrent("a save skipped under a lock leaves the row untouched and discar
     const owner = await createMemberFactory(transaction, workspace.id, "Admin");
     const wiki = createWikiActions(transaction);
     const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Skip save", content: textDoc("start") });
-    const server = createLiveServer({ db: transaction, maxDebounce: 50, authenticate: async (token) => token });
+    const server = createLiveServer({ db: transaction, authenticate: async (token) => token });
     await server.listen();
     const typist = createHocuspocusProvider(server.url, page.id, owner.id);
     const observer = createHocuspocusProvider(server.url, page.id, owner.id);
@@ -637,7 +640,7 @@ test.concurrent("a writer who typed in the lock window keeps persisting after un
     const wiki = createWikiActions(transaction);
     const page = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, title: "Lock window writer", content: textDoc("start") });
     const bus = createSignalBus(Bun.env.DATABASE_URL);
-    const server = createLiveServer({ db: transaction, bus, maxDebounce: 50, authenticate: async (token) => token });
+    const server = createLiveServer({ db: transaction, bus, authenticate: async (token) => token });
     await server.listen();
     const writerSession = createHocuspocusProvider(server.url, page.id, writer.id);
     const observer = createHocuspocusProvider(server.url, page.id, owner.id);

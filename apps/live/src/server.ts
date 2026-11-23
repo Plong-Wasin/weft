@@ -116,8 +116,6 @@ export function createLiveServer(options: {
   converterTimeoutMs?: number;
   /** Where converter and image warnings go; defaults to console.warn. */
   warn?: (message: string) => void;
-  /** Maximum wait before persisting a burst of document updates. */
-  maxDebounce?: number;
 }) {
   const bus = options.bus ?? createSignalBus();
   const actions = createWikiActions(options.db);
@@ -142,7 +140,7 @@ export function createLiveServer(options: {
     port: options.port ?? 0,
     address: options.address ?? "127.0.0.1",
     debounce: 250,
-    maxDebounce: options.maxDebounce ?? 2_000,
+    maxDebounce: 2_000,
     async onAuthenticate({ token, documentName, connectionConfig, requestHeaders }) {
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(documentName)) throw new Error("Invalid page id");
       const origins = options.webOrigins ?? (process.env.WEB_ORIGIN ? process.env.WEB_ORIGIN.split(",").map((origin) => origin.trim()) : ["http://localhost:5173"]);
@@ -253,7 +251,7 @@ export function createLiveServer(options: {
               await actions.processPageContentEffects(effects as unknown as Database, { userId: context?.userId ?? page.ownerId, source: "ui" }, updated!, page.content, content, !latest || Date.now() - latest.createdAt.getTime() >= 5 * 60_000);
             });
           } catch (error) {
-            console.warn(`Skipped content effects for wiki page ${page.id}`, error);
+            warn(`Skipped content effects for wiki page ${page.id}: ${error instanceof Error ? error.message : String(error)}`);
           }
         }
       }); } finally { bumpSaveEpoch(document); }

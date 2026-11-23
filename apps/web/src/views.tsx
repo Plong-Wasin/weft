@@ -124,9 +124,9 @@ export function ViewsPage({ workspaceSlug, project, selfId }: Scope) {
         <Link to={paths.workItems(workspaceSlug, project.key)} className="truncate text-secondary hover:text-primary">{project.name}</Link>
         <ChevronRight aria-hidden size={14} /><Layers aria-hidden size={14} /><h2 className="m-0 text-14 font-medium text-primary">{t("views.title")}</h2>
       </nav>
-      <label className="relative my-0 block"><span className="sr-only">{t("views.search")}</span>
+      <label className="relative my-0 block w-full sm:w-auto"><span className="sr-only">{t("views.search")}</span>
         <Search aria-hidden size={14} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-tertiary" />
-        <input type="search" value={search} placeholder={t("views.search")} className="w-48 pl-7 text-13" onChange={(event) => setSearch(event.target.value)} /></label>
+        <input type="search" value={search} placeholder={t("views.search")} className="w-full pl-7 text-13 sm:w-48" onChange={(event) => setSearch(event.target.value)} /></label>
       {canWrite && <button type="button" className={`${primary} flex items-center gap-1.5`} onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{t("views.add")}</button>}
     </header>
     {views !== null && shown.length === 0 && <p role="status" className="px-3 py-6 text-14 text-secondary">{t(views.length === 0 ? "views.empty" : "views.noMatch")}</p>}

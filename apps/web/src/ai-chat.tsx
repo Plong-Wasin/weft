@@ -290,6 +290,16 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
   const lastUser = [...messages].reverse().find((message) => message.role === "user");
   const slash = input.match(/(?:^|\s)\/([^\s/]*)$/);
   const matchingSkills = slash ? skills.filter((skill) => skill.name.includes(slash[1]!.toLowerCase())) : [];
+  // The Skill picker closes on an outside click or Escape, and stays closed until the composer text changes.
+  const [dismissedSkillInput, setDismissedSkillInput] = React.useState<string | null>(null);
+  const skillPickerOpen = slash !== null && dismissedSkillInput !== input;
+  const composerForm = React.useRef<HTMLFormElement>(null);
+  React.useEffect(() => {
+    if (!slash) return;
+    const onPointerDown = (event: MouseEvent) => { if (!composerForm.current?.contains(event.target as Node)) setDismissedSkillInput(input); };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [slash !== null, input]);
   function pickSkill(skill: SkillSummary) { setSelectedSkill(skill); setInput((value) => value.replace(/(?:^|\s)\/[^\s/]*$/, " ").trimStart()); }
   function send(text: string) { if (!text.trim() || busy) return; void sendMessage({ text }); }
   // sendMessage() with no argument sends no new message: the SDK appends the continuation to the last assistant message, as the server does.
@@ -346,13 +356,16 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
     </div>
     {error && <p role="alert" className="px-4 text-14 text-danger-primary">{translate(error.message.includes("rate_limited") ? "ai.rateLimited" : "ai.failed")}</p>}
     <div className="mx-auto w-full max-w-3xl px-4 pb-2">
-      <form onSubmit={(event) => { event.preventDefault(); const text = input.trim(); if (!text || busy) return; setInput(""); send(text); }} className="rounded-xl border border-subtle bg-surface-1 p-3 shadow-sm">
+      <form ref={composerForm} onSubmit={(event) => { event.preventDefault(); const text = input.trim(); if (!text || busy) return; setInput(""); send(text); }} className="rounded-xl border border-subtle bg-surface-1 p-3 shadow-sm">
         <span title={translate("ai.contextHint")} className="mb-2 flex w-fit max-w-full items-center gap-1.5 truncate rounded-md border border-subtle px-2 py-1 text-14 text-primary"><span className="sr-only">{translate("ai.contextPill")}: </span>{pill}</span>
         <label className="sr-only" htmlFor={`composer-${chatId}`}>{translate("ai.message")}</label>
         {selectedSkill && <button type="button" onClick={() => setSelectedSkill(null)} className="mb-2 inline-flex rounded-md border border-subtle px-2 py-1 text-13 text-primary">/{selectedSkill.name} · {translate(selectedSkill.scope === "personal" ? "skills.personal" : "skills.workspace")} ×</button>}
-        {slash && <div role="listbox" aria-label={translate("skills.picker")} className="mb-2 max-h-44 overflow-auto rounded-md border border-subtle bg-surface-1">{matchingSkills.map((skill) => <button key={skill.id} type="button" role="option" onClick={() => pickSkill(skill)} className="flex w-full items-center justify-between px-3 py-2 text-left text-14 hover:bg-layer-1"><span>/{skill.name}</span><span className="text-12 text-tertiary">{translate(skill.scope === "personal" ? "skills.personal" : "skills.workspace")}</span></button>)}{matchingSkills.length === 0 && <p className="px-3 py-2 text-13 text-tertiary">{translate("skills.empty")}</p>}</div>}
+        {skillPickerOpen && <div role="listbox" aria-label={translate("skills.picker")} className="mb-2 max-h-44 overflow-auto rounded-md border border-subtle bg-surface-1">{matchingSkills.map((skill) => <button key={skill.id} type="button" role="option" onClick={() => pickSkill(skill)} className="flex w-full items-center justify-between px-3 py-2 text-left text-14 hover:bg-layer-1"><span>/{skill.name}</span><span className="text-12 text-tertiary">{translate(skill.scope === "personal" ? "skills.personal" : "skills.workspace")}</span></button>)}{matchingSkills.length === 0 && <p className="px-3 py-2 text-13 text-tertiary">{translate("skills.empty")}</p>}</div>}
         <textarea ref={composerRef} id={`composer-${chatId}`} value={input} placeholder={translate("ai.placeholder")} rows={2} onChange={(event) => setInput(event.target.value)}
-          onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && skillPickerOpen) { event.preventDefault(); setDismissedSkillInput(input); return; }
+            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
+          }}
           className="block w-full resize-none border-0 bg-transparent p-0 text-16 text-primary outline-none placeholder:text-placeholder" />
         <div className="mt-2 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">

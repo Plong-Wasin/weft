@@ -6,11 +6,12 @@ import type { Transaction } from "@tiptap/pm/state";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Copy, Eraser, GripHorizontal, GripVertical, Heading, Plus, Table2, Trash2 } from "lucide-react";
 import { translate } from "@weft/shared";
 import { suggestionOpen } from "./editor-extensions";
+import { planTableMove, tableWidth, type TableAxis } from "./table-moves";
 
 /** Hover and caret controls for Wiki, description and Comment tables: `+` at the right and bottom edges, grips at the column tops, row lefts and the table corner. */
 
 type Axis = "row" | "column" | "table";
-export type TableAction = "insertRowAbove" | "insertRowBelow" | "duplicateRow" | "clearRow" | "deleteRow" | "insertColumnLeft" | "insertColumnRight" | "duplicateColumn" | "clearColumn" | "deleteColumn" | "toggleHeaderRow" | "toggleHeaderColumn" | "deleteTable";
+export type TableAction = "insertRowAbove" | "insertRowBelow" | "moveRowUp" | "moveRowDown" | "moveColumnLeft" | "moveColumnRight" | "duplicateRow" | "clearRow" | "deleteRow" | "insertColumnLeft" | "insertColumnRight" | "duplicateColumn" | "clearColumn" | "deleteColumn" | "toggleHeaderRow" | "toggleHeaderColumn" | "deleteTable";
 type Located = { pos: number; node: ProseMirrorNode };
 type Hover = { el: HTMLTableElement; row: number | null; col: number | null };
 type Caret = { el: HTMLTableElement; row: number; col: number };
@@ -18,6 +19,9 @@ type Caret = { el: HTMLTableElement; row: number; col: number };
 type Menu = { axis: Axis; index: number; pos: number };
 type Resolved = { el: HTMLTableElement; axis: Axis; index: number; located: Located; row: number; col: number };
 type Box = { left: number; top: number; right: number; bottom: number };
+/** A row or column being dragged by its grip: `to` is its final index, `boundary` the client coordinate of its drop line, null when the drop would not move it or would split a merged cell. */
+type Drag = { axis: TableAxis; el: HTMLTableElement; from: number; to: number; boundary: number | null };
+type MenuItem = { action: TableAction; icon: React.ComponentType<{ "aria-hidden"?: boolean; size?: number }>; danger?: boolean; disabled?: boolean };
 
 const GRIP = 24;
 const GAP = 4;
@@ -31,11 +35,17 @@ export function TableControls({ editor, editable }: { editor: Editor | null; edi
   const [hover, setHover] = React.useState<Hover | null>(null);
   const [menu, setMenu] = React.useState<Menu | null>(null);
   const [overlayFocus, setOverlayFocus] = React.useState(false);
+  const [drag, setDrag] = React.useState<Drag | null>(null);
+  // A drag's pointer-up is followed by a click on the same grip; the click must not open the menu.
+  const dragEndedAt = React.useRef(0);
   const [, setVersion] = React.useState(0);
   const root = React.useRef<HTMLDivElement>(null);
   const menuRef = React.useRef<HTMLDivElement>(null);
   // Escape from a cell asks for the table grip; the grip may not be rendered yet, so it is focused after the next render.
   const focusCorner = React.useRef(false);
+  // Read by the editor's key handler, which is registered once per editor: an open menu takes Escape before the table corner does.
+  const menuOpen = React.useRef(false);
+  menuOpen.current = menu !== null;
 
   React.useEffect(() => {
     if (!editor || !editable) return;
@@ -62,11 +72,20 @@ export function TableControls({ editor, editable }: { editor: Editor | null; edi
     };
     const onLeaveWindow = (event: MouseEvent) => { if (!event.relatedTarget) setHover(null); };
     const onPointerDown = (event: PointerEvent) => {
+      // Any pointer-down outside the menu and its grips closes it, including a click in the page content.
       const target = event.target;
-      if (target instanceof Node && (root.current?.contains(target) || dom.contains(target))) return;
+      if (target instanceof Node && root.current?.contains(target)) return;
       setMenu(null);
     };
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && menuOpen.current) {
+        // The menu takes this Escape alone: no other Escape handler of the page or the editor runs for it.
+        event.preventDefault();
+        event.stopPropagation();
+        setMenu(null);
+        editor.view.focus();
+        return;
+      }
       // Escape leaves the table for its controls: Tab then walks the corner, grips and `+` buttons.
       // Capture phase: ProseMirror's own keydown handler runs on the same element and would otherwise take the key first.
       if (event.key !== "Escape" || event.defaultPrevented || suggestionOpen(editor) || !caretTable(editor)) return;
@@ -118,10 +137,11 @@ export function TableControls({ editor, editable }: { editor: Editor | null; edi
   const frame = root.current?.getBoundingClientRect();
   const caret = editor.isFocused || overlayFocus || menu ? caretTable(editor) : null;
   const open = menu ? resolveMenu(editor, menu) : null;
-  const tables = [...new Set([hover?.el, caret?.el, open?.el].filter((el): el is HTMLTableElement => !!el))];
+  const tables = [...new Set([hover?.el, caret?.el, open?.el, drag?.el].filter((el): el is HTMLTableElement => !!el))];
 
   const closeMenu = () => { setMenu(null); editor.view.focus(); };
   const openMenu = (axis: Axis, index: number, el: HTMLTableElement) => {
+    if (Date.now() - dragEndedAt.current < 250) return;
     if (open && open.axis === axis && open.index === index && open.el === el) { setMenu(null); return; }
     const located = locateTable(editor, el);
     if (!located) return;
@@ -134,6 +154,44 @@ export function TableControls({ editor, editable }: { editor: Editor | null; edi
     if (!current) return;
     runTableAction(editor, current.located, current.row, current.col, action);
     editor.view.focus();
+  };
+  /** Starts a row or column drag from its grip once the pointer has moved a few pixels; a press that does not move stays a click. */
+  const startDrag = (event: React.PointerEvent<HTMLButtonElement>, axis: TableAxis, index: number, el: HTMLTableElement) => {
+    if (event.button !== 0) return;
+    const startX = event.clientX, startY = event.clientY;
+    let active = false;
+    let current: Drag | null = null;
+    const finish = (commit: boolean) => {
+      window.removeEventListener("pointermove", onDragMove);
+      window.removeEventListener("pointerup", onDragUp);
+      window.removeEventListener("pointercancel", onDragCancel);
+      window.removeEventListener("keydown", onDragKey, true);
+      setDrag(null);
+      if (!active) return;
+      dragEndedAt.current = Date.now();
+      const located = commit && current?.boundary != null ? locateTable(editor, el) : null;
+      if (located && current) moveTableLine(editor, located, axis, index, current.to, caretPlace(editor));
+    };
+    const onDragMove = (moveEvent: PointerEvent) => {
+      if (!active) {
+        if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < 4) return;
+        active = true;
+      }
+      current = dropAt(editor, el, axis, index, moveEvent.clientX, moveEvent.clientY);
+      setDrag(current);
+    };
+    const onDragUp = () => finish(true);
+    const onDragCancel = () => finish(false);
+    const onDragKey = (keyEvent: KeyboardEvent) => {
+      if (keyEvent.key !== "Escape") return;
+      keyEvent.preventDefault();
+      keyEvent.stopPropagation();
+      finish(false);
+    };
+    window.addEventListener("pointermove", onDragMove);
+    window.addEventListener("pointerup", onDragUp);
+    window.addEventListener("pointercancel", onDragCancel);
+    window.addEventListener("keydown", onDragKey, true);
   };
   const addAt = (el: HTMLTableElement, action: "insertRowBelow" | "insertColumnRight") => {
     const located = locateTable(editor, el);
@@ -152,20 +210,25 @@ export function TableControls({ editor, editable }: { editor: Editor | null; edi
     const rowBox = (index: number) => { const row = rows[index]; return row ? relative(row.getBoundingClientRect(), frame) : null; };
     const columnBox = (index: number) => { const cell = columns[index]; return cell ? relative(cell.getBoundingClientRect(), frame) : null; };
     const grips: React.ReactNode[] = [];
+    const dragged = drag?.el === el ? drag : null;
+    const dragLine = dragged && dragged.boundary !== null ? (dragged.axis === "row"
+      ? <div key="drop-line" data-testid="table-drop-line" aria-hidden="true" className="pointer-events-none absolute h-0.5 rounded-full" style={{ left: box.left, top: dragged.boundary - frame.top - 1, width: box.right - box.left, background: "var(--bg-accent-primary)" }} />
+      : <div key="drop-line" data-testid="table-drop-line" aria-hidden="true" className="pointer-events-none absolute w-0.5 rounded-full" style={{ left: dragged.boundary - frame.left - 1, top: box.top, height: box.bottom - box.top, background: "var(--bg-accent-primary)" }} />) : null;
     columns.forEach((_, index) => {
       if (!(hovered?.col === index || here?.col === index || (here_open?.axis === "column" && here_open.index === index))) return;
       const cell = columnBox(index)!;
       const label = translate("table.columnMenu");
-      grips.push(<TableGrip key={`column-${index}`} id={`column-${index}`} label={label} left={(cell.left + cell.right) / 2 - GRIP / 2} top={box.top - GRIP - GAP} expanded={here_open?.axis === "column" && here_open.index === index} onOpen={() => openMenu("column", index, el)}><GripHorizontal aria-hidden size={16} /></TableGrip>);
+      grips.push(<TableGrip key={`column-${index}`} id={`column-${index}`} label={label} left={(cell.left + cell.right) / 2 - GRIP / 2} top={box.top - GRIP - GAP} expanded={here_open?.axis === "column" && here_open.index === index} onOpen={() => openMenu("column", index, el)} onDragStart={(event) => startDrag(event, "column", index, el)}><GripHorizontal aria-hidden size={16} /></TableGrip>);
     });
     rows.forEach((_, index) => {
       if (!(hovered?.row === index || here?.row === index || (here_open?.axis === "row" && here_open.index === index))) return;
       const row = rowBox(index)!;
       const label = translate("table.rowMenu");
-      grips.push(<TableGrip key={`row-${index}`} id={`row-${index}`} label={label} left={box.left - GRIP - GAP} top={(row.top + row.bottom) / 2 - GRIP / 2} expanded={here_open?.axis === "row" && here_open.index === index} onOpen={() => openMenu("row", index, el)}><GripVertical aria-hidden size={16} /></TableGrip>);
+      grips.push(<TableGrip key={`row-${index}`} id={`row-${index}`} label={label} left={box.left - GRIP - GAP} top={(row.top + row.bottom) / 2 - GRIP / 2} expanded={here_open?.axis === "row" && here_open.index === index} onOpen={() => openMenu("row", index, el)} onDragStart={(event) => startDrag(event, "row", index, el)}><GripVertical aria-hidden size={16} /></TableGrip>);
     });
     grips.push(<TableGrip key="table" id="table" label={translate("table.tableMenu")} left={box.left - GRIP - GAP} top={box.top - GRIP - GAP} expanded={here_open?.axis === "table"} onOpen={() => openMenu("table", 0, el)}><Table2 aria-hidden size={15} /></TableGrip>);
     return <React.Fragment key={tableIndex}>
+      {dragLine}
       {grips}
       <AddButton kind="column" label={translate("table.addColumn")} left={box.right + GAP} top={(box.top + box.bottom) / 2 - PLUS / 2} onAdd={() => addAt(el, "insertColumnRight")} />
       <AddButton kind="row" label={translate("table.addRow")} left={(box.left + box.right) / 2 - PLUS / 2} top={box.bottom + GAP} onAdd={() => addAt(el, "insertRowBelow")} />
@@ -185,7 +248,7 @@ export function TableControls({ editor, editable }: { editor: Editor | null; edi
         const at = buttons.indexOf(document.activeElement as HTMLElement);
         buttons[(at + (event.key === "ArrowDown" ? 1 : buttons.length - 1)) % buttons.length]?.focus();
       }}>
-      {items.map((item) => <button key={item.action} type="button" role="menuitem" title={translate(`table.${item.action}.help` as never)} className={`table-control flex items-center gap-2 rounded px-2 py-1.5 text-left text-13 hover:bg-layer-transparent-hover ${item.danger ? "text-danger" : ""}`} onMouseDown={(event) => event.preventDefault()} onClick={() => runMenu(item.action)}>
+      {items.map((item) => <button key={item.action} type="button" role="menuitem" aria-disabled={item.disabled || undefined} title={translate(`table.${item.action}.help` as never)} className={`table-control flex items-center gap-2 rounded px-2 py-1.5 text-left text-13 hover:bg-layer-transparent-hover ${item.danger ? "text-danger" : ""} ${item.disabled ? "opacity-40" : ""}`} onMouseDown={(event) => event.preventDefault()} onClick={() => { if (!item.disabled) runMenu(item.action); }}>
         <item.icon aria-hidden size={14} />{translate(`table.${item.action}` as never)}
       </button>)}
     </div>;
@@ -196,16 +259,16 @@ export function TableControls({ editor, editable }: { editor: Editor | null; edi
     const inside = next instanceof Node && !!root.current?.contains(next);
     setOverlayFocus(inside);
     if (!inside && !(next instanceof Node && editor.view.dom.contains(next))) setMenu(null);
-  }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); if (menu) closeMenu(); else editor.view.focus(); } }}>
+  }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); if (menu) { event.stopPropagation(); closeMenu(); } else editor.view.focus(); } }}>
     {overlay}
     {menuView}
   </div>;
 }
 
-function TableGrip({ id, label, left, top, expanded, onOpen, children }: { id: string; label: string; left: number; top: number; expanded: boolean; onOpen: () => void; children: React.ReactNode }) {
+function TableGrip({ id, label, left, top, expanded, onOpen, onDragStart, children }: { id: string; label: string; left: number; top: number; expanded: boolean; onOpen: () => void; onDragStart?: (event: React.PointerEvent<HTMLButtonElement>) => void; children: React.ReactNode }) {
   return <button type="button" data-table-grip={id} aria-label={label} title={label} aria-haspopup="menu" aria-expanded={expanded}
-    className="table-control pointer-events-auto absolute grid size-6 place-items-center rounded text-tertiary hover:bg-layer-transparent-hover hover:text-primary aria-expanded:bg-layer-transparent-selected aria-expanded:text-primary"
-    style={{ left, top }} onMouseDown={(event) => event.preventDefault()} onClick={onOpen}>{children}</button>;
+    className="table-control pointer-events-auto absolute grid size-6 touch-none cursor-grab place-items-center rounded text-tertiary hover:bg-layer-transparent-hover hover:text-primary aria-expanded:bg-layer-transparent-selected aria-expanded:text-primary"
+    style={{ left, top }} onMouseDown={(event) => event.preventDefault()} onPointerDown={onDragStart} onClick={onOpen}>{children}</button>;
 }
 
 function AddButton({ kind, label, left, top, onAdd }: { kind: "row" | "column"; label: string; left: number; top: number; onAdd: () => void }) {
@@ -218,17 +281,27 @@ function menuLabelKey(axis: Axis): "table.rowMenu" | "table.columnMenu" | "table
   return axis === "row" ? "table.rowMenu" : axis === "column" ? "table.columnMenu" : "table.tableMenu";
 }
 
-function menuItems(menu: { axis: Axis; index: number }): Array<{ action: TableAction; icon: React.ComponentType<{ "aria-hidden"?: boolean; size?: number }>; danger?: boolean }> {
+/** The menu's items. Move items appear only where the line has a neighbour in that direction; one that would split a merged cell is shown disabled. */
+function menuItems(menu: Resolved): MenuItem[] {
   if (menu.axis === "table") return [{ action: "deleteTable", icon: Trash2, danger: true }];
+  const node = menu.located.node;
   if (menu.axis === "row") {
-    const items: Array<{ action: TableAction; icon: React.ComponentType<{ "aria-hidden"?: boolean; size?: number }>; danger?: boolean }> = [
-      { action: "insertRowAbove", icon: ArrowUp }, { action: "insertRowBelow", icon: ArrowDown }, { action: "duplicateRow", icon: Copy }, { action: "clearRow", icon: Eraser }, { action: "deleteRow", icon: Trash2, danger: true },
+    const count = node.childCount;
+    const moves: MenuItem[] = [];
+    if (menu.index > 0) moves.push({ action: "moveRowUp", icon: ArrowUp, disabled: planTableMove(node, "row", menu.index, menu.index - 1) === null });
+    if (menu.index < count - 1) moves.push({ action: "moveRowDown", icon: ArrowDown, disabled: planTableMove(node, "row", menu.index, menu.index + 1) === null });
+    const items: MenuItem[] = [
+      { action: "insertRowAbove", icon: ArrowUp }, { action: "insertRowBelow", icon: ArrowDown }, ...moves, { action: "duplicateRow", icon: Copy }, { action: "clearRow", icon: Eraser }, { action: "deleteRow", icon: Trash2, danger: true },
     ];
     if (menu.index === 0) items.push({ action: "toggleHeaderRow", icon: Heading });
     return items;
   }
-  const items: Array<{ action: TableAction; icon: React.ComponentType<{ "aria-hidden"?: boolean; size?: number }>; danger?: boolean }> = [
-    { action: "insertColumnLeft", icon: ArrowLeft }, { action: "insertColumnRight", icon: ArrowRight }, { action: "duplicateColumn", icon: Copy }, { action: "clearColumn", icon: Eraser }, { action: "deleteColumn", icon: Trash2, danger: true },
+  const count = tableWidth(node);
+  const moves: MenuItem[] = [];
+  if (menu.index > 0) moves.push({ action: "moveColumnLeft", icon: ArrowLeft, disabled: planTableMove(node, "column", menu.index, menu.index - 1) === null });
+  if (menu.index < count - 1) moves.push({ action: "moveColumnRight", icon: ArrowRight, disabled: planTableMove(node, "column", menu.index, menu.index + 1) === null });
+  const items: MenuItem[] = [
+    { action: "insertColumnLeft", icon: ArrowLeft }, { action: "insertColumnRight", icon: ArrowRight }, ...moves, { action: "duplicateColumn", icon: Copy }, { action: "clearColumn", icon: Eraser }, { action: "deleteColumn", icon: Trash2, danger: true },
   ];
   if (menu.index === 0) items.push({ action: "toggleHeaderColumn", icon: Heading });
   return items;
@@ -287,6 +360,46 @@ function caretTable(editor: Editor): Caret | null {
     return el ? { el, row: $from.index(depth), col: $from.index(depth + 1) } : null;
   }
   return null;
+}
+
+/** The row and column of the caret's cell, the place the caret keeps in a moved line; 0 when the caret is not in a table. */
+function caretPlace(editor: Editor): { row: number; col: number } {
+  const caret = caretTable(editor);
+  return { row: caret?.row ?? 0, col: caret?.col ?? 0 };
+}
+
+/**
+ * Where a dragged row or column lands at the pointer: `to` is its final index, and `boundary` the client coordinate of the drop line
+ * (the nearer boundary to the pointer). The line is null when the drop would not move the line or would split a merged cell.
+ */
+function dropAt(editor: Editor, el: HTMLTableElement, axis: TableAxis, from: number, x: number, y: number): Drag {
+  const rects = axis === "row" ? Array.from(el.rows).map((row) => row.getBoundingClientRect()) : columnRects(el);
+  const pointer = axis === "row" ? y : x;
+  const before = rects.filter((rect) => (axis === "row" ? (rect.top + rect.bottom) / 2 : (rect.left + rect.right) / 2) < pointer).length;
+  const to = Math.min(Math.max(before > from ? before - 1 : before, 0), Math.max(rects.length - 1, 0));
+  const located = locateTable(editor, el);
+  const moves = to !== from && !!located && planTableMove(located.node, axis, from, to) !== null;
+  let boundary: number | null = null;
+  if (moves && rects.length > 0) {
+    const last = rects[rects.length - 1]!;
+    boundary = axis === "row"
+      ? (before < rects.length ? rects[before]!.top : last.bottom)
+      : (before < rects.length ? rects[before]!.left : last.right);
+  }
+  return { axis, el, from, to, boundary };
+}
+
+/** The bounds of each grid column, from the first row; a merged cell there is split evenly over the columns it covers. */
+function columnRects(el: HTMLTableElement): DOMRect[] {
+  const first = el.rows[0];
+  if (!first) return [];
+  const rects: DOMRect[] = [];
+  for (const cell of Array.from(first.cells)) {
+    const rect = cell.getBoundingClientRect();
+    const span = cell.colSpan || 1, step = rect.width / span;
+    for (let part = 0; part < span; part += 1) rects.push(new DOMRect(rect.left + part * step, rect.top, step, rect.height));
+  }
+  return rects;
 }
 
 /** The table element's position in the live document, or null when it is no longer in the document. */
@@ -361,6 +474,10 @@ export function runTableAction(editor: Editor, { pos, node }: Located, row: numb
   switch (action) {
     case "insertRowAbove": return editor.chain().setTextSelection(select()).addRowBefore().run();
     case "insertRowBelow": return editor.chain().setTextSelection(select()).addRowAfter().run();
+    case "moveRowUp": return moveTableLine(editor, { pos, node }, "row", row, row - 1, { row, col });
+    case "moveRowDown": return moveTableLine(editor, { pos, node }, "row", row, row + 1, { row, col });
+    case "moveColumnLeft": return moveTableLine(editor, { pos, node }, "column", col, col - 1, { row, col });
+    case "moveColumnRight": return moveTableLine(editor, { pos, node }, "column", col, col + 1, { row, col });
     case "insertColumnLeft": return editor.chain().setTextSelection(select()).addColumnBefore().run();
     case "insertColumnRight": return editor.chain().setTextSelection(select()).addColumnAfter().run();
     case "deleteRow": return editor.chain().setTextSelection(select()).deleteRow().run();
@@ -373,6 +490,15 @@ export function runTableAction(editor: Editor, { pos, node }: Located, row: numb
     case "toggleHeaderRow": return toggleHeader(editor, pos, node, "row", row, col);
     case "toggleHeaderColumn": return toggleHeader(editor, pos, node, "column", row, col);
   }
+}
+
+/** Moves one row or column to its final index `to` in one transaction, so one undo step reverts it; false when the move is refused. The caret keeps its place in the moved line. */
+export function moveTableLine(editor: Editor, located: Located, axis: TableAxis, from: number, to: number, caret: { row: number; col: number }): boolean {
+  const moved = planTableMove(located.node, axis, from, to);
+  if (!moved) return false;
+  const row = axis === "row" ? to : caret.row, col = axis === "column" ? to : caret.col;
+  replaceTable(editor, located.pos, located.node, moved, row, col);
+  return true;
 }
 
 function clearAxis(editor: Editor, tablePos: number, table: ProseMirrorNode, axis: "row" | "column", rowIndex: number, columnIndex: number) {

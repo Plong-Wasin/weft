@@ -1,4 +1,5 @@
-import type { SuggestionProps } from "@tiptap/suggestion";
+import type { PluginKey } from "@tiptap/pm/state";
+import { exitSuggestion, SuggestionPluginKey, type SuggestionProps } from "@tiptap/suggestion";
 import { translate, type MessageKey } from "@weft/shared";
 import { avatarElement } from "./avatar";
 
@@ -74,14 +75,17 @@ type ListOptions<T> = {
   group?: (item: T) => MessageKey | null;
   /** A status row in place of the options (loading, failed, no match, nothing typed yet). While it shows, no option can be picked. */
   notice?: (props: SuggestionProps<T, T> & { loading?: boolean }) => MessageKey | null;
+  /** The Suggestion plugin key of this popup; an outside pointer-down exits that plugin. The default is the plugin's own key. */
+  pluginKey?: PluginKey;
 };
 
-/** The Suggestion `render` for a listbox: keyboard (ArrowUp/Down with wrap, Enter), mouse pick and selection shared by every popup. Escape is left to the suggestion plugin, which closes the popup. */
+/** The Suggestion `render` for a listbox: keyboard (ArrowUp/Down with wrap, Enter), mouse pick and selection shared by every popup. Escape is left to the suggestion plugin, which closes the popup; a pointer-down outside the list closes it here. */
 export function suggestRender<T>(options: ListOptions<T>) {
   return () => {
     let box: SuggestBox | null = null;
     let selected = 0;
     let current: SuggestionProps<T, T> | null = null;
+    let dismissOnOutside: ((event: MouseEvent) => void) | null = null;
 
     const paint = () => {
       if (!box || !current) return;
@@ -138,6 +142,11 @@ export function suggestRender<T>(options: ListOptions<T>) {
         box = new SuggestBox(options.label);
         paint();
         box.follow(props.clientRect);
+        const list = box.list;
+        dismissOnOutside = (event: MouseEvent) => {
+          if (!list.contains(event.target as Node)) exitSuggestion(props.editor.view, options.pluginKey ?? SuggestionPluginKey);
+        };
+        document.addEventListener("mousedown", dismissOnOutside);
       },
       onUpdate: (props: SuggestionProps<T, T>) => {
         current = props;
@@ -166,6 +175,8 @@ export function suggestRender<T>(options: ListOptions<T>) {
         return false;
       },
       onExit: () => {
+        if (dismissOnOutside) document.removeEventListener("mousedown", dismissOnOutside);
+        dismissOnOutside = null;
         box?.remove();
         box = null;
         current = null;
@@ -198,9 +209,10 @@ function textLine(className: string, text: string) {
 }
 
 /** The "@" mention list used by the Wiki and comment editors. */
-export function mentionRender(label: MessageKey) {
+export function mentionRender(label: MessageKey, pluginKey?: PluginKey) {
   return suggestRender<MentionOption>({
     label,
+    pluginKey,
     group: mentionGroup,
     disabled: (item) => item.unavailable === true,
     content: (item) => {

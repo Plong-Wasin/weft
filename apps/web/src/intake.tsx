@@ -325,30 +325,31 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
     <header className="flex flex-wrap items-center gap-2 border-b border-subtle px-5 py-3">
       <span className="text-16 font-medium text-secondary">{item.displayId}</span>
       <StatusBadge item={item} />
-      <span className="flex-1" />
-      <button type="button" className={iconButton} aria-label={t("intake.previous")} disabled={index <= 0} onClick={() => onMove(-1)}><ChevronUp aria-hidden size={16} /></button>
-      <button type="button" className={iconButton} aria-label={t("intake.next")} disabled={index >= count - 1} onClick={() => onMove(1)}><ChevronDown aria-hidden size={16} /></button>
-      {canDecide && undecided && <>
-        <button type="button" className={quietButton} onClick={() => setDialog("accept")}>{t("intake.accept")}</button>
-        <button type="button" className={quietButton} onClick={() => void run("reject_intake_item", {})}>{t("intake.reject")}</button>
-      </>}
-      {canDecide && unsnoozed && <button type="button" className={quietButton} onClick={() => void run("unsnooze_intake_item", {})}>{t("intake.unsnooze")}</button>}
-      <Popover label={t("intake.more")} align="right" className="size-8 justify-center border border-subtle bg-surface-1" trigger={<MoreHorizontal aria-hidden size={16} />}>
-        {(close) => <>
-          {canDecide && undecided && <>
-            <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setDialog("snooze"); }}><Clock aria-hidden size={14} />{t("intake.snooze")}</button>
-            <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setDialog("duplicate"); }}><Copy aria-hidden size={14} />{t("intake.markDuplicate")}</button>
-          </>}
-          <button type="button" role="menuitem" className={menuItemClass} onClick={() => {
-            close();
-            void navigator.clipboard?.writeText(location.href).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }, () => undefined);
-          }}>{copied ? <CopyCheck aria-hidden size={14} /> : <Copy aria-hidden size={14} />}{t("intake.copyLink")}</button>
+      <span className="ml-auto flex flex-wrap items-center gap-2">
+        <button type="button" className={iconButton} aria-label={t("intake.previous")} disabled={index <= 0} onClick={() => onMove(-1)}><ChevronUp aria-hidden size={16} /></button>
+        <button type="button" className={iconButton} aria-label={t("intake.next")} disabled={index >= count - 1} onClick={() => onMove(1)}><ChevronDown aria-hidden size={16} /></button>
+        {canDecide && undecided && <>
+          <button type="button" className={quietButton} onClick={() => setDialog("accept")}>{t("intake.accept")}</button>
+          <button type="button" className={quietButton} onClick={() => void run("reject_intake_item", {})}>{t("intake.reject")}</button>
         </>}
-      </Popover>
+        {canDecide && unsnoozed && <button type="button" className={quietButton} onClick={() => void run("unsnooze_intake_item", {})}>{t("intake.unsnooze")}</button>}
+        <Popover label={t("intake.more")} align="right" className="size-8 justify-center border border-subtle bg-surface-1" trigger={<MoreHorizontal aria-hidden size={16} />}>
+          {(close) => <>
+            {canDecide && undecided && <>
+              <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setDialog("snooze"); }}><Clock aria-hidden size={14} />{t("intake.snooze")}</button>
+              <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setDialog("duplicate"); }}><Copy aria-hidden size={14} />{t("intake.markDuplicate")}</button>
+            </>}
+            <button type="button" role="menuitem" className={menuItemClass} onClick={() => {
+              close();
+              void navigator.clipboard?.writeText(location.href).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }, () => undefined);
+            }}>{copied ? <CopyCheck aria-hidden size={14} /> : <Copy aria-hidden size={14} />}{t("intake.copyLink")}</button>
+          </>}
+        </Popover>
+      </span>
     </header>
     <div className="grid gap-5 overflow-auto px-5 py-5">
       {editable ? <div className="grid gap-3">
-        <label className="grid gap-1 text-13 text-secondary">{t("intake.titleField")}<input ref={titleInputRef} name="title" aria-label={t("intake.titleField")} required maxLength={500} value={title} className={`${field} text-24 font-semibold`} onInput={(event) => { titleValueRef.current = event.currentTarget.value; setTitle(event.currentTarget.value); sessionStorage.setItem(titleDraftKey(item.id), event.currentTarget.value); changeDraft({ title: event.currentTarget.value }); }} /></label>
+        <label className="grid gap-1 text-13 text-secondary">{t("intake.titleField")}<input ref={titleInputRef} name="title" aria-label={t("intake.titleField")} required maxLength={500} value={title} className={`${field} text-18 font-semibold sm:text-24`} onInput={(event) => { titleValueRef.current = event.currentTarget.value; setTitle(event.currentTarget.value); sessionStorage.setItem(titleDraftKey(item.id), event.currentTarget.value); changeDraft({ title: event.currentTarget.value }); }} /></label>
         <div><p className="mb-1 text-13 text-secondary">{t("intake.descriptionField")}</p><DescriptionEditor key={editorRevision} workspaceId={workspaceId} workItemId={item.workItemId} initial={description} editable onChange={(doc) => changeDraft({ description: doc })} /></div>
         <label className="grid gap-1 text-13 text-secondary">{t("intake.priority")}<select name="priority" aria-label={t("intake.priority")} value={priority} className={field} onChange={(event) => changeDraft({ priority: event.target.value })}>{["none", "urgent", "high", "medium", "low"].map((value) => <option key={value} value={value}>{t(`workItems.priority.${value}`)}</option>)}</select></label>
         <label className="grid gap-1 text-13 text-secondary">{t("workItems.assignees")}<select multiple aria-label={t("workItems.assignees")} value={assigneeIds} className={`${field} min-h-20`} onChange={(event) => changeDraft({ assigneeIds: [...event.currentTarget.selectedOptions].map((option) => option.value) })}>{people.map((person) => <option key={person.userId} value={person.userId} disabled={person.isAgent && person.hasAccess === false}>{person.name}{person.isAgent && person.hasAccess === false ? " (no access)" : ""}</option>)}</select></label>

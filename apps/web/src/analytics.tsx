@@ -140,7 +140,7 @@ export function AnalyticsOverviewPage({ workspaceId, workspaceSlug, run }: { wor
         <ul className="m-0 grid list-none gap-1 p-0">
           <li aria-hidden className="grid grid-cols-[minmax(0,1fr)_4rem_4rem_5rem] gap-3 text-12 text-secondary max-md:grid-cols-[minmax(0,1fr)_3rem_3rem_3.5rem]"><span>{t("analytics.projects")}</span><span className="text-right">{t("analytics.total")}</span><span className="text-right">{t("analytics.open")}</span><span className="text-right">{t("analytics.completed")}</span></li>
           {state.projects.map((project) => <li key={project.id} className="grid grid-cols-[minmax(0,1fr)_4rem_4rem_5rem] items-center gap-3 border-t border-subtle pt-1 text-14 max-md:grid-cols-[minmax(0,1fr)_3rem_3rem_3.5rem]">
-            <span className="flex min-w-0 items-center gap-2"><span className="shrink-0 rounded-md bg-layer-1 px-1.5 text-12 text-secondary">{project.key}</span><span className="truncate" title={project.name}>{project.name}</span></span>
+            <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1"><span className="shrink-0 rounded-md bg-layer-1 px-1.5 text-12 text-secondary">{project.key}</span><span className="min-w-0 break-words" title={project.name}>{project.name}</span></span>
             <span className="text-right tabular-nums" aria-label={`${t("analytics.total")}: ${project.total}`}>{formatNumber(project.total)}</span>
             <span className="text-right tabular-nums" aria-label={`${t("analytics.open")}: ${project.open}`}>{formatNumber(project.open)}</span>
             <span className="text-right tabular-nums" aria-label={`${t("analytics.completed")}: ${project.completed}`}>{formatNumber(project.completed)}</span>

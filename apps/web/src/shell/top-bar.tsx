@@ -9,6 +9,7 @@ import { WorkItemSearch } from "../work-item-search";
 import { Popover, menuItemClass } from "./popover";
 import { ProfileMenu } from "./profile-menu";
 import { SidecarToggle } from "../sidecar";
+import { AiOnly } from "../ai-flag";
 import { CommandPaletteButton } from "../command-palette";
 import { formatShortcut, isMacPlatform, openPaletteShortcut } from "../command-palette-model";
 import { WorkspaceSwitcher } from "./workspace-switcher";
@@ -24,11 +25,11 @@ export function TopBar({ current, workspace, signOut, refresh, onOpenDrawer, sid
     <div className="flex flex-1 justify-center px-2 max-md:justify-end max-md:px-0"><WorkItemSearch workspace={workspace} /></div>
     {/* Phones have no Ctrl K and no room in the bar; the drawer offers the palette there. */}
     <div className="flex max-md:hidden"><CommandPaletteButton shortcut={formatShortcut(openPaletteShortcut.keys, isMacPlatform(navigator.userAgent))} /></div>
-    <SidecarToggle />
+    <AiOnly><SidecarToggle /></AiOnly>
     <InboxLink workspace={workspace} />
     <Popover label={translate("topbar.help")} align="right" trigger={<CircleHelp aria-hidden size={18} />}>
       {(close) => <>
-        <Link role="menuitem" to={paths.ai(workspace.slug)} onClick={close} className={menuItemClass}>{translate("topbar.helpAskAi")}</Link>
+        <AiOnly><Link role="menuitem" to={paths.ai(workspace.slug)} onClick={close} className={menuItemClass}>{translate("topbar.helpAskAi")}</Link></AiOnly>
         <Link role="menuitem" to={paths.wiki(workspace.slug)} onClick={close} className={menuItemClass}>{translate("topbar.helpWiki")}</Link>
       </>}
     </Popover>

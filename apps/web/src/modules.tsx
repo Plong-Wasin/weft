@@ -207,7 +207,7 @@ export function ModulesPage({ workspaceId, workspaceSlug, projectKey, projectId,
     {display === "list"
       ? <ul aria-label={t("modules.title")} className="m-0 list-none p-0">{(modules ?? []).map((module) => <li key={module.id} data-testid={`module-row-${module.name}`} className="flex flex-wrap items-center gap-3 border-b border-subtle px-4 py-3 hover:bg-layer-transparent-hover">
         <ProgressRing percent={module.progress.percent} />
-        <Link to={paths.module(workspaceSlug, projectKey, module.id)} className="min-w-0 flex-1 truncate text-14 font-medium text-primary">{module.name}</Link>
+        <Link to={paths.module(workspaceSlug, projectKey, module.id)} className="min-w-48 flex-1 truncate text-14 font-medium text-primary">{module.name}</Link>
         <span className="flex items-center gap-1.5 rounded-md border border-subtle px-2 py-1 text-12 text-secondary"><CalendarRange aria-hidden size={13} />{dateRange(module)}</span>
         <StatusBadge status={module.status} />
         <span className="text-12 text-secondary">{t("modules.itemCount").replace("{count}", formatNumber(module.itemCount))}</span>

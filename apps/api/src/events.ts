@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import type { Elysia } from "elysia";
 import { createSignalBus, resolveSignalScope, type ActionContext, type Signal, type SignalBus } from "@weft/actions";
 import { workspaceMembers, type Database } from "@weft/db";
@@ -48,7 +48,7 @@ export function registerEventRoutes(app: Elysia<any, any, any, any, any, any, an
         const send = (text: string) => { try { controller.enqueue(encoder.encode(text)); } catch { cleanup(); } };
         const isMember = async (workspaceId: string) => {
           const [row] = await db.select({ id: workspaceMembers.userId }).from(workspaceMembers)
-            .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, caller.userId))).limit(1);
+            .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, caller.userId), isNull(workspaceMembers.suspendedAt))).limit(1);
           return Boolean(row);
         };
         const deliver = async (signal: Signal) => {

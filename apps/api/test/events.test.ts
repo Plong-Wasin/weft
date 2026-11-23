@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { createDatabase, type Database } from "@weft/db";
+import { createDatabase, type Database, workspaceMembers } from "@weft/db";
 import { type Signal, type SignalBus } from "@weft/actions";
 import { withRollback } from "../../../packages/db/src/test-helpers";
 import { createApp } from "../src/app";
@@ -75,6 +75,25 @@ test.concurrent("a write Action publishes a change signal with ids only, and mem
     await bus.publish({ type: "notification", workspaceId: workspace.id, userId: owner.id });
     const heard = await readEvents(outsiderStream, 1, 600);
     expect(heard).toEqual([]);
+  });
+});
+
+test.concurrent("a suspended member receives no workspace change while an active member does", async () => {
+  await withRollback(db, async (transaction) => {
+    const { app, bus, post, signUp } = await boot(transaction);
+    const owner = await signUp();
+    const active = await signUp();
+    const suspended = await signUp();
+    const workspace = await (await post("/actions/create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, owner.cookie)).json() as { id: string };
+    await transaction.insert(workspaceMembers).values([
+      { workspaceId: workspace.id, userId: active.id, role: "Member" },
+      { workspaceId: workspace.id, userId: suspended.id, role: "Member", suspendedAt: new Date() },
+    ]);
+    const activeStream = await app.handle(new Request("http://localhost/api/events", { headers: { cookie: active.cookie } }));
+    const suspendedStream = await app.handle(new Request("http://localhost/api/events", { headers: { cookie: suspended.cookie } }));
+    await bus.publish({ type: "change", workspaceId: workspace.id });
+    expect(await readEvents(activeStream, 1)).toEqual([{ type: "change", workspaceId: workspace.id }]);
+    expect(await readEvents(suspendedStream, 1, 600)).toEqual([]);
   });
 });
 

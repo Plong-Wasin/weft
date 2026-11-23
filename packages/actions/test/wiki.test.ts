@@ -1,6 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
-import { eq, sql } from "drizzle-orm";
-import { assets, collections, createDatabase, outlinks, projectMembers, projects, users, wikiPageVersions, wikiPages, type Database } from "@weft/db";
+import { drizzle } from "drizzle-orm/postgres-js";
+import { eq, inArray, sql } from "drizzle-orm";
+import { assets, collections, createDatabase, outlinks, projectMembers, projects, schema, users, wikiPageVersions, wikiPages, type Database } from "@weft/db";
 import { ActionError, createActionList, requireWikiPageAccess, createAgentActions, createAssetActions, createProjectActions, createWikiActions, versionIntervalMs, wikiContentFromYState, wikiYStateFromContent, type AssetStorage } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -432,6 +433,59 @@ test.concurrent("the stored sibling order is what the shared and project lists r
     await wiki.shareWikiPage.handler({ userId: alice.id }, { pageId: second.id, userId: bob.id, role: "view" });
     await wiki.moveWikiPage.handler({ userId: alice.id }, { pageId: second.id, parentId: null, siblingId: first.id, position: "before" });
     expect((await wiki.listSharedWikiPages.handler({ userId: bob.id }, { workspaceId: workspace.id })).map((row) => row.title)).toEqual(["Shared second", "Shared first"]);
+  });
+});
+
+test("listWikiPages keeps the old page set and write permissions with a query count independent of page count", async () => {
+  const queries: string[] = [];
+  const loggedDb = drizzle(client, { schema, logger: { logQuery: (query) => queries.push(query) } }) as unknown as Database;
+  await withRollback(loggedDb, async (tx) => {
+    const { workspace, alice, bob, guest, wiki, create } = await setup(tx);
+    const own = await create(bob.id, "Own page");
+    const list = (userId: string, includeArchived = false) => wiki.listWikiPages.handler({ userId }, { workspaceId: workspace.id, archived: includeArchived });
+    queries.length = 0;
+    const onePage = await list(bob.id);
+    const onePageQueryCount = queries.length;
+    expect(onePage.map(({ id, canEdit }) => [id, canEdit])).toEqual([[own.id, true]]);
+
+    const edit = await create(alice.id, "Edit share");
+    const view = await create(alice.id, "View share");
+    const comment = await create(alice.id, "Comment share");
+    const locked = await create(bob.id, "Locked page");
+    const archived = await create(bob.id, "Archived page");
+    const privateCollection = await wiki.createCollection.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Private shelf", visibility: "private" });
+    const collectionPage = await create(alice.id, "Collection member page", { collectionId: privateCollection.id });
+    await wiki.shareCollection.handler({ userId: alice.id }, { collectionId: privateCollection.id, userId: bob.id });
+    const pageSharedFromPrivateCollection = await create(alice.id, "Page share in private shelf", { collectionId: privateCollection.id });
+
+    await wiki.shareWikiPage.handler({ userId: alice.id }, { pageId: edit.id, userId: bob.id, role: "edit" });
+    await wiki.shareWikiPage.handler({ userId: alice.id }, { pageId: view.id, userId: bob.id, role: "view" });
+    await wiki.shareWikiPage.handler({ userId: alice.id }, { pageId: comment.id, userId: bob.id, role: "comment" });
+    await wiki.shareWikiPage.handler({ userId: alice.id }, { pageId: pageSharedFromPrivateCollection.id, userId: bob.id, role: "edit" });
+    await wiki.shareWikiPage.handler({ userId: alice.id }, { pageId: edit.id, userId: guest.id, role: "edit" });
+    await wiki.lockWikiPage.handler({ userId: bob.id }, { pageId: locked.id });
+    await wiki.archiveWikiPage.handler({ userId: bob.id }, { pageId: archived.id });
+
+    const morePages = await Promise.all(Array.from({ length: 8 }, (_, index) => create(alice.id, `Additional page ${index}`)));
+    queries.length = 0;
+    const pages = await list(bob.id);
+    const manyPageQueryCount = queries.length;
+    const expectedIds = [own.id, edit.id, view.id, comment.id, locked.id, collectionPage.id, pageSharedFromPrivateCollection.id, ...morePages.map(({ id }) => id)];
+    expect(pages.map(({ id }) => id)).toEqual((await tx.select({ id: wikiPages.id, sortOrder: wikiPages.sortOrder, createdAt: wikiPages.createdAt }).from(wikiPages).where(inArray(wikiPages.id, expectedIds))).sort((a, b) => a.sortOrder - b.sortOrder || a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id)).map(({ id }) => id));
+    expect(new Set(pages.map(({ id }) => id))).toEqual(new Set(expectedIds));
+    expect(Object.fromEntries(pages.map(({ id, canEdit }) => [id, canEdit]))).toEqual({
+      [own.id]: true,
+      [edit.id]: true,
+      [view.id]: false,
+      [comment.id]: false,
+      [locked.id]: true,
+      [collectionPage.id]: true,
+      [pageSharedFromPrivateCollection.id]: true,
+      ...Object.fromEntries(morePages.map(({ id }) => [id, true])),
+    });
+    expect((await list(guest.id)).map(({ id, canEdit }) => [id, canEdit]).find(([id]) => id === edit.id)).toEqual([edit.id, true]);
+    expect((await list(bob.id, true)).map(({ id, canEdit }) => [id, canEdit])).toContainEqual([archived.id, false]);
+    expect(manyPageQueryCount).toBe(onePageQueryCount);
   });
 });
 

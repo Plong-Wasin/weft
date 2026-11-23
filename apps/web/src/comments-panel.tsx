@@ -12,6 +12,7 @@ import { AssistMenu } from "./assist-menu";
 import { AiAssist } from "./editor-assist";
 import { EditorPlaceholder, EmojiSuggestions, ListIndent, MarkdownPaste, SafeLinkClick, SlashMenu, blockCommands, suggestionOpen, surfaceEditorExtensions, wikiCommands } from "./editor-extensions";
 import { TableControls } from "./table-controls";
+import { Popover } from "./shell/popover";
 import { copyText } from "./toast";
 import { normalizeAssetImages } from "../../../packages/actions/src/wiki-yjs";
 import { autoRuleReasonText, undoableAutoRuleIds } from "./auto-rule-reason";
@@ -48,7 +49,7 @@ const CommentKeys = Extension.create<{ submit: React.RefObject<() => Promise<voi
   },
 });
 
-function CommentEditor({ workspaceId, workItemId, people, initial, submitLabel, onSubmit, onCancel }: { workspaceId: string; workItemId: string; people: Person[]; initial?: unknown; submitLabel: string; onSubmit: (body: unknown) => Promise<void>; onCancel?: () => void }) {
+function CommentEditor({ workspaceId, workItemId, people, initial, submitLabel, onSubmit, onCancel, focusOnMount = false }: { workspaceId: string; workItemId: string; people: Person[]; initial?: unknown; submitLabel: string; onSubmit: (body: unknown) => Promise<void>; onCancel?: () => void; focusOnMount?: boolean }) {
   const peopleRef = React.useRef(people);
   peopleRef.current = people;
   // The editor is created once, so its keys reach the latest submit and cancel through these refs.
@@ -61,6 +62,8 @@ function CommentEditor({ workspaceId, workItemId, people, initial, submitLabel, 
   const limitWarnings = React.useMemo(() => editorLimitWarnings(initial), [initial]);
   const editor = useEditor({ extensions: [...surfaceEditorExtensions({ surface: "full", mention: mentionExtension(peopleRef), image: images }), ListIndent, MarkdownPaste, EmojiSuggestions, ReferencePicker.configure({ workspaceId }), AiAssist, SlashMenu.configure({ commands: [...blockCommands, ...wikiCommands.filter((command) => ["todo", "table", "callout", "emoji", "color", "image"].includes(command.id))], onImage: () => picker.current?.click() }), SafeLinkClick, EditorPlaceholder, CommentKeys.configure({ submit: submitRef, cancel: cancelRef })], content: normalizeAssetImages((initial as object | undefined) ?? "") });
   const submit = async () => { if (!editor || editor.isEmpty) return; await onSubmit(editor.getJSON()); if (!initial) editor.commands.clearContent(); };
+  // A reply opened from a comment takes focus and scrolls its editor into view, so the person types where they clicked.
+  React.useEffect(() => { if (focusOnMount && editor) { editor.commands.focus("end"); editor.view.dom.scrollIntoView({ block: "center" }); } }, [editor, focusOnMount]);
   submitRef.current = submit;
   const sourceToggle = React.useRef<(() => void) | null>(null);
   const [sourceActive, setSourceActive] = React.useState(false);
@@ -121,6 +124,7 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
   const [people, setPeople] = React.useState<Person[]>([]);
   const [editing, setEditing] = React.useState<string | null>(null);
   const [replying, setReplying] = React.useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = React.useState<string | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
   const [expandedActivityId, setExpandedActivityId] = React.useState<string | null>(null);
   const scrolled = React.useRef(false);
@@ -165,15 +169,24 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
     {editing === row.id
       ? <CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} initial={row.body} submitLabel={translate("comments.save")} onCancel={() => setEditing(null)} onSubmit={async (body) => { await guard(await actionResult("update_comment", { commentId: row.id, body })); setEditing(null); }} />
       : <CommentBody body={row.body} />}
-    <p className="flex flex-wrap gap-1">
-      {editing !== row.id && row.parentId === null && canComment && <button className="secondary" onClick={() => setReplying(row.id)}>{translate("comments.reply")}</button>}
-      {editing !== row.id && <button className="secondary" onClick={() => void copy(row.id)}>{translate("comments.copyLink")}</button>}
-      {row.editedAt && <button className="secondary" onClick={() => void showVersions(row.id)}>{translate("comments.history")}</button>}
-      {row.authorId === selfId && editing !== row.id && <>
-        <button className="secondary" onClick={() => setEditing(row.id)}>{translate("comments.edit")}</button>
-        <button className="secondary" onClick={async () => guard(await action("delete_comment", { commentId: row.id }))}>{translate("comments.delete")}</button>
-      </>}
-    </p>
+    <div data-comment-actions={row.id} className="flex flex-wrap items-center gap-2">
+      {editing !== row.id && row.parentId === null && canComment && replying !== row.id && <button type="button" className="rounded-md bg-transparent px-1 py-0.5 text-13 font-medium text-accent-text hover:underline" onClick={() => setReplying(row.id)}>{translate("comments.reply")}</button>}
+      {editing !== row.id && <Popover label={translate("comments.more")} className="flex items-center rounded-md border border-subtle bg-surface-1 px-2 py-0.5 text-13 font-medium text-primary hover:bg-layer-transparent-hover" panelRole="dialog" panelClassName="grid min-w-40 gap-1 p-2" trigger={<span>{translate("comments.more")}</span>}>
+        {(close) => <>
+          <button type="button" className="rounded-md bg-transparent px-2 py-1 text-left text-13 text-primary hover:bg-layer-transparent-hover" onClick={() => { close(); void copy(row.id); }}>{translate("comments.copyLink")}</button>
+          {row.editedAt && <button type="button" className="rounded-md bg-transparent px-2 py-1 text-left text-13 text-primary hover:bg-layer-transparent-hover" onClick={() => { close(); void showVersions(row.id); }}>{translate("comments.history")}</button>}
+          {row.authorId === selfId && <>
+            <button type="button" className="rounded-md bg-transparent px-2 py-1 text-left text-13 text-primary hover:bg-layer-transparent-hover" onClick={() => { close(); setEditing(row.id); }}>{translate("comments.edit")}</button>
+            <button type="button" className="rounded-md bg-transparent px-2 py-1 text-left text-13 text-danger-text hover:bg-layer-transparent-hover" onClick={() => { close(); setConfirmDelete(row.id); }}>{translate("comments.delete")}</button>
+          </>}
+        </>}
+      </Popover>}
+    </div>
+    {confirmDelete === row.id && <div role="alertdialog" aria-label={translate("comments.deleteConfirm")} className="flex flex-wrap items-center gap-2 text-13 text-primary">
+      <span>{translate("comments.deleteConfirm")}</span>
+      <button type="button" className="rounded-md bg-danger-primary px-3 py-1 text-13 font-medium text-on-color hover:bg-danger-primary-hover" onClick={async () => { setConfirmDelete(null); guard(await action("delete_comment", { commentId: row.id })); }}>{translate("comments.delete")}</button>
+      <button type="button" className="secondary" autoFocus onClick={() => { setConfirmDelete(null); requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-comment-actions="${row.id}"] button[aria-haspopup]`)?.focus()); }}>{translate("comments.cancel")}</button>
+    </div>}
     {versions?.commentId === row.id && <ol aria-label={translate("comments.history")}>
       {versions.rows.length === 0 && <li>{translate("comments.historyEmpty")}</li>}
       {versions.rows.map((version) => <li key={version.id}><small>{formatDate(version.writtenAt)}</small> {version.bodyText}</li>)}
@@ -182,7 +195,7 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
     </ol>}
     {row.parentId === null && row.replyCount > 0 && <small>{translate(row.replyCount === 1 ? "comments.repliesOne" : "comments.repliesMany").replace("{count}", String(row.replyCount))} · {row.participants.map((person) => person.name).join(", ")}</small>}
     {replies.length > 0 && <ul className="m-0 grid list-none gap-2 border-l-2 border-subtle !pl-3">{replies.map((reply) => item(reply, []))}</ul>}
-    {replying === row.id && <CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} submitLabel={translate("comments.reply")} onCancel={() => setReplying(null)} onSubmit={async (body) => { await guard(await actionResult("create_comment", { workItemId, body, parentId: row.id })); setReplying(null); }} />}
+    {replying === row.id && <div className="grid gap-1"><p className="m-0 text-13 text-secondary">{translate("comments.replyingTo").replace("{name}", row.authorName)}</p><CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} focusOnMount submitLabel={translate("comments.reply")} onCancel={() => setReplying(null)} onSubmit={async (body) => { await guard(await actionResult("create_comment", { workItemId, body, parentId: row.id })); setReplying(null); }} /></div>}
   </li>;
   const activityText = (row: ActivityRow) => row.field === "created" ? translate("workItems.activity.created") : row.field === "deleted" ? translate("workItems.activity.deleted") : row.field === "attachment_added" ? translate("workItems.activity.attachment_added") : row.field === "wake_skipped" ? translate(`workItems.activity.wake_skipped.${String((row.newValue as { reason?: unknown } | null)?.reason)}` as never) : row.field === "archived" || row.field === "restored" || row.field === "run_waiting" || row.field === "run_started" || row.field === "run_steered" ? translate(`workItems.activity.${row.field}` as never) : row.field.startsWith("web_link_") || row.field.startsWith("pull_request_") || row.field === "relation_added" || row.field === "relation_removed" ? translate(`workItems.activity.${row.field}` as never) : translate("workItems.activity.changed").replace("{field}", translateDynamic(`activity.field.${row.field}`) ?? (row.field.startsWith("property:") ? row.field.slice("property:".length) : row.field));
   const activityRows = groupActivities(entries.flatMap((entry) => entry.activity ? [entry.activity] : []), showAllChanges);

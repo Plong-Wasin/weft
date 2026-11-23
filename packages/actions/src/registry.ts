@@ -15,6 +15,7 @@ import { createExportActions } from "./exports";
 import { createIntakeActions } from "./intake";
 import { createLocaleActions } from "./locale";
 import { createEmailPreferenceActions } from "./email-preferences";
+import { createAiPreferenceActions } from "./ai-preferences";
 import { createModuleActions } from "./modules";
 import { createMemberActions } from "./members";
 import { createNotificationActions } from "./notifications";
@@ -59,6 +60,7 @@ export function createActionList(db: Database, options: { integrations?: boolean
   const inbox = createNotificationActions(db);
   const locale = createLocaleActions(db);
   const emailPreferences = createEmailPreferenceActions(db);
+  const aiPreferences = createAiPreferenceActions(db);
   const cycles = createCycleActions(db);
   const modules = createModuleActions(db);
   const intake = createIntakeActions(db);
@@ -90,7 +92,7 @@ export function createActionList(db: Database, options: { integrations?: boolean
     projectPreferences.listProjectPreferences, projectPreferences.setProjectPreference, projectPreferences.setProjectOrder, projectPreferences.resetProjectOrder,
     work.listStates, work.createState, work.updateState, work.reorderStates, work.deleteState, work.createWorkItem,
     work.listWorkItems, work.listWorkspaceWorkItems, work.listWorkspaceWorkItemsWithMetadata, work.moveWorkItem, work.getWorkItem, work.updateWorkItem, work.bulkUpdateWorkItems, work.deleteWorkItem, work.deleteWorkItems, work.listWorkItemDescriptionVersions, work.restoreWorkItemDescriptionVersion, work.listWorkItemActivities,
-    work.listSubWorkItems, archive.archiveWorkItem, archive.bulkArchiveWorkItems, archive.restoreWorkItem, work.listLabels, work.createLabel, work.updateLabel, work.deleteLabel,
+    work.listSubWorkItems, archive.archiveWorkItem, archive.bulkArchiveWorkItems, archive.restoreWorkItem, work.listLabels, work.createLabel, work.reorderLabels, work.updateLabel, work.deleteLabel,
     comments.listComments, comments.createComment, comments.updateComment, comments.deleteComment, comments.listMentionableMembers, comments.listCommentVersions, timeline.listTimeline,
     relations.listWorkItemRelations, relations.createWorkItemRelation, relations.removeWorkItemRelation,
     web.listWebLinks, web.createWebLink, web.updateWebLink, web.deleteWebLink,
@@ -112,13 +114,14 @@ export function createActionList(db: Database, options: { integrations?: boolean
     modules.createModule, modules.updateModule, modules.listModules, modules.getModule, modules.getModuleBurndown, modules.getModuleInsights, modules.addModuleItems, modules.removeModuleItems, modules.archiveModule, modules.unarchiveModule, modules.deleteModule,
     intake.submitIntakeItem, intake.listIntakeItems, intake.updateIntakeItem, intake.acceptIntakeItem, intake.rejectIntakeItem, intake.snoozeIntakeItem, intake.duplicateIntakeItem,
     intake.unsnoozeIntakeItem,
-    workItemTypes.listWorkItemTypes, workItemTypes.listCustomProperties, workItemTypes.listWorkItemTypeSuggestions, workItemTypes.createWorkItemType, workItemTypes.updateWorkItemType, workItemTypes.deleteWorkItemType,
-    workItemTypes.createCustomProperty, workItemTypes.updateCustomProperty, workItemTypes.deleteCustomProperty,
+    workItemTypes.listWorkItemTypes, workItemTypes.listCustomProperties, workItemTypes.listWorkItemTypeSuggestions, workItemTypes.createWorkItemType, workItemTypes.reorderWorkItemTypes, workItemTypes.updateWorkItemType, workItemTypes.deleteWorkItemType,
+    workItemTypes.createCustomProperty, workItemTypes.reorderCustomProperties, workItemTypes.updateCustomProperty, workItemTypes.deleteCustomProperty,
     workItemTypes.countCustomPropertyValues, workItemTypes.attachCustomPropertyType, workItemTypes.detachCustomPropertyType,
     estimates.getEstimate, estimates.createEstimate, estimates.updateEstimate, estimates.deleteEstimatePoint, estimates.getEstimateUsage, estimates.switchEstimateType, estimates.deleteEstimate,
     views.createView, views.updateView, views.deleteView, views.listViews, views.getView, views.createWorkspaceView, views.listWorkspaceViews,
     locale.getMyLocale, locale.setMyLocale,
     emailPreferences.getMyEmailPreferences, emailPreferences.setMyEmailPreferences,
+    aiPreferences.getMyAiPreferences, aiPreferences.setMyAiPreferences,
     agents.listAgents, agents.listManageableAgentAccess, agents.listAgentsForViewer, agents.setAgentRuntimeProfile, agents.getAgent, agents.createAgent, agents.updateAgent, agents.enableAgent, agents.disableAgent, agents.deleteAgent, agents.getAgentContentCounts, agents.setAgentProjectAccess, agents.setAgentAccess, agents.setAgentSkills, runtimeEnvironment.getAgentRuntimeEnvironment, runtimeEnvironment.getAgentRuntimeEnvironmentClassifications, runtimeEnvironment.getAgentRuntimeEnvironmentEditor, runtimeEnvironment.setAgentRuntimeEnvironment, runtimeEnvironment.updateAgentRuntimeEnvironment, runtimeEnvironment.classifyAgentRuntimeEnvironment,
     runtimes.registerDaemon, runtimes.listRuntimes, runtimes.listRuntimeProfiles, runtimes.createRuntimeProfile, runtimes.updateRuntimeProfile, runtimes.deleteRuntimeProfile, runtimes.deleteRuntime, runtimes.setRuntimeSandboxEnforcement, runtimes.shareRuntime, runtimes.unshareRuntime,
     analytics.getAnalyticsSummary, analytics.getAnalyticsInsights, analytics.getAnalyticsOverview, analytics.getCreatedVsResolved,

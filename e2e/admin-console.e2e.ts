@@ -59,9 +59,12 @@ try {
   await adminPage.goto(`${web}/${slug}/settings/members`);
   await adminPage.getByText(translate("account.adminTitle"), { exact: true }).first().waitFor({ timeout: 30_000 });
   // Rows sort by name: Ada (self, no suspend), Ben, Dao.
-  await adminPage.getByRole("button", { name: translate("account.suspend"), exact: true }).first().waitFor();
+  // Member actions sit in each row's More menu; Ben's row holds Suspend.
+  const benRow = adminPage.getByRole("listitem").filter({ hasText: "Ben Member" }).filter({ has: adminPage.getByRole("button", { name: new RegExp(`^${translate("sortable.actions")}`) }) });
+  await benRow.getByRole("button", { name: new RegExp(`^${translate("sortable.actions")}`) }).waitFor();
   adminPage.once("dialog", (dialog) => void dialog.accept());
-  await adminPage.getByRole("button", { name: translate("account.suspend"), exact: true }).first().click();
+  await benRow.getByRole("button", { name: new RegExp(`^${translate("sortable.actions")}`) }).click();
+  await adminPage.getByRole("menuitem", { name: translate("account.suspend"), exact: true }).click();
   await adminPage.getByText(translate("account.statusSuspended"), { exact: true }).first().waitFor({ timeout: 10_000 });
   await adminContext.close();
 

@@ -93,7 +93,7 @@ try {
 
   // Ticket 12.1 and 12.2: Ctrl+Enter saves an edit; Escape cancels an edit and a reply, and keeps the draft of a new comment.
   const row = comments.filter({ hasText: "Line one" });
-  await row.getByRole("button", { name: translate("comments.edit"), exact: true }).click();
+  await row.getByRole("button", { name: translate("comments.more"), exact: true }).first().click(); await page.getByRole("dialog", { name: translate("comments.more") }).getByRole("button", { name: translate("comments.edit"), exact: true }).click();
   const editor = row.getByTestId("comment-editor").first().locator(".ProseMirror");
   await editor.click();
   await page.keyboard.press("Control+End");
@@ -103,7 +103,7 @@ try {
   check(!(await row.locator(".comment-body").innerText()).includes("dropped"), "Escape saved the edit instead of cancelling it");
   console.log("PASS Escape cancels an edit without saving it");
 
-  await row.getByRole("button", { name: translate("comments.edit"), exact: true }).click();
+  await row.getByRole("button", { name: translate("comments.more"), exact: true }).first().click(); await page.getByRole("dialog", { name: translate("comments.more") }).getByRole("button", { name: translate("comments.edit"), exact: true }).click();
   await row.getByTestId("comment-editor").first().locator(".ProseMirror").click();
   await page.keyboard.press("Control+End");
   await page.keyboard.type(" saved");
@@ -121,7 +121,7 @@ try {
   console.log("PASS Escape cancels a reply");
 
   // The slash menu uses Escape too: it closes the menu first and leaves the edit open.
-  await row.getByRole("button", { name: translate("comments.edit"), exact: true }).click();
+  await row.getByRole("button", { name: translate("comments.more"), exact: true }).first().click(); await page.getByRole("dialog", { name: translate("comments.more") }).getByRole("button", { name: translate("comments.edit"), exact: true }).click();
   const slashEditor = row.getByTestId("comment-editor").first().locator(".ProseMirror");
   await slashEditor.click();
   await page.keyboard.press("Control+End");

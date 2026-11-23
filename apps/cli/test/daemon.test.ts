@@ -917,10 +917,11 @@ test("a failed transcript upload does not orphan the agent: the batch is retried
 
 test("a 409 transcript flush still reports final usage and model to finish", async () => {
   const path = await mkdtemp(join(tmpdir(), "weft-flush-409-")); scratch.push(path);
+  // The model and usage lines come first: the 25th assistant line triggers the flush whose 409 stops the CLI, and on a slow machine a line printed after that is never read.
   await writeFile(join(path, "claude"), `#!/bin/sh
-for i in $(seq 1 30); do echo '{"type":"assistant","message":{"content":[{"type":"text","text":"step"}]}}'; done
 echo '{"type":"system","subtype":"init","model":"claude-test"}'
 echo '{"type":"result","result":"done","usage":{"input_tokens":7,"output_tokens":2,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"total_cost_usd":0.01}'
+for i in $(seq 1 30); do echo '{"type":"assistant","message":{"content":[{"type":"text","text":"step"}]}}'; done
 `);
   await chmod(join(path, "claude"), 0o755);
   const controller = new AbortController();

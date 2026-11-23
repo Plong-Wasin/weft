@@ -1,8 +1,22 @@
 import React from "react";
-import { GripVertical } from "lucide-react";
+import { GripVertical, MoreHorizontal } from "lucide-react";
 import { translate } from "@weft/shared";
+import { Popover, menuItemClass } from "./shell/popover";
 
 type Drag = { id: string; over: number };
+
+/** The row menu's Move up and Move down, for a row that is also reorderable with its grip. Moves are disabled at the ends. */
+export function SortMenu({ name, canUp, canDown, onMove }: { name: string; canUp: boolean; canDown: boolean; onMove: (delta: -1 | 1) => void }) {
+  const wrap = React.useRef<HTMLSpanElement>(null);
+  // Moving re-inserts the row, which drops focus; put it back on the menu button so the next move is one keypress away.
+  const move = (delta: -1 | 1) => { onMove(delta); requestAnimationFrame(() => requestAnimationFrame(() => wrap.current?.querySelector<HTMLElement>("button[aria-haspopup]")?.focus())); };
+  return <span ref={wrap} className="contents"><Popover label={`${translate("sortable.actions")}: ${name}`} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-44">
+    {(close) => <>
+      <button type="button" role="menuitem" className={menuItemClass} disabled={!canUp} onClick={() => { close(); move(-1); }}>{translate("sortable.moveUp")}</button>
+      <button type="button" role="menuitem" className={menuItemClass} disabled={!canDown} onClick={() => { close(); move(1); }}>{translate("sortable.moveDown")}</button>
+    </>}
+  </Popover></span>;
+}
 
 /**
  * A bordered list whose rows reorder by dragging a handle (mouse, pen or touch) or by Arrow Up/Down on the focused handle.

@@ -1,8 +1,10 @@
 import React from "react";
 import { formatDate, translate, type MessageKey } from "@weft/shared";
 import { action } from "../../api";
+import { MoreHorizontal } from "lucide-react";
 import { Avatar } from "../../avatar";
 import { auditFieldLabel, describeAuditValue } from "../../audit-describe";
+import { Popover, menuItemClass } from "../../shell/popover";
 import { Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 import { auditPageReducer, initialAuditPage, initialMemberTokens, isCurrentRequest, memberTokensReducer, nextRequest } from "./member-security-state";
 
@@ -78,15 +80,17 @@ export function MemberSecurityList({ workspaceId, selfId, onChanged }: { workspa
           </span>
           <span className="text-13 text-secondary">{account.email} · {translate("account.lastActive")}: {account.lastActiveAt ? formatDate(account.lastActiveAt) : translate("account.never")}</span>
         </span>
-        {!self && <>
-          {account.status === "suspended"
-            ? <button type="button" className="secondary" onClick={() => void run("reactivate_member", { userId: account.userId }, translate("account.reactivated"))}>{translate("account.reactivate")}</button>
-            : <button type="button" className="secondary hover:!text-danger-text" onClick={() => void run("suspend_member", { userId: account.userId }, translate("account.suspended"), translate("account.suspendConfirm"))}>{translate("account.suspend")}</button>}
-          <button type="button" className="secondary" onClick={() => void run("sign_out_member", { userId: account.userId }, translate("account.signedOutEverywhere"), translate("account.signOutConfirm"))}>{translate("account.signOutEverywhereShort")}</button>
-          <button type="button" className="secondary" onClick={() => void run("force_password_reset", { userId: account.userId }, translate("account.resetForced"), translate("account.resetConfirm"))}>{translate("account.forceReset")}</button>
-          {account.forcePasswordReset && <button type="button" className="secondary" onClick={() => void run("cancel_forced_password_reset", { userId: account.userId }, translate("account.resetCancelled"), translate("account.cancelResetConfirm"))}>{translate("account.cancelReset")}</button>}
-        </>}
-        <button type="button" className="secondary" aria-expanded={openTokens === account.userId} onClick={() => void toggleTokens(account)}>{translate("account.tokens")}</button>
+        <Popover label={`${translate("sortable.actions")}: ${account.name}`} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-56">
+          {(close) => <>
+            {!self && (account.status === "suspended"
+              ? <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void run("reactivate_member", { userId: account.userId }, translate("account.reactivated")); }}>{translate("account.reactivate")}</button>
+              : <button type="button" role="menuitem" className={`${menuItemClass} text-danger-text`} onClick={() => { close(); void run("suspend_member", { userId: account.userId }, translate("account.suspended"), translate("account.suspendConfirm")); }}>{translate("account.suspend")}</button>)}
+            {!self && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void run("sign_out_member", { userId: account.userId }, translate("account.signedOutEverywhere"), translate("account.signOutConfirm")); }}>{translate("account.signOutEverywhereShort")}</button>}
+            {!self && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void run("force_password_reset", { userId: account.userId }, translate("account.resetForced"), translate("account.resetConfirm")); }}>{translate("account.forceReset")}</button>}
+            {!self && account.forcePasswordReset && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void run("cancel_forced_password_reset", { userId: account.userId }, translate("account.resetCancelled"), translate("account.cancelResetConfirm")); }}>{translate("account.cancelReset")}</button>}
+            <button type="button" role="menuitem" aria-expanded={openTokens === account.userId} className={menuItemClass} onClick={() => { close(); void toggleTokens(account); }}>{translate("account.tokens")}</button>
+          </>}
+        </Popover>
         {openTokens === account.userId && <div className="w-full pl-0 pt-2">
           {tokens === null ? <p role="status" className="text-13 text-secondary">{translate(tokensFailed ? "account.loadFailed" : "account.loading")}{tokensFailed && <button type="button" className="secondary ml-2" onClick={() => void loadTokens(account.userId)}>{translate("account.retry")}</button>}</p> : tokens.length === 0 ? <p className="text-13 text-secondary">{translate("account.tokensNone")}</p> : <ul className="m-0 grid list-none gap-1.5 p-0">{tokens.map((token) => <li key={token.id} className="flex flex-wrap items-center gap-3 text-13">
             <span className="min-w-0 flex-1"><span className="font-medium">{token.name}</span> <span className="text-secondary">· {translate(token.kind === "daemon" ? "account.tokenKindDaemon" : "account.tokenKindPersonal")} · {token.prefix}… · {translate(`account.tokenStatus.${token.status}` as MessageKey)}{token.lastUsedAt ? ` · ${translate("account.lastUsed")} ${formatDate(token.lastUsedAt)}` : ""}</span></span>

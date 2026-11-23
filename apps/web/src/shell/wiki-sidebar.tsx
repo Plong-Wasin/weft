@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, ChevronRight, FileText, Folder, GripVertical, Lock, Plus, Users } from "lucide-react";
 import { translate } from "@weft/shared";
 import { action, actionResult } from "../api";
-import { wikiDropDecision } from "../wiki-drop-target";
+import { wikiDropDecision, wikiDropPosition, type WikiDropPosition } from "../wiki-drop-target";
 import { paths } from "../routes";
 import type { Workspace } from "../types";
 import { collectionLabel } from "../type-descriptions";
@@ -16,22 +16,33 @@ const row = (active: boolean) => `flex min-w-0 items-center gap-2 rounded-md px-
 const heading = "flex w-full items-center gap-1 rounded-md !bg-transparent px-2 py-1 text-left text-12 font-medium text-tertiary hover:!bg-layer-transparent-hover";
 
 /** Pages of one level, each with its children below it when it is open; the path to the open page is always open. */
-function PageTree({ workspace, pages, parentId, activeId, open, toggle, depth, dragging, over, dragStart, overKind }: { workspace: Workspace; pages: PageRow[]; parentId: string | null; activeId: string; open: Set<string>; toggle: (id: string) => void; depth: number; dragging: string | null; over: string | null; dragStart: (id: string, event: React.PointerEvent) => void; overKind: string | null }) {
+function PageTree({ workspace, pages, parentId, activeId, open, toggle, depth, dragging, over, dragStart, overKind, moveBeside }: { workspace: Workspace; pages: PageRow[]; parentId: string | null; activeId: string; open: Set<string>; toggle: (id: string) => void; depth: number; dragging: string | null; over: string | null; dragStart: (id: string, event: React.PointerEvent) => void; overKind: string | null; moveBeside: (page: PageRow, sibling: PageRow, position: "before" | "after") => void }) {
   const known = new Set(pages.map((page) => page.id));
   const level = pages.filter((page) => parentId === null ? page.parentId === null || !known.has(page.parentId) : page.parentId === parentId);
   return <ul className="m-0 grid list-none gap-0.5 p-0">{level.map((page) => {
     const children = pages.filter((child) => child.parentId === page.id);
     const expanded = open.has(page.id);
     return <li key={page.id}>
-      <div data-wiki-drop-id={`page:${page.id}`} className={`flex items-center ${over === `page:${page.id}` ? "rounded-md bg-accent-primary/15 ring-1 ring-accent-primary" : ""} ${dragging === page.id ? "opacity-50" : ""}`} style={{ paddingLeft: `${depth * 0.75}rem` }}>
+      <div data-wiki-drop-id={`page:${page.id}`} className={`relative flex items-center ${over === `page:${page.id}` && overKind === "nest" ? "rounded-md bg-accent-primary/15 ring-1 ring-accent-primary" : ""} ${dragging === page.id ? "opacity-50" : ""}`} style={{ paddingLeft: `${depth * 0.75}rem` }}>
+        {over === `page:${page.id}` && overKind === "before" && <span aria-hidden data-wiki-drop-line="before" className="pointer-events-none absolute inset-x-0 -top-px h-0.5 rounded bg-accent-primary" />}
+        {over === `page:${page.id}` && overKind === "after" && <span aria-hidden data-wiki-drop-line="after" className="pointer-events-none absolute inset-x-0 -bottom-px h-0.5 rounded bg-accent-primary" />}
         {children.length > 0
           ? <button type="button" aria-expanded={expanded} aria-label={`${translate("wikiSidebar.toggle")}: ${page.title}`} onClick={() => toggle(page.id)} className="grid size-5 shrink-0 place-items-center rounded !bg-transparent !p-0 text-tertiary hover:!bg-layer-transparent-hover"><ChevronRight aria-hidden size={12} className={`transition-transform ${expanded ? "rotate-90" : ""}`} /></button>
           : <span className="size-5 shrink-0" />}
         <NavLink to={paths.wikiPage(workspace.slug, page.id)} className={({ isActive }) => `${row(isActive)} flex-1`}><FileText aria-hidden size={13} className="shrink-0" /><span className="truncate">{page.title}</span></NavLink>
-        {over === `page:${page.id}` && <span className="px-1 text-11 font-medium text-accent-primary">{translate(overKind === "nest" ? "wikiSidebar.dropNest" : "wikiSidebar.dropTopLevel")}</span>}
-        {page.canEdit && <button type="button" aria-label={`${translate("sortable.reorder")}: ${page.title}`} data-wiki-drag-handle={page.id} onPointerDown={(event) => dragStart(page.id, event)} className="grid size-5 shrink-0 touch-none place-items-center rounded !bg-transparent !p-0 text-tertiary hover:!bg-layer-transparent-hover hover:text-primary cursor-grab"><GripVertical aria-hidden size={12} /></button>}
+        {over === `page:${page.id}` && <span className="px-1 text-11 font-medium text-accent-primary">{translate(overKind === "before" ? "wikiSidebar.dropBefore" : overKind === "after" ? "wikiSidebar.dropAfter" : "wikiSidebar.dropNest")}</span>}
+        {page.canEdit && <button type="button" aria-label={`${translate("sortable.reorder")}: ${page.title}`} data-wiki-drag-handle={page.id} onPointerDown={(event) => dragStart(page.id, event)} onKeyDown={(event) => {
+          // Arrow Up places the page before its previous sibling and Arrow Down after its next one, in the order shown here.
+          const index = level.findIndex((item) => item.id === page.id);
+          const candidate = event.key === "ArrowUp" ? level[index - 1] : event.key === "ArrowDown" ? level[index + 1] : undefined;
+          // A page whose parent is hidden shows at the top level but still has that parent, so only a true sibling can take its place.
+          const neighbour = candidate && candidate.parentId === page.parentId ? candidate : undefined;
+          if (!neighbour) return;
+          event.preventDefault();
+          moveBeside(page, neighbour, event.key === "ArrowUp" ? "before" : "after");
+        }} className="grid size-5 shrink-0 touch-none place-items-center rounded !bg-transparent !p-0 text-tertiary hover:!bg-layer-transparent-hover hover:text-primary cursor-grab"><GripVertical aria-hidden size={12} /></button>}
       </div>
-      {expanded && children.length > 0 && <PageTree workspace={workspace} pages={pages} parentId={page.id} activeId={activeId} open={open} toggle={toggle} depth={depth + 1} dragging={dragging} over={over} dragStart={dragStart} overKind={overKind} />}
+      {expanded && children.length > 0 && <PageTree workspace={workspace} pages={pages} parentId={page.id} activeId={activeId} open={open} toggle={toggle} depth={depth + 1} dragging={dragging} over={over} dragStart={dragStart} overKind={overKind} moveBeside={moveBeside} />}
     </li>;
   })}</ul>;
 }
@@ -62,8 +73,10 @@ export function WikiSidebar({ workspace, selfId }: { workspace: Workspace; selfI
   const [over, setOverState] = React.useState<string | null>(null);
   const [overKind, setOverKind] = React.useState<string | null>(null);
   const overRef = React.useRef<string | null>(null);
-  const setOver = (value: string | null, kind: string | null = null) => { overRef.current = value; setOverState(value); setOverKind(kind); };
+  const overKindRef = React.useRef<string | null>(null);
+  const setOver = (value: string | null, kind: string | null = null) => { overRef.current = value; overKindRef.current = kind; setOverState(value); setOverKind(kind); };
   const [dropMessage, setDropMessage] = React.useState("");
+  const [announcement, setAnnouncement] = React.useState("");
   const toggle = (id: string) => setOpen((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   // Opening a page opens everything above it, so the tree always shows where you are.
   React.useEffect(() => {
@@ -75,31 +88,36 @@ export function WikiSidebar({ workspace, selfId }: { workspace: Workspace; selfI
   const workspacePages = pages.filter((page) => !page.projectId);
   const mine = workspacePages.filter((page) => page.access === "private" && page.ownerId === selfId);
   const isMine = new Set(mine.map((page) => page.id));
+  const knownIds = new Set(workspacePages.map((page) => page.id));
+  const orphanIds = new Set(workspacePages.filter((page) => page.parentId !== null && !knownIds.has(page.parentId)).map((page) => page.id));
   const create = async () => {
     const created = await action<{ id: string }>("create_wiki_page", { workspaceId: workspace.id, title: translate("wiki.untitled") });
     if (created) { await client.invalidateQueries({ queryKey: ["wiki-pages", workspace.id] }); navigate(paths.wikiPage(workspace.slug, created.id)); }
   };
-  const tree = (list: PageRow[]) => <PageTree workspace={workspace} pages={list} parentId={null} activeId={activeId} open={open} toggle={toggle} depth={0} dragging={dragging} over={over} dragStart={startDrag} overKind={overKind} />;
+  const tree = (list: PageRow[]) => <PageTree workspace={workspace} pages={list} parentId={null} activeId={activeId} open={open} toggle={toggle} depth={0} dragging={dragging} over={over} dragStart={startDrag} overKind={overKind} moveBeside={moveBeside} />;
   const defaultCollectionId = collections.find((item) => item.isDefault)?.id ?? "";
   const pageCollection = (page: PageRow) => page.collectionId ?? defaultCollectionId;
   const startDrag = (id: string, event: React.PointerEvent) => { if (event.button !== 0) return; event.currentTarget.setPointerCapture(event.pointerId); setDragging(id); };
   const moveDrag = (event: React.PointerEvent) => {
     if (!dragging) return;
-    const rawTarget = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-wiki-drop-id]")?.dataset.wikiDropId ?? null;
+    const hit = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-wiki-drop-id]") ?? null;
+    const rawTarget = hit?.dataset.wikiDropId ?? null;
     const source = workspacePages.find((page) => page.id === dragging);
     if (!rawTarget || !source) { setOver(null); return; }
+    const position: WikiDropPosition = hit && rawTarget.startsWith("page:") ? wikiDropPosition(event.clientY - hit.getBoundingClientRect().top, hit.getBoundingClientRect().height) : "nest";
     const descendants = new Set<string>();
     let changed = true;
     while (changed) { changed = false; for (const page of workspacePages) if (page.parentId === dragging || descendants.has(page.parentId ?? "")) { if (!descendants.has(page.id)) { descendants.add(page.id); changed = true; } } }
     const [kind, id] = rawTarget.split(":", 2);
-    const target = kind === "collection" ? { id: id!, collectionId: id!, header: true as const } : (() => { const page = workspacePages.find((item) => item.id === id); return page ? { id: page.id, collectionId: pageCollection(page), parentId: page.parentId, descendants: new Set<string>(), canEdit: page.canEdit } : null; })();
-    const decision = target && wikiDropDecision({ id: source.id, collectionId: pageCollection(source), parentId: source.parentId, descendants, canEdit: source.canEdit }, target, source.ownerId === selfId || source.canMoveAcrossCollections);
+    const target = kind === "collection" ? { id: id!, collectionId: id!, header: true as const } : (() => { const page = workspacePages.find((item) => item.id === id); return page ? { id: page.id, collectionId: pageCollection(page), parentId: page.parentId, descendants: new Set<string>(), canEdit: page.canEdit, orphan: orphanIds.has(page.id) } : null; })();
+    const decision = target && wikiDropDecision({ id: source.id, collectionId: pageCollection(source), parentId: source.parentId, descendants, canEdit: source.canEdit }, target, source.ownerId === selfId || source.canMoveAcrossCollections, position);
     setOver(decision ? rawTarget : null, decision ? decision.kind : null);
   };
   const endDrag = async () => {
     if (!dragging) return;
     const source = workspacePages.find((page) => page.id === dragging);
     const rawTarget = overRef.current;
+    const droppedKind = overKindRef.current;
     setDragging(null); setOver(null);
     if (!source || !rawTarget) return;
     const descendants = new Set<string>();
@@ -108,7 +126,8 @@ export function WikiSidebar({ workspace, selfId }: { workspace: Workspace; selfI
     const [kind, targetId] = rawTarget.split(":", 2);
     const collection = collections.find((item) => item.id === (kind === "collection" ? targetId : (() => { const found = workspacePages.find((item) => item.id === targetId); return found ? pageCollection(found) : undefined; })()));
     if (!collection) return;
-    const decision = wikiDropDecision({ id: source.id, collectionId: pageCollection(source), parentId: source.parentId, descendants, canEdit: source.canEdit }, kind === "collection" ? { id: targetId!, collectionId: targetId!, header: true } : (() => { const target = workspacePages.find((item) => item.id === targetId); return target ? { id: target.id, collectionId: pageCollection(target), parentId: target.parentId, descendants: new Set<string>(), canEdit: target.canEdit } : { id: "", collectionId: "", parentId: null, descendants: new Set<string>(), canEdit: false }; })(), source.ownerId === selfId || source.canMoveAcrossCollections);
+    const position: WikiDropPosition = droppedKind === "before" || droppedKind === "after" ? droppedKind : "nest";
+    const decision = wikiDropDecision({ id: source.id, collectionId: pageCollection(source), parentId: source.parentId, descendants, canEdit: source.canEdit }, kind === "collection" ? { id: targetId!, collectionId: targetId!, header: true } : (() => { const target = workspacePages.find((item) => item.id === targetId); return target ? { id: target.id, collectionId: pageCollection(target), parentId: target.parentId, descendants: new Set<string>(), canEdit: target.canEdit, orphan: orphanIds.has(target.id) } : { id: "", collectionId: "", parentId: null, descendants: new Set<string>(), canEdit: false }; })(), source.ownerId === selfId || source.canMoveAcrossCollections, position);
     if (!decision) return;
     let ok = false;
     if (decision.kind === "move-collection") {
@@ -120,10 +139,20 @@ export function WikiSidebar({ workspace, selfId }: { workspace: Workspace; selfI
       const result = await actionResult("move_page_scope", { pageId: source.id, projectId: null, collectionId: decision.collectionId });
       if ("error" in result) { setDropMessage(result.error); return; } ok = true;
     } else {
-      const result = await actionResult("move_wiki_page", { pageId: source.id, parentId: decision.parentId });
+      const result = await actionResult("move_wiki_page", decision.kind === "before" || decision.kind === "after" ? { pageId: source.id, parentId: decision.parentId, siblingId: targetId, position: decision.kind } : { pageId: source.id, parentId: decision.parentId });
       if ("error" in result) { setDropMessage(result.error); return; } ok = true;
     }
     if (ok) { setDropMessage(""); await client.invalidateQueries({ queryKey: ["wiki-pages", workspace.id] }); }
+  };
+  // Keyboard Move up and Move down: the page takes the place beside its neighbour, through the same action as a drop.
+  const moveBeside = async (page: PageRow, sibling: PageRow, position: "before" | "after") => {
+    const result = await actionResult("move_wiki_page", { pageId: page.id, parentId: page.parentId, siblingId: sibling.id, position });
+    if ("error" in result) { setDropMessage(result.error); return; }
+    setDropMessage("");
+    setAnnouncement(translate(position === "before" ? "wikiSidebar.movedBefore" : "wikiSidebar.movedAfter").replace("{name}", sibling.title));
+    await client.invalidateQueries({ queryKey: ["wiki-pages", workspace.id] });
+    // The row is re-inserted in its new place, which can drop focus; put it back on the same handle so the next arrow press works.
+    requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-wiki-drag-handle="${page.id}"]`)?.focus());
   };
   React.useEffect(() => {
     if (!dragging) return;
@@ -140,6 +169,7 @@ export function WikiSidebar({ workspace, selfId }: { workspace: Workspace; selfI
     <button type="button" onClick={() => void create()} className="mb-1 flex w-full items-center justify-center gap-1.5"><Plus aria-hidden size={14} />{translate("wiki.new")}</button>
     <NavLink end to={paths.wiki(workspace.slug)} className={({ isActive }) => row(isActive)}>{translate("sidebar.allPages")}</NavLink>
     <p className="px-2 pb-0.5 pt-3 text-12 font-medium text-tertiary">{translate("wikiSidebar.collections")}</p>
+    <p role="status" className="sr-only">{announcement}</p>
     {dropMessage && <p role="alert" className="px-2 text-12 text-danger">{dropMessage}</p>}
     {collections.map((collection) => {
       const inCollection = workspacePages.filter((page) => !isMine.has(page.id)).filter((page) => collection.isDefault ? !page.collectionId || page.collectionId === collection.id : page.collectionId === collection.id);

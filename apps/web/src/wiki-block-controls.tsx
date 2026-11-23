@@ -5,6 +5,7 @@ import { translate } from "@weft/shared";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { duplicateTopLevelBlock, moveTopLevelRange, rangeStartAfterMove, selectedBlockRange, staysPut, type BlockRange } from "./wiki-block-moves";
+import { autoScrollStep, dropBoundary, type BlockSpan } from "./wiki-block-drop";
 
 type Block = { pos: number; node: import("@tiptap/pm/model").Node; element: HTMLElement };
 type Drag = {
@@ -23,6 +24,15 @@ type Drag = {
 
 const GRIP_SIZE = 24;
 const DRAG_SOURCE_CLASS = "wiki-block-dragging";
+
+/** The nearest ancestor that scrolls vertically, which is where a drag near its edges scrolls the page. */
+function scrollContainer(element: HTMLElement): HTMLElement | null {
+  for (let node = element.parentElement; node; node = node.parentElement) {
+    const overflow = getComputedStyle(node).overflowY;
+    if ((overflow === "auto" || overflow === "scroll") && node.scrollHeight > node.clientHeight) return node;
+  }
+  return null;
+}
 
 /**
  * Hover, drag and menu controls for top-level Wiki blocks. All edits use editor transactions, so Yjs collaborators receive them.
@@ -70,15 +80,22 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
     return node && element instanceof HTMLElement ? { pos, node, element } : null;
   }, [editor]);
 
-  /** The boundary a pointer at (x, y) would drop the source on: before or after the block under it, by which half it is in. */
-  const dropFor = React.useCallback((range: BlockRange, x: number, y: number): Drag["drop"] => {
-    const target = blockAt(document.elementFromPoint(x, y));
-    if (!target) return null;
-    const bounds = target.element.getBoundingClientRect();
-    const after = y > bounds.top + bounds.height / 2;
-    const pos = after ? target.pos + target.node.nodeSize : target.pos;
-    return staysPut(range.from, range.to - range.from, pos) ? null : { pos, top: after ? bounds.bottom : bounds.top };
-  }, [blockAt]);
+  /**
+   * The boundary a pointer at height y would drop the source on: the nearest edge of the top-level blocks, whatever sits under the pointer,
+   * so the gutter, the margins and the gaps between blocks all work.
+   */
+  const dropFor = React.useCallback((range: BlockRange, y: number): Drag["drop"] => {
+    if (!editor) return null;
+    const spans: BlockSpan[] = [];
+    editor.state.doc.forEach((node, pos) => {
+      const element = editor.view.nodeDOM(pos);
+      if (!(element instanceof HTMLElement)) return;
+      const bounds = element.getBoundingClientRect();
+      spans.push({ pos, size: node.nodeSize, top: bounds.top, bottom: bounds.bottom });
+    });
+    const boundary = dropBoundary(spans, y);
+    return boundary && !staysPut(range.from, range.to - range.from, boundary.pos) ? boundary : null;
+  }, [editor]);
 
   const moveBlocks = React.useCallback((range: BlockRange, destination: number) => {
     // A run the person selected stays selected after the move, so the next drag or Move up/down carries the whole run again.
@@ -122,7 +139,7 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
       const current = dragRef.current;
       if (current) {
         const pointer = { x: event.clientX, y: event.clientY };
-        updateDrag({ ...current, pointer, drop: dropFor(current.range, event.clientX, event.clientY) });
+        updateDrag({ ...current, pointer, drop: dropFor(current.range, event.clientY) });
         return;
       }
       const start = pointerStart.current;
@@ -140,13 +157,13 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
         content: editor.state.doc.slice(range.from, range.to).content,
         pointer: { x: event.clientX, y: event.clientY },
         grab: { x: start.x - bounds.left, y: start.y - bounds.top },
-        drop: dropFor(range, event.clientX, event.clientY),
+        drop: dropFor(range, event.clientY),
       });
     };
     const onPointerUp = (event: PointerEvent) => {
       const current = dragRef.current;
       if (!current) { pointerStart.current = null; return; }
-      const drop = dropFor(current.range, event.clientX, event.clientY);
+      const drop = dropFor(current.range, event.clientY);
       endDrag();
       if (drop && stillRange(current)) moveBlocks(current.range, drop.pos);
     };
@@ -197,6 +214,30 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
       window.removeEventListener("scroll", relayout, true);
     };
   }, [blockAt, blockAtPos, cancelStale, dropFor, editable, editor, endDrag, moveBlocks, stillAt, stillRange, updateDrag]);
+
+  // While a drag is held near the top or bottom of its scroll area, the page scrolls and the drop boundary follows the content under the pointer.
+  const dragging = drag !== null;
+  React.useEffect(() => {
+    if (!editor || !dragging) return;
+    const scroller = scrollContainer(editor.view.dom);
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    let frame = 0;
+    const tick = () => {
+      const current = dragRef.current;
+      if (current) {
+        const area = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+        const step = autoScrollStep(current.pointer.y, area, reducedMotion);
+        if (step !== 0) {
+          if (scroller) scroller.scrollTop += step;
+          else window.scrollBy(0, step);
+          updateDrag({ ...current, drop: dropFor(current.range, current.pointer.y) });
+        }
+      }
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [dragging, dropFor, editor, updateDrag]);
 
   // The ghost is a copy of the dragged blocks in its own layer on the page, so it is not clipped by the editor.
   const rangeFrom = drag?.range.from ?? null;

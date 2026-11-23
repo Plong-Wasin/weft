@@ -50,7 +50,7 @@ test.concurrent("with MAIL_TRANSPORT=graph and all four settings, /api/config re
   await withRollback(db, async (transaction) => {
     const { mailer } = graphMailer();
     const app = createApp(undefined, transaction, undefined, undefined, undefined, undefined, undefined, undefined, mailer);
-    expect(await (await app.handle(new Request("http://localhost/api/config"))).json()).toEqual({ defaultLocale: null, minPasswordLength: 10, emailEnabled: true, integrationsEnabled: true, outboundWebhooksEnabled: false });
+    expect(await (await app.handle(new Request("http://localhost/api/config"))).json()).toEqual({ defaultLocale: null, minPasswordLength: 10, emailEnabled: true, integrationsEnabled: true, outboundWebhooksEnabled: false, ai: expect.any(Object) });
   });
 });
 

@@ -5,6 +5,9 @@ import { eq } from "drizzle-orm";
 import { comments, createDatabase, users, workspaces, workItemDescriptionVersions } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 
+// AI is off when the server has no provider key, so the AI assist menu this flow checks needs a placeholder key (no call is made).
+Bun.env.OPENAI_API_KEY ??= "sk-e2e-placeholder-no-call";
+
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31158);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52158);
 const livePort = Number(Bun.env.E2E_LIVE_PORT ?? 31178);
@@ -337,7 +340,7 @@ try {
   const savedTableComment = page.locator("li[id^='comment-']").filter({ hasText: "Inserted Comment table" }).last();
   await savedTableComment.waitFor();
   check(await savedTableComment.locator("table").count() === 1, "submitting a table Comment did not preserve its table");
-  await savedTableComment.getByRole("button", { name: translate("comments.edit"), exact: true }).click();
+  await savedTableComment.getByRole("button", { name: translate("comments.more"), exact: true }).first().click(); await page.getByRole("dialog", { name: translate("comments.more") }).getByRole("button", { name: translate("comments.edit"), exact: true }).click();
   const editComment = savedTableComment.getByTestId("comment-editor").locator(".ProseMirror");
   await editComment.locator("table").waitFor();
   check(await editComment.locator("table").count() === 1, "editing an existing Comment lost its table");

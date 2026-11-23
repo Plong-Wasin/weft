@@ -45,6 +45,7 @@ export const paths = {
   sessions: () => "/account/sessions",
   passwordChange: () => "/account/password",
   accountNotifications: () => "/account/notifications",
+  accountPreferences: () => "/account/preferences",
   /** Public page a password reset link opens (outside the signed-in shell). */
   resetPassword: () => "/reset-password",
   /** Every keyboard shortcut the app answers to, outside any workspace. */

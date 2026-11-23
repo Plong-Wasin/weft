@@ -6,6 +6,7 @@ import { dateFilters, hasFilters, type DateFilter, type Filters, type NamedFilte
 import { Popover } from "./shell/popover";
 import { requestFilterQuery, type FilterQueryScope } from "./ai-filter-query";
 import { aiStatusKey, requestAiStatus } from "./ai-status";
+import { AiOnly } from "./ai-flag";
 import type { Option } from "./property-dropdowns";
 
 const t = (key: string) => translate(key as MessageKey);
@@ -88,7 +89,7 @@ export function FilterQueryEditor({ text, error, onApply, generate }: { text: st
   const [draft, setDraft] = React.useState(text);
   React.useEffect(() => setDraft(text), [text]);
   return <form className="my-0 grid gap-1.5 rounded-lg border border-subtle bg-layer-1 p-2" onSubmit={(event) => { event.preventDefault(); onApply(draft); }}>
-    {generate && <FilterQueryGenerate scope={generate} onQuery={setDraft} />}
+    {generate && <AiOnly><FilterQueryGenerate scope={generate} onQuery={setDraft} /></AiOnly>}
     <label className="my-0 grid gap-1 text-12 font-medium text-tertiary">{t("layout.filterQuery.label")}
       <textarea value={draft} rows={2} maxLength={2000} spellCheck={false} aria-invalid={error !== null} placeholder={t("layout.filterQuery.placeholder")} className="font-mono text-13"
         onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); onApply(draft); } }} /></label>
@@ -124,5 +125,5 @@ function FilterQueryGenerate({ scope, onQuery }: { scope: FilterQueryScope; onQu
 }
 
 export function FilterQueryToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
-  return <button type="button" aria-pressed={open} aria-label={t("layout.filterQuery.toggle")} title={t("layout.filterQuery.toggle")} className={`${ghost} ${open ? "bg-layer-1" : ""}`} onClick={onToggle}><Code2 aria-hidden size={14} /><span>{t("layout.filterQuery.button")}</span></button>;
+  return <button type="button" aria-pressed={open} aria-label={t("layout.filterQuery.toggle")} title={t("layout.filterQuery.toggle")} className={`${ghost} ${open ? "bg-layer-1" : ""}`} onClick={onToggle}><Code2 aria-hidden size={14} /><span className="max-sm:sr-only">{t("layout.filterQuery.button")}</span></button>;
 }

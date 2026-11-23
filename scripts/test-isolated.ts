@@ -31,9 +31,10 @@ const urlFor = (name: string) => { const url = new URL(base); url.pathname = `/$
 // Bun loads the developer's .env into the test process; a closed gate there (ALLOW_WORKSPACE_CREATION=false) makes tests that create workspaces fail with 403/422.
 // Tests that need a closed gate pass their own gates to createApp, so the suite pins the defaults.
 // SMTP_HOST is cleared and MAIL_TRANSPORT is pinned to smtp so a developer's .env (SMTP or Microsoft Graph) cannot send real mail from the suite; email tests run their own local SMTP sink and fake Graph server.
+// WEFT_AI_ENABLED is on for the suite too, so AI surface tests need no setup; a key-less server still counts AI as off (aiState), so AI tests pass features.ai. apps/api/test/ai-default.test.ts proves the real default.
 // WEFT_INTEGRATIONS_ENABLED is on for the suite so integration tests need no setup. Every test of the off path sets the flag off itself
 // (explicit `integrations: false`, or an env without it), and apps/api/test/integration-default-off.test.ts proves the real unset default in a child process.
-const envFor = (databaseUrl: string) => ({ ...Bun.env, DATABASE_URL: databaseUrl, ALLOW_SIGNUP: "true", ALLOW_WORKSPACE_CREATION: "true", PASSWORD_BREACH_CHECK: "off", SMTP_HOST: "", MAIL_TRANSPORT: "smtp", WEFT_INTEGRATIONS_ENABLED: "true" });
+const envFor = (databaseUrl: string) => ({ ...Bun.env, DATABASE_URL: databaseUrl, ALLOW_SIGNUP: "true", ALLOW_WORKSPACE_CREATION: "true", PASSWORD_BREACH_CHECK: "off", SMTP_HOST: "", MAIL_TRANSPORT: "smtp", WEFT_INTEGRATIONS_ENABLED: "true", WEFT_AI_ENABLED: "true" });
 
 /** Files that time themselves against a deadline with the CPU (converter limits, backfill, the Daemon black box). They fail when other files load the machine, so they run after the queue, when the machine is quiet. */
 const timingSensitive = /written-form-(limits|round7)|migrate-schema-only|apps\/cli\/test\/daemon\.test|packages\/actions\/test\/(runtimes|comments|registry-permissions)\.test|apps\/api\/test\/(run-token-gate|rate-limits)\.test/;
@@ -86,8 +87,8 @@ try {
       await Bun.write(`${logDir}/${prefix}_${lane}.log`, log);
     };
     await Promise.all(Array.from({ length: count }, (_, index) => drain(`w${index}`, () => queue.shift())));
-    // The timing-sensitive files run once the pool is done and the machine is quiet, a few at a time: most of their time is waiting on purpose, not computing.
-    await Promise.all(Array.from({ length: Math.min(2, alone.length) }, (_, index) => drain(`alone${index}`, () => alone.shift())));
+    // The timing-sensitive files run once the pool is done and the machine is quiet, a few at a time: most of their time is waiting on purpose, not computing. With two workers or fewer (a two-core CI runner) they run one at a time, because two of them side by side use up the cores their deadlines count on.
+    await Promise.all(Array.from({ length: Math.min(count > 2 ? 2 : 1, alone.length) }, (_, index) => drain(`alone${index}`, () => alone.shift())));
     console.log(`${totals.pass} pass\n${totals.fail} fail\nRan ${totals.tests} tests across ${total} files in ${Math.round((Date.now() - started) / 1000)}s`);
     console.log(`logs: ${logDir}/${prefix}_*.log`);
     code = totals.fail === 0 && totals.failedFiles === 0 ? 0 : 1;

@@ -33,6 +33,19 @@ test("the registry built with the flags on contains the integration and webhook 
   }
 });
 
+test("the settings reorder Actions are in the registry on every surface, with the same classification as their list's writes", () => {
+  const names = actions.map((action) => action.name);
+  for (const name of ["reorder_labels", "reorder_work_item_types", "reorder_custom_properties"]) {
+    expect(names, `expected ${name} in the Action registry`).toContain(name);
+    expect(actions.find((action) => action.name === name)?.kind).toBe("write");
+    expect(classifyAgentAction(name), `${name} must be classified`).toBeDefined();
+  }
+  expect(agentActionGroup("reorder_labels")).toBe("feature");
+  expect(agentMayUseAction("reorder_labels", noGrants)).toBe(false);
+  expect(agentMayUseAction("reorder_labels", allGrants)).toBe(true);
+  expect(aiWriteActions).toContain("reorder_labels");
+});
+
 test("an Action name no rule knows is refused whatever the grants", () => {
   expect(agentActionGroup("frobnicate_thing")).toBe("denied");
   expect(agentMayUseAction("frobnicate_thing", allGrants)).toBe(false);
@@ -50,7 +63,7 @@ test("account, security and Agent-configuring actions are never available to an 
   for (const action of [
     "create_api_token", "revoke_api_token", "list_api_tokens", "list_managed_credentials", "list_cli_devices", "revoke_cli_device", "list_member_api_tokens", "revoke_member_api_token",
     "force_password_reset", "sign_out_everywhere", "sign_out_member", "suspend_member", "revoke_my_session", "list_my_sessions",
-    "create_invite", "accept_invite", "revoke_invite", "set_my_email_preferences", "create_work_item_integration", "rotate_work_item_integration_secret",
+    "create_invite", "accept_invite", "revoke_invite", "set_my_email_preferences", "get_my_ai_preferences", "set_my_ai_preferences", "create_work_item_integration", "rotate_work_item_integration_secret",
     "list_authorized_apps", "revoke_authorized_app", "register_daemon", "create_agent", "update_agent", "enable_agent", "disable_agent", "set_agent_access",
     "set_agent_skills", "create_skill", "update_skill", "create_trigger", "update_trigger", "create_recurrence", "run_recurrence_now", "share_runtime",
     "unshare_runtime", "set_autopilot_setting", "set_runtime_run_limits", "publish_wiki_page", "share_wiki_page",

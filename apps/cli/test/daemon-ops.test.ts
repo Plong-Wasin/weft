@@ -73,7 +73,8 @@ test("logs --follow prints lines appended later, survives truncation, and stops 
   controller.abort();
   expect(await finished).toBe(0);
   expect(out.join("")).toBe("first\nsecond\nfresh start\n");
-});
+// Three waits of up to 5 s each, on a log that is polled every 500 ms: the default 5 s test timeout is too tight on a busy runner.
+}, 20_000);
 
 test("logs --json cannot be combined with --follow", async () => {
   const errors: string[] = [];

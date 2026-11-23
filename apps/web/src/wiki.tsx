@@ -1,5 +1,6 @@
 import { api, liveUrl } from "./api";
 import { SidecarTrigger } from "./sidecar";
+import { AiOnly } from "./ai-flag";
 import React from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import Collaboration from "@tiptap/extension-collaboration";
@@ -15,7 +16,7 @@ import { AssistMenu } from "./assist-menu";
 import { AiAssist } from "./editor-assist";
 import { BlockKeyboardShortcuts, CodeBlockCopy, EditorPlaceholder, EmojiSuggestions, ListIndent, MarkdownPaste, SafeLinkClick, SlashMenu, surfaceEditorExtensions, wikiCommands } from "./editor-extensions";
 import { Link, useNavigate, useSearchParams } from "react-router";
-import { MoreHorizontal, FileText, Heart, Globe, ChevronRight, Plus, Lock, PanelRight, X, Download, Upload, FileDown, Maximize2, Code, Clock, FilePlus, Archive, Trash2, Pencil, EyeOff } from "lucide-react";
+import { Check, MoreHorizontal, FileText, Heart, Globe, ChevronRight, Plus, Lock, PanelRight, X, Download, Upload, FileDown, Maximize2, Code, Clock, FilePlus, Archive, Trash2, Pencil, EyeOff } from "lucide-react";
 import { paths } from "./routes";
 import { useInboxNotificationOpen } from "./inbox";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -24,7 +25,7 @@ import { MenuItem, Popover } from "./shell/popover";
 import { Dialog, DialogActions } from "./dialog";
 import { TableControls } from "./table-controls";
 import { addRowAfter, goToNextCell } from "@tiptap/pm/tables";
-import { TextSelection } from "@tiptap/pm/state";
+import { PluginKey, TextSelection } from "@tiptap/pm/state";
 import type { WikiPaperSize } from "./wiki-pdf";
 import { WikiBubbleMenu } from "./wiki-bubble-menu";
 import { WikiBlockControls } from "./wiki-block-controls";
@@ -90,12 +91,15 @@ async function call<T>(name: string, body: unknown): Promise<T | null> {
 
 
 function pageMentions(people: React.RefObject<Member[]>) {
+  // The key is shared with the list, so an outside pointer-down can exit this suggestion.
+  const pluginKey = new PluginKey("mentionSuggestion");
   return Mention.configure({
     HTMLAttributes: { class: "mention" },
     suggestion: {
       char: "@",
+      pluginKey,
       items: ({ query }: { query: string }) => (people.current ?? []).filter((person) => person.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())).sort((a, b) => Number(!!a.isAgent) - Number(!!b.isAgent) || a.name.localeCompare(b.name)).slice(0, 8).map(({ userId, name, isAgent, codeCapable }) => ({ id: userId, label: name, isAgent, codeCapable })),
-      render: mentionRender("wiki.mentionMembers"),
+      render: mentionRender("wiki.mentionMembers", pluginKey),
     },
   });
 }
@@ -141,6 +145,11 @@ function useWideScreen() {
 type PageMenuActions = { onLock: () => void; onArchive: () => void; onAddSubpage: () => void; onDelete: () => void };
 function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported, actions }: { workspaceId: string; page: Page; self: string; onChanged: () => void; onResync: () => void; info: React.ReactNode; onImported: (pageId: string) => void; actions: PageMenuActions }) {
   const [title, setTitle] = React.useState(page.title);
+  // The title is a textarea so a long title wraps on a phone instead of clipping; it grows to fit its text.
+  const titleRef = React.useRef<HTMLTextAreaElement>(null);
+  const fitTitle = React.useCallback(() => { const node = titleRef.current; if (!node) return; node.style.height = "auto"; node.style.height = `${node.scrollHeight}px`; }, []);
+  React.useLayoutEffect(fitTitle, [title, fitTitle]);
+  React.useEffect(() => { window.addEventListener("resize", fitTitle); return () => window.removeEventListener("resize", fitTitle); }, [fitTitle]);
   const [status, setStatus] = React.useState<"saved" | "saving" | "failed" | "not-saved">("saved");
   const [versions, setVersions] = React.useState<Version[]>([]);
   const queryClient = useQueryClient();
@@ -184,6 +193,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
   const [threads, setThreads] = React.useState<Array<{ id: string; bodyText: string; authorId: string; authorName: string; anchor: string | null; resolved: boolean; replies: Array<{ id: string; bodyText: string; authorName: string }> }>>([]);
   const [commentText, setCommentText] = React.useState("");
   const [replyTo, setReplyTo] = React.useState<string | null>(null);
+  const [replyText, setReplyText] = React.useState("");
   const [editingComment, setEditingComment] = React.useState<{ id: string; text: string } | null>(null);
   const [showResolved, setShowResolved] = React.useState(false);
   const peopleRef = React.useRef(people);
@@ -313,11 +323,12 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
     if (result) { setCommentText(""); await loadThreads(); } else setStatus("failed");
   }
   async function reply(threadId: string) {
-    if (!commentText.trim()) return;
-    const body = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: commentText.trim() }] }] };
-    if (await call("reply_wiki_page_comment", { commentId: threadId, body })) { setCommentText(""); setReplyTo(null); await loadThreads(); }
+    if (!replyText.trim()) return;
+    const body = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: replyText.trim() }] }] };
+    if (await call("reply_wiki_page_comment", { commentId: threadId, body })) { setReplyText(""); setReplyTo(null); await loadThreads(); }
     else setStatus("failed");
   }
+  function closeReply() { setReplyText(""); setReplyTo(null); }
 
   async function exportMarkdown() {
     if (!editor || exporting) return;
@@ -393,7 +404,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
     <div className="wiki-print-document">
     <h1 className="wiki-print-title">{title}</h1>
     <div className="flex flex-wrap items-center gap-2">
-      <input className="wiki-edit-title min-w-0 flex-1 basis-[12rem] border-0 bg-transparent px-0 text-40 font-semibold text-primary" aria-label={translate("wiki.untitled")} value={title} disabled={!page.canEdit} onChange={(event) => { setTitle(event.target.value); dirtyTitle.current = event.target.value || translate("wiki.untitled"); schedule(); }} onBlur={onChanged} />
+      <textarea ref={titleRef} rows={1} className="wiki-edit-title min-w-0 flex-1 basis-[12rem] resize-none overflow-hidden border-0 bg-transparent px-0 text-28 font-semibold leading-tight text-primary sm:text-40" aria-label={translate("wiki.untitled")} value={title} disabled={!page.canEdit} onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }} onChange={(event) => { setTitle(event.target.value); dirtyTitle.current = event.target.value || translate("wiki.untitled"); schedule(); }} onBlur={onChanged} />
       {page.locked && <span data-testid="wiki-locked-badge" className="shrink-0 rounded-md border border-subtle bg-surface-2 px-2 py-0.5 text-12 text-secondary">{translate("wiki.locked")}</span>}
       <div className="wiki-page-actions flex items-center gap-1">
         {!page.projectId && page.ownerId === self && <button type="button" className="secondary" data-testid="wiki-header-share" onClick={() => revealPanelSection("wiki-share-members")}>{translate("wiki.share.action")}</button>}
@@ -497,16 +508,23 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
             </form>
             : <div><strong className="text-primary">{thread.authorName}</strong>: {thread.bodyText}</div>}
           {thread.replies.map((reply) => <p key={reply.id} className="m-0 border-l-2 border-subtle pl-2 text-secondary">{reply.authorName}: {reply.bodyText}</p>)}
-          <div className="flex flex-wrap gap-1 [&_button]:!px-2 [&_button]:!py-0.5 [&_button]:!text-12">
-            <button type="button" className="secondary" onClick={() => setReplyTo(thread.id)}>{translate("wiki.comments.reply")}</button>
-            <button type="button" className="secondary" onClick={() => void call("resolve_wiki_page_comment", { commentId: thread.id, resolved: !thread.resolved }).then(() => loadThreads())}>{translate(thread.resolved ? "wiki.comments.reopen" : "wiki.comments.resolve")}</button>
-            {thread.authorId === self && <button type="button" className="secondary" onClick={() => setEditingComment({ id: thread.id, text: thread.bodyText })}>{translate("wiki.comments.edit")}</button>}
+          {replyTo === thread.id && <form className="grid gap-1.5" onSubmit={(event) => { event.preventDefault(); void reply(thread.id); }} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); closeReply(); } }}>
+            <input aria-label={`${translate("wiki.comments.replyTo")} ${thread.authorName}`} autoFocus value={replyText} onChange={(event) => setReplyText(event.target.value)} />
+            <div className="flex gap-1 [&_button]:!px-2 [&_button]:!py-0.5 [&_button]:!text-12"><button type="submit" disabled={!replyText.trim()}>{translate("wiki.comments.send")}</button><button type="button" className="secondary" onClick={closeReply}>{translate("comments.cancel")}</button></div>
+          </form>}
+          <div className="flex items-center gap-3 text-13">
+            {!thread.resolved && <button type="button" className="!bg-transparent !p-0 font-medium text-accent-text hover:underline" onClick={() => { setReplyText(""); setReplyTo(thread.id); }}>{translate("wiki.comments.reply")}</button>}
+            <Popover label={translate("wiki.comments.more")} align="right" className="icon-button-ghost ml-auto !grid !place-items-center !p-0" panelClassName="w-48" trigger={<MoreHorizontal aria-hidden size={14} />}>
+              {(close) => <>
+                <MenuItem icon={Check} onClick={() => { close(); void call("resolve_wiki_page_comment", { commentId: thread.id, resolved: !thread.resolved }).then(() => loadThreads()); }}>{translate(thread.resolved ? "wiki.comments.reopen" : "wiki.comments.resolve")}</MenuItem>
+                {thread.authorId === self && <MenuItem icon={Pencil} onClick={() => { close(); setEditingComment({ id: thread.id, text: thread.bodyText }); }}>{translate("wiki.comments.edit")}</MenuItem>}
+              </>}
+            </Popover>
           </div>
         </li>)}</ul>
         <div className="grid gap-2 border-t border-subtle pt-3">
           {!replyTo && <button type="button" className="secondary w-fit" disabled={!editor || editor.state.selection.empty} onClick={() => setReplyTo(null)}>{translate("wiki.comments.selected")}</button>}
-          {replyTo && <button type="button" className="w-fit !bg-transparent !p-0 text-12 !text-secondary hover:!text-primary" onClick={() => setReplyTo(null)}>{translate("comments.cancel")}</button>}
-          <div className="flex gap-2"><input className="min-w-0 flex-1" aria-label={translate("wiki.comments.text")} value={commentText} onChange={(event) => setCommentText(event.target.value)} /><button type="button" className="secondary" disabled={!commentText.trim()} onClick={() => replyTo ? void reply(replyTo) : void addComment()}>{translate(replyTo ? "wiki.comments.reply" : "wiki.comments.add")}</button></div>
+          <div className="flex gap-2"><input className="min-w-0 flex-1" aria-label={translate("wiki.comments.text")} value={commentText} onChange={(event) => setCommentText(event.target.value)} /><button type="button" className="secondary" disabled={!commentText.trim()} onClick={() => void addComment()}>{translate("wiki.comments.add")}</button></div>
         </div>
       </section>}
       {pane === "activity" && <div className="grid gap-4">
@@ -571,9 +589,9 @@ function writeListFilter(params: URLSearchParams, key: keyof ListFilters, value:
 function ListControls({ pages, filters, update, shared = false }: { pages: Summary[]; filters: ListFilters; update: (key: keyof ListFilters, value: string) => void; shared?: boolean }) {
   const owners = Array.from(new Map(pages.map((page) => [page.ownerId, page.ownerName ?? page.ownerId])).entries());
   return <div className="grid gap-3">
-    <div role="tablist" className="flex gap-4 border-b border-subtle">
+    <div role="tablist" className="flex gap-x-3 overflow-x-auto border-b border-subtle sm:gap-x-4">
       {(["all", "public", "private", "archived", ...(shared ? ["shared" as const] : [])] as const).map((name) => <button key={name} role="tab" type="button" aria-selected={filters.tab === name} onClick={() => update("tab", name)}
-        className={`-mb-px border-0 border-b-2 bg-transparent px-1 py-2 text-13 font-medium ${filters.tab === name ? "border-b-[var(--bg-accent-primary)] text-accent-text" : "border-b-transparent text-secondary"}`}>{translate(`pages.tab.${name}` as MessageKey)}</button>)}
+        className={`-mb-px whitespace-nowrap border-0 border-b-2 bg-transparent px-1 py-2 text-13 font-medium ${filters.tab === name ? "border-b-[var(--bg-accent-primary)] text-accent-text" : "border-b-transparent text-secondary"}`}>{translate(`pages.tab.${name}` as MessageKey)}</button>)}
     </div>
     <div className="flex flex-wrap items-end gap-3 text-13">
       <label className="grid gap-1 text-secondary">{translate("pages.filter.owner")}<select aria-label={translate("pages.filter.owner")} value={filters.owner} onChange={(event) => update("owner", event.target.value)}>
@@ -819,7 +837,7 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
   return <section aria-label={translate("wiki.title")} className="grid gap-4">
     <nav aria-label={translate("wiki.breadcrumb")} className="flex items-center gap-1 text-13 text-secondary">
       <Link to={back} className="hover:underline">{translate(projectKey ? "projectNav.pages" : "wiki.title")}</Link><ChevronRight aria-hidden size={12} /><span className="text-primary">{page.title}</span>
-      <span className="ml-auto flex items-center gap-2"><button type="button" className="secondary" aria-pressed={isFavorite} aria-label={translate(isFavorite ? "wiki.unfavorite" : "wiki.favorite")} title={translate(isFavorite ? "wiki.unfavorite" : "wiki.favorite")} onClick={() => void toggleFavorite()}><Heart aria-hidden size={14} fill={isFavorite ? "currentColor" : "none"} /></button><SidecarTrigger context={{ type: "wiki_page", id: page.id, title: page.title }} /></span>
+      <span className="ml-auto flex items-center gap-2"><button type="button" className="secondary" aria-pressed={isFavorite} aria-label={translate(isFavorite ? "wiki.unfavorite" : "wiki.favorite")} title={translate(isFavorite ? "wiki.unfavorite" : "wiki.favorite")} onClick={() => void toggleFavorite()}><Heart aria-hidden size={14} fill={isFavorite ? "currentColor" : "none"} /></button><AiOnly><SidecarTrigger context={{ type: "wiki_page", id: page.id, title: page.title }} /></AiOnly></span>
     </nav>
     {failed && <p role="alert">{translate("wiki.failed")}</p>}
     {page.archived && <p role="status" className="text-secondary">{translate("pages.archivedReadOnly")}</p>}

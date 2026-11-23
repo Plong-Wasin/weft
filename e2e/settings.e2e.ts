@@ -291,8 +291,9 @@ try {
   // States: add, rename, reorder, delete.
   await page.getByRole("navigation", { name: `${translate("settings.label")} MOBX` }).getByRole("link", { name: translate("states.title"), exact: true }).click();
   const startedBlock = page.locator("section").filter({ has: page.getByRole("heading", { name: translate("states.group.started") }) }).last();
+  await startedBlock.getByRole("button", { name: translate("states.add"), exact: true }).click();
   await startedBlock.getByLabel(translate("states.name")).fill("Review");
-  await startedBlock.getByRole("button", { name: translate("states.add") }).click();
+  await startedBlock.getByRole("button", { name: translate("states.create"), exact: true }).click();
   await startedBlock.getByText("Review", { exact: true }).waitFor();
   await startedBlock.getByRole("listitem").filter({ hasText: "Review" }).getByRole("button", { name: new RegExp(`^${translate("sortable.actions")}`) }).click();
   await page.getByRole("menuitem", { name: translate("states.moveUp") }).click();
@@ -335,6 +336,13 @@ try {
   await page.goto(`${web}/${slug}/settings/members`);
   // The members page lists each person twice: the roster (with Remove) and the "Members and access" security list.
   const memberRow = page.getByRole("listitem").filter({ hasText: "Invited Person" }).filter({ has: page.getByRole("button", { name: translate("members.remove") }) });
+  // Removing a member asks first: a dismissed confirm keeps the member.
+  const asked = page.waitForEvent("dialog");
+  const removing = memberRow.getByRole("button", { name: translate("members.remove") }).click();
+  (await asked).dismiss();
+  await removing;
+  await memberRow.getByRole("button", { name: translate("members.remove") }).waitFor();
+  page.once("dialog", (dialog) => void dialog.accept());
   await memberRow.getByRole("button", { name: translate("members.remove") }).click();
   await memberRow.waitFor({ state: "detached" });
   console.log("settings ok: workspace member removed");

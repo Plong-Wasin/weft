@@ -8,6 +8,7 @@ import type { UIMessage } from "ai";
 import { chatsKey, Conversation, post, type ChatMode, type Recent, type SidecarContext, type Workspace } from "./ai-chat";
 import { paths } from "./routes";
 import { Popover, menuItemClass } from "./shell/popover";
+import { useAiEnabled } from "./ai-flag";
 
 export const SIDECAR_MIN = 320;
 export const SIDECAR_MAX = 720;
@@ -40,10 +41,12 @@ export function useSidecar(): SidecarState {
 export function SidecarProvider({ workspace, userId, children }: { workspace: Workspace; userId: string; children: React.ReactNode }) {
   const [open, setOpen] = React.useState(false);
   const [context, setContext] = React.useState<SidecarContext | undefined>();
+  // With AI off there is no panel to mount: the chat and its requests never start.
+  const aiOn = useAiEnabled();
   const state = React.useMemo<SidecarState>(() => ({ open, show: () => setOpen(true), hide: () => setOpen(false), toggle: () => setOpen((value) => !value), setContext }), [open]);
   return <SidecarContextValue.Provider value={state}>
     {children}
-    <PanelSlot workspace={workspace} userId={userId} open={open} context={context} onClose={() => setOpen(false)} />
+    {aiOn && <PanelSlot workspace={workspace} userId={userId} open={open} context={context} onClose={() => setOpen(false)} />}
   </SidecarContextValue.Provider>;
 }
 

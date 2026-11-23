@@ -11,6 +11,7 @@ import { TimelinePanel } from "./comments-panel";
 import { RunsPanel } from "./runs-panel";
 import { RelationsPanel } from "./relations-panel";
 import { SidecarTrigger } from "./sidecar";
+import { AiOnly } from "./ai-flag";
 import { Popover, menuItemClass } from "./shell/popover";
 import { AttachmentsPanel } from "./asset-images";
 import { WebLinksPanel } from "./web-links-panel";
@@ -324,7 +325,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
         <span className="shrink-0 font-medium text-primary">{item.displayId}</span>
       </nav>}
     {mode === "page" && <div className="ml-auto flex items-center gap-2">
-      <span className="[&_button]:whitespace-nowrap"><SidecarTrigger context={{ type: "work_item", id: item.displayId, title: item.title }} /></span>
+      <span className="[&_button]:whitespace-nowrap"><AiOnly><SidecarTrigger context={{ type: "work_item", id: item.displayId, title: item.title }} /></AiOnly></span>
       <span className="hidden lg:block"><button type="button" className="icon-button-ghost" data-testid="work-item-properties-toggle" aria-pressed={propertiesOpen} aria-label={t(propertiesOpen ? "workItems.properties.hide" : "workItems.properties.show")} title={t(propertiesOpen ? "workItems.properties.hide" : "workItems.properties.show")} onClick={togglePropertiesPanel}><PanelRight aria-hidden size={16} /></button></span>
       <Popover label={t("workItems.more")} align="right" className="!size-10 shrink-0 border border-subtle bg-surface-1 p-0 sm:hidden" trigger={<MoreHorizontal aria-hidden size={18} />}>
         {(close) => <>
@@ -404,7 +405,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
         onKeyDown={(event) => { handleImeSafeEnter(event.nativeEvent, () => event.currentTarget.blur()); }} />
     </div>
     {/* Beside the description (wide page with the panel shown) the Properties panel already holds these, so the bar is for the other layouts. */}
-    <div role="group" aria-label={t("workItems.quickProperties")} data-quick-properties className={`flex flex-wrap items-center gap-2 ${mode === "page" && propertiesOpen ? "lg:hidden" : ""} ${mode === "peek" ? "@[800px]:hidden" : ""}`}>
+    <div role="group" aria-label={t("workItems.quickProperties")} data-quick-properties className={`max-sm:grid max-sm:grid-cols-2 flex flex-wrap items-center gap-2 ${mode === "page" && propertiesOpen ? "lg:hidden" : ""} ${mode === "peek" ? "@[800px]:hidden" : ""}`}>
       {keyPickers.state}{keyPickers.priority}{keyPickers.assignees}{keyPickers.due}
     </div>
     <div className="min-h-16 min-w-0 max-w-full">
@@ -417,12 +418,12 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       {t("workItems.lastEditedBy").replace("{name}", lastDescriptionEdit.name).replace("{time}", relativeTime(lastDescriptionEdit.at))} ▾
     </button>}
     <OutlinksPanel kind="work-item" id={item.id} run={action} refreshKey={descriptionOutlinksKey} updating={descriptionSaveState === "saving" || descriptionSaveState === "updating"} onRefreshComplete={onDescriptionOutlinksRefreshComplete} />
-    <div role="group" className="flex w-full min-w-0 max-w-full flex-wrap gap-2" aria-label={t("workItems.actions")}>
+    <div role="group" className="flex w-full min-w-0 max-w-full flex-wrap gap-2 max-sm:grid max-sm:grid-cols-[auto_auto] max-sm:justify-start max-sm:[&>button]:whitespace-nowrap" aria-label={t("workItems.actions")}>
       {canWrite && <>
-        <button type="button" className="secondary" onClick={() => openAction("subItems")}>{t("workItems.addSubItemAction")}</button>
-        <button type="button" className="secondary" onClick={() => { setActiveForm("relations"); setCollapsed((current) => current.filter((value) => value !== "relations")); }}>{t("workItems.addRelationAction")}</button>
-        <button type="button" className="secondary" onClick={() => openAction("links")}>{t("workItems.addLinkAction")}</button>
-        <button type="button" className="secondary" onClick={() => { setActiveForm("attachments"); setCollapsed((current) => current.filter((value) => value !== "attachments")); attachmentPicker.current?.click(); }}>{t("workItems.attachAction")}</button>
+        <button type="button" className="rounded-md bg-transparent px-2 py-1 text-13 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={() => openAction("subItems")}>{t("workItems.addSubItemAction")}</button>
+        <button type="button" className="rounded-md bg-transparent px-2 py-1 text-13 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={() => { setActiveForm("relations"); setCollapsed((current) => current.filter((value) => value !== "relations")); }}>{t("workItems.addRelationAction")}</button>
+        <button type="button" className="rounded-md bg-transparent px-2 py-1 text-13 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={() => openAction("links")}>{t("workItems.addLinkAction")}</button>
+        <button type="button" className="rounded-md bg-transparent px-2 py-1 text-13 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={() => { setActiveForm("attachments"); setCollapsed((current) => current.filter((value) => value !== "attachments")); attachmentPicker.current?.click(); }}>{t("workItems.attachAction")}</button>
       </>}
     </div>
     {section("subItems", t("workItems.subItems"), subItems.length, <>

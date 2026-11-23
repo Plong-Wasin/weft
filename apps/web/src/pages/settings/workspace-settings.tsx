@@ -5,6 +5,7 @@ import { formatDate, translate } from "@weft/shared";
 import { useQuery } from "@tanstack/react-query";
 import { action } from "../../api";
 import { aiStatusKey, requestAiStatus } from "../../ai-status";
+import { useAiOffReason, useAiState } from "../../ai-flag";
 import { useWorkspace } from "../../layouts/workspace-layout";
 import { roles, type Member } from "../../types";
 import { Avatar, AgentLabel } from "../../avatar";
@@ -78,14 +79,14 @@ export function WorkspaceMembers() {
   return <section>
     <SettingsHeader title={translate("members.title")} description={translate("settings.membersDesc")} />
     <RowList>{members.map((member) => <Row key={member.userId}>
-      <Avatar name={member.name} id={member.userId} agent={member.isAgent} size="md" /><span className="grid min-w-0 flex-1"><span className="flex items-center gap-1.5 truncate font-medium">{member.name}{member.isAgent && <AgentLabel />}</span><span className="truncate text-13 text-secondary">{member.email}</span></span>
+      <Avatar name={member.name} id={member.userId} agent={member.isAgent} size="md" /><span className="grid min-w-[min(100%,14rem)] flex-1 gap-0.5"><span className="flex flex-wrap items-center gap-1.5 break-words font-medium">{member.name}{member.isAgent && <AgentLabel />}</span><span className="break-all text-13 text-secondary">{member.email}</span></span>
       {isAdmin && !member.isAgent ? <select aria-label={`${translate("settings.roleOf")} ${member.name}`} value={member.role} onChange={async (event) => guard(await action("change_member_role", { workspaceId: workspace.id, userId: member.userId, role: event.target.value }))}>
         {roles.map((role) => <option key={role} value={role}>{translate(`members.role.${role}`)}</option>)}
       </select> : <span className="text-secondary">{translate(`members.role.${member.role}`)}</span>}
-      {isAdmin && !member.isAgent && <button type="button" className="secondary" onClick={async () => guard(await action("remove_member", { workspaceId: workspace.id, userId: member.userId }))}>{translate("members.remove")}</button>}
+      {isAdmin && !member.isAgent && <button type="button" className="secondary hover:!text-danger-text" onClick={async () => { if (!window.confirm(translate("members.removeConfirm"))) return; await guard(await action("remove_member", { workspaceId: workspace.id, userId: member.userId })); }}>{translate("members.remove")}</button>}
     </Row>)}</RowList>
     <Note note={note} error />
-    {isAdmin && <MemberSecurityList workspaceId={workspace.id} selfId={selfId} onChanged={load} />}
+    {isAdmin && <div className="mt-8"><MemberSecurityList workspaceId={workspace.id} selfId={selfId} onChanged={load} /></div>}
   </section>;
 }
 
@@ -144,10 +145,14 @@ export function WorkspaceInvites() {
 /** Whether the AI is configured: provider, model, and key present or missing. The key itself never reaches the browser. */
 export function WorkspaceAi() {
   const { workspace } = useWorkspace();
-  const { data, isPending } = useQuery({ queryKey: aiStatusKey(workspace.id), queryFn: () => requestAiStatus(workspace.id) });
+  const aiState = useAiState();
+  const offReason = useAiOffReason();
+  // With AI off the status route answers 404, so the page explains the cause from /api/config instead of asking it.
+  const { data, isPending } = useQuery({ queryKey: aiStatusKey(workspace.id), queryFn: () => requestAiStatus(workspace.id), enabled: aiState === "on" });
+  if (aiState === "unknown") return null;
   return <section>
     <SettingsHeader title={translate("aiStatus.title")} description={translate("aiStatus.desc")} />
-    {isPending ? null : !data ? <p role="alert" className="text-danger-primary">{translate("aiStatus.unknown")}</p> : <>
+    {aiState === "off" ? <p role="status" data-testid="ai-off-reason" className="text-secondary">{translate(offReason === "switched_off" ? "aiStatus.off.switched_off" : "aiStatus.off.no_provider_key")}</p> : isPending ? null : !data ? <p role="alert" className="text-danger-primary">{translate("aiStatus.unknown")}</p> : <>
       <SettingsBlock>
         <RowList>
           <Row><span className="flex-1 text-secondary">{translate("aiStatus.provider")}</span><span data-testid="ai-provider" className="font-medium">{data.provider}</span></Row>

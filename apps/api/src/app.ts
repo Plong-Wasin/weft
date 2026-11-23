@@ -3,7 +3,7 @@ import { Type } from "@sinclair/typebox";
 import { cors } from "@elysiajs/cors";
 import { createMailerFromEnv, type Mailer, ActionError, AgentAccessDeniedError, actionRegistry, createActionList, createApiTokenActions, createRuntimeDispatchActions, aiWriteActions, HIDDEN_FROM_AI, skillWriteActions, createWorkspaceAction, registerAction, writeDecision, type ActionContext, type SignalBus, containsRuntimeSecretValue, openSecret, recordSecretOutputBlockedNotifications, withAgentRunProjectAuthorization, mintApiToken, DEFAULT_TOKEN_MS, CLI_DEVICE_INACTIVITY_MS, CLI_DEVICE_ROTATION_INTERVAL_MS, lockCliDeviceLifecycle, expireCliDeviceAuthorizations } from "@weft/actions";
 import { and, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
-import { agents, apiTokens, cliDevices, cliDeviceAuthorizations, collections, comments, createDatabase, oauthAccessToken, oauthClient, runs, runtimes, users, wikiPages, workItems, type Database } from "@weft/db";
+import { agents, apiTokens, cliDevices, cliDeviceAuthorizations, collections, comments, createDatabase, cycles, modules, oauthAccessToken, oauthClient, projectMembers, projects, runs, runtimes, users, wikiPages, workItems, workspaceMembers, type Database } from "@weft/db";
 import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
 import { createAuth, minimumPasswordLength, type AuthOptions } from "./auth";
 import { microsoftAuthSettings, microsoftEnabled } from "./microsoft-auth";
@@ -31,6 +31,54 @@ function setting(name: string, defaultValue: boolean) {
 }
 
 type LimitedSet = { status?: number | string; headers: Record<string, string | number | undefined> };
+
+async function requireAgentProjectMembership(database: Database, agentUserId: string, originatorId: string, runWorkspaceId: string, actionName: string, input: unknown) {
+  if (!input || typeof input !== "object") return;
+  const body = input as Record<string, unknown>;
+  const projectIds = new Set<string>();
+  if (typeof body.projectId === "string") projectIds.add(body.projectId);
+  if (Array.isArray(body.projectIds)) for (const id of body.projectIds) if (typeof id === "string") projectIds.add(id);
+  if (actionName === "request_export") {
+    if (body.workspaceId !== runWorkspaceId) throw new ActionError("Forbidden", 403);
+    if (!Array.isArray(body.projectIds)) {
+      const [membership] = await database.select({ role: workspaceMembers.role }).from(workspaceMembers)
+        .where(and(eq(workspaceMembers.workspaceId, runWorkspaceId), eq(workspaceMembers.userId, originatorId)));
+      const originatorProjects = membership?.role === "Admin"
+        ? await database.select({ id: projects.id }).from(projects).where(eq(projects.workspaceId, runWorkspaceId))
+        : await database.select({ id: projectMembers.projectId }).from(projectMembers)
+          .where(and(eq(projectMembers.workspaceId, runWorkspaceId), eq(projectMembers.userId, originatorId)));
+      for (const project of originatorProjects) projectIds.add(project.id);
+    }
+  }
+  if (typeof body.workItemId === "string") {
+    const [item] = await database.select({ projectId: workItems.projectId }).from(workItems).where(eq(workItems.id, body.workItemId));
+    if (item) projectIds.add(item.projectId);
+  }
+  if (Array.isArray(body.workItemIds)) {
+    const ids = body.workItemIds.filter((id): id is string => typeof id === "string");
+    if (ids.length) for (const item of await database.select({ projectId: workItems.projectId }).from(workItems).where(inArray(workItems.id, ids))) projectIds.add(item.projectId);
+  }
+  if (typeof body.commentId === "string") {
+    const [comment] = await database.select({ projectId: comments.projectId }).from(comments).where(eq(comments.id, body.commentId));
+    if (comment?.projectId) projectIds.add(comment.projectId);
+  }
+  if (typeof body.cycleId === "string") {
+    const [cycle] = await database.select({ projectId: cycles.projectId }).from(cycles).where(eq(cycles.id, body.cycleId));
+    if (cycle) projectIds.add(cycle.projectId);
+  }
+  if (typeof body.moduleId === "string") {
+    const [module] = await database.select({ projectId: modules.projectId }).from(modules).where(eq(modules.id, body.moduleId));
+    if (module) projectIds.add(module.projectId);
+  }
+  for (const projectId of projectIds) {
+    const [project] = await database.select({ workspaceId: projects.workspaceId }).from(projects).where(eq(projects.id, projectId));
+    if (!project) throw new ActionError("Project not found", 404);
+    if (project.workspaceId !== runWorkspaceId) throw new ActionError("Forbidden", 403);
+    const [member] = await database.select({ userId: projectMembers.userId }).from(projectMembers)
+      .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, agentUserId)));
+    if (!member) throw new ActionError("Project not found", 404);
+  }
+}
 
 /** Answers 429 with Retry-After. The body names the refusal code and the wait, so the web form can say how long to wait. */
 function limited(set: LimitedSet, code: string, retryAfterSeconds: number, error: string) {
@@ -785,10 +833,10 @@ export function createApp(
         // Converter work is charged to the user (a token is only a sub-limit of its user, so many tokens are still one caller); a caller without a user is keyed by address and workspace.
         const bodyWorkspace = (body as { workspaceId?: string } | null)?.workspaceId ?? "";
         const converterKey = caller.userId ? `user:${caller.userId}` : `ip:${clientAddress(request, Number(Bun.env.TRUSTED_PROXY_HOPS ?? 0))}:${bodyWorkspace}`;
-        // Project checks inside Actions must see the Agent's memberships. The Run guard above
-        // separately verifies that its Originator and Runtime owner still authorize the Run.
-        const actionCaller = caller.agent ? { ...caller, userId: caller.agent.agentUserId } : caller;
-        const executeAction = () => withWrittenFormKey(converterKey, () => (action.handler as (context: ActionContext, input: unknown) => Promise<unknown>)(actionCaller, body), (caller as { apiTokenId?: string }).apiTokenId);
+        const executeAction = async () => {
+          if (caller.agent) await requireAgentProjectMembership(db, caller.agent.agentUserId, caller.userId, caller.agent.workspaceId ?? "", action.name, body);
+          return withWrittenFormKey(converterKey, () => (action.handler as (context: ActionContext, input: unknown) => Promise<unknown>)(caller, body), (caller as { apiTokenId?: string }).apiTokenId);
+        };
         let result: unknown;
         if (caller.source === "agent" && caller.agent && action.kind === "read") {
           const guarded = await withAgentRunProjectAuthorization(db, caller.agent.runId, async (state) => {

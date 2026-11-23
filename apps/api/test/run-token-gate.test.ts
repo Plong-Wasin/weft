@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { activities, assets as assetRows, comments as commentRows, createDatabase, runs, workItems, type Database } from "@weft/db";
 import { createAgentActions, createAgentRuntimeEnvironmentActions, createCommentActions, createProjectActions, createRuntimeDispatchActions, createRuntimeActions, createTriggerActions, createWikiActions, createWorkItemActions, lockRuntimeRun } from "@weft/actions";
 import { createMemberFactory, withRollback } from "../../../packages/db/src/test-helpers";
@@ -118,6 +118,40 @@ test.concurrent("a Run token can write only in Projects the Agent belongs to, in
     expect((await post("/actions/update_work_item", { workItemId: otherItem.id, title: "Must fail" }, { token })).status).toBe(404);
     expect((await post("/actions/create_comment", { workItemId: otherItem.id, bodyMarkdown: "Must fail" }, { token })).status).toBe(404);
     expect((await post("/actions/update_work_item", { workItemId: foreignItem.id, title: "Must fail" }, { token })).status).toBe(403);
+  });
+});
+
+test.concurrent("a Run token needs both Originator access and Agent membership in the target Project", async () => {
+  await withRollback(db, async (transaction) => {
+    const { post, claim, owner, workspace, project, agent, agents, work } = await scenario(transaction);
+    const originator = await createMemberFactory(transaction, workspace.id, "Member");
+    const projects = createProjectActions(transaction);
+    await projects.addProjectMember.handler({ userId: owner.id }, { projectId: project.id, userId: originator.id, role: "Member" });
+    await agents.setAgentAccess.handler({ userId: owner.id }, { agentId: agent.id, userIds: [originator.id] });
+    const agentOnlyProject = await projects.createProject.handler({ userId: owner.id }, {
+      workspaceId: workspace.id, name: "Agent only", key: `AO${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private",
+    });
+    await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id, agentOnlyProject.id] });
+    const originatorItem = await work.createWorkItem.handler({ userId: originator.id }, { projectId: project.id, title: "Originator Run", assigneeIds: [agent.userId] });
+    const credentialRun = (await (await claim()).json() as Array<{ runId: string; workItemId: string; token: string }>).find((run) => run.workItemId === originatorItem.id)!;
+    const refused = await post("/actions/create_work_item", { projectId: agentOnlyProject.id, title: "Originator cannot write here" }, { token: credentialRun.token });
+    expect(refused.status).toBe(404);
+
+    const created = await (await post("/actions/create_work_item", { projectId: project.id, title: "Run-created item" }, { token: credentialRun.token })).json() as { id: string };
+    const [createdRow] = await transaction.select({ createdBy: workItems.createdBy }).from(workItems).where(eq(workItems.id, created.id));
+    expect(createdRow?.createdBy).toBe(originator.id);
+    const [createdActivity] = await transaction.select({ actorId: activities.actorId, originatorId: activities.originatorId, runId: activities.runId }).from(activities)
+      .where(eq(activities.entityId, created.id));
+    expect(createdActivity).toMatchObject({ actorId: agent.userId, originatorId: originator.id, runId: credentialRun.runId });
+
+    const commentResponse = await post("/actions/create_comment", { workItemId: originatorItem.id, bodyMarkdown: "Run attribution check" }, { token: credentialRun.token });
+    expect(commentResponse.status).toBe(200);
+    const [createdComment] = await transaction.select({ authorId: commentRows.authorId, runId: commentRows.runId }).from(commentRows)
+      .where(eq(commentRows.workItemId, originatorItem.id));
+    expect(createdComment).toEqual({ authorId: agent.userId, runId: credentialRun.runId });
+    const [commentActivity] = await transaction.select({ actorId: activities.actorId, originatorId: activities.originatorId, runId: activities.runId }).from(activities)
+      .where(and(eq(activities.entityId, originatorItem.id), eq(activities.field, "comment_added")));
+    expect(commentActivity).toMatchObject({ actorId: agent.userId, originatorId: originator.id, runId: credentialRun.runId });
   });
 });
 

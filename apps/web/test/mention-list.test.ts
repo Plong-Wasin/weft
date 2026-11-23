@@ -65,13 +65,13 @@ test("structured mentions render with an at sign and shared styling while plain 
 
 test("Wiki and rich-text editors use the shared mention popup behavior", () => {
   const wiki = src("wiki.tsx");
-  expect(wiki).toContain("render: mentionRender(\"wiki.mentionMembers\")");
+  expect(wiki).toContain("render: mentionRender(\"wiki.mentionMembers\", pluginKey)");
   expect(wiki).toContain('HTMLAttributes: { class: "mention" }');
   for (const name of ["comments-panel.tsx", "description-editor.tsx"]) {
     const text = src(name);
     expect(text).toContain('from "./mention-extension"');
     expect(text).toContain("mention: mentionExtension(peopleRef)");
   }
-  expect(src("mention-extension.ts")).toContain("render: mentionRender(\"wiki.mentionMembers\")");
+  expect(src("mention-extension.ts")).toContain("render: mentionRender(\"wiki.mentionMembers\", pluginKey)");
   expect(src("editor-extensions.ts")).toContain("suggestRender<");
 });

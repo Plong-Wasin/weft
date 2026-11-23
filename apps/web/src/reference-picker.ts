@@ -97,10 +97,11 @@ export const ReferencePicker = Extension.create<{ workspaceId: string }>({
     // Only the newest search may set the failed flag; an older one that finishes late is dropped.
     let latest = 0;
     let failed = false;
+    const pluginKey = new PluginKey("referencePicker");
     return [Suggestion<ReferenceHit, ReferenceHit>({
       editor: this.editor,
       char: "[[",
-      pluginKey: new PluginKey("referencePicker"),
+      pluginKey,
       // Titles have spaces, so the query runs on past them: "[[dark mode" searches for "dark mode".
       allowSpaces: true,
       allowedPrefixes: null,
@@ -123,6 +124,7 @@ export const ReferencePicker = Extension.create<{ workspaceId: string }>({
       },
       render: suggestRender<ReferenceHit>({
         label: "reference.picker",
+        pluginKey,
         group: referenceGroup,
         content: referenceContent,
         notice: (props) => props.loading ? "reference.loading" : failed ? "reference.failed" : props.items.length > 0 ? null : props.query.trim() ? "reference.empty" : "reference.hint",

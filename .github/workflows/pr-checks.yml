@@ -7,7 +7,22 @@ permissions:
   contents: read
 
 jobs:
-  checks:
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+
+  tests:
+    name: tests
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
@@ -32,7 +47,23 @@ jobs:
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
-      - run: bun run typecheck
       - run: bun run test:isolated --workers=2
         env:
           DATABASE_URL: postgres://weft:weft@localhost:54329/weft
+
+  checks:
+    name: checks
+    if: ${{ always() }}
+    needs: [typecheck, tests]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require typecheck and tests to pass
+        if: ${{ always() }}
+        env:
+          TYPECHECK_RESULT: ${{ needs.typecheck.result }}
+          TESTS_RESULT: ${{ needs.tests.result }}
+        run: |
+          printf 'typecheck: %s\ntests: %s\n' "$TYPECHECK_RESULT" "$TESTS_RESULT"
+          if [[ "$TYPECHECK_RESULT" != success || "$TESTS_RESULT" != success ]]; then
+            exit 1
+          fi

@@ -40,6 +40,16 @@ test.concurrent("workspace work items never include a private project the caller
   });
 });
 
+test.concurrent("workspace work item list skips archived Projects", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, admin, open, work } = await setup(transaction);
+    const item = await work.createWorkItem.handler({ userId: admin.id }, { projectId: open.id, title: "Archived project item" });
+    expect(titles(await work.listWorkspaceWorkItems.handler({ userId: admin.id }, { workspaceId: workspace.id }))).toContain(item.title);
+    await createProjectActions(transaction).archiveProject.handler({ userId: admin.id }, { projectId: open.id });
+    expect(titles(await work.listWorkspaceWorkItems.handler({ userId: admin.id }, { workspaceId: workspace.id }))).not.toContain(item.title);
+  });
+});
+
 test.concurrent("workspace Views return 2,000 work items at the limit and disclose additional matches", async () => {
   await withRollback(db, async (transaction) => {
     const { workspace, admin, open, work } = await setup(transaction);

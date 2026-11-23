@@ -36,6 +36,9 @@ export function TableControls({ editor, editable }: { editor: Editor | null; edi
   const menuRef = React.useRef<HTMLDivElement>(null);
   // Escape from a cell asks for the table grip; the grip may not be rendered yet, so it is focused after the next render.
   const focusCorner = React.useRef(false);
+  // Read by the editor's key handler, which is registered once per editor: an open menu takes Escape before the table corner does.
+  const menuOpen = React.useRef(false);
+  menuOpen.current = menu !== null;
 
   React.useEffect(() => {
     if (!editor || !editable) return;
@@ -62,11 +65,20 @@ export function TableControls({ editor, editable }: { editor: Editor | null; edi
     };
     const onLeaveWindow = (event: MouseEvent) => { if (!event.relatedTarget) setHover(null); };
     const onPointerDown = (event: PointerEvent) => {
+      // Any pointer-down outside the menu and its grips closes it, including a click in the page content.
       const target = event.target;
-      if (target instanceof Node && (root.current?.contains(target) || dom.contains(target))) return;
+      if (target instanceof Node && root.current?.contains(target)) return;
       setMenu(null);
     };
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && menuOpen.current) {
+        // The menu takes this Escape alone: no other Escape handler of the page or the editor runs for it.
+        event.preventDefault();
+        event.stopPropagation();
+        setMenu(null);
+        editor.view.focus();
+        return;
+      }
       // Escape leaves the table for its controls: Tab then walks the corner, grips and `+` buttons.
       // Capture phase: ProseMirror's own keydown handler runs on the same element and would otherwise take the key first.
       if (event.key !== "Escape" || event.defaultPrevented || suggestionOpen(editor) || !caretTable(editor)) return;
@@ -196,7 +208,7 @@ export function TableControls({ editor, editable }: { editor: Editor | null; edi
     const inside = next instanceof Node && !!root.current?.contains(next);
     setOverlayFocus(inside);
     if (!inside && !(next instanceof Node && editor.view.dom.contains(next))) setMenu(null);
-  }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); if (menu) closeMenu(); else editor.view.focus(); } }}>
+  }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); if (menu) { event.stopPropagation(); closeMenu(); } else editor.view.focus(); } }}>
     {overlay}
     {menuView}
   </div>;

@@ -42,9 +42,9 @@ test.concurrent("weft login issues a normal Personal API token that calls /actio
     expect(row?.status).toBe("active");
     expect(Date.parse(row!.expiresAt!) - Date.now()).toBeGreaterThan(29 * 24 * 60 * 60 * 1000);
     expect(Date.parse(row!.expiresAt!) - Date.now()).toBeLessThanOrEqual(30 * 24 * 60 * 60 * 1000);
-    // A second sign-in on the same machine replaces the first token.
+    // Legacy callbacks identify only a hostname, which may be shared by multiple machines.
     const again = await signIn(owner.cookie, "devbox");
-    expect((await call("/actions/list_projects", { workspaceId: workspace.id }, { bearer: cli })).status).toBe(401);
+    expect((await call("/actions/list_projects", { workspaceId: workspace.id }, { bearer: cli })).status).toBe(200);
     expect((await call("/actions/list_projects", { workspaceId: workspace.id }, { bearer: again })).status).toBe(200);
   });
 });
@@ -100,5 +100,47 @@ test.concurrent("register_daemon refuses a Daemon credential as the caller", asy
     const personal = (await (await call("/actions/create_api_token", { name: "cli" }, { cookie: owner.cookie })).json() as { token: string }).token;
     const registered = await (await call("/api/daemon/register", { hostname: "devbox", version: "1", agentClis: [] }, { bearer: personal })).json() as { daemonToken: string };
     expect((await call("/actions/register_daemon", { hostname: "devbox", version: "1", agentClis: [] }, { bearer: registered.daemonToken })).status).toBe(401);
+  });
+});
+
+test("Daemon WebSocket authenticates the handshake header, rejects revoked credentials, and still accepts legacy query credentials", async () => {
+  await withRollback(db, async (transaction) => {
+    const { app, call, signUp } = setup(transaction);
+    const owner = await signUp();
+    const personal = (await (await call("/actions/create_api_token", { name: "cli" }, { cookie: owner.cookie })).json() as { token: string }).token;
+    const registration = await (await call("/api/daemon/register", { hostname: "ws-auth", version: "1", agentClis: ["claude"] }, { bearer: personal })).json() as { daemonId: string; daemonToken: string };
+    app.listen(0);
+    const url = `ws://127.0.0.1:${app.server!.port}/api/daemon`;
+    const waitFor = <T>(socket: WebSocket, event: "open" | "message" | "close") => new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Timed out waiting for WebSocket ${event}`)), 2_000);
+      socket.addEventListener(event, (value) => { clearTimeout(timer); resolve(value as T); }, { once: true });
+    });
+    const connectAndHeartbeat = async (socket: WebSocket) => {
+      await waitFor(socket, "open");
+      const message = waitFor<MessageEvent>(socket, "message");
+      socket.send(JSON.stringify({ type: "heartbeat", runtimeIds: [] }));
+      return JSON.parse((await message).data as string) as { type: string };
+    };
+    const BunWebSocket = WebSocket as unknown as new (url: string, options: { headers: Record<string, string> }) => WebSocket;
+    try {
+      const headerSocket = new BunWebSocket(url, { headers: { Authorization: `Bearer ${registration.daemonToken}` } });
+      expect(await connectAndHeartbeat(headerSocket)).toMatchObject({ type: "heartbeat_ack" });
+      const legacySocket = new WebSocket(`${url}?token=${encodeURIComponent(registration.daemonToken)}`);
+      expect(await connectAndHeartbeat(legacySocket)).toMatchObject({ type: "heartbeat_ack" });
+
+      const invalidSocket = new BunWebSocket(`${url}?token=${encodeURIComponent(registration.daemonToken)}`, { headers: { Authorization: "Bearer weft_daemon_invalid" } });
+      await waitFor(invalidSocket, "open");
+      const invalidClose = await waitFor<CloseEvent>(invalidSocket, "close");
+      expect(invalidClose.code).toBe(1008);
+
+      const hash = Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(registration.daemonToken))).toString("hex");
+      await transaction.update(apiTokens).set({ revokedAt: new Date() }).where(eq(apiTokens.tokenHash, hash));
+      const revokedClose = waitFor<CloseEvent>(headerSocket, "close");
+      headerSocket.send(JSON.stringify({ type: "heartbeat", runtimeIds: [] }));
+      expect((await revokedClose).code).toBe(1008);
+      legacySocket.close();
+    } finally {
+      app.stop(true);
+    }
   });
 });

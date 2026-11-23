@@ -397,6 +397,69 @@ test.concurrent("builds a page tree and moves a page, refusing cycles", async ()
   });
 });
 
+test.concurrent("the stored sibling order is what the shared and project lists return", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, wiki, create } = await setup(tx);
+    const project = await createProjectActions(tx).createProject.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Docs", key: "DOC", visibility: "public" });
+    const p1 = await create(alice.id, "Project one", { projectId: project.id });
+    const p2 = await create(alice.id, "Project two", { projectId: project.id });
+    const p3 = await create(alice.id, "Project three", { projectId: project.id });
+    await wiki.moveWikiPage.handler({ userId: alice.id }, { pageId: p3.id, parentId: null, siblingId: p1.id, position: "before" });
+    expect((await wiki.listProjectWikiPages.handler({ userId: alice.id }, { projectId: project.id })).map((row) => row.title)).toEqual(["Project three", "Project one", "Project two"]);
+    await wiki.moveWikiPage.handler({ userId: alice.id }, { pageId: p1.id, parentId: null, siblingId: p2.id, position: "after" });
+    expect((await wiki.listProjectWikiPages.handler({ userId: alice.id }, { projectId: project.id })).map((row) => row.title)).toEqual(["Project three", "Project two", "Project one"]);
+    expect(p2.projectId).toBe(project.id);
+    // Pages shared with Bob come back in the same stored order, whichever way they were moved.
+    const first = await create(alice.id, "Shared first");
+    const second = await create(alice.id, "Shared second");
+    await wiki.shareWikiPage.handler({ userId: alice.id }, { pageId: first.id, userId: bob.id, role: "view" });
+    await wiki.shareWikiPage.handler({ userId: alice.id }, { pageId: second.id, userId: bob.id, role: "view" });
+    await wiki.moveWikiPage.handler({ userId: alice.id }, { pageId: second.id, parentId: null, siblingId: first.id, position: "before" });
+    expect((await wiki.listSharedWikiPages.handler({ userId: bob.id }, { workspaceId: workspace.id })).map((row) => row.title)).toEqual(["Shared second", "Shared first"]);
+  });
+});
+
+test.concurrent("moves a page before or after a sibling with the position parameter, and every list keeps the order", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, guest, wiki, create, titles } = await setup(tx);
+    const a = await create(alice.id, "A");
+    const b = await create(alice.id, "B");
+    const c = await create(alice.id, "C");
+    const move = (userId: string, input: Record<string, unknown>) => wiki.moveWikiPage.handler({ userId }, input as never);
+    // Before the first sibling, after the last, and in the middle.
+    await move(alice.id, { pageId: c.id, parentId: null, siblingId: a.id, position: "before" });
+    expect(await titles(alice.id)).toEqual(["C", "A", "B"]);
+    await move(alice.id, { pageId: a.id, parentId: null, siblingId: b.id, position: "after" });
+    expect(await titles(alice.id)).toEqual(["C", "B", "A"]);
+    await move(alice.id, { pageId: c.id, parentId: null, siblingId: a.id, position: "after" });
+    expect(await titles(alice.id)).toEqual(["B", "A", "C"]);
+    await move(alice.id, { pageId: b.id, parentId: null, siblingId: c.id, position: "after" });
+    expect(await titles(alice.id)).toEqual(["A", "C", "B"]);
+    // The order is stored, so another member and a fresh read see the same list.
+    expect((await wiki.listWikiPages.handler({ userId: alice.id }, { workspaceId: workspace.id })).map((row) => row.title)).toEqual(["A", "C", "B"]);
+    // Siblings under a parent: the position parameter places the page among that parent's children.
+    const parent = await create(alice.id, "Parent");
+    const first = await create(alice.id, "First", { parentId: parent.id });
+    const second = await create(alice.id, "Second", { parentId: parent.id });
+    const moved = await move(alice.id, { pageId: second.id, parentId: parent.id, siblingId: first.id, position: "before" });
+    expect(moved.parentId).toBe(parent.id);
+    expect((await wiki.listWikiPages.handler({ userId: alice.id }, { workspaceId: workspace.id })).filter((row) => row.parentId === parent.id).map((row) => row.title)).toEqual(["Second", "First"]);
+    // A position needs a sibling, the sibling must share the new parent, and a page cannot sit beside itself.
+    expect((await failure(move(alice.id, { pageId: b.id, parentId: null, position: "before" })))?.status).toBe(400);
+    expect((await failure(move(alice.id, { pageId: b.id, parentId: null, siblingId: first.id, position: "after" })))?.status).toBe(400);
+    expect((await failure(move(alice.id, { pageId: b.id, parentId: null, siblingId: b.id, position: "before" })))?.status).toBe(400);
+    // A sibling in another Collection is refused; the move must use the Collection confirmation instead.
+    const other = await wiki.createCollection.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Elsewhere" });
+    const outside = await create(alice.id, "Outside", { collectionId: other.id });
+    expect((await failure(move(alice.id, { pageId: b.id, parentId: null, siblingId: outside.id, position: "before" })))?.status).toBe(400);
+    // Only people who can see and edit the page may move it: a private page of someone else is not found, and a Guest cannot edit.
+    const secret = await create(alice.id, "Secret", { access: "private" });
+    expect((await failure(move(bob.id, { pageId: secret.id, parentId: null, siblingId: a.id, position: "before" })))?.status).toBe(404);
+    expect(await failure(move(guest.id, { pageId: b.id, parentId: null, siblingId: a.id, position: "before" }))).not.toBeNull();
+    expect(await titles(alice.id)).toContain("B");
+  });
+});
+
 test.concurrent("private pages are visible only to the owner; public to every member", async () => {
   await withRollback(db, async (tx) => {
     const { alice, bob, admin, guest, wiki, create, titles } = await setup(tx);

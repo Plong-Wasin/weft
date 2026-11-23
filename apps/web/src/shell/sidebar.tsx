@@ -1,4 +1,5 @@
 import { useIntegrationsEnabled } from "../integrations-flag";
+import { AiOnly } from "../ai-flag";
 import { adminState } from "../admin-state";
 import { useOutboundWebhooksEnabled } from "../outbound-webhooks-flag";
 import React from "react";
@@ -187,6 +188,11 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
   // Project mode: one project's settings. While the list loads the sections show at once; once it is loaded, a key that is not in it gets the Workspace mode list.
   const inProjectSettings = section === "settings" && Boolean(projectKey) && (data === undefined || projectList.some((project) => project.key === projectKey));
   const { data: favorites = [] } = useQuery({ queryKey: favoritesKey(workspace.id), queryFn: async () => await action<Array<{ id: string; title: string; projectId: string | null }>>("list_favorite_wiki_pages", { workspaceId: workspace.id }) ?? [], enabled: section === "work" || section === "wiki" });
+  // Favorites sit at the top of Work (under the primary links) and of Wiki (above the page tree); an empty list shows no heading.
+  const favoritesBlock = favorites.length > 0 ? <>
+    <p className={heading}>{translate("sidebar.favorites")}</p>
+    <ul className="grid gap-0.5">{favorites.map((page) => <li key={page.id}><NavLink to={page.projectId ? paths.page(workspace.slug, (data ?? []).find((project) => project.id === page.projectId)?.key ?? "", page.id) : paths.wikiPage(workspace.slug, page.id)} className={itemClass}><FileText aria-hidden size={14} /><span className="truncate">{page.title}</span></NavLink></li>)}</ul>
+  </> : null;
   return <nav aria-label={translate("shell.sidebar")} className="flex w-64 shrink-0 max-md:w-auto max-md:flex-1 max-md:border-r-0 flex-col gap-0.5 overflow-y-auto border-r border-subtle bg-surface-1 p-2">
     <InboxNavLink workspace={workspace} />
     {section === "work" && <>
@@ -194,24 +200,18 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       <NavLink to={paths.workspaceViews(workspace.slug)} className={itemClass}>{translate("views.title")}</NavLink>
       <NavLink to={paths.activeCycles(workspace.slug)} className={itemClass}>{translate("cycles.activeTitle")}</NavLink>
       {canSeeAnalytics && <NavLink to={paths.analytics(workspace.slug)} className={itemClass}>{translate("analytics.title")}</NavLink>}
+      {favoritesBlock}
       <label className="grid gap-1 px-2.5 pt-1 text-12 font-medium text-secondary">
         {translate("projects.find")}
         <input type="search" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder={translate("projects.searchPlaceholder")} className="min-w-0 px-2 py-1 text-13" />
       </label>
       <ProjectGroups workspace={workspace} projects={projectList} prefs={prefs} projectKey={projectKey} reorder={reorder} drag={drag} query={projectQuery} />
-      {favorites.length > 0 && <>
-        <p className={heading}>{translate("sidebar.favorites")}</p>
-        <ul className="grid gap-0.5">{favorites.map((page) => <li key={page.id}><NavLink to={page.projectId ? paths.page(workspace.slug, (data ?? []).find((project) => project.id === page.projectId)?.key ?? "", page.id) : paths.wikiPage(workspace.slug, page.id)} className={itemClass}><FileText aria-hidden size={14} /><span className="truncate">{page.title}</span></NavLink></li>)}</ul>
-      </>}
     </>}
     {section === "wiki" && <>
+      {favoritesBlock}
       <WikiSidebar workspace={workspace} selfId={selfId} />
-      {favorites.length > 0 && <>
-        <p className={heading}>{translate("sidebar.favorites")}</p>
-        <ul className="grid gap-0.5">{favorites.map((page) => <li key={page.id}><NavLink to={page.projectId ? paths.page(workspace.slug, (data ?? []).find((project) => project.id === page.projectId)?.key ?? "", page.id) : paths.wikiPage(workspace.slug, page.id)} className={itemClass}><FileText aria-hidden size={14} /><span className="truncate">{page.title}</span></NavLink></li>)}</ul>
-      </>}
     </>}
-    {section === "ai" && <AiSidebar workspace={workspace} activeId={aiChatId} />}
+    {section === "ai" && <AiOnly><AiSidebar workspace={workspace} activeId={aiChatId} /></AiOnly>}
     {inProjectSettings && projectKey && <>
       <NavLink to={paths.workspaceSettings(workspace.slug)} className={(state) => `${itemClass(state)} mb-2`}><ArrowLeft aria-hidden size={14} className="shrink-0" />{translate("sidebar.backToWorkspace")}</NavLink>
       <SettingsProjectNav workspace={workspace} projects={[...projectSort.starred, ...projectSort.others]} projectKey={projectKey} />
@@ -229,7 +229,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       <NavLink to={paths.workspaceSkills(workspace.slug)} className={itemClass}>{translate("settings.skills")}</NavLink>
       <NavLink to={paths.workspaceExports(workspace.slug)} className={itemClass}>{translate("settings.exports")}</NavLink>
       {isWorkspaceAdmin && <NavLink to={paths.workspaceUsage(workspace.slug)} className={itemClass}>{translate("settings.usage")}</NavLink>}
-      <NavLink to={paths.workspaceAi(workspace.slug)} className={itemClass}>{translate("aiStatus.title")}</NavLink>
+      <AiOnly><NavLink to={paths.workspaceAi(workspace.slug)} className={itemClass}>{translate("aiStatus.title")}</NavLink></AiOnly>
       {integrationsOn && <NavLink to={paths.workspaceIntegrations(workspace.slug)} className={itemClass}>{translate("integrations.title")}</NavLink>}
       {webhooksOn && <NavLink to={paths.workspaceWebhooks(workspace.slug)} className={itemClass}>{translate("outboundWebhooks.nav")}</NavLink>}
       <NavLink to={paths.workspaceProjectOrder(workspace.slug)} className={itemClass}>{translate("settings.projectOrder")}</NavLink>

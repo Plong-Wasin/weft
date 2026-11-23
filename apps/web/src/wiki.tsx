@@ -1,5 +1,6 @@
 import { api, liveUrl } from "./api";
 import { SidecarTrigger } from "./sidecar";
+import { AiOnly } from "./ai-flag";
 import React from "react";
 import { EditorContent, useEditor } from "@tiptap/react";
 import Collaboration from "@tiptap/extension-collaboration";
@@ -24,7 +25,7 @@ import { MenuItem, Popover } from "./shell/popover";
 import { Dialog, DialogActions } from "./dialog";
 import { TableControls } from "./table-controls";
 import { addRowAfter, goToNextCell } from "@tiptap/pm/tables";
-import { TextSelection } from "@tiptap/pm/state";
+import { PluginKey, TextSelection } from "@tiptap/pm/state";
 import type { WikiPaperSize } from "./wiki-pdf";
 import { WikiBubbleMenu } from "./wiki-bubble-menu";
 import { WikiBlockControls } from "./wiki-block-controls";
@@ -90,12 +91,15 @@ async function call<T>(name: string, body: unknown): Promise<T | null> {
 
 
 function pageMentions(people: React.RefObject<Member[]>) {
+  // The key is shared with the list, so an outside pointer-down can exit this suggestion.
+  const pluginKey = new PluginKey("mentionSuggestion");
   return Mention.configure({
     HTMLAttributes: { class: "mention" },
     suggestion: {
       char: "@",
+      pluginKey,
       items: ({ query }: { query: string }) => (people.current ?? []).filter((person) => person.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())).sort((a, b) => Number(!!a.isAgent) - Number(!!b.isAgent) || a.name.localeCompare(b.name)).slice(0, 8).map(({ userId, name, isAgent, codeCapable }) => ({ id: userId, label: name, isAgent, codeCapable })),
-      render: mentionRender("wiki.mentionMembers"),
+      render: mentionRender("wiki.mentionMembers", pluginKey),
     },
   });
 }
@@ -819,7 +823,7 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
   return <section aria-label={translate("wiki.title")} className="grid gap-4">
     <nav aria-label={translate("wiki.breadcrumb")} className="flex items-center gap-1 text-13 text-secondary">
       <Link to={back} className="hover:underline">{translate(projectKey ? "projectNav.pages" : "wiki.title")}</Link><ChevronRight aria-hidden size={12} /><span className="text-primary">{page.title}</span>
-      <span className="ml-auto flex items-center gap-2"><button type="button" className="secondary" aria-pressed={isFavorite} aria-label={translate(isFavorite ? "wiki.unfavorite" : "wiki.favorite")} title={translate(isFavorite ? "wiki.unfavorite" : "wiki.favorite")} onClick={() => void toggleFavorite()}><Heart aria-hidden size={14} fill={isFavorite ? "currentColor" : "none"} /></button><SidecarTrigger context={{ type: "wiki_page", id: page.id, title: page.title }} /></span>
+      <span className="ml-auto flex items-center gap-2"><button type="button" className="secondary" aria-pressed={isFavorite} aria-label={translate(isFavorite ? "wiki.unfavorite" : "wiki.favorite")} title={translate(isFavorite ? "wiki.unfavorite" : "wiki.favorite")} onClick={() => void toggleFavorite()}><Heart aria-hidden size={14} fill={isFavorite ? "currentColor" : "none"} /></button><AiOnly><SidecarTrigger context={{ type: "wiki_page", id: page.id, title: page.title }} /></AiOnly></span>
     </nav>
     {failed && <p role="alert">{translate("wiki.failed")}</p>}
     {page.archived && <p role="status" className="text-secondary">{translate("pages.archivedReadOnly")}</p>}

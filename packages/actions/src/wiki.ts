@@ -197,7 +197,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         .where(and(eq(projectMembers.projectId, page.projectId), eq(projectMembers.userId, userId)));
       if (projectAccess.project.workspaceId !== page.workspaceId || (!membership && !(options.allowWorkspaceAdmin && projectAccess.workspaceRole === "Admin"))) throw new ActionError("Wiki page not found", 404);
       assertFeatureEnabled(projectAccess.project, "pages");
-      canWrite = canWrite && (projectAccess.workspaceRole === "Admin" || projectAccess.projectRole !== "Guest");
+      canWrite = canWrite && !projectAccess.project.archivedAt && (projectAccess.workspaceRole === "Admin" || projectAccess.projectRole !== "Guest");
     }
     if (page.access === "private" && page.ownerId !== userId && !shareRole) throw new ActionError("Wiki page not found", 404);
     if (!page.projectId && page.ownerId !== userId && shareRole === null && page.access !== "public") throw new ActionError("Wiki page not found", 404);

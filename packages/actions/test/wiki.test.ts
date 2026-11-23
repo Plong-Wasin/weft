@@ -381,6 +381,22 @@ test.concurrent("duplicates a visible page in place, copies its image assets, an
   });
 });
 
+test.concurrent("Wiki page access is read-only when its Project is archived", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, wiki } = await setup(tx);
+    const projects = createProjectActions(tx);
+    const project = await projects.createProject.handler({ userId: alice.id }, {
+      workspaceId: workspace.id, name: "Docs", key: "DOC", visibility: "public",
+    });
+    await projects.addProjectMember.handler({ userId: alice.id }, { projectId: project.id, userId: bob.id, role: "Member" });
+    const page = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, projectId: project.id, title: "Guide" });
+
+    expect(await wiki.getWikiPageAccess.handler({ userId: bob.id }, { pageId: page.id })).toEqual({ canRead: true, canWrite: true, locked: false });
+    await projects.archiveProject.handler({ userId: alice.id }, { projectId: project.id });
+    expect(await wiki.getWikiPageAccess.handler({ userId: bob.id }, { pageId: page.id })).toEqual({ canRead: true, canWrite: false, locked: false });
+  });
+});
+
 test.concurrent("builds a page tree and moves a page, refusing cycles", async () => {
   await withRollback(db, async (tx) => {
     const { alice, wiki, create } = await setup(tx);

@@ -78,7 +78,11 @@ try {
     }
     if (properties) {
       await dialog.getByLabel(translate("workItems.assignees")).selectOption(userRow!.id);
-      await dialog.getByLabel(translate("workItems.labels")).selectOption(createdLabel.id);
+      const labels = dialog.getByRole("button", { name: new RegExp(`^${translate("workItems.labels")}:`) });
+      await labels.click();
+      await page.getByRole("searchbox", { name: translate("picker.search"), exact: true }).fill("E2E label");
+      await page.getByRole("menuitemcheckbox", { name: "E2E label", exact: true }).click();
+      await dialog.getByRole("button", { name: new RegExp(`^${translate("workItems.labels")}: .*E2E label`) }).waitFor();
       await dialog.getByLabel(translate("workItems.dueDate")).fill("2030-05-06");
     }
     if (attach) {
@@ -161,7 +165,7 @@ try {
   await detail.getByTestId("comment-editor").locator('[contenteditable="true"]').fill("Keep the draft");
   await detail.getByRole("button", { name: translate("comments.add"), exact: true }).click();
   await detail.getByText("Keep the draft", { exact: true }).waitFor();
-  await detail.getByLabel(translate("workItems.labels")).selectOption(createdLabel.id);
+  await detail.getByRole("button", { name: new RegExp(`^${translate("workItems.labels")}: .*E2E label`) }).waitFor();
   await detail.getByLabel(translate("workItems.dueDate")).fill("2030-05-07");
   await page.reload();
   await page.getByTestId("intake-MOB-1").click();
@@ -213,7 +217,7 @@ try {
   await expectValue(reopened.getByLabel(translate("intake.priority")), "high", "reopened priority");
   await expectValue(reopened.getByLabel(translate("workItems.dueDate")), "2030-05-08", "reopened due date");
   check(JSON.stringify(await reopened.getByLabel(translate("workItems.assignees")).evaluate((node: HTMLSelectElement) => [...node.selectedOptions].map((option) => option.value))) === JSON.stringify([userRow!.id]), "assignee did not survive reload");
-  check(JSON.stringify(await reopened.getByLabel(translate("workItems.labels")).evaluate((node: HTMLSelectElement) => [...node.selectedOptions].map((option) => option.value))) === JSON.stringify([createdLabel.id]), "label did not survive reload");
+  check((await reopened.getByRole("button", { name: new RegExp(`^${translate("workItems.labels")}: .*E2E label`) }).count()) === 1, `label did not survive reload (${createdLabel.id})`);
   await reopened.getByTestId("description-editor").locator("strong").getByText("Updated request").waitFor();
   await submit("Export to CSV");
   await submit("Slow search");

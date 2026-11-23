@@ -2,6 +2,7 @@
 // it filters by name, a message shows when nothing matches, and ArrowUp, ArrowDown, Enter and Escape work without the mouse.
 // Small pickers (Priority) keep no search field; the Assignee picker (eight People and Agents) searches, labels its groups and keeps a disabled Agent's reason. Run with `bun e2e/picker-search.e2e.ts`.
 import { chromium } from "playwright";
+import { mkdirSync } from "node:fs";
 import { like } from "drizzle-orm";
 import { createDatabase, projectMembers, users, workspaceMembers, workspaces } from "../packages/db/src";
 import { createAgentActions } from "../packages/actions/src";
@@ -177,6 +178,29 @@ try {
   await page.keyboard.press("Escape");
   await panel.waitFor({ state: "detached" });
   await sidebar.getByRole("button", { name: new RegExp(`^${t("workItems.assignees")}: .*${targetName}`) }).waitFor();
+
+  // Large label sets remain searchable, and filtering does not clear selections made before the query changed.
+  for (let index = 1; index <= 243; index++) await call("create_label", { projectId: project.id, name: `Long-tail ${String(index).padStart(3, "0")}` });
+  await page.reload();
+  const labelsTrigger = sidebar.getByRole("button", { name: new RegExp(`^${t("workItems.labels")}:`) });
+  await labelsTrigger.click();
+  await searchField.fill("Long-tail 243");
+  check(await panel.getByRole("menuitemcheckbox").count() === 1, "a 250-label picker should narrow to one matching option");
+  await page.keyboard.press("Escape");
+  await labelsTrigger.click();
+  await searchField.fill("Charlie");
+  check(await panel.getByRole("menuitemcheckbox", { name: "Charlie", exact: true }).getAttribute("aria-checked") === "true", "filtering a selected label should keep it selected");
+  mkdirSync("/home/plong/workspace/weft/.local/continuous-improvements/labels-keyboard", { recursive: true });
+  await page.screenshot({ path: "/home/plong/workspace/weft/.local/continuous-improvements/labels-keyboard/labels-1440.png", fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${web}/${slug}/projects/POP/intake`);
+  await page.getByRole("button", { name: t("intake.add"), exact: true }).click();
+  const intakeDialog = page.getByRole("dialog");
+  await intakeDialog.getByRole("button", { name: new RegExp(`^${t("workItems.labels")}:`) }).click();
+  await page.getByRole("searchbox", { name: t("picker.search"), exact: true }).fill("Long-tail 243");
+  await panel.getByRole("menuitemcheckbox", { name: /Long-tail 243/ }).waitFor();
+  await page.screenshot({ path: "/home/plong/workspace/weft/.local/continuous-improvements/labels-keyboard/labels-390.png", fullPage: false });
+  await page.keyboard.press("Escape");
   console.log("e2e picker-search: search above six options, focus, filter, empty message, arrows, Enter, Escape, Assignee People/Agents, disabled Agent reason and no field on Priority ok");
   await browser.close();
 } catch (error) {

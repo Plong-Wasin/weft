@@ -328,7 +328,7 @@ export function CycleDetailPage({ workspaceId, workspaceSlug, projectKey, projec
       <div className="min-w-0 flex-1">
         <h4 className="mb-2 mt-0 text-14 font-semibold">{t("cycles.workItems")}</h4>
         <WorkItemLayouts projectId={projectId} workspaceSlug={workspaceSlug} action={action} run={runQuery} refreshKey={refreshKey} cycleId={cycleId}
-          rowAction={canWrite && !cycle.archived ? (item) => <button className="secondary" onClick={() => void remove(item.id)}>{t("cycles.remove")}</button> : undefined} />
+          rowAction={canWrite && !cycle.archived ? (item) => <button className="secondary whitespace-nowrap px-2 py-1 text-12" onClick={() => void remove(item.id)}>{t("cycles.remove")}</button> : undefined} />
       </div>
       <aside aria-label={t("cycles.details")} className="grid h-fit gap-4 rounded-lg border border-subtle p-4 lg:w-80 lg:shrink-0">
         <section className="grid gap-2" aria-label={t("workItems.description")}><h3 className="m-0 text-14 font-semibold">{t("workItems.description")}</h3><EntityDescription key={cycle.id} action={action} workspaceId={workspaceId} owner={{ ownerType: "cycle", ownerId: cycle.id }} mentionPeople={mentionPeople} initial={cycle.description ?? null} editable={canWrite && !cycle.archived} /></section>

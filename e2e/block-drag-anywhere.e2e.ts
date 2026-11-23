@@ -57,6 +57,8 @@ try {
   await page.getByLabel(translate("workspace.name")).fill("Block drag team");
   await page.getByLabel(translate("workspace.slug")).fill(slug);
   await page.getByRole("button", { name: translate("workspace.create") }).click();
+  // The workspace exists once the app opens its route; reading the account before that can miss it.
+  await page.waitForURL(new RegExp(`/${slug}(/|$)`));
   const me = await (await context.request.get(`${api}/api/me`)).json() as { workspaces: Array<{ id: string }> };
   const workspaceId = me.workspaces[0]!.id;
 

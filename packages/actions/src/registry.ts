@@ -15,6 +15,7 @@ import { createExportActions } from "./exports";
 import { createIntakeActions } from "./intake";
 import { createLocaleActions } from "./locale";
 import { createEmailPreferenceActions } from "./email-preferences";
+import { createAiPreferenceActions } from "./ai-preferences";
 import { createModuleActions } from "./modules";
 import { createMemberActions } from "./members";
 import { createNotificationActions } from "./notifications";
@@ -59,6 +60,7 @@ export function createActionList(db: Database, options: { integrations?: boolean
   const inbox = createNotificationActions(db);
   const locale = createLocaleActions(db);
   const emailPreferences = createEmailPreferenceActions(db);
+  const aiPreferences = createAiPreferenceActions(db);
   const cycles = createCycleActions(db);
   const modules = createModuleActions(db);
   const intake = createIntakeActions(db);
@@ -119,6 +121,7 @@ export function createActionList(db: Database, options: { integrations?: boolean
     views.createView, views.updateView, views.deleteView, views.listViews, views.getView, views.createWorkspaceView, views.listWorkspaceViews,
     locale.getMyLocale, locale.setMyLocale,
     emailPreferences.getMyEmailPreferences, emailPreferences.setMyEmailPreferences,
+    aiPreferences.getMyAiPreferences, aiPreferences.setMyAiPreferences,
     agents.listAgents, agents.listManageableAgentAccess, agents.listAgentsForViewer, agents.setAgentRuntimeProfile, agents.getAgent, agents.createAgent, agents.updateAgent, agents.enableAgent, agents.disableAgent, agents.deleteAgent, agents.getAgentContentCounts, agents.setAgentProjectAccess, agents.setAgentAccess, agents.setAgentSkills, runtimeEnvironment.getAgentRuntimeEnvironment, runtimeEnvironment.getAgentRuntimeEnvironmentClassifications, runtimeEnvironment.getAgentRuntimeEnvironmentEditor, runtimeEnvironment.setAgentRuntimeEnvironment, runtimeEnvironment.updateAgentRuntimeEnvironment, runtimeEnvironment.classifyAgentRuntimeEnvironment,
     runtimes.registerDaemon, runtimes.listRuntimes, runtimes.listRuntimeProfiles, runtimes.createRuntimeProfile, runtimes.updateRuntimeProfile, runtimes.deleteRuntimeProfile, runtimes.deleteRuntime, runtimes.setRuntimeSandboxEnforcement, runtimes.shareRuntime, runtimes.unshareRuntime,
     analytics.getAnalyticsSummary, analytics.getAnalyticsInsights, analytics.getAnalyticsOverview, analytics.getCreatedVsResolved,

@@ -17,7 +17,7 @@ afterAll(async () => client.end());
  */
 
 /** Actions that only touch the caller's own data, so they legitimately succeed for any signed-in user. */
-const ownDataActions = new Set(["create_api_token", "list_api_tokens", "list_managed_credentials", "list_cli_devices", "revoke_cli_device", "revoke_api_token", "list_authorized_apps", "revoke_authorized_app", "get_my_locale", "set_my_locale", "list_notifications", "mark_notification_read", "mark_notification_unread", "mark_all_notifications_read", "unread_notification_count", "list_my_sessions", "revoke_my_session", "sign_out_everywhere", "acknowledge_security_notice", "get_my_email_preferences", "set_my_email_preferences"]);
+const ownDataActions = new Set(["create_api_token", "list_api_tokens", "list_managed_credentials", "list_cli_devices", "revoke_cli_device", "revoke_api_token", "list_authorized_apps", "revoke_authorized_app", "get_my_locale", "set_my_locale", "list_notifications", "mark_notification_read", "mark_notification_unread", "mark_all_notifications_read", "unread_notification_count", "list_my_sessions", "revoke_my_session", "sign_out_everywhere", "acknowledge_security_notice", "get_my_email_preferences", "set_my_email_preferences", "get_my_ai_preferences", "set_my_ai_preferences"]);
 /** Succeeds or fails on a bearer secret rather than on membership. */
 const bearerSecretActions = new Set(["accept_invite", "register_daemon"]);
 

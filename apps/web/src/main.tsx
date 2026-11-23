@@ -29,6 +29,7 @@ import { ConnectAiSettings } from "./pages/settings/connect-ai-settings";
 import { AccountApiTokensRoute, ApiTokensPage } from "./pages/settings/api-tokens";
 import { SessionsPage } from "./pages/account-security";
 import { AccountNotificationsPage } from "./pages/settings/email-settings";
+import { AccountPreferencesPage } from "./pages/settings/account-preferences";
 import { OAuthConsentPage } from "./pages/oauth-consent";
 import { CliDeviceApprovalPage } from "./pages/cli-device-approval";
 import { ShortcutsPage } from "./pages/shortcuts-page";
@@ -82,6 +83,7 @@ function AppRoutes() {
       <Route path="account/sessions" element={<SessionsPage />} />
       <Route path="account/password" element={null} />
       <Route path="account/notifications" element={<AccountNotificationsPage />} />
+      <Route path="account/preferences" element={<AccountPreferencesPage />} />
       <Route path="reset-password" element={null} />
       <Route path="account/shortcuts" element={<ShortcutsPage />} />
       <Route index element={<HomeRedirect />} />

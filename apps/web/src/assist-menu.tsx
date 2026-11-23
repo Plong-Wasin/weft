@@ -5,7 +5,8 @@ import { translate, type MessageKey } from "@weft/shared";
 import { aiStatusKey, requestAiStatus } from "./ai-status";
 import { AiOnly } from "./ai-flag";
 import { suggestionOpen } from "./editor-extensions";
-import { ASSIST_TASKS, createAssistSession, hasNonTextContent, insertBelow, markAssistRange, replaceSelection, getAssistRange, type AssistTask, type AssistView } from "./editor-assist";
+import { useShowAiSelectionMenu } from "./ai-preferences";
+import { ASSIST_OPEN_EVENT, ASSIST_TASKS, createAssistSession, hasNonTextContent, insertBelow, markAssistRange, replaceSelection, getAssistRange, type AssistTask, type AssistView } from "./editor-assist";
 
 const buttonClass = "secondary !px-2 !py-1 !text-12";
 
@@ -104,6 +105,19 @@ function AssistMenuFor({ editor, workspaceId }: { editor: Editor; workspaceId: s
   // it stays until Discard, Replace, Insert or Escape.
   const [pickerHidden, setPickerHidden] = React.useState(false);
   React.useEffect(() => setPickerHidden(false), [key]);
+  // The person can switch the floating menu off. The slash command and Mod-Shift-J still open the task picker for the selection: they name the selection they opened it for.
+  const showSelectionMenu = useShowAiSelectionMenu();
+  const [openedFor, setOpenedFor] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    const onOpen = (event: Event) => {
+      if ((event as CustomEvent<{ view: unknown }>).detail.view !== editor.view) return;
+      const selection = editor.state.selection;
+      setOpenedFor(`${selection.from}:${selection.to}:${editor.isEditable}`);
+      setPickerHidden(false);
+    };
+    document.addEventListener(ASSIST_OPEN_EVENT, onOpen);
+    return () => document.removeEventListener(ASSIST_OPEN_EVENT, onOpen);
+  }, [editor]);
   const idle = view.status === "idle";
   React.useEffect(() => {
     if (!idle) return;
@@ -111,7 +125,7 @@ function AssistMenuFor({ editor, workspaceId }: { editor: Editor; workspaceId: s
     document.addEventListener("mousedown", onPointerDown);
     return () => document.removeEventListener("mousedown", onPointerDown);
   }, [idle]);
-  const pickerShown = idle && hasSelection && !pickerHidden;
+  const pickerShown = idle && hasSelection && !pickerHidden && (showSelectionMenu || openedFor === key);
   // Escape closes the preview (discarding it) or else the task picker. Bubble phase, after ProseMirror, which prevents the default of every Escape
   // in the editor, so the default is not checked here. An open suggestion list or table menu stops the event before it reaches this listener.
   React.useEffect(() => {

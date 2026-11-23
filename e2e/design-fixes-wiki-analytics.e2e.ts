@@ -90,6 +90,20 @@ try {
   check((await resolvedItem.getByRole("button", { name: translate("wiki.comments.reply"), exact: true }).count()) === 0, "a resolved thread must not offer Reply");
   console.log("wiki comment reply ok: resolved thread has no Reply");
 
+  // Each thread shows one text action (Reply); Resolve and Edit live in a "more" menu.
+  check((await openItem.getByRole("button", { name: translate("wiki.comments.resolve"), exact: true }).count()) === 0, "Resolve must not be a visible button in the thread row");
+  check((await openItem.getByRole("button", { name: translate("wiki.comments.edit"), exact: true }).count()) === 0, "Edit must not be a visible button in the thread row");
+  await openItem.getByRole("button", { name: translate("wiki.comments.more"), exact: true }).click();
+  await page.getByRole("menuitem", { name: translate("wiki.comments.resolve"), exact: true }).click();
+  await openItem.getByRole("button", { name: translate("wiki.comments.reply"), exact: true }).waitFor({ state: "detached" }); // resolving from the menu removes Reply
+  await openItem.getByRole("button", { name: translate("wiki.comments.more"), exact: true }).click();
+  await page.getByRole("menuitem", { name: translate("wiki.comments.reopen"), exact: true }).click();
+  await openItem.getByRole("button", { name: translate("wiki.comments.reply"), exact: true }).waitFor();
+  await openItem.getByRole("button", { name: translate("wiki.comments.more"), exact: true }).click();
+  await page.getByRole("menuitem", { name: translate("wiki.comments.edit"), exact: true }).click();
+  await page.getByRole("textbox", { name: translate("wiki.comments.edit"), exact: true }).waitFor();
+  console.log("wiki comment menu ok: resolve, reopen and edit reachable from more");
+
   // Phone width: the long title wraps, and no route scrolls the page sideways.
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${web}/${slug}/wiki/${pageId}`);

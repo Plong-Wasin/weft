@@ -135,7 +135,7 @@ export function AnalyticsOverviewPage({ workspaceId, workspaceSlug, run }: { wor
     {state === "failed" && <p role="alert" className="m-0 text-danger-text">{t("analytics.failed")}</p>}
     {typeof state === "object" && state !== null && <>
       <SummaryCards summary={state.summary} />
-      {state.projects.length === 0 ? <p className="m-0 text-secondary">{t("analytics.noProjects")}</p> : <div className="grid min-w-0 gap-3 rounded-lg border border-subtle p-3">
+      {state.projects.length === 0 ? <p className="m-0 text-secondary">{t("analytics.noProjects")}</p> : <div className="grid min-w-0 gap-3">
         <h2 className="m-0 text-16 font-semibold">{t("analytics.projectList")}</h2>
         <ul className="m-0 grid list-none gap-1 p-0">
           <li aria-hidden className="grid grid-cols-[minmax(0,1fr)_4rem_4rem_5rem] gap-3 text-12 text-secondary max-md:grid-cols-[minmax(0,1fr)_3rem_3rem_3.5rem]"><span>{t("analytics.projects")}</span><span className="text-right">{t("analytics.total")}</span><span className="text-right">{t("analytics.open")}</span><span className="text-right">{t("analytics.completed")}</span></li>
@@ -184,11 +184,11 @@ export function AnalyticsPage({ workspaceId, workspaceSlug, action, run }: { wor
     {typeof state === "object" && state !== null && <>
       <SummaryCards summary={state.summary} />
       {empty ? <p className="m-0 text-secondary">{t("analytics.empty")}</p> : <>
-      <div className="grid min-w-0 gap-3 rounded-lg border border-subtle p-3">
+      <div className="grid min-w-0 gap-3">
         <h2 className="m-0 text-16 font-semibold">{t("analytics.createdVsResolved")}</h2>
         {state.months.length === 0 ? <p className="m-0 text-secondary">{t("analytics.noData")}</p> : <CreatedVsResolved months={state.months} />}
       </div>
-      <div className="grid min-w-0 gap-3 rounded-lg border border-subtle p-3">
+      <div className="grid min-w-0 gap-3">
         <h2 className="m-0 text-16 font-semibold">{t("analytics.insights")}</h2>
         <div className="flex flex-wrap items-center gap-3">
           <label className="flex items-center gap-2 text-13 text-secondary">{t("analytics.xAxis")}

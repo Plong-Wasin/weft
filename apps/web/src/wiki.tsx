@@ -16,7 +16,7 @@ import { AssistMenu } from "./assist-menu";
 import { AiAssist } from "./editor-assist";
 import { BlockKeyboardShortcuts, CodeBlockCopy, EditorPlaceholder, EmojiSuggestions, ListIndent, MarkdownPaste, SafeLinkClick, SlashMenu, surfaceEditorExtensions, wikiCommands } from "./editor-extensions";
 import { Link, useNavigate, useSearchParams } from "react-router";
-import { MoreHorizontal, FileText, Heart, Globe, ChevronRight, Plus, Lock, PanelRight, X, Download, Upload, FileDown, Maximize2, Code, Clock, FilePlus, Archive, Trash2, Pencil, EyeOff } from "lucide-react";
+import { Check, MoreHorizontal, FileText, Heart, Globe, ChevronRight, Plus, Lock, PanelRight, X, Download, Upload, FileDown, Maximize2, Code, Clock, FilePlus, Archive, Trash2, Pencil, EyeOff } from "lucide-react";
 import { paths } from "./routes";
 import { useInboxNotificationOpen } from "./inbox";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -512,10 +512,14 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
             <input aria-label={`${translate("wiki.comments.replyTo")} ${thread.authorName}`} autoFocus value={replyText} onChange={(event) => setReplyText(event.target.value)} />
             <div className="flex gap-1 [&_button]:!px-2 [&_button]:!py-0.5 [&_button]:!text-12"><button type="submit" disabled={!replyText.trim()}>{translate("wiki.comments.send")}</button><button type="button" className="secondary" onClick={closeReply}>{translate("comments.cancel")}</button></div>
           </form>}
-          <div className="flex flex-wrap gap-1 [&_button]:!px-2 [&_button]:!py-0.5 [&_button]:!text-12">
-            {!thread.resolved && <button type="button" className="secondary" onClick={() => { setReplyText(""); setReplyTo(thread.id); }}>{translate("wiki.comments.reply")}</button>}
-            <button type="button" className="secondary" onClick={() => void call("resolve_wiki_page_comment", { commentId: thread.id, resolved: !thread.resolved }).then(() => loadThreads())}>{translate(thread.resolved ? "wiki.comments.reopen" : "wiki.comments.resolve")}</button>
-            {thread.authorId === self && <button type="button" className="secondary" onClick={() => setEditingComment({ id: thread.id, text: thread.bodyText })}>{translate("wiki.comments.edit")}</button>}
+          <div className="flex items-center gap-3 text-13">
+            {!thread.resolved && <button type="button" className="!bg-transparent !p-0 font-medium text-accent-text hover:underline" onClick={() => { setReplyText(""); setReplyTo(thread.id); }}>{translate("wiki.comments.reply")}</button>}
+            <Popover label={translate("wiki.comments.more")} align="right" className="icon-button-ghost ml-auto !grid !place-items-center !p-0" panelClassName="w-48" trigger={<MoreHorizontal aria-hidden size={14} />}>
+              {(close) => <>
+                <MenuItem icon={Check} onClick={() => { close(); void call("resolve_wiki_page_comment", { commentId: thread.id, resolved: !thread.resolved }).then(() => loadThreads()); }}>{translate(thread.resolved ? "wiki.comments.reopen" : "wiki.comments.resolve")}</MenuItem>
+                {thread.authorId === self && <MenuItem icon={Pencil} onClick={() => { close(); setEditingComment({ id: thread.id, text: thread.bodyText }); }}>{translate("wiki.comments.edit")}</MenuItem>}
+              </>}
+            </Popover>
           </div>
         </li>)}</ul>
         <div className="grid gap-2 border-t border-subtle pt-3">

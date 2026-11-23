@@ -782,6 +782,7 @@ export const th: Record<keyof typeof en, string> = {
   "wiki.comments.reply": "ตอบกลับ",
   "wiki.comments.replyTo": "ตอบกลับ",
   "wiki.comments.send": "ส่ง",
+  "wiki.comments.more": "การดำเนินการเพิ่มเติม",
   "wiki.comments.edit": "แก้ไขความคิดเห็น",
   "wiki.comments.resolve": "ปิดความคิดเห็น",
   "wiki.comments.reopen": "เปิดความคิดเห็นอีกครั้ง",

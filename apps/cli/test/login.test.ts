@@ -24,17 +24,25 @@ test.concurrent("weft login saves a normal personal token; the Daemon credential
 
     const home = await mkdtemp(join(tmpdir(), "weft-login-test-"));
     try {
-      // The browser step: the sign-in page redirects a signed-in person to the local callback, so follow that redirect here.
+      const apiFetch = async (input: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
+        return app.handle(new Request(`http://localhost${url.pathname}${url.search}`, init));
+      };
+      // The approval happens in a separately authenticated browser session; the terminal receives only the exchange result.
       await login({
         env: { WEFT_API_URL: "http://localhost", XDG_CONFIG_HOME: home },
-        stdout: () => {},
+        fetch: apiFetch, sleep: async () => {}, stdout: () => {},
         openBrowser: async (url: string) => {
-          const redirect = await app.handle(new Request(url, { headers: { cookie } }));
-          void fetch(redirect.headers.get("location")!);
+          const code = new URL(url).searchParams.get("code")!;
+          const review = await app.handle(new Request(`http://localhost/api/cli/device-authorization?code=${code}`, { headers: { cookie } }));
+          expect(review.status).toBe(200);
+          const decision = await app.handle(new Request("http://localhost/api/cli/device-authorization/decision", { method: "POST", headers: { cookie, origin: "http://localhost:5173", "content-type": "application/json" }, body: JSON.stringify({ code, decision: "approve" }) }));
+          expect(decision.status).toBe(200);
         },
       });
-      const config = JSON.parse(await readFile(join(home, "weft", "config.json"), "utf8")) as { token: string; daemonToken?: string };
+      const config = JSON.parse(await readFile(join(home, "weft", "config.json"), "utf8")) as { token: string; deviceId: string; daemonToken?: string };
       expect(config.token).toStartWith("weft_");
+      expect(config.deviceId).toMatch(/^[0-9a-f-]{36}$/i);
       expect(config.token.startsWith("weft_daemon_")).toBe(false);
       expect(config.daemonToken).toBeUndefined();
       // The Daemon credential is issued by registration, with the CLI token, and is stored in its own file.

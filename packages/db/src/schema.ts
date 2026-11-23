@@ -286,7 +286,35 @@ export const apiTokens = pgTable("api_tokens", {
   lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
   daemonOnly: boolean("daemon_only").notNull().default(false),
-}, (table) => [index().on(table.userId)]);
+  /** Set on restricted Daemon credentials issued to a CLI device; null means legacy/unassociated. */
+  cliDeviceId: uuid("cli_device_id"),
+}, (table) => [index().on(table.userId), index().on(table.userId, table.cliDeviceId)]);
+
+/** A CLI installation has its own identity even when another device reports the same hostname. */
+export const cliDevices = pgTable("cli_devices", {
+  deviceId: uuid("device_id").notNull(),
+  ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  hostname: text("hostname").notNull(),
+  tokenId: uuid("token_id").notNull().unique().references(() => apiTokens.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }).notNull().defaultNow(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+}, (table) => [primaryKey({ columns: [table.ownerId, table.deviceId] })]);
+
+/** Short lived, one-use authorization request. Only hashes of the terminal secret and user code are stored. */
+export const cliDeviceAuthorizations = pgTable("cli_device_authorizations", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  deviceId: uuid("device_id").notNull(),
+  hostname: text("hostname").notNull(),
+  deviceSecretHash: text("device_secret_hash").notNull().unique(),
+  userCodeHash: text("user_code_hash").notNull().unique(),
+  status: text("status").notNull().default("pending"),
+  userId: text("user_id").references(() => users.id, { onDelete: "cascade" }),
+  tokenId: uuid("token_id").references(() => apiTokens.id, { onDelete: "cascade" }),
+  previousTokenId: uuid("previous_token_id").references(() => apiTokens.id, { onDelete: "cascade" }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index().on(table.status, table.expiresAt)]);
 
 /** A signed-in CLI process which owns local Runtimes. */
 export const daemons = pgTable("daemons", {
@@ -297,9 +325,11 @@ export const daemons = pgTable("daemons", {
   version: text("version").notNull(),
   /** Explicit protocol features this Daemon can safely execute; empty for historical registrations. */
   capabilities: jsonb("capabilities").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  /** Device identity from the Personal API token used to register this Daemon. Null for legacy registrations. */
+  cliDeviceId: uuid("cli_device_id"),
   lastHeartbeatAt: timestamp("last_heartbeat_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [uniqueIndex().on(table.tokenId)]);
+}, (table) => [uniqueIndex().on(table.tokenId), uniqueIndex().on(table.ownerId, table.cliDeviceId).where(sql`${table.cliDeviceId} is not null`)]);
 
 /** A Runtime is one CLI offered by a Daemon to one workspace. */
 export const runtimes = pgTable("runtimes", {

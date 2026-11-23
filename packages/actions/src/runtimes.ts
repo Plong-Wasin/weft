@@ -1,11 +1,11 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, notInArray, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { agentAccess, agents, apiTokens, daemons, projectMembers, projects, runs, runtimes, runtimeProfiles, users, workItems, workspaceMembers } from "@weft/db";
+import { agentAccess, agents, apiTokens, cliDevices, daemons, projectMembers, projects, runs, runtimes, runtimeProfiles, users, workItems, workspaceMembers } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { revokeAgentRuns } from "./runs";
 import { auditAgentChange } from "./agent-audit";
-import { DAEMON_ROTATION_GRACE_MS, DEFAULT_TOKEN_MS, mintApiToken } from "./api-tokens";
+import { DAEMON_ROTATION_GRACE_MS, DEFAULT_TOKEN_MS, lockCliDeviceLifecycle, mintApiToken } from "./api-tokens";
 import { initializeAgentAccess } from "./agent-access";
 
 const freshForMs = 150_000;
@@ -32,11 +32,16 @@ type Context = { userId: string; apiTokenId?: string };
 export async function daemonForCredential(db: Database, credential: { tokenId: string; userId: string }) {
   const [direct] = await db.select({ id: daemons.id, tokenId: daemons.tokenId }).from(daemons).where(eq(daemons.tokenId, credential.tokenId));
   if (direct) return direct;
-  const [token] = await db.select({ name: apiTokens.name }).from(apiTokens).where(eq(apiTokens.id, credential.tokenId));
+  const [token] = await db.select({ name: apiTokens.name, cliDeviceId: apiTokens.cliDeviceId }).from(apiTokens).where(eq(apiTokens.id, credential.tokenId));
+  if (token?.cliDeviceId) {
+    const [row] = await db.select({ id: daemons.id, tokenId: daemons.tokenId }).from(daemons)
+      .where(and(eq(daemons.ownerId, credential.userId), eq(daemons.cliDeviceId, token.cliDeviceId))).limit(1);
+    return row;
+  }
   const prefix = "Daemon @ ";
   if (!token?.name.startsWith(prefix)) return undefined;
   const [row] = await db.select({ id: daemons.id, tokenId: daemons.tokenId }).from(daemons)
-    .where(and(eq(daemons.ownerId, credential.userId), eq(daemons.hostname, token.name.slice(prefix.length)))).orderBy(desc(daemons.lastHeartbeatAt)).limit(1);
+    .where(and(eq(daemons.ownerId, credential.userId), eq(daemons.hostname, token.name.slice(prefix.length)), isNull(daemons.cliDeviceId))).orderBy(desc(daemons.lastHeartbeatAt)).limit(1);
   return row;
 }
 
@@ -226,16 +231,25 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
       output: Type.Object({ daemonId: Type.String({ format: "uuid" }), runtimes: Type.Array(output), daemonToken: Type.Optional(Type.String()) }),
       handler: async (context: Context, input: { hostname: string; version: string; agentClis: Array<"claude" | "codex">; capabilities?: Array<"runtime_environment" | "runtime_sandbox">; rotate?: boolean }) => {
         if (!context.apiTokenId) throw new ActionError("Daemon registration requires a Personal API token", 403);
-        const [caller] = await db.select({ daemonOnly: apiTokens.daemonOnly }).from(apiTokens).where(eq(apiTokens.id, context.apiTokenId));
+        const [caller] = await db.select({ daemonOnly: apiTokens.daemonOnly, cliDeviceId: cliDevices.deviceId }).from(apiTokens)
+          .leftJoin(cliDevices, and(eq(cliDevices.tokenId, apiTokens.id), eq(cliDevices.ownerId, context.userId))).where(eq(apiTokens.id, context.apiTokenId));
         if (!caller || caller.daemonOnly) throw new ActionError("Daemon registration requires a Personal API token", 403);
         const timestamp = now();
         const registered = await db.transaction(async (tx) => {
-          // One lock per owner and hostname: concurrent registrations queue here, and each later one sees the earlier one's row.
-          await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`${context.userId}:${input.hostname}`}))`);
-          // The Daemon row of this owner and hostname keeps its id (Runtimes hang off it); only its credential changes.
+          if (caller.cliDeviceId) {
+            await lockCliDeviceLifecycle(tx as unknown as Database, context.userId, caller.cliDeviceId);
+            const [device] = await tx.select({ tokenId: cliDevices.tokenId }).from(cliDevices).where(and(
+              eq(cliDevices.ownerId, context.userId), eq(cliDevices.deviceId, caller.cliDeviceId), eq(cliDevices.tokenId, context.apiTokenId!), isNull(cliDevices.revokedAt),
+            )).for("update");
+            if (!device) throw new ActionError("CLI device was revoked; run `weft login` to sign in again", 403);
+          }
+          // Enrolled devices have independent Daemon identities, even when two devices report the same hostname.
+          const identity = caller.cliDeviceId ? `device:${caller.cliDeviceId}` : `hostname:${input.hostname}`;
+          await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`${context.userId}:${identity}`}))`);
+          // Legacy registrations keep their hostname identity; an enrolled device keeps its own row and Runtimes.
           const [current] = await tx.select({ id: daemons.id, tokenId: daemons.tokenId, expiresAt: apiTokens.expiresAt, revokedAt: apiTokens.revokedAt, daemonOnly: apiTokens.daemonOnly })
             .from(daemons).innerJoin(apiTokens, eq(apiTokens.id, daemons.tokenId))
-            .where(and(eq(daemons.ownerId, context.userId), eq(daemons.hostname, input.hostname))).orderBy(desc(daemons.lastHeartbeatAt)).limit(1);
+            .where(and(eq(daemons.ownerId, context.userId), caller.cliDeviceId ? eq(daemons.cliDeviceId, caller.cliDeviceId) : and(eq(daemons.hostname, input.hostname), isNull(daemons.cliDeviceId)))).orderBy(desc(daemons.lastHeartbeatAt)).limit(1);
           const activeLeftMs = current && current.daemonOnly && !current.revokedAt && current.expiresAt ? current.expiresAt.getTime() - timestamp.getTime() : -1;
           let daemonToken: string | undefined;
           let daemonId: string;
@@ -245,18 +259,18 @@ export function createRuntimeActions(db: Database, now: () => Date = () => new D
             daemonId = daemon!.id;
             activeTokenId = current.tokenId;
           } else {
-            const minted = await mintApiToken(tx as unknown as Database, { userId: context.userId, name: `Daemon @ ${input.hostname}`, description: "Restricted Daemon credential", daemonOnly: true, expiresAt: new Date(timestamp.getTime() + DEFAULT_TOKEN_MS) });
+            const minted = await mintApiToken(tx as unknown as Database, { userId: context.userId, name: `Daemon @ ${input.hostname}`, description: "Restricted Daemon credential", daemonOnly: true, cliDeviceId: caller.cliDeviceId, expiresAt: new Date(timestamp.getTime() + DEFAULT_TOKEN_MS) });
             daemonToken = minted.token;
             activeTokenId = minted.id;
             if (current) {
-              const [daemon] = await tx.update(daemons).set({ tokenId: minted.id, version: input.version, capabilities: input.capabilities ?? [], lastHeartbeatAt: timestamp }).where(eq(daemons.id, current.id)).returning({ id: daemons.id });
+              const [daemon] = await tx.update(daemons).set({ tokenId: minted.id, cliDeviceId: caller.cliDeviceId, version: input.version, capabilities: input.capabilities ?? [], lastHeartbeatAt: timestamp }).where(eq(daemons.id, current.id)).returning({ id: daemons.id });
               daemonId = daemon!.id;
               // The previous credential stays usable for the grace period, never past its own expiry.
               const graceEnd = new Date(timestamp.getTime() + DAEMON_ROTATION_GRACE_MS);
               const graceExpiry = current.expiresAt && current.expiresAt < graceEnd ? current.expiresAt : graceEnd;
               await tx.update(apiTokens).set({ expiresAt: graceExpiry }).where(and(eq(apiTokens.id, current.tokenId), isNull(apiTokens.revokedAt)));
             } else {
-              const [daemon] = await tx.insert(daemons).values({ ownerId: context.userId, tokenId: minted.id, hostname: input.hostname, version: input.version, capabilities: input.capabilities ?? [], lastHeartbeatAt: timestamp }).returning({ id: daemons.id });
+              const [daemon] = await tx.insert(daemons).values({ ownerId: context.userId, tokenId: minted.id, cliDeviceId: caller.cliDeviceId, hostname: input.hostname, version: input.version, capabilities: input.capabilities ?? [], lastHeartbeatAt: timestamp }).returning({ id: daemons.id });
               daemonId = daemon!.id;
             }
           }

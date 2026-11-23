@@ -2,7 +2,7 @@ import { access, chmod, mkdir, open, rm, stat, writeFile } from "node:fs/promise
 import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
-import { daemonPaths, daemonStatus, detectedClis, readDaemonRecord, processExists, startDaemonBackground, stopDaemon, type DaemonEnvironment, type DaemonRecord } from "./daemon";
+import { assertDaemonCredentialServer, daemonApiUrl, daemonPaths, daemonStatus, detectedClis, readCliConfig, readDaemonRecord, processExists, startDaemonBackground, stopDaemon, type DaemonEnvironment, type DaemonRecord } from "./daemon";
 
 type Env = Record<string, string | undefined>;
 export type ProcessResult = { exitCode: number | null; stdout: string; stderr: string; timedOut: boolean };
@@ -258,10 +258,14 @@ export async function disableAutostart(options: AutostartOptions = {}): Promise<
 /** `weft daemon start`: with autostart on, the service starts the Daemon so two Daemons never run; otherwise a background Daemon. */
 export async function startDaemonForUser(options: AutostartOptions = {}) {
   const env = options.env ?? Bun.env;
+  const config = await readCliConfig(env);
+  assertDaemonCredentialServer(env, config, daemonApiUrl(env, config));
   const status = await autostartStatus(options);
   if (!status.enabled) return startDaemonBackground(options);
+  assertDaemonCredentialServer({ ...env, WEFT_TOKEN: undefined }, config, daemonApiUrl(env, config));
   const running = await daemonStatus(options);
   if (running.running) throw new Error(`Daemon is already running (process ${running.pid}). Run \`weft daemon status\` or \`weft daemon stop\`.`);
+  await updateAutostartServer(options, status.platform);
   const run = options.run ?? runCapture;
   const uid = options.uid ?? process.getuid?.() ?? 501;
   const result = status.platform === "linux"
@@ -281,13 +285,33 @@ async function waitForRecord(env: Env, timeoutMs = 10_000): Promise<DaemonRecord
   return undefined;
 }
 
+/** An explicit server selection must reach the service manager's actual foreground process. */
+async function updateAutostartServer(options: AutostartOptions, platform: "linux" | "darwin" | "unsupported") {
+  const env = options.env ?? Bun.env;
+  if (!env.WEFT_API_URL || platform === "unsupported") return;
+  const file = autostartFile(env, platform);
+  if (!file) return;
+  const common = { execPath: options.execPath ?? process.execPath, scriptPath: options.scriptPath ?? process.argv[1]!, env, logPath: daemonPaths(env).log };
+  const content = platform === "linux" ? systemdUnit(common) : launchAgentPlist(common);
+  await writeFile(file, content, { mode: 0o600 });
+  await chmod(file, 0o600);
+  if (platform === "linux") {
+    const result = await (options.run ?? runCapture)(["systemctl", "--user", "daemon-reload"], { env });
+    if (result.exitCode !== 0) throw new Error(`Could not reload the autostart service after selecting ${env.WEFT_API_URL}: ${(result.stderr || result.stdout).trim()}. The service was not restarted.`);
+  }
+}
+
 /** `weft daemon restart`: stops a running Daemon (or restarts the autostart service) and starts it again. */
 export async function restartDaemon(options: AutostartOptions = {}) {
   const env = options.env ?? Bun.env;
+  const config = await readCliConfig(env);
+  assertDaemonCredentialServer(env, config, daemonApiUrl(env, config));
   const before = await daemonStatus(options);
   const previousPid = before.running ? before.pid : undefined;
   const status = await autostartStatus(options);
   if (status.enabled) {
+    assertDaemonCredentialServer({ ...env, WEFT_TOKEN: undefined }, config, daemonApiUrl(env, config));
+    await updateAutostartServer(options, status.platform);
     const run = options.run ?? runCapture;
     const uid = options.uid ?? process.getuid?.() ?? 501;
     const result = status.platform === "linux"

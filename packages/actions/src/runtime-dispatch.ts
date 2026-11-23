@@ -100,7 +100,15 @@ export async function sweepRuntimeRuns(db: Database, now: () => Date = () => new
   const active = await db.select({ run: runs, daemon: daemons, timeoutSeconds: agents.timeoutSeconds }).from(runs).innerJoin(agents, eq(agents.id, runs.agentId)).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).innerJoin(daemons, eq(daemons.id, runtimes.daemonId)).where(and(inArray(runs.status, ["running", "stopping"]), isNotNull(runs.startedAt)));
   for (const { run, daemon, timeoutSeconds } of active) {
     const timedOut = current.getTime() - run.startedAt!.getTime() >= timeoutSeconds * 1000;
-    if (run.status === "stopping") { if (current.getTime() - daemon.lastHeartbeatAt.getTime() > 150_000 || timedOut) await settleCancelled(db, run.id); continue; }
+    if (run.status === "stopping") {
+      if (current.getTime() - daemon.lastHeartbeatAt.getTime() > 150_000 || timedOut) {
+        if (run.failureReason === "cli_device_revoked" || run.failureReason === "daemon_credential_revoked") {
+          await db.update(runs).set({ failureReason: `${run.failureReason}_unconfirmed` }).where(and(eq(runs.id, run.id), eq(runs.status, "stopping"), eq(runs.failureReason, run.failureReason)));
+        }
+        await settleCancelled(db, run.id);
+      }
+      continue;
+    }
     const reason = timedOut ? "timeout" : current.getTime() - daemon.lastHeartbeatAt.getTime() > 150_000 ? "runtime_offline" : null;
     if (!reason) continue;
     const failed = await db.transaction(async (transaction) => {
@@ -351,7 +359,17 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
         const tx = transaction as unknown as Database;
         await lockRuntimeRun(tx, runId);
         const [current] = await tx.select().from(runs).where(eq(runs.id, runId)).for("update");
-        if (current?.status === "stopping") { if (current.failureReason === "runtime_secret_output") await recordAdditionalUsage(tx, runId, usage, model); else await recordUsage(tx, runId, usage, model); settleAfterAck = true; }
+        if (current?.status === "stopping") {
+          if (current.failureReason === "runtime_secret_output") await recordAdditionalUsage(tx, runId, usage, model); else await recordUsage(tx, runId, usage, model);
+          if (current.failureReason === "cli_device_revoked" || current.failureReason === "daemon_credential_revoked") {
+            await tx.update(runs).set({ failureReason: `${current.failureReason}_confirmed` }).where(eq(runs.id, runId));
+          }
+          settleAfterAck = true;
+        }
+        else if (current?.status === "cancelled" && (current.failureReason === "cli_device_revoked_unconfirmed" || current.failureReason === "daemon_credential_revoked_unconfirmed")) {
+          await recordUsage(tx, runId, usage, model);
+          await tx.update(runs).set({ failureReason: current.failureReason.replace("_unconfirmed", "_confirmed") }).where(eq(runs.id, runId));
+        }
         else if ((current?.status === "cancelled" || (current?.status === "failed" && current.failureReason === "timeout")) && !current.usageReported) await recordUsage(tx, runId, usage, model);
       });
       if (settleAfterAck) await settleCancelled(db, runId);

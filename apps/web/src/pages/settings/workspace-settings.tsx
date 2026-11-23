@@ -78,14 +78,14 @@ export function WorkspaceMembers() {
   return <section>
     <SettingsHeader title={translate("members.title")} description={translate("settings.membersDesc")} />
     <RowList>{members.map((member) => <Row key={member.userId}>
-      <Avatar name={member.name} id={member.userId} agent={member.isAgent} size="md" /><span className="grid min-w-0 flex-1"><span className="flex items-center gap-1.5 truncate font-medium">{member.name}{member.isAgent && <AgentLabel />}</span><span className="truncate text-13 text-secondary">{member.email}</span></span>
+      <Avatar name={member.name} id={member.userId} agent={member.isAgent} size="md" /><span className="grid min-w-[min(100%,14rem)] flex-1 gap-0.5"><span className="flex flex-wrap items-center gap-1.5 break-words font-medium">{member.name}{member.isAgent && <AgentLabel />}</span><span className="break-all text-13 text-secondary">{member.email}</span></span>
       {isAdmin && !member.isAgent ? <select aria-label={`${translate("settings.roleOf")} ${member.name}`} value={member.role} onChange={async (event) => guard(await action("change_member_role", { workspaceId: workspace.id, userId: member.userId, role: event.target.value }))}>
         {roles.map((role) => <option key={role} value={role}>{translate(`members.role.${role}`)}</option>)}
       </select> : <span className="text-secondary">{translate(`members.role.${member.role}`)}</span>}
-      {isAdmin && !member.isAgent && <button type="button" className="secondary" onClick={async () => guard(await action("remove_member", { workspaceId: workspace.id, userId: member.userId }))}>{translate("members.remove")}</button>}
+      {isAdmin && !member.isAgent && <button type="button" className="secondary hover:!text-danger-text" onClick={async () => { if (!window.confirm(translate("members.removeConfirm"))) return; await guard(await action("remove_member", { workspaceId: workspace.id, userId: member.userId })); }}>{translate("members.remove")}</button>}
     </Row>)}</RowList>
     <Note note={note} error />
-    {isAdmin && <MemberSecurityList workspaceId={workspace.id} selfId={selfId} onChanged={load} />}
+    {isAdmin && <div className="mt-8"><MemberSecurityList workspaceId={workspace.id} selfId={selfId} onChanged={load} /></div>}
   </section>;
 }
 

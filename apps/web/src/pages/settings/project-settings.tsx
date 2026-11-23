@@ -184,6 +184,7 @@ export function ProjectStates() {
   const canAdmin = canAdminOf(project);
   const [states, setStates] = React.useState<WorkState[]>([]);
   const [newName, setNewName] = React.useState<Record<string, string>>({});
+  const [adding, setAdding] = React.useState<Record<string, boolean>>({});
   const [editing, setEditing] = React.useState<{ id: string; name: string } | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
   const load = React.useCallback(async () => setStates(await action<WorkState[]>("list_states", { projectId: project.id }) ?? []), [project.id]);
@@ -225,13 +226,17 @@ export function ProjectStates() {
               </>}
             </>;
           }} />}
-        {canAdmin && <form className="my-0 flex flex-wrap items-end gap-3" onSubmit={async (event) => {
-          event.preventDefault();
-          if (await guard(await action("create_state", { projectId: project.id, group, name: newName[group] ?? "" }))) setNewName({ ...newName, [group]: "" });
-        }}>
-          <label>{translate("states.name")}<input required value={newName[group] ?? ""} onChange={(event) => setNewName({ ...newName, [group]: event.target.value })} /></label>
-          <button>{translate("states.add")}</button>
-        </form>}
+        {canAdmin && <div className="grid justify-items-start gap-3">
+          <button type="button" className="secondary" aria-expanded={adding[group] === true} onClick={() => setAdding({ ...adding, [group]: !adding[group] })}>{translate("states.add")}</button>
+          {adding[group] && <form className="my-0 flex flex-wrap items-end gap-3" onSubmit={async (event) => {
+            event.preventDefault();
+            if (await guard(await action("create_state", { projectId: project.id, group, name: newName[group] ?? "" }))) { setNewName({ ...newName, [group]: "" }); setAdding({ ...adding, [group]: false }); }
+          }}>
+            <label>{translate("states.name")}<input required value={newName[group] ?? ""} onChange={(event) => setNewName({ ...newName, [group]: event.target.value })} /></label>
+            <button>{translate("states.create")}</button>
+            <button type="button" className="secondary" onClick={() => setAdding({ ...adding, [group]: false })}>{translate("settings.cancel")}</button>
+          </form>}
+        </div>}
       </SettingsBlock>;
     })}
     <Note note={note} error />

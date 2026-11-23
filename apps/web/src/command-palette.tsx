@@ -9,6 +9,7 @@ import { paths } from "./routes";
 import { projectsKey } from "./shell/sidebar";
 import { themes, useTheme, type Theme } from "./theme";
 import type { Current, Member, Project } from "./types";
+import { useAiEnabled } from "./ai-flag";
 import { isPaletteToggle, matchesQuery, modalDialogOpen, paletteToolAllowed, type PaletteTool, nextActive, pageLocation, paletteKeys, type PaletteAction } from "./command-palette-model";
 
 /** The top-bar button dispatches this event; the palette, mounted once for every signed-in screen, listens for it. */
@@ -43,6 +44,7 @@ export function CommandPalette({ current, signOut }: { current: Current; signOut
   const { pathname } = useLocation();
   const [, setTheme] = useTheme();
   const [open, setOpen] = React.useState(false);
+  const aiOn = useAiEnabled();
   const [query, setQuery] = React.useState("");
   const [active, setActive] = React.useState(0);
   const [found, setFound] = React.useState<Found>({ status: "idle", items: [], pages: [] });
@@ -144,7 +146,7 @@ export function CommandPalette({ current, signOut }: { current: Current; signOut
       ...projects.filter((project) => project.role === "Admin" || project.role === "Member").map((project): Entry => ({
         id: `create-${project.id}`, group: "create", label: `${translate("palette.newItemIn")} ${project.name}`, hint: project.key, local: true, run: () => setCreatingIn(project),
       })),
-      ...wsSettings.filter((section) => (!section.tool || paletteToolAllowed(section.tool, role))).map((section): Entry => ({ id: `settings-${section.label}`, group: "settings", label: translate(section.label), local: true, run: () => navigate(section.to(slug)) })),
+      ...wsSettings.filter((section) => (!section.tool || paletteToolAllowed(section.tool, role)) && (section.tool !== "ai" || aiOn)).map((section): Entry => ({ id: `settings-${section.label}`, group: "settings", label: translate(section.label), local: true, run: () => navigate(section.to(slug)) })),
       ...projects.map((project): Entry => ({ id: `project-settings-${project.id}`, group: "settings", label: `${project.name}: ${translate("settings.label")}`, hint: project.key, local: true, run: () => navigate(paths.projectSettings(slug, project.key)) })),
     );
   }

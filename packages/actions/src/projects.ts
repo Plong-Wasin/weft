@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, eq, inArray, isNull, isNotNull, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { agentAccess, agents, labels, projectKeyAliases, projectMembers, projects, runtimes, users, workItemStates, workspaceMembers } from "@weft/db";
+import { agentAccess, agents, labels, moduleMembers, modules, projectKeyAliases, projectMembers, projects, runtimes, users, workItemStates, workspaceMembers } from "@weft/db";
 import { defaultStates } from "./work-items";
 import { agentUserIds, openProjectToAllProjectAgents, withoutDisabledAgents } from "./agent-access";
 import { triageGroup, triageStateName } from "./triage";
@@ -324,6 +324,9 @@ export function createProjectActions(db: Database) {
             throw new ActionError("A project needs at least one Admin", 400);
           }
           await database.delete(projectMembers).where(eq(projectMembers.id, target.id));
+          const projectModules = database.select({ id: modules.id }).from(modules).where(eq(modules.projectId, input.projectId));
+          await database.update(modules).set({ leadId: null }).where(and(eq(modules.projectId, input.projectId), eq(modules.leadId, input.userId)));
+          await database.delete(moduleMembers).where(and(inArray(moduleMembers.moduleId, projectModules), eq(moduleMembers.userId, input.userId)));
           await revokeProjectMemberRuns(database, input.projectId, input.userId, context.userId);
           await pauseCreatorRecurrences(database, input.userId, { projectId: input.projectId }, "creator was removed from the project", context.userId);
           return { removed: true };

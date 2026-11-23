@@ -35,6 +35,24 @@ test.concurrent("a Member creates, updates, lists and gets a Module; status is s
   });
 });
 
+test.concurrent("removing a Project member clears their Module roles only in that Project", async () => {
+  await withRollback(db, async (transaction) => {
+    const { modules, projects, member, admin, project, workspace } = await setup(transaction);
+    const otherProject = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Other", key: "OTH", visibility: "public" });
+    await projects.addProjectMember.handler({ userId: admin.id }, { projectId: otherProject.id, userId: member.id, role: "Member" });
+
+    const ledHere = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Led here", leadId: member.id });
+    const joinedHere = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Joined here", memberIds: [member.id, admin.id] });
+    const otherProjectModule = await modules.createModule.handler({ userId: member.id }, { projectId: otherProject.id, name: "Still here", leadId: member.id, memberIds: [member.id] });
+
+    await projects.removeProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: member.id });
+
+    expect(await modules.getModule.handler({ userId: admin.id }, { moduleId: ledHere.id })).toMatchObject({ leadId: null, memberIds: [] });
+    expect(await modules.getModule.handler({ userId: admin.id }, { moduleId: joinedHere.id })).toMatchObject({ leadId: null, memberIds: [admin.id] });
+    expect(await modules.getModule.handler({ userId: admin.id }, { moduleId: otherProjectModule.id })).toMatchObject({ leadId: member.id, memberIds: [member.id] });
+  });
+});
+
 test.concurrent("Module descriptions are optional Written form Markdown and can be edited and cleared", async () => {
   await withRollback(db, async (transaction) => {
     const { modules, member, project, item } = await setup(transaction);

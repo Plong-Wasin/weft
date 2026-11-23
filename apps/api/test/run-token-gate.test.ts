@@ -9,7 +9,7 @@ const { client, db } = createDatabase();
 afterAll(async () => client.end());
 
 async function scenario(transaction: Database, allowAutopilot = true, assetStorage?: import("@weft/actions").AssetStorage) {
-  const app = createApp(undefined, transaction, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, assetStorage);
+  const app = createApp(undefined, transaction, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, { ai: true }, undefined, undefined, assetStorage);
   const post = (path: string, body: unknown, options: { cookie?: string; token?: string } = {}) => app.handle(new Request(`http://localhost${path}`, {
     method: "POST", headers: { "content-type": "application/json", ...(options.cookie ? { cookie: options.cookie } : {}), ...(options.token ? { authorization: `Bearer ${options.token}` } : {}) }, body: JSON.stringify(body),
   }));

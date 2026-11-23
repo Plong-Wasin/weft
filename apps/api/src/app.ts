@@ -18,7 +18,7 @@ const MAX_WEBHOOK_BODY = 5 * 1024 * 1024;
 /** The Session a Daemon used for a Runtime Run: the CLI's Session id when it printed one, and whether the Run resumed it. */
 const sessionReport = Type.Object({ id: Type.Optional(Type.Union([Type.Null(), Type.String({ maxLength: 200 })])), mode: Type.Union([Type.Literal("resumed"), Type.Literal("new")]), reason: Type.String({ maxLength: 64 }) });
 import { createRuntimeActions, daemonForCredential, sanitizeWrittenDocument, withWrittenFormKey } from "@weft/actions";
-import { integrationsEnabled, outboundWebhooksEnabled, receiveRepositoryWebhook } from "@weft/actions";
+import { aiState, integrationsEnabled, outboundWebhooksEnabled, receiveRepositoryWebhook, type AiState } from "@weft/actions";
 import { agentActionRefusal, agentMayUseAction } from "@weft/actions";
 import { isLocale, type Locale } from "@weft/shared";
 import { withRequestLog } from "./request-log";
@@ -78,8 +78,8 @@ export function createApp(
   /** Sends account and notification email. Defaults to the Mail transport chosen by MAIL_TRANSPORT (SMTP or Graph); null means email is off. */
   mail: Mailer | null = createMailerFromEnv(),
   authOptions: AuthOptions = {},
-  /** Feature switches. integrations defaults to WEFT_INTEGRATIONS_ENABLED and outboundWebhooks to WEFT_OUTBOUND_WEBHOOKS_ENABLED (only "true" turns each on). */
-  features: { integrations?: boolean; outboundWebhooks?: boolean } = {},
+  /** Feature switches. integrations defaults to WEFT_INTEGRATIONS_ENABLED and outboundWebhooks to WEFT_OUTBOUND_WEBHOOKS_ENABLED (only "true" turns each on). ai defaults to WEFT_AI_ENABLED and the provider key (see aiState). */
+  features: { integrations?: boolean; outboundWebhooks?: boolean; ai?: boolean } = {},
   /** Rate limits. settings default to the environment (see rate-limits.ts); now is the clock, injectable for tests. */
   limits: { settings?: Partial<RateLimitSettings>; now?: () => number } = {},
   /** The clock of the Runtime actions (offline time, freshness, dispatch); injectable for tests. */
@@ -88,6 +88,7 @@ export function createApp(
 ) {
   const integrations = features.integrations ?? integrationsEnabled();
   const outboundWebhooks = features.outboundWebhooks ?? outboundWebhooksEnabled();
+  const aiSwitch: AiState = features.ai === undefined ? aiState(Bun.env) : features.ai ? { enabled: true, reason: null } : { enabled: false, reason: "switched_off" };
   const limitSettings: RateLimitSettings = { ...rateLimitSettings(), ...limits.settings };
   const limitClock = limits.now ?? Date.now;
   const trustedProxyHops = aiOptions.trustedProxyHops ?? Number(Bun.env.TRUSTED_PROXY_HOPS ?? 0);
@@ -428,7 +429,7 @@ export function createApp(
         account: { forcePasswordReset: user.forcePasswordReset, securityNotice: user.securityNotice },
       };
     })
-    .get("/api/config", () => ({ defaultLocale, minPasswordLength, emailEnabled: mail !== null, integrationsEnabled: integrations, outboundWebhooksEnabled: outboundWebhooks }))
+    .get("/api/config", () => ({ defaultLocale, minPasswordLength, emailEnabled: mail !== null, integrationsEnabled: integrations, outboundWebhooksEnabled: outboundWebhooks, ai: aiSwitch }))
     // Liveness only says the process answers. Readiness also checks the database and file storage, and names the one that failed.
     .get("/api/health/live", () => ({ status: "ok" }))
     .get("/api/health/ready", async ({ set }) => {
@@ -558,7 +559,7 @@ export function createApp(
     }, { body: action.input });
   }
   registerEventRoutes(app, { db, resolveCaller, bus });
-  registerAiRoutes(app, { db, resolveCaller, bus, model: aiModel, requestsPerMinute: aiOptions.aiRequestsPerMinute, assistRequestsPerMinute: aiOptions.aiAssistRequestsPerMinute, assistNow: aiOptions.aiAssistNow, env: { ...process.env, ...aiOptions.aiEnv, DEFAULT_LANGUAGE: configuredLanguage } });
+  registerAiRoutes(app, { enabled: aiSwitch.enabled, db, resolveCaller, bus, model: aiModel, requestsPerMinute: aiOptions.aiRequestsPerMinute, assistRequestsPerMinute: aiOptions.aiAssistRequestsPerMinute, assistNow: aiOptions.aiAssistNow, env: { ...process.env, ...aiOptions.aiEnv, DEFAULT_LANGUAGE: configuredLanguage } });
   // Connected Daemons are told about queued work and cancels within seconds, not only when their next heartbeat arrives.
   const daemonSockets = new Map<string, { socket: { send: (data: string) => unknown }; daemonId: string }>();
   let signalTimer: ReturnType<typeof setInterval> | undefined;

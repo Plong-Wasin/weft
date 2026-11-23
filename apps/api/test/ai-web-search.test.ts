@@ -43,7 +43,7 @@ async function chatWith(body: { webSearch?: boolean; mode?: "ask" | "build" }, a
   let system = "";
   await withRollback(db, async (transaction) => {
     const model = answer();
-    const app = createApp(undefined, transaction, undefined, model, undefined, { aiEnv });
+    const app = createApp(undefined, transaction, undefined, model, undefined, { aiEnv }, undefined, undefined, undefined, undefined, { ai: true });
     const call = async (path: string, payload: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
       method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(payload),
     }));
@@ -104,7 +104,7 @@ test.concurrent("sources are streamed and saved, and a later turn replays the an
     const call = async (app: ReturnType<typeof createApp>, path: string, payload: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
       method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(payload),
     }));
-    const app = createApp(undefined, transaction, undefined, first, undefined, { aiEnv: {} });
+    const app = createApp(undefined, transaction, undefined, first, undefined, { aiEnv: {} }, undefined, undefined, undefined, undefined, { ai: true });
     const cookie = (await call(app, "/api/auth/sign-up/email", { name: "Ann", email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" })).headers.get("set-cookie")!.split(";")[0]!;
     const workspace = await (await call(app, "/actions/create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, cookie)).json() as { id: string };
     const id = crypto.randomUUID();
@@ -119,7 +119,7 @@ test.concurrent("sources are streamed and saved, and a later turn replays the an
 
     // Second turn with web search off, against a fresh model so only this turn's prompt is inspected.
     const second = answer();
-    const app2 = createApp(undefined, transaction, undefined, second, undefined, { aiEnv: {} });
+    const app2 = createApp(undefined, transaction, undefined, second, undefined, { aiEnv: {} }, undefined, undefined, undefined, undefined, { ai: true });
     const reply = await call(app2, "/api/ai/chat", { id, workspaceId: workspace.id, messages: [{ id: "u2", role: "user", parts: [{ type: "text", text: "thanks" }] }] }, cookie);
     expect(reply.status).toBe(200);
     await reply.text();
@@ -158,7 +158,7 @@ test.concurrent("a searched turn with no sources, or one that also called a work
     const call = async (app: ReturnType<typeof createApp>, path: string, payload: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
       method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(payload),
     }));
-    const app = createApp(undefined, transaction, undefined, mixed, undefined, { aiEnv: {} });
+    const app = createApp(undefined, transaction, undefined, mixed, undefined, { aiEnv: {} }, undefined, undefined, undefined, undefined, { ai: true });
     const cookie = (await call(app, "/api/auth/sign-up/email", { name: "Ann", email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" })).headers.get("set-cookie")!.split(";")[0]!;
     const workspace = await (await call(app, "/actions/create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, cookie)).json() as { id: string };
     const id = crypto.randomUUID();
@@ -168,7 +168,7 @@ test.concurrent("a searched turn with no sources, or one that also called a work
     for (const bad of ["rs_9", "fc_9", "msg_9", "tool-web_search"]) expect(stored).not.toContain(bad);
 
     const second = answer();
-    const app2 = createApp(undefined, transaction, undefined, second, undefined, { aiEnv: {} });
+    const app2 = createApp(undefined, transaction, undefined, second, undefined, { aiEnv: {} }, undefined, undefined, undefined, undefined, { ai: true });
     const reply = await call(app2, "/api/ai/chat", { id, workspaceId: workspace.id, messages: [{ id: "u2", role: "user", parts: [{ type: "text", text: "and?" }] }] }, cookie);
     expect(reply.status).toBe(200);
     await reply.text();

@@ -17,7 +17,7 @@ const textModel = (text = "Assisted text") => new MockLanguageModelV4({
 
 async function setup(database: Database, options: { model?: MockLanguageModelV4; limit?: number; now?: () => number } = {}) {
   const model = options.model ?? textModel();
-  const app = createApp(undefined, database, undefined, model, undefined, { aiAssistRequestsPerMinute: options.limit, aiAssistNow: options.now });
+  const app = createApp(undefined, database, undefined, model, undefined, { aiAssistRequestsPerMinute: options.limit, aiAssistNow: options.now }, undefined, undefined, undefined, undefined, { ai: true });
   const call = (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
     method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
   }));
@@ -126,7 +126,7 @@ test.concurrent("a provider failure returns a generic error with no provider det
 test.concurrent("status reports provider, model, and key presence to any member, and never the key", async () => {
   await withRollback(db, async (tx) => {
     const secret = "sk-super-secret-value";
-    const app = (env: Record<string, string>) => createApp(undefined, tx, undefined, textModel(), undefined, { aiEnv: env });
+    const app = (env: Record<string, string>) => createApp(undefined, tx, undefined, textModel(), undefined, { aiEnv: env }, undefined, undefined, undefined, undefined, { ai: true });
     const env = { AI_PROVIDER: "anthropic", AI_MODEL: "claude-test", ANTHROPIC_API_KEY: secret, OPENAI_API_KEY: "sk-other-secret" };
     const configured = app(env);
     const call = (target: typeof configured, path: string, body: unknown, cookie?: string) => target.handle(new Request(`http://localhost${path}`, {

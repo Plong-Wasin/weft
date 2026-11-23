@@ -6,7 +6,7 @@ Compares Weft screens with Plane's, at 1440px and 390px, light theme.
 
 ## Prerequisites
 
-- `bun install`, and a Chromium for Playwright. Set `CHROMIUM_PATH` to a Chromium binary if Playwright's own download is missing.
+- `bun install`, and a Chromium for Playwright. Set `CHROMIUM_PATH` to a Chromium binary if Playwright's own download is missing. `bun run visual:weft` stops the servers it started when the browser cannot launch; a port left busy by an older run still has to be freed by hand.
 - Docker, for Plane. Weft needs `DATABASE_URL` pointing at a migrated Postgres (never a shared stale database).
 
 ## Commands

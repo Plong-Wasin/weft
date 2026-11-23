@@ -233,7 +233,8 @@ test.concurrent("finishing the emailed reset link ends a forced reset without th
     expect((await h.get("/api/me", { cookie: gatedSession })).status).toBe(403);
     sent.length = 0;
     expect((await h.call("/api/auth/request-password-reset", { email: member.email, redirectTo: "http://localhost:5173/reset-password" }, { cookie: gatedSession })).status).toBe(200);
-    await Bun.sleep(100);
+    // The mail is sent in the background of the request; wait for it instead of a fixed pause.
+    for (let i = 0; i < 100 && !sent.some((entry) => entry.to === member.email && /reset-password\//.test(entry.text)); i++) await Bun.sleep(50);
     const message = sent.find((entry) => entry.to === member.email && /reset-password\//.test(entry.text))!;
     const token = message.text.match(/reset-password\/([^?\s]+)/)![1]!;
     expect((await h.call("/api/auth/reset-password", { newPassword: "a-fresh-password-9", token }, { cookie: gatedSession })).status).toBe(200);

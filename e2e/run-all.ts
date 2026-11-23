@@ -125,7 +125,12 @@ try {
     }
   }));
   // The last non-log lines of each failure; the whole output of every flow is in the log directory.
-  for (const { file, output } of stillFailing) console.log(`\n=== ${file}\n${output.split("\n").filter((line) => !line.startsWith('{"time"')).slice(-12).join("\n")}`);
+  for (const { file, output } of stillFailing) {
+    const lines = output.split("\n").filter((line) => !line.startsWith('{"time"'));
+    // The thrown message first, because the stack frames below it push it out of the last lines.
+    const message = lines.find((line) => /^(error|Error|TimeoutError)\b/.test(line));
+    console.log(`\n=== ${file}${message ? `\n${message}` : ""}\n${lines.slice(-12).join("\n")}`);
+  }
   console.log(`\nlogs: ${logDir}/${prefix}_*.log`);
   console.log(`\ne2e ${stillFailing.length ? `FAILED: ${stillFailing.map((flow) => flow.file).join(", ")}` : `all ok (${files.length} flows)`} in ${Math.round((Date.now() - started) / 1000)}s`);
   if (retried.length) console.log(`passed only on the second run (flaky under load): ${retried.join(", ")}`);

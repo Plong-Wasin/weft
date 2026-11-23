@@ -68,9 +68,11 @@ async function captureWeft() {
     Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: join(root, "apps", "web"), env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
   ];
   const apiUrl = Bun.env.WEFT_API_URL ?? api, webUrl = Bun.env.WEFT_WEB_URL ?? web;
-  const browser = await launch();
   const outDir = dirs.weft;
+  let browser: Awaited<ReturnType<typeof launch>> | undefined;
+  // The browser launches inside the try: when it cannot start (no Chromium), the servers above are still stopped instead of keeping their ports.
   try {
+    browser = await launch();
     await Promise.all([waitFor(`${apiUrl}/api/me`, 100), waitFor(webUrl, 100)]);
     const slug = `ref-${crypto.randomUUID().slice(0, 8)}`;
     const client = new WeftClient(apiUrl, webUrl);
@@ -108,7 +110,7 @@ async function captureWeft() {
       if (failures > 0) { console.error(`${failures} shot(s) drifted past the threshold`); process.exitCode = 1; }
     }
   } finally {
-    await browser.close();
+    await browser?.close();
     for (const server of servers) server.kill();
   }
 }

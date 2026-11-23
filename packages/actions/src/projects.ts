@@ -10,6 +10,7 @@ import { featureColumns, featuresForShape, featuresOf, featuresPatchSchema, feat
 import { ActionError, requireWorkspaceRole, roleLevel, workspaceRoles, type WorkspaceRole } from "./members";
 import { pauseCreatorRecurrences } from "./recurrence-pause";
 import { revokeProjectMemberRuns } from "./run-revocation";
+import { clearModuleRoles } from "./module-roles";
 
 export const projectKeyPattern = /^[A-Z][A-Z0-9]{1,11}$/;
 export const projectVisibilities = ["public", "private"] as const;
@@ -297,6 +298,7 @@ export function createProjectActions(db: Database) {
           }
           await database.update(projectMembers).set({ role: input.role }).where(eq(projectMembers.id, target.id));
           if (input.role === "Guest") {
+            await clearModuleRoles(database, { projectIds: [input.projectId], userId: input.userId });
             const [workspaceRole] = await database.select({ role: workspaceMembers.role }).from(workspaceMembers)
               .where(and(eq(workspaceMembers.workspaceId, target.workspaceId), eq(workspaceMembers.userId, input.userId)));
             if (workspaceRole?.role !== "Admin") {
@@ -324,6 +326,7 @@ export function createProjectActions(db: Database) {
             throw new ActionError("A project needs at least one Admin", 400);
           }
           await database.delete(projectMembers).where(eq(projectMembers.id, target.id));
+          await clearModuleRoles(database, { projectIds: [input.projectId], userId: input.userId });
           await revokeProjectMemberRuns(database, input.projectId, input.userId, context.userId);
           await pauseCreatorRecurrences(database, input.userId, { projectId: input.projectId }, "creator was removed from the project", context.userId);
           return { removed: true };

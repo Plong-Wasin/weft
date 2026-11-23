@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { createDatabase, schema, type Database } from "@weft/db";
-import { ActionError, createMemberActions, createProjectActions, createWorkItemActions, requireWorkspaceRole } from "../src";
+import { createDatabase, moduleMembers, modules, schema, type Database } from "@weft/db";
+import { ActionError, createMemberActions, createModuleActions, createProjectActions, createWorkItemActions, requireWorkspaceRole } from "../src";
 import { createMemberFactory, createUserFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -127,6 +127,26 @@ test.concurrent("removing a member also removes their project memberships, so th
     // An item the removed member was already on can still be edited and cleared.
     const cleared = await work.updateWorkItem.handler({ userId: admin.id }, { workItemId: item.id, assigneeIds: [] });
     expect(cleared.assigneeIds).toEqual([]);
+  });
+});
+
+test.concurrent("demoting a workspace Member to Guest clears Module lead and member roles in every Project", async () => {
+  await withRollback(db, async (transaction) => {
+    const { workspace, admin, actions } = await setup(transaction);
+    const member = await createMemberFactory(transaction, workspace.id, "Member");
+    const projects = createProjectActions(transaction);
+    const project = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "One", key: "ONE", visibility: "public" });
+    const otherProject = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Two", key: "TWO", visibility: "public" });
+    await projects.addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: member.id, role: "Member" });
+    await projects.addProjectMember.handler({ userId: admin.id }, { projectId: otherProject.id, userId: member.id, role: "Member" });
+    const modules = createModuleActions(transaction);
+    const first = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "First", leadId: member.id, memberIds: [member.id] });
+    const second = await modules.createModule.handler({ userId: member.id }, { projectId: otherProject.id, name: "Second", leadId: member.id, memberIds: [member.id] });
+
+    await actions.changeMemberRole.handler({ userId: admin.id }, { workspaceId: workspace.id, userId: member.id, role: "Guest" });
+
+    expect(await modules.getModule.handler({ userId: admin.id }, { moduleId: first.id })).toMatchObject({ leadId: null, memberIds: [] });
+    expect(await modules.getModule.handler({ userId: admin.id }, { moduleId: second.id })).toMatchObject({ leadId: null, memberIds: [] });
   });
 });
 

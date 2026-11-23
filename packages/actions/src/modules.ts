@@ -2,7 +2,7 @@ import { Type } from "@sinclair/typebox";
 import { and, asc, eq, gte, ilike, inArray, isNotNull, isNull, lte, ne, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { assertNoneArchived, assertNotArchived, liveWorkItems, unarchivedWorkItems } from "./triage";
-import { activities, moduleHistory, moduleItems, moduleMembers, modules, projectMembers, workItemAssignees, workItemLabels, workItemRelations, labels, users, workItemStates, workItems, workspaceMembers } from "@weft/db";
+import { activities, moduleHistory, moduleItems, moduleMembers, modules, workItemAssignees, workItemLabels, workItemRelations, labels, users, workItemStates, workItems } from "@weft/db";
 import { assertFeatureEnabled } from "./features";
 import { ActionError } from "./members";
 import { requireProjectAccess } from "./projects";
@@ -13,6 +13,7 @@ import { requirePointsEstimate } from "./estimates";
 import { workItemMarkdownOptions, writtenDescription } from "./work-items";
 import { WRITTEN_FORM_MAX_INPUT_LENGTH } from "./markdown-doc";
 import { validateRichTextAssets } from "./rich-text-validation";
+import { eligibleModuleRolePairs } from "./module-roles";
 
 /** Set by hand, never computed from dates or work items. */
 export const moduleStatuses = ["backlog", "planned", "in-progress", "paused", "completed", "cancelled"] as const;
@@ -97,15 +98,12 @@ export function createModuleActions(db: Database) {
     return { module: found, project };
   }
 
-  /** Lead and members must be able to work in the project: a project member or a workspace Admin. */
+  /** Lead and members must be able to write in the project, or be a workspace Admin. */
   async function assertPeople(database: Database, project: { id: string; workspaceId: string }, userIds: string[]) {
     const ids = [...new Set(userIds)];
     if (ids.length === 0) return;
-    const inProject = await database.select({ userId: projectMembers.userId }).from(projectMembers).where(and(eq(projectMembers.projectId, project.id), inArray(projectMembers.userId, ids)));
-    const admins = await database.select({ userId: workspaceMembers.userId }).from(workspaceMembers)
-      .where(and(eq(workspaceMembers.workspaceId, project.workspaceId), eq(workspaceMembers.role, "Admin"), inArray(workspaceMembers.userId, ids)));
-    const ok = new Set([...inProject, ...admins].map((row) => row.userId));
-    if (ids.some((id) => !ok.has(id))) throw new ActionError("Lead and members must belong to this project", 400);
+    const eligible = await eligibleModuleRolePairs(database, { projectIds: [project.id], userIds: ids });
+    if (ids.some((id) => !eligible.has(`${project.id}:${id}`))) throw new ActionError("Lead and members must belong to this project", 400);
   }
 
   function assertOpen(found: ModuleRow) {
@@ -186,7 +184,9 @@ export function createModuleActions(db: Database) {
             descriptionPatch.descriptionMarkdown = description.markdown; descriptionPatch.descriptionDoc = description.document;
           }
           const leadId = input.leadId === undefined ? current.leadId : input.leadId;
-          await assertPeople(database, project, [...(input.leadId ? [input.leadId] : []), ...(input.memberIds ?? [])]);
+          const existingMembers = input.memberIds ? await database.select({ userId: moduleMembers.userId }).from(moduleMembers).where(eq(moduleMembers.moduleId, current.id)) : [];
+          const addedMembers = input.memberIds?.filter((userId) => !existingMembers.some((row) => row.userId === userId)) ?? [];
+          await assertPeople(database, project, [...(input.leadId && input.leadId !== current.leadId ? [input.leadId] : []), ...addedMembers]);
           await assertLeadIsPerson(database, input.leadId);
           const [row] = await database.update(modules).set({ name: input.name ?? current.name, status: input.status ?? current.status, leadId, startDate, endDate, ...descriptionPatch }).where(eq(modules.id, current.id)).returning();
           if (input.memberIds) {

@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
-import { activities, assets, createDatabase, moduleItems, modules as moduleRows, workItems, workItemStates, workspaces, type Database } from "@weft/db";
-import { createCycleActions, createIntakeActions, createModuleActions, createProjectActions, createRelationActions, createWorkItemActions } from "../src";
+import { activities, assets, createDatabase, moduleItems, moduleMembers, modules as moduleRows, workItems, workItemStates, workspaces, type Database } from "@weft/db";
+import { createCycleActions, createIntakeActions, createMemberActions, createModuleActions, createProjectActions, createRelationActions, createWorkItemActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -32,6 +32,67 @@ test.concurrent("a Member creates, updates, lists and gets a Module; status is s
     for (const status of ["planned", "paused", "completed", "cancelled", "backlog"] as const) expect((await modules.updateModule.handler({ userId: member.id }, { moduleId: created.id, status })).status).toBe(status);
     expect((await modules.listModules.handler({ userId: guest.id }, { projectId: project.id })).map((row) => row.name)).toEqual(["Auth"]);
     expect(await modules.getModule.handler({ userId: guest.id }, { moduleId: created.id })).toMatchObject({ id: created.id, workItemIds: [] });
+  });
+});
+
+test.concurrent("removing a Project member clears their Module roles only in that Project", async () => {
+  await withRollback(db, async (transaction) => {
+    const { modules, projects, member, admin, project, workspace } = await setup(transaction);
+    const otherProject = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Other", key: "OTH", visibility: "public" });
+    await projects.addProjectMember.handler({ userId: admin.id }, { projectId: otherProject.id, userId: member.id, role: "Member" });
+
+    const ledHere = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Led here", leadId: member.id });
+    const joinedHere = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Joined here", memberIds: [member.id, admin.id] });
+    const otherProjectModule = await modules.createModule.handler({ userId: member.id }, { projectId: otherProject.id, name: "Still here", leadId: member.id, memberIds: [member.id] });
+
+    await projects.removeProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: member.id });
+
+    expect(await modules.getModule.handler({ userId: admin.id }, { moduleId: ledHere.id })).toMatchObject({ leadId: null, memberIds: [] });
+    expect(await modules.getModule.handler({ userId: admin.id }, { moduleId: joinedHere.id })).toMatchObject({ leadId: null, memberIds: [admin.id] });
+    expect(await modules.getModule.handler({ userId: admin.id }, { moduleId: otherProjectModule.id })).toMatchObject({ leadId: member.id, memberIds: [member.id] });
+  });
+});
+
+test.concurrent("removing a workspace member clears their Module roles only in Projects they lose", async () => {
+  await withRollback(db, async (transaction) => {
+    const { modules, projects, member, admin, project, workspace } = await setup(transaction);
+    const otherProject = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Other", key: "OTH", visibility: "public" });
+    await projects.addProjectMember.handler({ userId: admin.id }, { projectId: otherProject.id, userId: member.id, role: "Member" });
+    const target = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Member roles", leadId: member.id, memberIds: [member.id, admin.id] });
+    const other = await modules.createModule.handler({ userId: member.id }, { projectId: otherProject.id, name: "Other project", leadId: member.id, memberIds: [member.id] });
+
+    await createMemberActions(transaction).removeMember.handler({ userId: admin.id }, { workspaceId: workspace.id, userId: member.id });
+
+    expect(await modules.getModule.handler({ userId: admin.id }, { moduleId: target.id })).toMatchObject({ leadId: null, memberIds: [admin.id] });
+    expect(await modules.getModule.handler({ userId: admin.id }, { moduleId: other.id })).toMatchObject({ leadId: null, memberIds: [] });
+  });
+});
+
+test.concurrent("changing a Project role to Guest clears Module roles only in that Project", async () => {
+  await withRollback(db, async (transaction) => {
+    const { modules, projects, member, admin, project, workspace } = await setup(transaction);
+    const otherProject = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Other", key: "OTH", visibility: "public" });
+    await projects.addProjectMember.handler({ userId: admin.id }, { projectId: otherProject.id, userId: member.id, role: "Member" });
+    const target = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Member roles", leadId: member.id, memberIds: [member.id, admin.id] });
+    const other = await modules.createModule.handler({ userId: member.id }, { projectId: otherProject.id, name: "Other project", leadId: member.id, memberIds: [member.id] });
+
+    await projects.changeProjectMemberRole.handler({ userId: admin.id }, { projectId: project.id, userId: member.id, role: "Guest" });
+
+    expect(await modules.getModule.handler({ userId: admin.id }, { moduleId: target.id })).toMatchObject({ leadId: null, memberIds: [admin.id] });
+    expect(await modules.getModule.handler({ userId: admin.id }, { moduleId: other.id })).toMatchObject({ leadId: member.id, memberIds: [member.id] });
+  });
+});
+
+test.concurrent("a workspace Admin keeps Module roles when removed from a Project", async () => {
+  await withRollback(db, async (transaction) => {
+    const { modules, projects, admin, member, project } = await setup(transaction);
+    await projects.addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: admin.id, role: "Admin" });
+    await projects.changeProjectMemberRole.handler({ userId: admin.id }, { projectId: project.id, userId: member.id, role: "Admin" });
+    const target = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Admin roles", leadId: admin.id, memberIds: [admin.id] });
+
+    await projects.removeProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: admin.id });
+
+    expect(await modules.getModule.handler({ userId: admin.id }, { moduleId: target.id })).toMatchObject({ leadId: admin.id, memberIds: [admin.id] });
   });
 });
 
@@ -94,6 +155,45 @@ test.concurrent("validation: dates, status, lead outside the project", async () 
     expect(await bad({ startDate: "2030-02-30" })).toBe(400);
     expect(await bad({ leadId: outsider.id })).toBe(400);
     expect(await bad({ memberIds: [outsider.id] })).toBe(400);
+  });
+});
+
+test.concurrent("Module leads and members must have a project write role", async () => {
+  await withRollback(db, async (transaction) => {
+    const { modules, member, guest, project } = await setup(transaction);
+    const module = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "People" });
+    const code = (promise: Promise<unknown>) => promise.then(() => 200, (error: { status: number }) => error.status);
+
+    expect(await code(modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Guest lead", leadId: guest.id }))).toBe(400);
+    expect(await code(modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Guest member", memberIds: [guest.id] }))).toBe(400);
+    expect(await code(modules.updateModule.handler({ userId: member.id }, { moduleId: module.id, leadId: guest.id }))).toBe(400);
+    expect(await code(modules.updateModule.handler({ userId: member.id }, { moduleId: module.id, memberIds: [guest.id] }))).toBe(400);
+
+    const valid = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Writable people", leadId: member.id, memberIds: [member.id] });
+    expect(valid).toMatchObject({ leadId: member.id, memberIds: [member.id] });
+  });
+});
+
+test.concurrent("Module leads and members cannot be workspace Guests with Project Member access", async () => {
+  await withRollback(db, async (transaction) => {
+    const { modules, projects, member, guest, admin, project } = await setup(transaction);
+    await projects.addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: guest.id, role: "Member" });
+    const code = (promise: Promise<unknown>) => promise.then(() => 200, (error: { status: number }) => error.status);
+
+    expect(await code(modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Guest lead", leadId: guest.id }))).toBe(400);
+    expect(await code(modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Guest member", memberIds: [guest.id] }))).toBe(400);
+
+    const existing = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Existing member" });
+    await transaction.insert(moduleMembers).values({ moduleId: existing.id, userId: guest.id });
+    const legacyMemberIds = (await modules.getModule.handler({ userId: member.id }, { moduleId: existing.id })).memberIds;
+    expect(await code(modules.updateModule.handler({ userId: member.id }, { moduleId: existing.id, status: "in-progress", memberIds: legacyMemberIds }))).toBe(200);
+    expect(await code(modules.updateModule.handler({ userId: member.id }, { moduleId: existing.id, leadId: guest.id }))).toBe(400);
+    expect(await code(modules.updateModule.handler({ userId: member.id }, { moduleId: existing.id, memberIds: [guest.id] }))).toBe(200);
+    await modules.updateModule.handler({ userId: member.id }, { moduleId: existing.id, memberIds: [] });
+    expect(await code(modules.updateModule.handler({ userId: member.id }, { moduleId: existing.id, memberIds: [guest.id] }))).toBe(400);
+
+    const valid = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Valid people", leadId: admin.id, memberIds: [member.id] });
+    expect(valid).toMatchObject({ leadId: admin.id, memberIds: [member.id] });
   });
 });
 

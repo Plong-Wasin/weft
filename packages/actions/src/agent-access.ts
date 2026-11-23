@@ -1,6 +1,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { agentAccess, agentProjects, agents, projectMembers, projects, runtimes, users, workspaceMembers } from "@weft/db";
+import { clearModuleRoles } from "./module-roles";
 
 /** System ceilings for per-run limits an Admin or eligible Member creator may set on an Agent. */
 export const agentLimitDefaults = { maxToolCalls: 25, maxTokens: 200_000, timeoutSeconds: 1800 } as const;
@@ -75,7 +76,10 @@ export async function syncAgentProjects(db: Database, agent: Pick<typeof agents.
   const current = await db.select({ projectId: projectMembers.projectId }).from(projectMembers)
     .where(and(eq(projectMembers.workspaceId, agent.workspaceId), eq(projectMembers.userId, agent.userId)));
   const stale = current.map((row) => row.projectId).filter((id) => !wanted.includes(id));
-  if (stale.length > 0) await db.delete(projectMembers).where(and(eq(projectMembers.userId, agent.userId), inArray(projectMembers.projectId, stale)));
+  if (stale.length > 0) {
+    await db.delete(projectMembers).where(and(eq(projectMembers.userId, agent.userId), inArray(projectMembers.projectId, stale)));
+    await clearModuleRoles(db, { projectIds: stale, userId: agent.userId });
+  }
 }
 
 /** Opens a freshly created project to every Agent that is open to all projects. */

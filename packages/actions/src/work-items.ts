@@ -1049,8 +1049,8 @@ export function createWorkItemActions(db: Database) {
           const sameSet = input.labelIds.length === current.length && new Set(input.labelIds).size === current.length && current.every((label) => input.labelIds.includes(label.id));
           if (!sameSet) throw new ActionError("Reorder must list every label exactly once", 400);
           for (const [position, labelId] of input.labelIds.entries()) {
-            const before = current.findIndex((label) => label.id === labelId);
-            if (before === position) continue;
+            // Compare the stored position, not the list index: a deleted label leaves a gap, so an index can match while the stored value does not.
+            if (current.find((label) => label.id === labelId)?.position === position) continue;
             await database.update(labels).set({ position }).where(eq(labels.id, labelId));
           }
           const reordered = await database.select().from(labels).where(eq(labels.projectId, project.id)).orderBy(asc(labels.position), asc(labels.name));

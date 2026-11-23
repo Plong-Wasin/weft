@@ -32,6 +32,17 @@ test.concurrent("reorder_labels stores the order that list_labels returns, and a
   });
 });
 
+test.concurrent("reorder_labels keeps the chosen order after a label was deleted and left a gap", async () => {
+  await withRollback(db, async (transaction) => {
+    const { admin, project, items } = await setup(transaction);
+    const ids: Record<string, string> = {};
+    for (const name of ["Alpha", "Bravo", "Charlie", "Delta"]) ids[name] = (await items.createLabel.handler({ userId: admin.id }, { projectId: project.id, name })).id;
+    await items.deleteLabel.handler({ userId: admin.id }, { labelId: ids.Bravo! });
+    await items.reorderLabels.handler({ userId: admin.id }, { projectId: project.id, labelIds: [ids.Delta!, ids.Charlie!, ids.Alpha!] });
+    expect((await items.listLabels.handler({ userId: admin.id }, { projectId: project.id })).map((label) => label.name)).toEqual(["Delta", "Charlie", "Alpha"]);
+  });
+});
+
 test.concurrent("reorder_labels refuses a list that is not every label exactly once, and a Member", async () => {
   await withRollback(db, async (transaction) => {
     const { admin, member, project, items } = await setup(transaction);

@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
 import { activities, createDatabase, jobs, projectMembers, runs, workspaces, type Database } from "@weft/db";
-import { createAgentActions, createJobHandlers, createProjectActions, createRunActions, createCommentActions, createWorkItemActions, createTriggerActions, queueRunsForAssignees, runNextJob, startRun, createAutopilotSettingActions } from "../src";
+import { createAgentActions, createApiTokenActions, createJobHandlers, createProjectActions, createRunActions, createCommentActions, createRuntimeActions, createWorkItemActions, createTriggerActions, queueRunsForAssignees, runNextJob, startRun, createAutopilotSettingActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -184,6 +184,35 @@ test.concurrent("a member lists a work item's Runs and reads one; a Guest and an
     }
     await expect(s.runActions.listRuns.handler({ userId: s.guest.id }, { workItemId: item.id })).rejects.toMatchObject({ status: 403 });
     await expect(s.runActions.getRun.handler({ userId: s.member.id }, { runId: crypto.randomUUID() })).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+test.concurrent("a Runtime owner lists only readable project Runs; Admin and the Agent see all, unrelated Members are refused", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const privateProject = await s.projects.createProject.handler({ userId: s.admin.id }, { workspaceId: s.workspace.id, name: "Private", key: "PRV", visibility: "private" });
+    await s.projects.addProjectMember.handler({ userId: s.admin.id }, { projectId: privateProject.id, userId: s.member.id, role: "Member" });
+    const token = await createApiTokenActions(transaction).createApiToken.handler({ userId: s.member.id }, { name: "daemon" });
+    const runtimeActions = createRuntimeActions(transaction);
+    const registered = await runtimeActions.registerDaemon.handler({ userId: s.member.id, apiTokenId: token.id }, { hostname: "owner-box", version: "1", agentClis: ["claude"] });
+    const runtime = registered.runtimes[0]!;
+    await runtimeActions.shareRuntime.handler({ userId: s.member.id }, { runtimeId: runtime.id });
+    const agent = await s.agents.createAgent.handler({ userId: s.member.id }, { workspaceId: s.workspace.id, name: "Member's Agent", model: "default", runtimeId: runtime.id });
+    await s.agents.setAgentProjectAccess.handler({ userId: s.member.id }, { agentId: agent.id, allProjects: false, projectIds: [s.project.id, privateProject.id] });
+    await s.agents.setAgentAccess.handler({ userId: s.member.id }, { agentId: agent.id, userIds: [s.member.id, s.admin.id] });
+    const readableItem = await newItem(s);
+    const privateItem = await s.work.createWorkItem.handler({ userId: s.member.id }, { projectId: privateProject.id, title: "Private Run", assigneeIds: [agent.userId] });
+    await transaction.delete(projectMembers).where(and(eq(projectMembers.projectId, privateProject.id), eq(projectMembers.userId, s.member.id)));
+    await s.work.updateWorkItem.handler({ userId: s.member.id }, { workItemId: readableItem.id, assigneeIds: [agent.userId] });
+
+    const listedByCreator = await s.runActions.listAgentRuns.handler({ userId: s.member.id }, { agentId: agent.id });
+    expect(listedByCreator).toHaveLength(1);
+    expect(listedByCreator[0]).toMatchObject({ agentId: agent.id, workItemId: readableItem.id, projectId: s.project.id });
+    expect(await s.runActions.listAgentRuns.handler({ userId: s.admin.id }, { agentId: agent.id })).toHaveLength(2);
+    expect(await s.runActions.listAgentRuns.handler({ userId: agent.userId }, { agentId: agent.id })).toHaveLength(2);
+    expect(privateItem.projectId).toBe(privateProject.id);
+    const unrelated = await createMemberFactory(transaction, s.workspace.id, "Member");
+    await expect(s.runActions.listAgentRuns.handler({ userId: unrelated.id }, { agentId: agent.id })).rejects.toMatchObject({ status: 403 });
   });
 });
 

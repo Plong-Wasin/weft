@@ -9,7 +9,7 @@ import { enqueueJob } from "./jobs";
 import { enqueueNotification } from "./notifications";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
-import { hasAgentAccess } from "./agent-access";
+import { canManageAgentAccess, hasAgentAccess } from "./agent-access";
 import { emitRunFinished } from "./outbound-webhooks";
 import { openSecret } from "./integration-secrets";
 import { lockRuntimeRun, redactRuntimeSecrets, scrubRunMessages } from "./runtime-secret-comments";
@@ -826,11 +826,16 @@ export function createRunActions(db: Database) {
       handler: async (context: Context, input: { agentId: string }) => {
         const [agent] = await db.select().from(agents).where(eq(agents.id, input.agentId));
         if (!agent) throw new ActionError("Agent not found", 404);
-        await requireWorkspaceRole(db, context.userId, agent.workspaceId, "read");
-        if (await db.select({ id: agents.id }).from(agents).where(and(eq(agents.id, agent.id), eq(agents.userId, context.userId))).then((rows) => rows.length) === 0) await requireWorkspaceRole(db, context.userId, agent.workspaceId, "admin");
-        const rows = await db.select().from(runs).where(eq(runs.agentId, agent.id)).orderBy(desc(runs.createdAt), desc(runs.id));
-        const [membership] = await db.select({ role: workspaceMembers.role }).from(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, agent.workspaceId), eq(workspaceMembers.userId, context.userId)));
-        return presentRuns(db, rows, await failureDetailAllowed(db, context.userId, membership?.role, rows));
+        const workspaceRole = await requireWorkspaceRole(db, context.userId, agent.workspaceId, "read");
+        if (workspaceRole !== "Admin" && agent.userId !== context.userId && !(await canManageAgentAccess(db, agent, context.userId))) throw new ActionError("Forbidden", 403);
+        let rows = await db.select().from(runs).where(eq(runs.agentId, agent.id)).orderBy(desc(runs.createdAt), desc(runs.id));
+        if (workspaceRole !== "Admin") {
+          const readableProjects = await db.select({ id: projects.id }).from(projects).leftJoin(projectMembers, and(eq(projectMembers.projectId, projects.id), eq(projectMembers.userId, context.userId)))
+            .where(and(eq(projects.workspaceId, agent.workspaceId), or(eq(projects.visibility, "public"), eq(projectMembers.userId, context.userId))));
+          const readableProjectIds = new Set(readableProjects.map((project) => project.id));
+          rows = rows.filter((row) => readableProjectIds.has(row.projectId));
+        }
+        return presentRuns(db, rows, await failureDetailAllowed(db, context.userId, workspaceRole, rows));
       },
     },
     getRunTranscript: {

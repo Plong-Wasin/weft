@@ -1,9 +1,9 @@
 import { Elysia } from "elysia";
 import { Type } from "@sinclair/typebox";
 import { cors } from "@elysiajs/cors";
-import { createMailerFromEnv, type Mailer, ActionError, AgentAccessDeniedError, actionRegistry, createActionList, createApiTokenActions, createRuntimeDispatchActions, aiWriteActions, HIDDEN_FROM_AI, skillWriteActions, createWorkspaceAction, registerAction, writeDecision, type ActionContext, type SignalBus, containsRuntimeSecretValue, openSecret, recordSecretOutputBlockedNotifications, withAgentRunProjectAuthorization } from "@weft/actions";
-import { and, eq, gt, isNull } from "drizzle-orm";
-import { agents, apiTokens, collections, comments, createDatabase, oauthAccessToken, oauthClient, runs, runtimes, users, wikiPages, workItems, type Database } from "@weft/db";
+import { createMailerFromEnv, type Mailer, ActionError, AgentAccessDeniedError, actionRegistry, createActionList, createApiTokenActions, createRuntimeDispatchActions, aiWriteActions, HIDDEN_FROM_AI, skillWriteActions, createWorkspaceAction, registerAction, writeDecision, type ActionContext, type SignalBus, containsRuntimeSecretValue, openSecret, recordSecretOutputBlockedNotifications, withAgentRunProjectAuthorization, mintApiToken, DEFAULT_TOKEN_MS, CLI_DEVICE_INACTIVITY_MS, CLI_DEVICE_ROTATION_INTERVAL_MS, lockCliDeviceLifecycle, expireCliDeviceAuthorizations } from "@weft/actions";
+import { and, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
+import { agents, apiTokens, cliDevices, cliDeviceAuthorizations, collections, comments, createDatabase, oauthAccessToken, oauthClient, runs, runtimes, users, wikiPages, workItems, type Database } from "@weft/db";
 import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
 import { createAuth, minimumPasswordLength, type AuthOptions } from "./auth";
 import { microsoftAuthSettings, microsoftEnabled } from "./microsoft-auth";
@@ -94,6 +94,7 @@ export function createApp(
   const signInThrottle = createSignInThrottle(limitSettings, limitClock);
   const addressCounter = createWindowCounter(limitClock);
   const apiCounter = createWindowCounter(limitClock);
+  const deviceAuthCounter = createWindowCounter(limitClock);
   const configuredLanguage = aiOptions.defaultLanguage ?? Bun.env.DEFAULT_LANGUAGE;
   const minPasswordLength = passwordOptions.minimum ?? minimumPasswordLength();
   const defaultLocale: Locale | null = configuredLanguage === undefined || configuredLanguage === "" ? null : isLocale(configuredLanguage) ? configuredLanguage : null;
@@ -119,7 +120,7 @@ export function createApp(
   const passwordSignInEnabled = authOptions.passwordSignInEnabled ?? (Bun.env.PASSWORD_SIGN_IN_ENABLED ?? "true").toLowerCase() !== "false";
   const cookieSecure = (Bun.env.WEFT_PUBLIC_URL ?? Bun.env.BETTER_AUTH_URL ?? "http://localhost:3000").startsWith("https://");
   const memberActions = createActionList(db, { integrations, passwordSignInEnabled, outboundWebhooks, clock, assetStorage });
-  const tokens = createApiTokenActions(db);
+  const tokens = createApiTokenActions(db, { now: () => new Date(limitClock()) });
   const runtimeActions = createRuntimeActions(db, clock);
   const runtimeDispatch = createRuntimeDispatchActions(db, clock);
   const registrationLimiter = createRegistrationLimiter({ trustedProxyHops });
@@ -225,6 +226,237 @@ export function createApp(
       set.headers["cache-control"] = "no-store";
       return Response.redirect(destination.toString(), 302);
     })
+    // Device authorization keeps the terminal secret separate from the short code the person reviews.
+    .post("/api/cli/device-authorization", async ({ request, set }) => {
+      const address = clientAddress(request, trustedProxyHops);
+      const limit = deviceAuthCounter.take(`start:${address}`, 10, MINUTE_MS);
+      if (!limit.allowed) return addressLimited(set, "DEVICE_LOGIN_LIMIT", limit.retryAfterSeconds);
+      const body = await request.json().catch(() => null) as { deviceId?: unknown; hostname?: unknown } | null;
+      if (!body || typeof body.deviceId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.deviceId) || typeof body.hostname !== "string" || body.hostname.length > 500) {
+        set.status = 400; return { error: "Invalid device sign-in request" };
+      }
+      const deviceSecret = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+      const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      const randomCode = crypto.getRandomValues(new Uint8Array(8));
+      const userCode = Array.from(randomCode, (byte) => alphabet[byte % alphabet.length]).join("");
+      const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+      const expiresAt = new Date(limitClock() + 5 * MINUTE_MS);
+      await db.insert(cliDeviceAuthorizations).values({
+        deviceId: body.deviceId, hostname: body.hostname.trim().slice(0, 200) || "computer",
+        deviceSecretHash: hash(deviceSecret), userCodeHash: hash(userCode), expiresAt,
+      });
+      const webOrigin = (Bun.env.WEB_ORIGIN ?? "http://localhost:5173").replace(/\/$/, "");
+      set.status = 201;
+      set.headers["cache-control"] = "no-store";
+      set.headers["referrer-policy"] = "no-referrer";
+      return { deviceSecret, userCode, verificationUrl: `${webOrigin}/cli/authorize?code=${userCode}`, expiresAt: expiresAt.toISOString(), interval: 2 };
+    })
+    .get("/api/cli/device-authorization", async ({ request, set }) => {
+      const address = clientAddress(request, trustedProxyHops);
+      const limit = deviceAuthCounter.take(`code:${address}`, 20, MINUTE_MS);
+      if (!limit.allowed) return addressLimited(set, "DEVICE_LOGIN_LIMIT", limit.retryAfterSeconds);
+      const caller = await resolveCaller(request);
+      if (!caller || caller.via !== "session") { set.status = 401; return { error: "Sign in to review this device request." }; }
+      const code = new URL(request.url).searchParams.get("code")?.replace(/[^a-z0-9]/gi, "").toUpperCase() ?? "";
+      if (!/^[A-HJ-NP-Z2-9]{8}$/.test(code)) { set.status = 404; return { error: "This sign-in request is invalid or expired." }; }
+      const [authorization] = await db.select().from(cliDeviceAuthorizations).where(eq(cliDeviceAuthorizations.userCodeHash, createHash("sha256").update(code).digest("hex")));
+      if (!authorization || authorization.status !== "pending" || authorization.expiresAt <= new Date(limitClock())) { set.status = 404; return { error: "This sign-in request is invalid or expired." }; }
+      set.headers["cache-control"] = "no-store";
+      set.headers["referrer-policy"] = "no-referrer";
+      const [approvingUser] = await db.select({ name: users.name, email: users.email }).from(users).where(eq(users.id, caller.userId));
+      if (!approvingUser) { set.status = 401; return { error: "Sign in to review this device request." }; }
+      return { hostname: authorization.hostname, account: approvingUser, access: "account-wide", expiresAt: authorization.expiresAt.toISOString() };
+    })
+    .post("/api/cli/device-authorization/decision", async ({ request, set }) => {
+      const caller = await resolveCaller(request);
+      if (!caller || caller.via !== "session") { set.status = 401; return { error: "Sign in to review this device request." }; }
+      const origin = request.headers.get("origin");
+      const allowedOrigin = (Bun.env.WEB_ORIGIN ?? "http://localhost:5173").replace(/\/$/, "");
+      if (!origin || origin.replace(/\/$/, "") !== allowedOrigin) { set.status = 403; return { error: "Request origin is not allowed." }; }
+      const body = await request.json().catch(() => null) as { code?: unknown; decision?: unknown } | null;
+      const code = typeof body?.code === "string" ? body.code.replace(/[^a-z0-9]/gi, "").toUpperCase() : "";
+      if (!/^[A-HJ-NP-Z2-9]{8}$/.test(code) || !["approve", "deny"].includes(String(body?.decision))) { set.status = 404; return { error: "This sign-in request is invalid or expired." }; }
+      const address = clientAddress(request, trustedProxyHops);
+      const limit = deviceAuthCounter.take(`decision:${address}`, 20, MINUTE_MS);
+      if (!limit.allowed) return addressLimited(set, "DEVICE_LOGIN_LIMIT", limit.retryAfterSeconds);
+      const [authorization] = await db.update(cliDeviceAuthorizations).set({ status: body!.decision === "approve" ? "approved" : "denied", userId: caller.userId })
+        .where(and(eq(cliDeviceAuthorizations.userCodeHash, createHash("sha256").update(code).digest("hex")), eq(cliDeviceAuthorizations.status, "pending"), gt(cliDeviceAuthorizations.expiresAt, new Date(limitClock())))).returning({ id: cliDeviceAuthorizations.id });
+      if (!authorization) { set.status = 404; return { error: "This sign-in request is invalid, expired, or already used." }; }
+      set.headers["cache-control"] = "no-store";
+      return { status: body!.decision === "approve" ? "approved" : "denied" };
+    })
+    .post("/api/cli/device-authorization/poll", async ({ request, set }) => {
+      const address = clientAddress(request, trustedProxyHops);
+      const body = await request.json().catch(() => null) as { deviceSecret?: unknown } | null;
+      if (typeof body?.deviceSecret !== "string" || body.deviceSecret.length > 100) { set.status = 400; return { error: "Invalid device request." }; }
+      const secretHash = createHash("sha256").update(body.deviceSecret).digest("hex");
+      const requestLimit = deviceAuthCounter.take(`poll:${secretHash}`, 120, MINUTE_MS);
+      const addressLimit = deviceAuthCounter.take(`poll-address:${address}`, 600, MINUTE_MS);
+      if (!requestLimit.allowed) return addressLimited(set, "DEVICE_LOGIN_LIMIT", requestLimit.retryAfterSeconds);
+      if (!addressLimit.allowed) return addressLimited(set, "DEVICE_LOGIN_LIMIT", addressLimit.retryAfterSeconds);
+      const [authorization] = await db.select({ status: cliDeviceAuthorizations.status, expiresAt: cliDeviceAuthorizations.expiresAt }).from(cliDeviceAuthorizations).where(eq(cliDeviceAuthorizations.deviceSecretHash, secretHash));
+      if (!authorization) { set.status = 404; return { error: "This sign-in request is invalid or expired." }; }
+      set.headers["cache-control"] = "no-store";
+      return { status: authorization.expiresAt <= new Date(limitClock()) ? "expired" : authorization.status };
+    })
+    .post("/api/cli/device-authorization/cancel", async ({ request, set }) => {
+      const body = await request.json().catch(() => null) as { deviceSecret?: unknown } | null;
+      if (typeof body?.deviceSecret !== "string" || body.deviceSecret.length > 100) { set.status = 400; return { error: "Invalid device request." }; }
+      const secretHash = createHash("sha256").update(body.deviceSecret).digest("hex");
+      const result = await db.transaction(async (transaction) => {
+        const [candidate] = await transaction.select({ userId: cliDeviceAuthorizations.userId, deviceId: cliDeviceAuthorizations.deviceId })
+          .from(cliDeviceAuthorizations).where(eq(cliDeviceAuthorizations.deviceSecretHash, secretHash));
+        if (!candidate?.userId) {
+          const [cancelled] = await transaction.update(cliDeviceAuthorizations).set({ status: "cancelled" })
+            .where(and(eq(cliDeviceAuthorizations.deviceSecretHash, secretHash), eq(cliDeviceAuthorizations.status, "pending"))).returning({ id: cliDeviceAuthorizations.id });
+          if (cancelled) return "cancelled";
+          const [authorization] = await transaction.select({ status: cliDeviceAuthorizations.status }).from(cliDeviceAuthorizations).where(eq(cliDeviceAuthorizations.deviceSecretHash, secretHash));
+          return authorization?.status === "cancelled" ? "cancelled" : authorization?.status === "completed" ? "completed" : null;
+        }
+        // Exchange and finalize use this same device lifecycle lock. Cancellation therefore wins
+        // before finalize, or reports that finalize already committed; it cannot revoke the old token.
+        await lockCliDeviceLifecycle(transaction as unknown as Database, candidate.userId, candidate.deviceId);
+        const [authorization] = await transaction.select().from(cliDeviceAuthorizations)
+          .where(eq(cliDeviceAuthorizations.deviceSecretHash, secretHash)).for("update");
+        if (!authorization) return null;
+        if (authorization.status === "completed") return "completed";
+        if (authorization.status === "cancelled") return "cancelled";
+        if (!["pending", "approved", "exchanged"].includes(authorization.status)) return null;
+        if (authorization.tokenId) {
+          await transaction.update(apiTokens).set({ revokedAt: new Date(limitClock()) })
+            .where(and(eq(apiTokens.id, authorization.tokenId), isNull(apiTokens.revokedAt)));
+        }
+        await transaction.update(cliDeviceAuthorizations).set({ status: "cancelled" }).where(eq(cliDeviceAuthorizations.id, authorization.id));
+        return "cancelled";
+      });
+      if (!result) { set.status = 409; return { error: "This sign-in request is no longer cancellable." }; }
+      set.headers["cache-control"] = "no-store";
+      return { status: result };
+    })
+    .post("/api/cli/device-authorization/exchange", async ({ request, set }) => {
+      const body = await request.json().catch(() => null) as { deviceSecret?: unknown } | null;
+      if (typeof body?.deviceSecret !== "string" || body.deviceSecret.length > 100) { set.status = 400; return { error: "Invalid device request." }; }
+      const secretHash = createHash("sha256").update(body.deviceSecret).digest("hex");
+      const result = await db.transaction(async (transaction) => {
+        const [candidate] = await transaction.select({ userId: cliDeviceAuthorizations.userId, deviceId: cliDeviceAuthorizations.deviceId })
+          .from(cliDeviceAuthorizations).where(eq(cliDeviceAuthorizations.deviceSecretHash, secretHash));
+        if (!candidate?.userId) return null;
+        await lockCliDeviceLifecycle(transaction as unknown as Database, candidate.userId, candidate.deviceId);
+        const [authorization] = await transaction.select().from(cliDeviceAuthorizations).where(eq(cliDeviceAuthorizations.deviceSecretHash, secretHash)).for("update");
+        if (!authorization || authorization.status !== "approved" || authorization.expiresAt <= new Date(limitClock()) || !authorization.userId) return null;
+        const [device] = await transaction.select({ isAuthorizedAfterRevocation: sql<boolean>`(${cliDevices.revokedAt} is null or ${cliDeviceAuthorizations.createdAt} > ${cliDevices.revokedAt})` })
+          .from(cliDeviceAuthorizations).leftJoin(cliDevices, and(eq(cliDevices.ownerId, authorization.userId), eq(cliDevices.deviceId, authorization.deviceId)))
+          .where(eq(cliDeviceAuthorizations.id, authorization.id));
+        if (!device?.isAuthorizedAfterRevocation) return null;
+        const credential = await mintApiToken(transaction, { userId: authorization.userId, name: `CLI @ ${authorization.hostname}`, description: "Signed in with weft login", expiresAt: new Date(limitClock() + CLI_DEVICE_INACTIVITY_MS), cliDeviceId: authorization.deviceId });
+        await transaction.update(cliDeviceAuthorizations).set({ status: "exchanged", tokenId: credential.id }).where(eq(cliDeviceAuthorizations.id, authorization.id));
+        return { token: credential.token, exchangeId: authorization.id };
+      });
+      if (!result) { set.status = 409; return { error: "This sign-in request is not approved, has expired, or was already exchanged." }; }
+      set.headers["cache-control"] = "no-store";
+      set.headers["pragma"] = "no-cache";
+      return result;
+    })
+    // Rotate only enrolled device credentials. The old credential remains usable until
+    // the client has atomically installed the new one and calls finalize.
+    .post("/api/cli/device-credentials/renew", async ({ request, set }) => {
+      const caller = await resolveCaller(request);
+      if (!caller?.apiTokenId || caller.via !== "token") { set.status = 401; return { error: "Sign in with an enrolled CLI device to renew it." }; }
+      const now = limitClock();
+      const result = await db.transaction(async (transaction) => {
+        const [candidate] = await transaction.select({ ownerId: cliDevices.ownerId, deviceId: cliDevices.deviceId }).from(cliDevices)
+          .where(and(eq(cliDevices.tokenId, caller.apiTokenId!), eq(cliDevices.ownerId, caller.userId)));
+        if (!candidate) return { status: "legacy" as const };
+        await lockCliDeviceLifecycle(transaction as unknown as Database, candidate.ownerId, candidate.deviceId);
+        const [device] = await transaction.select({ ownerId: cliDevices.ownerId, deviceId: cliDevices.deviceId, hostname: cliDevices.hostname, createdAt: apiTokens.createdAt, revokedAt: cliDevices.revokedAt })
+          .from(cliDevices).innerJoin(apiTokens, eq(apiTokens.id, cliDevices.tokenId))
+          .where(and(eq(cliDevices.tokenId, caller.apiTokenId!), eq(cliDevices.ownerId, caller.userId))).for("update", { of: cliDevices });
+        if (!device) return { status: "legacy" as const };
+        if (device.revokedAt) return { status: "revoked" as const };
+        if (device.createdAt.getTime() > now - CLI_DEVICE_ROTATION_INTERVAL_MS) return { status: "current" as const };
+        const [pending] = await transaction.select({ id: cliDeviceAuthorizations.id }).from(cliDeviceAuthorizations)
+          .where(and(eq(cliDeviceAuthorizations.deviceId, device.deviceId), eq(cliDeviceAuthorizations.status, "rotating"), gt(cliDeviceAuthorizations.expiresAt, new Date(now)))).limit(1);
+        if (pending) return { status: "pending" as const };
+        const credential = await mintApiToken(transaction, {
+          userId: caller.userId, name: `CLI @ ${device.hostname}`, description: "Signed in with weft login",
+          expiresAt: new Date(now + CLI_DEVICE_INACTIVITY_MS), cliDeviceId: device.deviceId,
+        });
+        const exchangeId = crypto.randomUUID();
+        const marker = () => createHash("sha256").update(crypto.randomUUID()).digest("hex");
+        await transaction.insert(cliDeviceAuthorizations).values({
+          id: exchangeId, deviceId: device.deviceId, hostname: device.hostname, userId: caller.userId,
+          tokenId: credential.id, previousTokenId: caller.apiTokenId, deviceSecretHash: marker(), userCodeHash: marker(), status: "rotating",
+          // Limit abandoned exchanges while allowing a saved replacement to finalize later.
+          expiresAt: new Date(now + 10 * MINUTE_MS),
+        });
+        return { status: "rotated" as const, token: credential.token, exchangeId };
+      });
+      if (result.status === "revoked") { set.status = 401; return { error: "CLI device was revoked. Run `weft login` to sign in again." }; }
+      set.headers["cache-control"] = "no-store";
+      set.headers.pragma = "no-cache";
+      return result;
+    })
+    .post("/api/cli/device-authorization/finalize", async ({ request, set }) => {
+      const bearer = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+      if (!bearer) { set.status = 401; return { error: "The new CLI credential is not valid." }; }
+      const body = await request.json().catch(() => null) as { exchangeId?: unknown } | null;
+      if (typeof body?.exchangeId !== "string") { set.status = 400; return { error: "Invalid exchange." }; }
+      const exchangeId = body.exchangeId;
+      const now = new Date(limitClock());
+      const [exchange] = await db.select({ status: cliDeviceAuthorizations.status, expiresAt: cliDeviceAuthorizations.expiresAt }).from(cliDeviceAuthorizations).where(eq(cliDeviceAuthorizations.id, exchangeId));
+      if (exchange && exchange.status !== "completed" && exchange.expiresAt <= now) {
+        await expireCliDeviceAuthorizations(db, now, exchangeId);
+        set.status = 410;
+        return { error: "This sign-in exchange expired before it was finalized. Run `weft login` to start again." };
+      }
+      const tokenHash = createHash("sha256").update(bearer).digest("hex");
+      const [credential] = await db.select({ id: apiTokens.id, userId: apiTokens.userId, daemonOnly: apiTokens.daemonOnly, revokedAt: apiTokens.revokedAt, expiresAt: apiTokens.expiresAt })
+        .from(apiTokens).where(eq(apiTokens.tokenHash, tokenHash));
+      if (!credential || credential.daemonOnly || credential.revokedAt || (credential.expiresAt && credential.expiresAt <= new Date(limitClock()))) { set.status = 401; return { error: "The new CLI credential is not valid." }; }
+      const tokenId = credential.id;
+      const finalized = await db.transaction(async (transaction) => {
+        const [candidate] = await transaction.select({ userId: cliDeviceAuthorizations.userId, deviceId: cliDeviceAuthorizations.deviceId })
+          .from(cliDeviceAuthorizations).where(and(eq(cliDeviceAuthorizations.id, exchangeId), eq(cliDeviceAuthorizations.tokenId, tokenId)));
+        if (!candidate?.userId || candidate.userId !== credential.userId) return false;
+        await lockCliDeviceLifecycle(transaction as unknown as Database, candidate.userId, candidate.deviceId);
+        const [authorization] = await transaction.select().from(cliDeviceAuthorizations).where(and(eq(cliDeviceAuthorizations.id, exchangeId), eq(cliDeviceAuthorizations.tokenId, tokenId), inArray(cliDeviceAuthorizations.status, ["exchanged", "rotating", "completed"]))).for("update");
+        if (!authorization?.userId) return false;
+        if (authorization.status !== "completed" && authorization.expiresAt <= new Date(limitClock())) {
+          await transaction.update(apiTokens).set({ revokedAt: new Date(limitClock()) })
+            .where(and(eq(apiTokens.id, tokenId), isNull(apiTokens.revokedAt)));
+          await transaction.update(cliDeviceAuthorizations).set({ status: "expired" }).where(eq(cliDeviceAuthorizations.id, authorization.id));
+          return "expired" as const;
+        }
+        const [deviceState] = await transaction.select({ tokenId: cliDevices.tokenId, revokedAt: cliDevices.revokedAt,
+          isAuthorizedAfterRevocation: sql<boolean>`(${cliDevices.revokedAt} is null or ${cliDeviceAuthorizations.createdAt} > ${cliDevices.revokedAt})`,
+        }).from(cliDevices).innerJoin(cliDeviceAuthorizations, eq(cliDeviceAuthorizations.id, authorization.id))
+          .where(and(eq(cliDevices.deviceId, authorization.deviceId), eq(cliDevices.ownerId, authorization.userId))).for("update", { of: cliDevices });
+        if (deviceState && !deviceState.isAuthorizedAfterRevocation) return false;
+        if (authorization.status === "completed") {
+          return deviceState?.tokenId === tokenId && !deviceState.revokedAt;
+        }
+        if (authorization.status === "rotating") {
+          const prior = deviceState;
+          if (!prior || prior.tokenId !== authorization.previousTokenId) return false;
+          await transaction.update(apiTokens).set({ cliDeviceId: authorization.deviceId }).where(eq(apiTokens.id, tokenId));
+          await transaction.update(cliDevices).set({ tokenId, hostname: authorization.hostname, lastUsedAt: new Date(limitClock()), revokedAt: null }).where(and(eq(cliDevices.deviceId, authorization.deviceId), eq(cliDevices.ownerId, authorization.userId)));
+          if (prior.tokenId !== tokenId) await transaction.update(apiTokens).set({ revokedAt: new Date(limitClock()) }).where(and(eq(apiTokens.id, prior.tokenId), isNull(apiTokens.revokedAt)));
+          await transaction.update(cliDeviceAuthorizations).set({ status: "completed" }).where(eq(cliDeviceAuthorizations.id, authorization.id));
+          return true;
+        }
+        const [prior] = await transaction.select({ tokenId: cliDevices.tokenId }).from(cliDevices).where(and(eq(cliDevices.deviceId, authorization.deviceId), eq(cliDevices.ownerId, authorization.userId)));
+        await transaction.update(apiTokens).set({ cliDeviceId: authorization.deviceId }).where(eq(apiTokens.id, tokenId));
+        await transaction.insert(cliDevices).values({ deviceId: authorization.deviceId, ownerId: authorization.userId, hostname: authorization.hostname, tokenId, lastUsedAt: new Date(limitClock()), revokedAt: null })
+          .onConflictDoUpdate({ target: [cliDevices.ownerId, cliDevices.deviceId], set: { hostname: authorization.hostname, tokenId, lastUsedAt: new Date(limitClock()), revokedAt: null } });
+        if (prior && prior.tokenId !== tokenId) await transaction.update(apiTokens).set({ revokedAt: new Date(limitClock()) }).where(and(eq(apiTokens.id, prior.tokenId), isNull(apiTokens.revokedAt)));
+        await transaction.update(cliDeviceAuthorizations).set({ status: "completed" }).where(eq(cliDeviceAuthorizations.id, authorization.id));
+        return true;
+      });
+      if (finalized === "expired") { set.status = 410; return { error: "This sign-in exchange expired before it was finalized. Run `weft login` to start again." }; }
+      if (!finalized) { set.status = 409; return { error: "This exchange is invalid or already completed." }; }
+      set.headers["cache-control"] = "no-store";
+      return { status: "completed" };
+    })
     // Repository webhooks (GitHub, GitLab). No sign-in: the request is authenticated by its signature and the integration id in the path.
     .post("/api/webhooks/work-items/:provider/:integrationId", async ({ params, request, set }) => {
       // Off by default: answer before reading the body or touching the database.
@@ -268,7 +500,7 @@ export function createApp(
       // Registration takes the Personal API token only; the Daemon credential it returns cannot register again.
       const bearer = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
       const owner = bearer ? await tokens.authenticateWithToken(bearer) : null;
-      if (!owner) { set.status = 401; return { error: "Personal API token expired or invalid. Run `weft login` to sign in again." }; }
+      if (!owner) { set.status = 401; return { error: "Personal API token expired, revoked, or invalid. Run `weft login` to sign in again." }; }
       const advertised = request.headers.get("x-weft-capabilities")?.split(",").map((capability) => capability.trim()).filter((capability) => capability === "runtime_environment" || capability === "runtime_sandbox");
       try { return await runtimeActions.registerDaemon.handler({ userId: owner.userId, apiTokenId: owner.tokenId }, { ...body, ...(advertised ? { capabilities: advertised } : {}) }); }
       catch (error) { set.status = error instanceof ActionError ? error.status : 400; return { error: error instanceof Error ? error.message : "Daemon registration failed" }; }
@@ -279,6 +511,23 @@ export function createApp(
       if (!caller.daemonId) { set.status = 403; return { error: "Daemon is not registered" }; }
       return runtimeDispatch.claimRuns({ userId: caller.userId, daemonId: caller.daemonId }, 20);
     })
+    .post("/api/daemon/runs/cancellations", async ({ request, set }) => {
+      // A revoked credential gets this one recovery operation so a Daemon that lost its
+      // WebSocket can learn about durable revocation stops. It cannot claim, read or start work.
+      const bearer = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+      if (!bearer) { set.status = 401; return { error: "Daemon credential expired or invalid." }; }
+      const tokenHash = createHash("sha256").update(bearer).digest("hex");
+      const [credential] = await db.select({ id: apiTokens.id, userId: apiTokens.userId, revokedAt: apiTokens.revokedAt, daemonOnly: apiTokens.daemonOnly })
+        .from(apiTokens).where(eq(apiTokens.tokenHash, tokenHash));
+      if (!credential?.daemonOnly || !credential.revokedAt) { set.status = 401; return { error: "Daemon credential expired or invalid." }; }
+      const daemon = await daemonForCredential(db, { tokenId: credential.id, userId: credential.userId });
+      if (!daemon) { set.status = 401; return { error: "Daemon credential expired or invalid." }; }
+      const rows = await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId))
+        .where(and(eq(runtimes.daemonId, daemon.id), inArray(runs.status, ["stopping", "cancelled"]), inArray(runs.failureReason, [
+          "cli_device_revoked", "daemon_credential_revoked", "cli_device_revoked_unconfirmed", "daemon_credential_revoked_unconfirmed",
+        ])));
+      return { runIds: rows.map(({ id }) => id) };
+    }, { body: Type.Object({}) })
     .post("/api/daemon/stop", async ({ request, set }) => {
       const caller = await resolveDaemonCaller(request);
       if (!caller?.apiTokenId) { set.status = 401; return { error: "Daemon credential expired or invalid. Run `weft login` to sign in again." }; }
@@ -331,9 +580,30 @@ export function createApp(
       session: Type.Optional(sessionReport),
     }) })
     .post("/api/daemon/runs/cancel-ack", async ({ request, body, set }) => {
-      const caller = await resolveDaemonCaller(request); if (!caller?.apiTokenId) { set.status = 401; return { error: "Daemon credential expired or invalid. Run `weft login` to sign in again." }; }
-      const [run] = caller.daemonId ? await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runs.id, body.runId), eq(runtimes.daemonId, caller.daemonId))) : [];
-      if (!run) { set.status = 403; return { error: "Run is not assigned to this Daemon" }; }
+      const caller = await resolveDaemonCaller(request);
+      let canAcknowledge = false;
+      if (caller?.apiTokenId && caller.daemonId) {
+        const [run] = await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId))
+          .where(and(eq(runs.id, body.runId), eq(runtimes.daemonId, caller.daemonId)));
+        canAcknowledge = Boolean(run);
+      } else {
+        // Revocation rejects every Daemon request, with one narrowly scoped exception: a process
+        // already told to stop may confirm that exact Run and cannot claim, read, or change anything else.
+        const bearer = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+        if (bearer) {
+          const tokenHash = createHash("sha256").update(bearer).digest("hex");
+          const [credential] = await db.select({ id: apiTokens.id, userId: apiTokens.userId, revokedAt: apiTokens.revokedAt, daemonOnly: apiTokens.daemonOnly })
+            .from(apiTokens).where(eq(apiTokens.tokenHash, tokenHash));
+          const daemon = credential?.revokedAt && credential.daemonOnly
+            ? await daemonForCredential(db, { tokenId: credential.id, userId: credential.userId }) : undefined;
+          const [run] = daemon ? await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId))
+            .where(and(eq(runs.id, body.runId), inArray(runs.status, ["stopping", "cancelled"]), inArray(runs.failureReason, [
+              "cli_device_revoked", "daemon_credential_revoked", "cli_device_revoked_unconfirmed", "daemon_credential_revoked_unconfirmed",
+            ]), eq(runtimes.daemonId, daemon.id))) : [];
+          canAcknowledge = Boolean(run);
+        }
+      }
+      if (!canAcknowledge) { set.status = 401; return { error: "Daemon credential expired or invalid. Run `weft login` to sign in again." }; }
       await runtimeDispatch.acknowledgeCancel(body.runId, body.usage, body.model); return { ok: true };
     }, { body: Type.Object({ runId: Type.String({ format: "uuid" }), usage: Type.Optional(Type.Union([Type.Null(), Type.Object({ inputTokens: Type.Integer({ minimum: 0 }), outputTokens: Type.Integer({ minimum: 0 }), cacheReadTokens: Type.Optional(Type.Integer({ minimum: 0 })), cacheCreationTokens: Type.Optional(Type.Integer({ minimum: 0 })), reportedCostUsd: Type.Optional(Type.Union([Type.Null(), Type.Number({ minimum: 0 })])) })])), model: Type.Optional(Type.Union([Type.Null(), Type.String({ maxLength: 200 })])) }) })
     .get("/api/auth/oauth2/authorize", ({ request }) => {
@@ -563,6 +833,13 @@ export function createApp(
   const daemonSockets = new Map<string, { socket: { send: (data: string) => unknown }; daemonId: string }>();
   let signalTimer: ReturnType<typeof setInterval> | undefined;
   const traceDaemon = (message: string) => { if (Bun.env.WEFT_DAEMON_TRACE === "1") console.log(`[daemon trace] ${message}`); };
+  /** New Daemons authenticate in the handshake header. Query credentials remain accepted for already-installed Daemon versions. */
+  const daemonSocketToken = (socket: { data: { headers?: Record<string, string | undefined>; query?: Record<string, string> } }) => {
+    const authorization = socket.data.headers?.authorization;
+    if (authorization !== undefined) return authorization.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? null;
+    const legacyToken = socket.data.query?.token;
+    return typeof legacyToken === "string" ? legacyToken : null;
+  };
   const signalDaemon = async (socket: { send: (data: string) => unknown }, daemonId: string) => {
     const cancelled = await db.select({ id: runs.id }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runtimes.daemonId, daemonId), eq(runs.status, "stopping")));
     for (const run of cancelled) socket.send(JSON.stringify({ type: "cancel", runId: run.id }));
@@ -573,8 +850,8 @@ export function createApp(
   app.ws("/api/daemon", {
     open: async (socket) => {
       traceDaemon("websocket opened");
-      const token = socket.data.query?.token;
-      if (!token || typeof token !== "string") { socket.close(1008, "Daemon credential expired or invalid. Run `weft login` to sign in again."); return; }
+      const token = daemonSocketToken(socket);
+      if (!token) { socket.close(1008, "Daemon credential expired or invalid. Run `weft login` to sign in again."); return; }
       const caller = await tokens.authenticateDaemonToken(token);
       if (!caller) { socket.close(1008, "Unauthenticated"); return; }
     },
@@ -583,8 +860,8 @@ export function createApp(
       if (message !== "heartbeat" && !(message && typeof message === "object" && (message as { type?: unknown }).type === "heartbeat")) {
         socket.close(1003, "Unsupported daemon frame"); return;
       }
-      const token = socket.data.query?.token;
-      const caller = typeof token === "string" ? await tokens.authenticateDaemonToken(token) : null;
+      const token = daemonSocketToken(socket);
+      const caller = token ? await tokens.authenticateDaemonToken(token) : null;
       if (!caller) {
         const tokenHash = createHash("sha256").update(token ?? "").digest("hex");
         const [tokenRow] = await db.select({ id: apiTokens.id }).from(apiTokens).where(eq(apiTokens.tokenHash, tokenHash));

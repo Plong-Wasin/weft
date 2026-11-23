@@ -11,8 +11,11 @@ import { Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui
 
 type ApiToken = {
   id: string; name: string; prefix: string; description: string | null; createdAt: string;
-  expiresAt: string | null; lastUsedAt: string | null; status: "active" | "expired" | "revoked";
+  expiresAt: string | null; lastUsedAt: string | null; revokedAt: string | null; status: "active" | "expired" | "revoked"; kind: "personal" | "daemon";
 };
+type CredentialPage = { active: ApiToken[]; history: ApiToken[]; historyCount: number; hasMore: boolean };
+type CliDevice = { id: string; hostname: string; createdAt: string; lastActivityAt: string; expiresAt: string | null; revokedAt: string | null; status: "active" | "expired" | "revoked"; daemonConnected: boolean };
+type DevicePage = { active: CliDevice[]; history: CliDevice[]; historyCount: number; hasMore: boolean };
 type CreatedToken = { id: string; name: string; token: string };
 type AuthorizedApp = { id: string; name: string; allowedAt: string; lastUsedAt: string | null };
 
@@ -31,6 +34,13 @@ function todayTomorrow() {
 
 export function ApiTokensPage() {
   const [tokens, setTokens] = React.useState<ApiToken[]>([]);
+  const [tokenHistory, setTokenHistory] = React.useState<ApiToken[]>([]);
+  const [tokenHistoryCount, setTokenHistoryCount] = React.useState(0);
+  const [tokenHistoryHasMore, setTokenHistoryHasMore] = React.useState(false);
+  const [devices, setDevices] = React.useState<CliDevice[]>([]);
+  const [deviceHistory, setDeviceHistory] = React.useState<CliDevice[]>([]);
+  const [deviceHistoryCount, setDeviceHistoryCount] = React.useState(0);
+  const [deviceHistoryHasMore, setDeviceHistoryHasMore] = React.useState(false);
   const [apps, setApps] = React.useState<AuthorizedApp[]>([]);
   const [loaded, setLoaded] = React.useState(false);
   const [failed, setFailed] = React.useState(false);
@@ -45,10 +55,18 @@ export function ApiTokensPage() {
   const [note, setNote] = React.useState<string | null>(null);
 
   const load = React.useCallback(async () => {
-    const result = await action<ApiToken[]>("list_api_tokens", {});
-    const authorized = await action<AuthorizedApp[]>("list_authorized_apps", {});
-    setFailed(result === null);
-    if (result) setTokens(result);
+    const [result, devicePage, authorized] = await Promise.all([
+      action<CredentialPage>("list_managed_credentials", {}),
+      action<DevicePage>("list_cli_devices", {}),
+      action<AuthorizedApp[]>("list_authorized_apps", {}),
+    ]);
+    setFailed(result === null || devicePage === null || authorized === null);
+    if (result) {
+      setTokens(result.active); setTokenHistory(result.history); setTokenHistoryCount(result.historyCount); setTokenHistoryHasMore(result.hasMore);
+    }
+    if (devicePage) {
+      setDevices(devicePage.active); setDeviceHistory(devicePage.history); setDeviceHistoryCount(devicePage.historyCount); setDeviceHistoryHasMore(devicePage.hasMore);
+    }
     if (authorized) setApps(authorized);
     setLoaded(true);
   }, []);
@@ -82,9 +100,35 @@ export function ApiTokensPage() {
   }
 
   async function revoke(token: ApiToken) {
-    if (!window.confirm(translate("tokens.revokeConfirm"))) return;
+    if (!window.confirm(translate("tokens.revokeConfirm").replace("{name}", token.name))) return;
     const result = await action("revoke_api_token", { tokenId: token.id });
-    setNote(result ? translate("tokens.revoked") : translate("tokens.failed"));
+    setNote(result ? translate(token.kind === "daemon" ? "tokens.daemonRevoked" : "tokens.revoked") : translate("tokens.failed"));
+    if (result) await load();
+  }
+
+  async function revokeDevice(device: CliDevice) {
+    if (!window.confirm(translate("devices.revokeConfirm").replace("{hostname}", device.hostname))) return;
+    const result = await action("revoke_cli_device", { deviceId: device.id });
+    setNote(result ? translate("devices.revoked") : translate("devices.failed"));
+    if (result) await load();
+  }
+
+  async function loadMoreDevices() {
+    const next = await action<DevicePage>("list_cli_devices", { historyOffset: deviceHistory.length });
+    if (!next) { setFailed(true); return; }
+    setDeviceHistory((current) => [...current, ...next.history]); setDeviceHistoryHasMore(next.hasMore);
+  }
+
+  async function loadMoreTokenHistory() {
+    const next = await action<CredentialPage>("list_managed_credentials", { historyOffset: tokenHistory.length });
+    if (!next) { setFailed(true); return; }
+    setTokenHistory((current) => [...current, ...next.history]); setTokenHistoryHasMore(next.hasMore);
+  }
+
+  async function revokeHistoricalToken(token: ApiToken) {
+    if (!window.confirm(translate("tokens.revokeConfirm").replace("{name}", token.name))) return;
+    const result = await action("revoke_api_token", { tokenId: token.id });
+    setNote(result ? translate(token.kind === "daemon" ? "tokens.daemonRevoked" : "tokens.revoked") : translate("tokens.failed"));
     if (result) await load();
   }
 
@@ -102,19 +146,57 @@ export function ApiTokensPage() {
         <button type="button" onClick={() => { setDialog(true); setNote(null); }}>{translate("tokens.add")}</button>
       </div>
     </SettingsHeader>
+    <SettingsHeader level={2} title={translate("devices.title")} description={translate("devices.description")} />
     <SettingsBlock>
-      {failed && <Note note={translate("tokens.failed")} error />}
-      {loaded && tokens.length === 0 && !failed && <p className="text-14 text-secondary">{translate("tokens.empty")}</p>}
-      {tokens.length > 0 && <RowList>{tokens.map((token) => <Row key={token.id}>
-        <span className="grid min-w-0 flex-1 gap-0.5">
-          <span className="font-medium">{token.name}</span>
+      {devices.length === 0 && loaded && !failed && <p className="text-14 text-secondary">{translate("devices.empty")}</p>}
+      {devices.length > 0 && <RowList>{devices.map((device) => <Row key={device.id}>
+        <span className="grid min-w-0 flex-[1_1_15rem] gap-0.5">
+          <span className="font-medium">{device.hostname} <span className="font-mono text-12 text-tertiary">· {device.id.slice(0, 8)}</span></span>
+          <span className="text-12 text-tertiary">{translate("devices.lastActivity")} {formatDate(device.lastActivityAt)} · {translate(device.daemonConnected ? "devices.connected" : "devices.disconnected")}</span>
+          <span className="text-12 text-tertiary">{translate("tokens.expiry")} {device.expiresAt ? formatDate(device.expiresAt) : translate("tokens.never")}</span>
+        </span>
+        <span className={`rounded-full px-2 py-0.5 text-12 ${device.status === "active" ? "bg-accent-subtle text-accent-text" : "bg-layer-2 text-secondary"}`}>{translate(`devices.status.${device.status}`)}</span>
+        <button type="button" className="secondary hover:!text-danger-text" onClick={() => void revokeDevice(device)}>{translate("devices.revoke")}</button>
+      </Row>)}</RowList>}
+      {deviceHistoryCount > 0 && <details className="mt-3 border-t border-subtle pt-3">
+        <summary className="cursor-pointer text-13 font-medium">{translate("devices.history").replace("{count}", String(deviceHistoryCount))}</summary>
+        <div className="mt-2"><RowList>{deviceHistory.map((device) => <Row key={device.id}>
+          <span className="grid min-w-0 flex-1 gap-0.5"><span className="font-medium">{device.hostname} <span className="font-mono text-12 text-tertiary">· {device.id.slice(0, 8)}</span></span>
+            <span className="text-12 text-tertiary"><span data-testid="device-history-status">{translate(`devices.status.${device.status}`)}</span> · {translate(device.status === "revoked" ? "devices.revokedAt" : "devices.expiredAt")} {device.status === "revoked" ? formatDate(device.revokedAt ?? device.createdAt) : formatDate(device.expiresAt ?? device.createdAt)}</span>
+          </span>
+          {device.status !== "revoked" && <button type="button" className="secondary hover:!text-danger-text" onClick={() => void revokeDevice(device)}>{translate("devices.revoke")}</button>}
+        </Row>)}</RowList></div>
+        {deviceHistoryHasMore && <button type="button" className="secondary mt-3" onClick={() => void loadMoreDevices()}>{translate("devices.loadMore")}</button>}
+      </details>}
+    </SettingsBlock>
+    <SettingsHeader level={2} title={translate("tokens.activeTitle")} description={translate("tokens.activeDescription")} />
+    <SettingsBlock>
+      {loaded && tokens.filter((token) => token.kind === "personal").length === 0 && !failed && <p className="text-14 text-secondary">{translate("tokens.personalEmpty")}</p>}
+      {tokens.filter((token) => token.kind === "personal").length > 0 && <RowList>{tokens.filter((token) => token.kind === "personal").map((token) => <Row key={token.id}>
+        <span className="grid min-w-0 flex-1 gap-0.5"><span className="font-medium">{token.name}</span>
           {token.description && <span className="text-13 text-secondary">{token.description}</span>}
           <span className="text-12 text-tertiary">{token.prefix} · {translate("tokens.created")} {formatDate(token.createdAt)} · {translate("tokens.expiry")} {token.expiresAt ? formatDate(token.expiresAt) : translate("tokens.never")}</span>
           <span className="text-12 text-tertiary">{translate("tokens.lastUsed")} {token.lastUsedAt ? formatDate(token.lastUsedAt) : translate("tokens.notUsed")}</span>
         </span>
-        <span className={`rounded-full px-2 py-0.5 text-12 ${token.status === "active" ? "bg-accent-subtle text-accent-text" : "bg-layer-2 text-secondary"}`}>{translate(`tokens.status.${token.status}`)}</span>
-        {token.status === "active" && <button type="button" className="secondary" onClick={() => void revoke(token)}>{translate("tokens.revoke")}</button>}
+        <button type="button" className="secondary" onClick={() => void revoke(token)}>{translate("tokens.revoke")}</button>
       </Row>)}</RowList>}
+      <h3 className="mb-2 mt-5 text-14 font-semibold">{translate("tokens.unassociatedTitle")}</h3>
+      <p className="mb-3 text-13 text-secondary">{translate("tokens.unassociatedDescription")}</p>
+      {tokens.filter((token) => token.kind === "daemon").length === 0 && !failed && <p className="text-14 text-secondary">{translate("tokens.legacyEmpty")}</p>}
+      {tokens.filter((token) => token.kind === "daemon").length > 0 && <RowList>{tokens.filter((token) => token.kind === "daemon").map((token) => <Row key={token.id}>
+        <span className="grid min-w-0 flex-1 gap-0.5"><span className="font-medium">{token.name}</span><span className="text-12 text-tertiary">{token.prefix} · {translate("tokens.created")} {formatDate(token.createdAt)} · {translate("tokens.expiry")} {token.expiresAt ? formatDate(token.expiresAt) : translate("tokens.never")}</span></span>
+        <button type="button" className="secondary hover:!text-danger-text" onClick={() => void revoke(token)}>{translate("tokens.revoke")}</button>
+      </Row>)}</RowList>}
+      {tokenHistoryCount > 0 && <details className="mt-3 border-t border-subtle pt-3">
+        <summary className="cursor-pointer text-13 font-medium">{translate("tokens.history").replace("{count}", String(tokenHistoryCount))}</summary>
+        <div className="mt-2"><RowList>{tokenHistory.map((token) => <Row key={token.id}>
+          <span className="grid min-w-0 flex-1 gap-0.5"><span className="font-medium">{token.name} <span className="text-12 text-secondary"><span data-testid="credential-history-status">{translate(`tokens.status.${token.status}`)}</span></span></span>
+            <span className="text-12 text-tertiary">{token.prefix} · {translate("tokens.created")} {formatDate(token.createdAt)} · {translate(token.status === "revoked" ? "tokens.revokedAt" : "tokens.expiredAt")} {formatDate(token.status === "revoked" ? token.revokedAt ?? token.createdAt : token.expiresAt ?? token.createdAt)}</span></span>
+          {token.status !== "revoked" && <button type="button" className="secondary hover:!text-danger-text" onClick={() => void revokeHistoricalToken(token)}>{translate("tokens.revoke")}</button>}
+        </Row>)}</RowList></div>
+        {tokenHistoryHasMore && <button type="button" className="secondary mt-3" onClick={() => void loadMoreTokenHistory()}>{translate("tokens.loadMore")}</button>}
+      </details>}
+      {failed && <Note note={translate("tokens.failed")} error />}
     </SettingsBlock>
     <SettingsHeader level={2} title={translate("apps.title")} description={translate("apps.description")} />
     <SettingsBlock>

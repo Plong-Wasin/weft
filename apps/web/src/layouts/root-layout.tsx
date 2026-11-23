@@ -138,7 +138,7 @@ export function RootLayout() {
   if (resetPending) return <ForcedPasswordReset minPasswordLength={minPasswordLength} notice={resetNotice} languageSwitch={languageSwitch} signOut={signOut} onDone={refresh} />;
   if (current === undefined) return null;
   if (window.location.pathname === paths.resetPassword()) return <ResetPasswordScreen minPasswordLength={minPasswordLength} api={api} languageSwitch={languageSwitch} />;
-  if (current === null) return <AuthScreen api={api} inviteToken={inviteToken} onSignedIn={refresh} languageSwitch={languageSwitch} minPasswordLength={minPasswordLength} emailEnabled={emailEnabled} />;
+  if (current === null) return <AuthScreen api={api} inviteToken={inviteToken} onSignedIn={refresh} languageSwitch={languageSwitch} minPasswordLength={minPasswordLength} emailEnabled={emailEnabled} contextualNotice={window.location.pathname === "/cli/authorize" ? translate("cliDevice.signedOut") : undefined} />;
   if (inviteToken) return <OnboardingShell>
     <h1 className="text-20 font-semibold">{translate("invite.title")}</h1>
     <p role={inviteError ? "alert" : "status"} className={`text-14 ${inviteError ? "text-danger-text" : "text-secondary"}`}>{inviteError ?? translate("invite.joining")}</p>

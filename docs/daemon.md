@@ -9,6 +9,7 @@ Use `weft daemon status` to see whether it is running, its process ID, uptime, d
 The Daemon folder (`~/.config/weft` by default) is created with owner-only permissions (`0700`). It holds:
 
 - `config.json` (`0600`): the CLI settings and the Personal API token that `weft login` saved.
+- `config.json.lockdb` (`0600`): a SQLite transaction lock used to serialize login and renewal across CLI processes. An interrupted transaction is released by the operating system.
 - `daemon-credential.json` (`0600`): the Daemon credential, issued by the server at registration.
 - `daemon.json` (`0600`) and `daemon.log` (`0600`): the process record and the log.
 
@@ -36,7 +37,11 @@ Enable refuses while a background Daemon runs: run `weft daemon stop` first. Whi
 
 ## Two credentials
 
-**The Personal API token** (`config.json`) is a normal token for CLI commands, the same kind as one you create in the web app. `weft login` saves it with a 30-day expiry. Signing in again on the same machine revokes the previous token of that machine. The Daemon uses it only for `register_daemon`, the call that registers the Daemon and its Runtimes.
+**CLI credential transport and recovery.** Authenticated CLI requests, `weft login`, and automatic device-token renewal require HTTPS for remote Weft servers. HTTP is accepted for loopback development addresses (`localhost`, `127.0.0.0/8`, and `::1`). The CLI checks the URL before sending credentials and explains this requirement if a remote HTTP URL is selected. Existing explicit Personal API token authentication (`--token` or `WEFT_TOKEN`) remains supported with HTTPS. A bearer token sent over remote HTTP can be stolen. The browser URL and code remain visible in the terminal, and the browser must be able to reach the same Weft server.
+
+If approval succeeds but the server response or local save is interrupted, the CLI keeps the previous config and a protected pending credential in `config.json`. The next `weft login`, CLI request, or Daemon registration retries finalization and promotes the new credential only after the server confirms it. The pending exchange must be finalized within the authorization request's five-minute lifetime; after it expires, the server revokes its unused credential and `weft login` must be run again. The worker also expires abandoned exchanges during its hourly cleanup, so cleanup does not depend on another login. Login and renewal operations sharing a config are serialized; a process crash releases the SQLite transaction lock automatically.
+
+**The Personal API token** (`config.json`) is a normal token for CLI commands, the same kind as one you create in the web app. A token enrolled by `weft login` renews automatically while the device is active and requires sign-in again after 90 days without activity. Signing in again on the same machine replaces that device's credential after the new one is installed. The Daemon uses it only for registration, the call that registers the Daemon and its Runtimes.
 
 **The Daemon credential** (`daemon-credential.json`) is a restricted token (prefix `weft_daemon_`). The server returns it once, when registration issues or rotates it. It reaches `/api/daemon/*` endpoints only: claiming Runs, status posts, the WebSocket, and stopping the Daemon. It is refused on `/actions`, and it cannot register again. It expires 30 days after issue. Every registration (about every 5 minutes) checks it: when less than 7 days remain, or when no active credential exists for this host, the server issues a new one and keeps the same Daemon and its Runtimes. A Daemon with no credential file asks for a new one.
 
@@ -48,7 +53,9 @@ Enable refuses while a background Daemon runs: run `weft daemon stop` first. Whi
 
 **When the Personal sign-in is refused**, registration returns 401 (the Personal token expired or was revoked). The Daemon writes a message to its log and to stderr telling you to run `weft login`, and keeps retrying with a backoff of up to 5 minutes. Run `weft login`; the Daemon picks up the new sign-in at its next retry.
 
-**The Daemon credential is in the WebSocket URL.** The WebSocket connects to `/api/daemon?token=...`, so the credential is part of the URL. Proxies and access logs in front of the API may record that URL. Treat the server's access logs as holding Daemon credentials, and keep the credential's lifetime short (30 days, rotated early).
+**WebSocket credential transport.** Current Daemon versions send their restricted credential as `Authorization: Bearer <credential>` on the WebSocket handshake to `/api/daemon`; the URL contains no credential. The API authenticates that credential when the socket opens and again for each heartbeat, so expiry, rotation and revocation are enforced on an active connection. Current clients do not fall back to query authentication if the header is rejected.
+
+For compatibility, the API still accepts `?token=...` from older Daemon versions. Those older clients expose the reusable credential in the request URL, which a reverse proxy or access log may record; the API's own request log records only the path, but cannot control logs at an upstream proxy. Upgrade old Daemons to a current CLI and configure upstream access logs to omit or redact query strings until those clients are retired. This compatibility path is temporary and does not weaken authentication or revocation checks; header authentication takes precedence whenever an Authorization header is present.
 
 ## What an Agent CLI can read
 

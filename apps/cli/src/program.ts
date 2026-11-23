@@ -1,7 +1,7 @@
 import { Command, Option } from "commander";
 import { createActionList, describeAction, integrationsEnabled, outboundWebhooksEnabled } from "@weft/actions";
 import type { Database } from "@weft/db";
-import { daemonPaths, daemonStatus, login, readCliConfig, startDaemon, stopDaemon } from "./daemon";
+import { assertDaemonCredentialServer, daemonPaths, daemonStatus, login, readCliConfig, renewCliCredential, startDaemon, stopDaemon, validatedAuthApiUrl, withCliConfigLock } from "./daemon";
 import { autostartStatus, disableAutostart, enableAutostart, followLog, probeAgentClis, readLogTail, recordServiceDaemon, restartDaemon, startDaemonForUser } from "./daemon-ops";
 import { checkForNewerCli } from "./version";
 
@@ -14,6 +14,8 @@ export interface CliEnvironment {
   stderr?: (text: string) => void;
   stdin?: ReadableStream<Uint8Array>;
   signal?: AbortSignal;
+  openBrowser?: (url: string) => Promise<void> | void;
+  backgroundSpawn?: (argv: string[], options: Parameters<typeof Bun.spawn>[1]) => { pid: number; unref(): void };
 }
 
 interface Schema { type?: string; description?: string; properties?: Record<string, Schema>; required?: string[]; anyOf?: Schema[]; const?: unknown }
@@ -40,6 +42,11 @@ export function buildProgram(environment: CliEnvironment = {}) {
   const doFetch: FetchLike = environment.fetch ?? fetch;
   const stdout = environment.stdout ?? ((text: string) => process.stdout.write(text));
   const stderr = environment.stderr ?? ((text: string) => process.stderr.write(text));
+  const selectedEnv = (): Record<string, string | undefined> => ({
+    ...env,
+    ...(program.opts().apiUrl ? { WEFT_API_URL: program.opts().apiUrl as string } : {}),
+    ...(program.opts().token ? { WEFT_TOKEN: program.opts().token as string } : {}),
+  });
 
   const program = new Command("weft")
     .description("Weft command line, derived from the Action registry: one command per Action (work items, wiki, Cycles, Modules, Intake, Relations, comments, queries, ...). Run `weft <command> --help` for a command's options; `weft --help` lists them all. Write commands run at once (no Confirmation card).")
@@ -49,25 +56,31 @@ export function buildProgram(environment: CliEnvironment = {}) {
     .exitOverride()
     .configureOutput({ writeOut: stdout, writeErr: stderr });
 
-  program.command("login").description("Sign in through your browser and save your CLI token").action(async () => login({ env, fetch: doFetch, stdout, stderr }));
+  program.command("login").description("Sign in by approving this device in a browser").action(async () => {
+    const controller = environment.signal ? undefined : new AbortController();
+    const cancel = () => controller?.abort();
+    if (controller) process.once("SIGINT", cancel);
+    try { await login({ env: { ...env, WEFT_API_URL: program.opts().apiUrl ?? env.WEFT_API_URL }, fetch: doFetch, stdout, stderr, signal: environment.signal ?? controller?.signal, openBrowser: environment.openBrowser }); }
+    finally { if (controller) process.removeListener("SIGINT", cancel); }
+  });
   const daemon = program.command("daemon").description("Manage the local Daemon");
   daemon.command("start").description("Start the Daemon in the background").addHelpText("after", "\nEach machine that runs a Daemon needs its own hostname: two machines with the same hostname share one Daemon and lock each other out.\nSet WEFT_HOSTNAME to a distinct name on each machine (the default is this computer's hostname).\n").option("--foreground", "Keep the Daemon attached to this terminal for debugging").action(async (options: { foreground?: boolean }) => {
-    const runtime = { env, fetch: doFetch, stdout, stderr };
+    const runtime = { env: selectedEnv(), fetch: doFetch, stdout, stderr, backgroundSpawn: environment.backgroundSpawn };
     if (!options.foreground) {
       const started = await startDaemonForUser(runtime);
       if ("managedBy" in started && started.managedBy === "autostart") stdout(`Daemon started by autostart${started.pid ? ` (process ${started.pid})` : ""}. Run \`weft daemon status\` to check it.\n`);
-      const notice = await checkForNewerCli({ fetch: doFetch, apiUrl: (await readCliConfig(env)).apiUrl ?? env.WEFT_API_URL ?? "http://localhost:3000" });
+      const notice = await checkForNewerCli({ fetch: doFetch, apiUrl: runtime.env.WEFT_API_URL ?? (await readCliConfig(env)).apiUrl ?? "http://localhost:3000" });
       if (notice) stdout(`${notice}\n`);
       return;
     }
     // The autostart service runs the foreground Daemon and must record its own process so status and stop can find it.
-    const serviced = env.WEFT_DAEMON_SERVICE === "1";
-    const release = serviced ? await recordServiceDaemon({ env, apiUrl: (env.WEFT_API_URL ?? (await readCliConfig(env)).apiUrl ?? "http://localhost:3000").replace(/\/$/, "") }) : undefined;
+    const serviced = runtime.env.WEFT_DAEMON_SERVICE === "1";
+    const release = serviced ? await recordServiceDaemon({ env: runtime.env, apiUrl: (runtime.env.WEFT_API_URL ?? (await readCliConfig(runtime.env)).apiUrl ?? "http://localhost:3000").replace(/\/$/, "") }) : undefined;
     try { await startDaemon(runtime); } finally { await release?.(); }
   });
   daemon.command("stop").description("Stop the background Daemon and its active Runs").action(async () => { await stopDaemon({ env, stdout, stderr }); });
   daemon.command("restart").description("Stop the Daemon if it runs, then start it again").option("--json", "Print the result as JSON").action(async (options: { json?: boolean }) => {
-    const result = await restartDaemon({ env, stdout: () => {}, stderr });
+    const result = await restartDaemon({ env: selectedEnv(), stdout: () => {}, stderr, backgroundSpawn: environment.backgroundSpawn });
     if (options.json) { stdout(`${JSON.stringify(result)}\n`); return; }
     const before = result.previousPid ? `Stopped process ${result.previousPid}. ` : "";
     stdout(`${before}Daemon restarted${result.pid ? ` (process ${result.pid})` : ""} ${result.managedBy === "autostart" ? "by autostart" : "in the background"}. Run \`weft daemon status\` to check it.\n`);
@@ -82,7 +95,7 @@ export function buildProgram(environment: CliEnvironment = {}) {
     } else {
       stdout(`Daemon is running as process ${status.pid} (up ${Math.floor(status.uptimeSeconds / 60)}m ${status.uptimeSeconds % 60}s).\nAgent CLIs: ${status.agentClis.length ? status.agentClis.join(", ") : "none detected"}.\nSigned in to: ${status.server}.\nLog file: ${status.logPath}.\n${autostartLine}Run \`weft daemon stop\` to stop it.\n`);
     }
-    const notice = await checkForNewerCli({ fetch: doFetch, apiUrl: status.running ? status.server : (await readCliConfig(env)).apiUrl ?? env.WEFT_API_URL ?? "http://localhost:3000" });
+    const notice = await checkForNewerCli({ fetch: doFetch, apiUrl: status.running ? status.server : selectedEnv().WEFT_API_URL ?? (await readCliConfig(env)).apiUrl ?? "http://localhost:3000" });
     if (notice) stdout(`${notice}\n`);
   });
   daemon.command("logs").description("Show the last lines of the Daemon log, or follow it").option("-n, --lines <count>", "How many lines to show (default 50)", "50").option("-f, --follow", "Keep showing new lines until you press Ctrl+C").option("--json", "Print the last lines as JSON").action(async (options: { lines: string; follow?: boolean; json?: boolean }) => {
@@ -103,8 +116,8 @@ export function buildProgram(environment: CliEnvironment = {}) {
     stdout(clis.some((cli) => cli.usable) ? "A usable CLI is registered the next time the Daemon starts or re-checks its CLIs.\n" : "No agent CLI can run here yet, so no Runtime is offered.\n");
   });
   const autostart = daemon.command("autostart").description("Start the Daemon when you sign in (off by default)");
-  autostart.command("enable").alias("on").description("Turn on autostart for this user: no administrator rights needed").action(async () => { stdout(`${await enableAutostart({ env, stdout, stderr })}\n`); });
-  autostart.command("disable").alias("off").description("Turn off autostart and stop the autostart Daemon").action(async () => { stdout(`${await disableAutostart({ env, stdout, stderr })}\n`); });
+  autostart.command("enable").alias("on").description("Turn on autostart for this user: no administrator rights needed").action(async () => { stdout(`${await enableAutostart({ env: selectedEnv(), stdout, stderr })}\n`); });
+  autostart.command("disable").alias("off").description("Turn off autostart and stop the autostart Daemon").action(async () => { stdout(`${await disableAutostart({ env: selectedEnv(), stdout, stderr })}\n`); });
   autostart.command("status").description("Show whether autostart is on").option("--json", "Print status as JSON").action(async (options: { json?: boolean }) => {
     const status = await autostartStatus({ env });
     if (options.json) { stdout(`${JSON.stringify(status)}\n`); return; }
@@ -112,15 +125,28 @@ export function buildProgram(environment: CliEnvironment = {}) {
     stdout(status.enabled ? `Autostart is on: the Daemon starts when you sign in. Unit: ${status.file}.\n` : "Autostart is off: the Daemon does not start by itself. Turn it on with `weft daemon autostart enable`.\n");
   });
 
-  async function request(path: string, token: string, apiUrl: string, body?: unknown) {
-    const response = await doFetch(`${apiUrl.replace(/\/$/, "")}${path}`, {
+  async function request(path: string, token: string, apiUrl: string, body?: unknown, allowConfigRetry = true, retriedWithRotatedToken = false) {
+    const secureApiUrl = validatedAuthApiUrl(apiUrl);
+    const send = () => doFetch(`${secureApiUrl}${path}`, {
       method: body === undefined ? "GET" : "POST",
       headers: { authorization: `Bearer ${token}`, "x-weft-source": "cli", ...(body === undefined ? {} : { "content-type": "application/json" }) },
       body: body === undefined ? undefined : JSON.stringify(body),
+      redirect: "error",
     });
+    const response = allowConfigRetry
+      ? await withCliConfigLock(env, async () => {
+        const current = await readCliConfig(env);
+        assertDaemonCredentialServer({}, current, secureApiUrl);
+        return send();
+      })
+      : await send();
     const text = await response.text();
     const data = text ? JSON.parse(text) : null;
-    if (response.status === 401) throw new Error(`401: ${(data as { error?: string } | null)?.error ?? "Unauthenticated"}. The token is missing, wrong or expired: run \`weft login\` again, or pass --token or set WEFT_TOKEN.`);
+    if (response.status === 401) {
+      const currentToken = allowConfigRetry && !retriedWithRotatedToken ? (await readCliConfig(env)).token : undefined;
+      if (currentToken && currentToken !== token) return request(path, currentToken, apiUrl, body, allowConfigRetry, true);
+      throw new Error(`401: ${(data as { error?: string } | null)?.error ?? "Unauthenticated"}. The token is missing, expired or revoked: run \`weft login\` again, or pass --token or set WEFT_TOKEN.`);
+    }
     if (!response.ok) throw new Error(`${response.status}: ${(data as { error?: string } | null)?.error ?? response.statusText}`);
     return data;
   }
@@ -142,7 +168,9 @@ export function buildProgram(environment: CliEnvironment = {}) {
       const options = self.optsWithGlobals() as Record<string, string | undefined>;
       const saved = await readCliConfig(env);
       const apiUrl = options.apiUrl ?? env.WEFT_API_URL ?? saved.apiUrl ?? "http://localhost:3000";
-      const token = options.token ?? env.WEFT_TOKEN ?? saved.token;
+      const explicitToken = options.token ?? env.WEFT_TOKEN;
+      if (!explicitToken) assertDaemonCredentialServer(env, saved, validatedAuthApiUrl(apiUrl));
+      const token = explicitToken ?? await renewCliCredential({ env, fetch: doFetch }, apiUrl) ?? saved.token;
       if (!token) throw new Error("No API token: pass --token or set WEFT_TOKEN");
       const input: Record<string, unknown> = options.input ? JSON.parse(options.input) : {};
       for (const [name, property] of orderedProperties) {
@@ -156,12 +184,12 @@ export function buildProgram(environment: CliEnvironment = {}) {
       if ("workspaceId" in properties) {
         const slug = options.workspace ?? env.WEFT_WORKSPACE;
         if (!slug) throw new Error("This command needs --workspace <slug> (or WEFT_WORKSPACE)");
-        const me = await request("/api/me", token, apiUrl) as { workspaces: Array<{ id: string; slug: string }> };
+        const me = await request("/api/me", token, apiUrl, undefined, options.token === undefined && env.WEFT_TOKEN === undefined) as { workspaces: Array<{ id: string; slug: string }> };
         const workspace = me.workspaces.find((candidate) => candidate.slug === slug);
         if (!workspace) throw new Error(`Workspace "${slug}" not found for this token's owner`);
         input.workspaceId = workspace.id;
       }
-      stdout(`${JSON.stringify(await request(`/actions/${action.name}`, token, apiUrl, input), null, 2)}\n`);
+      stdout(`${JSON.stringify(await request(`/actions/${action.name}`, token, apiUrl, input, options.token === undefined && env.WEFT_TOKEN === undefined), null, 2)}\n`);
     });
   }
   return program;

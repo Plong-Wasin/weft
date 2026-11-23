@@ -2,7 +2,7 @@ import type { MessageKey } from "@weft/shared";
 
 export type OwnerType = "work_item" | "comment" | "wiki_page" | "cycle" | "module";
 export type OwnerRef = { ownerType: OwnerType; ownerId: string };
-export type AssetRow = { id: string; ownerType: OwnerType; ownerId: string; uploaderId: string; filename: string; contentType: string; size: number; inline: boolean; unverified: boolean; createdAt: string };
+export type AssetRow = { id: string; ownerType: OwnerType; ownerId: string; uploaderId: string; filename: string; contentType: string; size: number; inline: boolean; previewable: boolean; unverified: boolean; createdAt: string };
 
 /** Mirrors the server's inline list (packages/actions/src/storage.ts); the server stays the authority and also reports `inline` per asset. */
 export const inlineImageTypes = ["image/png", "image/jpeg", "image/gif", "image/webp"];

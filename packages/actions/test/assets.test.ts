@@ -392,28 +392,49 @@ test("presigned POST policy pins key, type and size range, and is deterministic 
   expect(signPostPolicy(settings, { key: "w/a", contentType: "image/png", maxBytes: 78 }, now).fields["x-amz-signature"]).not.toBe(post.fields["x-amz-signature"]);
 });
 
-test.concurrent("png, jpeg, gif, webp render inline; svg, html and others download only", async () => {
+test.concurrent("only supported passive image, video and PDF MIME types can preview", async () => {
   await withRollback(db, async (transaction) => {
     const env = await setup(transaction);
-    const cases: Array<[string, string, boolean]> = [
-      ["image/png", "a.png", true], ["image/jpeg", "a.jpg", true], ["image/gif", "a.gif", true], ["image/webp", "a.webp", true], ["IMAGE/PNG; charset=x", "b.png", true],
-      ["image/svg+xml", "a.svg", false], ["text/html", "a.html", false], ["application/xhtml+xml", "a.xhtml", false], ["application/pdf", "a.pdf", false], ["", "none", false],
+    const cases: Array<[string, string, boolean, boolean]> = [
+      ["image/png", "a.png", true, true], ["image/jpeg", "a.jpg", true, true], ["image/gif", "a.gif", true, true], ["image/webp", "a.webp", true, true], ["IMAGE/PNG; charset=x", "b.png", true, true],
+      ["video/mp4", "a.mp4", false, true], ["video/webm", "a.webm", false, true], ["application/pdf", "a.pdf", false, true],
+      ["image/svg+xml", "a.svg", false, false], ["text/html", "a.html", false, false], ["application/xhtml+xml", "a.xhtml", false, false], ["video/quicktime", "a.mov", false, false], ["", "none", false, false],
     ];
-    for (const [contentType, filename, expected] of cases) {
+    for (const [contentType, filename, inline, previewable] of cases) {
       const ticket = await env.assets.requestAssetUpload.handler({ userId: env.member.id }, { ownerType: "work_item", ownerId: env.item.id, filename, contentType: contentType || "x", size: 10 });
-      env.mem.put(ticket.fields.key!, 10);
+      const normalized = contentType.toLowerCase().split(";")[0];
+      const signatures: Record<string, number[]> = {
+        "image/png": [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+        "image/jpeg": [0xff, 0xd8, 0xff], "image/gif": [0x47, 0x49, 0x46, 0x38, 0x39, 0x61],
+        "image/webp": [0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50],
+        "video/mp4": [0, 0, 0, 0, 0x66, 0x74, 0x79, 0x70], "video/webm": [0x1a, 0x45, 0xdf, 0xa3],
+        "application/pdf": [0x25, 0x50, 0x44, 0x46, 0x2d],
+      };
+      env.mem.putBytes(ticket.fields.key!, Uint8Array.from(previewable ? signatures[normalized]! : new Array(10).fill(0)));
       const asset = await env.assets.completeAssetUpload.handler({ userId: env.member.id }, { assetId: ticket.assetId });
-      expect(asset.inline).toBe(expected);
+      expect(asset.inline).toBe(inline);
+      expect(asset.previewable).toBe(previewable);
       const download = await env.assets.getAssetDownloadUrl.handler({ userId: env.member.id }, { assetId: asset.id });
-      expect(download.inline).toBe(expected);
-      expect(download.url).toContain(`inline=${expected}`);
-      if (expected) {
+      expect(download.inline).toBe(inline);
+      expect(download.preview).toBe(false);
+      expect(download.url).toContain(`inline=${inline}`);
+      if (previewable) {
+        const preview = await env.assets.getAssetDownloadUrl.handler({ userId: env.member.id }, { assetId: asset.id, preview: true });
+        expect(preview).toMatchObject({ inline, preview: true, contentType: contentType.toLowerCase().split(";")[0] });
+        expect(preview.url).toContain("inline=true");
+        expect(decodeURIComponent(preview.url)).toContain(`type=${contentType.toLowerCase().split(";")[0]}`);
         const attachment = await env.assets.getAssetDownloadUrl.handler({ userId: env.member.id }, { assetId: asset.id, download: true });
-        expect(attachment.inline).toBe(false);
+        expect(attachment).toMatchObject({ inline: false, preview: false });
         expect(attachment.url).toContain("type=application%2Foctet-stream");
+      } else {
+        await expect(env.assets.getAssetDownloadUrl.handler({ userId: env.member.id }, { assetId: asset.id, preview: true })).rejects.toMatchObject({ status: 400 });
+        expect(decodeURIComponent(download.url)).toContain("type=application/octet-stream");
       }
-      if (!expected) expect(decodeURIComponent(download.url)).toContain("type=application/octet-stream");
     }
+    const disguisedTicket = await env.assets.requestAssetUpload.handler({ userId: env.member.id }, { ownerType: "work_item", ownerId: env.item.id, filename: "fake.pdf", contentType: "application/pdf", size: 21 });
+    env.mem.putBytes(disguisedTicket.fields.key!, Buffer.from("<html>not a PDF</html>"));
+    const disguisedHtml = await env.assets.completeAssetUpload.handler({ userId: env.member.id }, { assetId: disguisedTicket.assetId });
+    await expect(env.assets.getAssetDownloadUrl.handler({ userId: env.member.id }, { assetId: disguisedHtml.id, preview: true })).rejects.toMatchObject({ status: 400 });
   });
 });
 
@@ -424,6 +445,7 @@ test.concurrent("access control: download needs read access; upload and delete n
     expect((await env.assets.getAssetDownloadUrl.handler({ userId: env.guest.id }, { assetId: asset.id })).filename).toBe("a.png");
     expect((await env.assets.getAssetDownloadUrl.handler({ userId: env.admin.id }, { assetId: asset.id })).filename).toBe("a.png");
     await expect(env.assets.getAssetDownloadUrl.handler({ userId: env.outsider.id }, { assetId: asset.id })).rejects.toMatchObject({ status: 404 });
+    await expect(env.assets.getAssetDownloadUrl.handler({ userId: env.outsider.id }, { assetId: asset.id, preview: true })).rejects.toMatchObject({ status: 404 });
     await expect(env.assets.listAssets.handler({ userId: env.outsider.id }, { ownerType: "work_item", ownerId: env.item.id })).rejects.toMatchObject({ status: 404 });
     await expect(env.assets.requestAssetUpload.handler({ userId: env.guest.id }, { ownerType: "work_item", ownerId: env.item.id, filename: "a", contentType: "image/png", size: 1 })).rejects.toMatchObject({ status: 403 });
     await expect(env.assets.requestAssetUpload.handler({ userId: env.outsider.id }, { ownerType: "work_item", ownerId: env.item.id, filename: "a", contentType: "image/png", size: 1 })).rejects.toMatchObject({ status: 404 });

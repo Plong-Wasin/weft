@@ -114,8 +114,15 @@ export function createApp(
     if (node.type === "text" && Array.isArray(node.marks) && node.marks.some((mark) => {
       if (!mark || typeof mark !== "object") return false;
       const attrs = (mark as { attrs?: unknown }).attrs;
-      return !!attrs && typeof attrs === "object" && typeof (attrs as { href?: unknown }).href === "string" && (attrs as { href: string }).href.startsWith("weft://work-item/");
-    })) return { type: "text", text: "[work item]" };
+      return !!attrs && typeof attrs === "object" && typeof (attrs as { href?: unknown }).href === "string" && (attrs as { href: string }).href.startsWith("weft://");
+    })) {
+      const isWorkItem = (node.marks as unknown[]).some((mark) => {
+        if (!mark || typeof mark !== "object") return false;
+        const attrs = (mark as { attrs?: unknown }).attrs;
+        return !!attrs && typeof attrs === "object" && typeof (attrs as { href?: unknown }).href === "string" && (attrs as { href: string }).href.startsWith("weft://work-item/");
+      });
+      return { type: "text", text: isWorkItem ? "[work item]" : "[page]" };
+    }
     return Object.fromEntries(Object.entries(node).map(([key, child]) => [key, publicContent(child)]));
   }
   const workspaceAction = createWorkspaceAction(db, { ...gates, bucketName: Bun.env.S3_BUCKET ?? "weft-assets" });

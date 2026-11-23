@@ -155,6 +155,43 @@ test.concurrent("published Wiki content hides references to work items in privat
   });
 });
 
+test.concurrent("published Wiki content hides links to private Wiki pages", async () => {
+  await withRollback(db, async (transaction) => {
+    const app = createApp(undefined, transaction);
+    const post = async (name: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost/actions/${name}`, {
+      method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
+    }));
+    const owner = (await app.handle(new Request("http://localhost/api/auth/sign-up/email", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Owner", email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" }),
+    }))).headers.get("set-cookie")!.split(";")[0]!;
+    const workspace = await (await post("create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, owner)).json() as { id: string };
+    const publicShelf = await (await post("create_collection", { workspaceId: workspace.id, name: "Public" }, owner)).json() as { id: string };
+    const privateShelf = await (await post("create_collection", { workspaceId: workspace.id, name: "Private" }, owner)).json() as { id: string };
+    await post("set_collection_visibility", { collectionId: privateShelf.id, visibility: "private" }, owner);
+    const privatePage = await (await post("create_wiki_page", { workspaceId: workspace.id, collectionId: publicShelf.id, title: "Private page title", access: "private" }, owner)).json() as { id: string };
+    const privateCollectionPage = await (await post("create_wiki_page", { workspaceId: workspace.id, collectionId: privateShelf.id, title: "Private collection title" }, owner)).json() as { id: string };
+    const publishedPage = await (await post("create_wiki_page", { workspaceId: workspace.id, collectionId: publicShelf.id, title: "Public guide" }, owner)).json() as { id: string };
+    await transaction.update(wikiPages).set({ content: { type: "doc", content: [{ type: "paragraph", content: [
+      { type: "text", text: "Ordinary text " },
+      { type: "text", text: "Private page title", marks: [{ type: "link", attrs: { href: `weft://wiki/${privatePage.id}`, kind: "wiki", targetId: privatePage.id, target: "Private page title" } }] },
+      { type: "text", text: " and " },
+      { type: "text", text: "Private collection title", marks: [{ type: "link", attrs: { href: `weft://wiki/${privateCollectionPage.id}`, kind: "wiki", targetId: privateCollectionPage.id, target: "Private collection title" } }] },
+      { type: "text", text: " External link", marks: [{ type: "link", attrs: { href: "https://example.test/path" } }] },
+    ] }] } }).where(eq(wikiPages.id, publishedPage.id));
+    const published = await (await post("publish_wiki_page", { pageId: publishedPage.id }, owner)).json() as { token: string };
+    const response = await app.handle(new Request(`http://localhost/published/${published.token}`));
+    expect(response.status).toBe(200);
+    const body = JSON.stringify(await response.json());
+    expect(body).not.toContain(privatePage.id);
+    expect(body).not.toContain("Private page title");
+    expect(body).not.toContain(privateCollectionPage.id);
+    expect(body).not.toContain("Private collection title");
+    expect(body).toContain("Ordinary text ");
+    expect(body).toContain("https://example.test/path");
+    expect(body).toContain("External link");
+  });
+});
+
 test.concurrent("project Pages are hidden through HTTP list, detail, activity and search routes", async () => {
   await withRollback(db, async (transaction) => {
     const app = createApp(undefined, transaction);

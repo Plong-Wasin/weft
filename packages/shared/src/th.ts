@@ -553,6 +553,8 @@ export const th: Record<keyof typeof en, string> = {
   "sortable.reorder": "เรียงลำดับ",
   "sortable.hint": "ลากเพื่อเรียงลำดับ หรือกดลูกศรขึ้นหรือลง",
   "sortable.actions": "การทำงาน",
+  "sortable.moveUp": "เลื่อนขึ้น",
+  "sortable.moveDown": "เลื่อนลง",
   "sortable.moved": "ย้าย {name} ไปตำแหน่งที่ {position} จาก {total}",
   "states.moveDown": "เลื่อนลง",
   "states.remove": "นำออก",

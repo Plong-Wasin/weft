@@ -33,6 +33,19 @@ test("the registry built with the flags on contains the integration and webhook 
   }
 });
 
+test("the settings reorder Actions are in the registry on every surface, with the same classification as their list's writes", () => {
+  const names = actions.map((action) => action.name);
+  for (const name of ["reorder_labels", "reorder_work_item_types", "reorder_custom_properties"]) {
+    expect(names, `expected ${name} in the Action registry`).toContain(name);
+    expect(actions.find((action) => action.name === name)?.kind).toBe("write");
+    expect(classifyAgentAction(name), `${name} must be classified`).toBeDefined();
+  }
+  expect(agentActionGroup("reorder_labels")).toBe("feature");
+  expect(agentMayUseAction("reorder_labels", noGrants)).toBe(false);
+  expect(agentMayUseAction("reorder_labels", allGrants)).toBe(true);
+  expect(aiWriteActions).toContain("reorder_labels");
+});
+
 test("an Action name no rule knows is refused whatever the grants", () => {
   expect(agentActionGroup("frobnicate_thing")).toBe("denied");
   expect(agentMayUseAction("frobnicate_thing", allGrants)).toBe(false);

@@ -551,6 +551,8 @@ export const en = {
     "sortable.reorder": "Reorder",
     "sortable.hint": "Drag to reorder, or press Arrow Up or Down",
     "sortable.actions": "Actions",
+    "sortable.moveUp": "Move up",
+    "sortable.moveDown": "Move down",
     "sortable.moved": "{name} moved to position {position} of {total}",
     "states.moveDown": "Move down",
     "states.remove": "Remove",

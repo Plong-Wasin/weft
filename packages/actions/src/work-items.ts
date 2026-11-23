@@ -1016,7 +1016,7 @@ export function createWorkItemActions(db: Database) {
       input: Type.Object(projectInput), output: Type.Array(labelOutput),
       handler: async (context: Context, input: { projectId: string }) => {
         await requireProjectAccess(db, context.userId, input.projectId, "read");
-        const rows = await db.select().from(labels).where(eq(labels.projectId, input.projectId)).orderBy(asc(labels.name));
+        const rows = await db.select().from(labels).where(eq(labels.projectId, input.projectId)).orderBy(asc(labels.position), asc(labels.name));
         return rows.map((row) => ({ id: row.id, projectId: row.projectId, name: row.name, color: row.color }));
       },
     },
@@ -1030,9 +1030,31 @@ export function createWorkItemActions(db: Database) {
           await database.execute(sql`select pg_advisory_xact_lock(hashtext(${`labels:${project.id}`}))`);
           const [clash] = await database.select({ id: labels.id }).from(labels).where(and(eq(labels.projectId, project.id), eq(labels.name, input.name)));
           if (clash) throw new ActionError("Label name is already used", 400);
-          const [label] = await database.insert(labels).values({ workspaceId: project.workspaceId, projectId: project.id, name: input.name, ...(input.color ? { color: input.color } : {}) }).returning();
+          const [{ value }] = await database.select({ value: max(labels.position) }).from(labels).where(eq(labels.projectId, project.id));
+          const [label] = await database.insert(labels).values({ workspaceId: project.workspaceId, projectId: project.id, name: input.name, position: (value ?? -1) + 1, ...(input.color ? { color: input.color } : {}) }).returning();
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, entityType: "label", entityId: label!.id, field: "created", newValue: input.name });
           return { id: label!.id, projectId: label!.projectId, name: label!.name, color: label!.color };
+        });
+      },
+    },
+    reorderLabels: {
+      name: "reorder_labels", kind: "write" as const,
+      input: Type.Object({ ...projectInput, labelIds: Type.Array(uuid()) }), output: Type.Array(labelOutput),
+      handler: async (context: Context, input: { projectId: string; labelIds: string[] }) => {
+        const { project } = await requireProjectAccess(db, context.userId, input.projectId, "admin");
+        return db.transaction(async (transaction) => {
+          const database = tx(transaction);
+          await database.execute(sql`select pg_advisory_xact_lock(hashtext(${`labels:${project.id}`}))`);
+          const current = await database.select().from(labels).where(eq(labels.projectId, project.id)).orderBy(asc(labels.position), asc(labels.name));
+          const sameSet = input.labelIds.length === current.length && new Set(input.labelIds).size === current.length && current.every((label) => input.labelIds.includes(label.id));
+          if (!sameSet) throw new ActionError("Reorder must list every label exactly once", 400);
+          for (const [position, labelId] of input.labelIds.entries()) {
+            const before = current.findIndex((label) => label.id === labelId);
+            if (before === position) continue;
+            await database.update(labels).set({ position }).where(eq(labels.id, labelId));
+          }
+          const reordered = await database.select().from(labels).where(eq(labels.projectId, project.id)).orderBy(asc(labels.position), asc(labels.name));
+          return reordered.map((row) => ({ id: row.id, projectId: row.projectId, name: row.name, color: row.color }));
         });
       },
     },

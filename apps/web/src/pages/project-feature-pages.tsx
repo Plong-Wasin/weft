@@ -9,12 +9,22 @@ import { ModuleDetailPage, ModulesPage } from "../modules";
 import { useParams } from "react-router";
 import { ViewDetailPage, ViewsPage } from "../views";
 import { canDecideIntake } from "../intake-permissions";
+import { projectFeaturePermissions } from "../project-feature-permissions";
 
 /** The props every project feature screen takes: where it lives and what the caller may do there. */
 function useShared(feature: "cycles" | "modules") {
-  const { workspace } = useWorkspace();
+  const { workspace, selfId } = useWorkspace();
   const { project } = useProject();
-  return { workspaceId: workspace.id, workspaceSlug: workspace.slug, projectKey: project.key, projectId: project.id, canWrite: project.role !== "Guest", canAdmin: project.role === "Admin" || project.role === null, enabled: project.features[feature], action, run: actionResult };
+  const [workspaceRole, setWorkspaceRole] = React.useState<"Admin" | "Member" | "Guest" | null>(null);
+  React.useEffect(() => {
+    let active = true;
+    setWorkspaceRole(null);
+    void action<Array<{ userId: string; role: "Admin" | "Member" | "Guest" }>>("list_members", { workspaceId: workspace.id }).then((members) => {
+      if (active) setWorkspaceRole(members?.find((member) => member.userId === selfId)?.role ?? null);
+    });
+    return () => { active = false; };
+  }, [workspace.id, selfId]);
+  return { workspaceId: workspace.id, workspaceSlug: workspace.slug, projectKey: project.key, projectId: project.id, ...projectFeaturePermissions(workspaceRole, project.role), enabled: project.features[feature], action, run: actionResult };
 }
 
 export function ProjectCyclesRoute() { return <CyclesPage {...useShared("cycles")} />; }

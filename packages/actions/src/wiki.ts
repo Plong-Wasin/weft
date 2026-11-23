@@ -1163,8 +1163,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const body = prepared.document;
         await validateRichTextAssets(db, body, "wiki_page", page.id, context.userId);
         if (page.projectId) {
-          const access = await requireProjectAccess(db, context.userId, page.projectId, "read");
-          if (access.projectRole === "Guest") throw new ActionError("Forbidden", 403);
+          await requireProjectAccess(db, context.userId, page.projectId, "write");
         } else {
           const [share] = await db.select({ role: wikiPageShares.role }).from(wikiPageShares).where(and(eq(wikiPageShares.pageId, page.id), eq(wikiPageShares.userId, context.userId)));
           if (page.ownerId !== context.userId && share?.role !== "comment" && share?.role !== "edit") throw new ActionError("Forbidden", 403);
@@ -1223,8 +1222,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const body = prepared.document;
         await validateRichTextAssets(db, body, "wiki_page", page.id, context.userId);
         if (page.projectId) {
-          const access = await requireProjectAccess(db, context.userId, page.projectId, "read");
-          if (access.projectRole === "Guest") throw new ActionError("Forbidden", 403);
+          await requireProjectAccess(db, context.userId, page.projectId, "write");
         } else {
           const [share] = await db.select({ role: wikiPageShares.role }).from(wikiPageShares).where(and(eq(wikiPageShares.pageId, page.id), eq(wikiPageShares.userId, context.userId)));
           if (page.ownerId !== context.userId && share?.role !== "comment" && share?.role !== "edit") throw new ActionError("Forbidden", 403);
@@ -1249,8 +1247,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           const [share] = await db.select({ role: wikiPageShares.role }).from(wikiPageShares).where(and(eq(wikiPageShares.pageId, page.id), eq(wikiPageShares.userId, context.userId)));
           if (page.ownerId !== context.userId && share?.role !== "comment" && share?.role !== "edit") throw new ActionError("Forbidden", 403);
         } else {
-          const access = await requireProjectAccess(db, context.userId, page.projectId, "read");
-          if (access.projectRole === "Guest") throw new ActionError("Forbidden", 403);
+          await requireProjectAccess(db, context.userId, page.projectId, "write");
         }
         if (row.authorId !== context.userId) throw new ActionError("Forbidden", 403);
         const [updated] = await db.update(comments).set({ body, bodyMarkdown: prepared.markdown, bodyText: plainText(body), editedAt: now() }).where(eq(comments.id, row.id)).returning();
@@ -1266,8 +1263,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         if (!row?.wikiPageId) throw new ActionError("Comment not found", 404);
         const { page } = await load(db, context.userId, row.wikiPageId, "read");
         if (page.projectId) {
-          const access = await requireProjectAccess(db, context.userId, page.projectId, "read");
-          if (access.projectRole === "Guest") throw new ActionError("Forbidden", 403);
+          await requireProjectAccess(db, context.userId, page.projectId, "write");
         } else {
           const [share] = await db.select({ role: wikiPageShares.role }).from(wikiPageShares).where(and(eq(wikiPageShares.pageId, page.id), eq(wikiPageShares.userId, context.userId)));
           if (page.ownerId !== context.userId && share?.role !== "comment" && share?.role !== "edit") throw new ActionError("Forbidden", 403);

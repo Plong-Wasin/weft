@@ -1009,6 +1009,26 @@ test.concurrent("Wiki comment threads require comment access, support replies an
   });
 });
 
+test.concurrent("Project Wiki comments require project write access for every mutation", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, bob, guest, wiki } = await setup(tx);
+    const projects = createProjectActions(tx);
+    const project = await projects.createProject.handler({ userId: alice.id }, { workspaceId: workspace.id, name: "Docs", key: "DOC", visibility: "public" });
+    await projects.addProjectMember.handler({ userId: alice.id }, { projectId: project.id, userId: bob.id, role: "Member" });
+    await projects.addProjectMember.handler({ userId: alice.id }, { projectId: project.id, userId: guest.id, role: "Member" });
+    const page = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, projectId: project.id, title: "Review" });
+    const thread = await wiki.createWikiPageComment.handler({ userId: bob.id }, { pageId: page.id, body: doc("member comment"), anchor: "anchor" });
+
+    await expect(wiki.createWikiPageComment.handler({ userId: guest.id }, { pageId: page.id, body: doc("guest comment"), anchor: "anchor" })).rejects.toMatchObject({ status: 403 });
+    await expect(wiki.replyWikiPageComment.handler({ userId: guest.id }, { commentId: thread.id, body: doc("guest reply") })).rejects.toMatchObject({ status: 403 });
+    await expect(wiki.updateWikiPageComment.handler({ userId: guest.id }, { commentId: thread.id, body: doc("guest edit") })).rejects.toMatchObject({ status: 403 });
+    await expect(wiki.resolveWikiPageComment.handler({ userId: guest.id }, { commentId: thread.id, resolved: true })).rejects.toMatchObject({ status: 403 });
+    await expect(wiki.replyWikiPageComment.handler({ userId: bob.id }, { commentId: thread.id, body: doc("member reply") })).resolves.toBeDefined();
+    await expect(wiki.updateWikiPageComment.handler({ userId: bob.id }, { commentId: thread.id, body: doc("member edit") })).resolves.toMatchObject({ bodyText: "member edit" });
+    await expect(wiki.resolveWikiPageComment.handler({ userId: bob.id }, { commentId: thread.id, resolved: true })).resolves.toEqual({ resolved: true });
+  });
+});
+
 test.concurrent("a Member cannot hide, rename or share the default Collection", async () => {
   await withRollback(db, async (tx) => {
     const { workspace, alice, bob, admin, wiki, create, titles } = await setup(tx);

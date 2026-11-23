@@ -11,6 +11,7 @@ import { ActionError, requireWorkspaceRole, roleLevel, workspaceRoles, type Work
 import { pauseCreatorRecurrences } from "./recurrence-pause";
 import { revokeProjectMemberRuns } from "./run-revocation";
 import { clearModuleRoles } from "./module-roles";
+import { agentProjectIds, currentAgentProjectScope } from "./agent-project-scope";
 
 export const projectKeyPattern = /^[A-Z][A-Z0-9]{1,11}$/;
 export const projectVisibilities = ["public", "private"] as const;
@@ -32,6 +33,13 @@ type Requirement = "read" | "write" | "admin";
 export async function requireProjectAccess(db: Database, userId: string, projectId: string, requirement: Requirement, options: { allowArchived?: boolean } = {}) {
   const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
   if (!project) throw new ActionError("Project not found", 404);
+  const agentScope = currentAgentProjectScope();
+  if (agentScope) {
+    if (project.workspaceId !== agentScope.workspaceId) throw new ActionError("Project not found", 404);
+    const [agentMembership] = await db.select({ projectId: projectMembers.projectId }).from(projectMembers)
+      .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, agentScope.agentUserId)));
+    if (!agentMembership) throw new ActionError("Project not found", 404);
+  }
   const workspaceRole = await requireWorkspaceRole(db, userId, project.workspaceId, "read");
   const [member] = await db.select({ role: projectMembers.role }).from(projectMembers)
     .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, userId)));
@@ -51,9 +59,10 @@ export async function requireProjectAccess(db: Database, userId: string, project
 export async function accessibleProjects(db: Database, userId: string, workspaceId: string) {
   const workspaceRole = await requireWorkspaceRole(db, userId, workspaceId, "read");
   const rows = await db.select().from(projects).where(eq(projects.workspaceId, workspaceId)).orderBy(asc(projects.key));
-  if (workspaceRole === "Admin") return rows;
+  const agentProjects = await agentProjectIds(db, workspaceId);
+  if (workspaceRole === "Admin") return agentProjects ? rows.filter((project) => agentProjects.has(project.id)) : rows;
   const mine = new Set((await db.select({ projectId: projectMembers.projectId }).from(projectMembers).where(eq(projectMembers.userId, userId))).map((row) => row.projectId));
-  return rows.filter((project) => project.visibility === "public" || mine.has(project.id));
+  return rows.filter((project) => (project.visibility === "public" || mine.has(project.id)) && (!agentProjects || agentProjects.has(project.id)));
 }
 
 function toOutput(project: typeof projects.$inferSelect, role: string | null): ProjectOutput {
@@ -138,7 +147,8 @@ export function createProjectActions(db: Database) {
           .leftJoin(projectMembers, and(eq(projectMembers.projectId, projects.id), eq(projectMembers.userId, context.userId)))
           .where(and(eq(projects.workspaceId, input.workspaceId), input.archived ? isNotNull(projects.archivedAt) : isNull(projects.archivedAt)))
           .orderBy(asc(projects.key));
-        return rows.filter((row) => workspaceRole === "Admin" || row.project.visibility === "public" || row.role !== null).map((row) => toOutput(row.project, row.role));
+        const agentProjects = await agentProjectIds(db, input.workspaceId);
+        return rows.filter((row) => (workspaceRole === "Admin" || row.project.visibility === "public" || row.role !== null) && (!agentProjects || agentProjects.has(row.project.id))).map((row) => toOutput(row.project, row.role));
       },
     },
     listWorkspaceViewMetadata: {
@@ -151,7 +161,8 @@ export function createProjectActions(db: Database) {
           const rows = await db.select({ project: projects, role: projectMembers.role }).from(projects)
             .leftJoin(projectMembers, and(eq(projectMembers.projectId, projects.id), eq(projectMembers.userId, context.userId)))
             .where(and(eq(projects.workspaceId, input.workspaceId), isNull(projects.archivedAt))).orderBy(asc(projects.key));
-          return rows.filter((row) => workspaceRole === "Admin" || row.project.visibility === "public" || row.role !== null)
+          const agentProjects = await agentProjectIds(db, input.workspaceId);
+          return rows.filter((row) => (workspaceRole === "Admin" || row.project.visibility === "public" || row.role !== null) && (!agentProjects || agentProjects.has(row.project.id)))
             .map((row) => ({ project: row.project, output: toOutput(row.project, row.role) }));
         })();
         const projectIds = visibleProjects.map(({ project }) => project.id);

@@ -48,6 +48,7 @@ export * from "./skills";
 export * from "./views";
 export * from "./builtin-views";
 export * from "./triage";
+export * from "./agent-project-scope";
 export * from "./tool-notes";
 export * from "./agents";
 export * from "./agent-runtime-environment";

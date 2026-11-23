@@ -9,6 +9,8 @@ import { createS3Storage, type ExportStorage } from "./storage";
 import { notInTriage } from "./triage";
 import { loadProperties, loadPropertyValues } from "./work-item-properties";
 import { createZip } from "./zip";
+import { agentProjectIds, currentAgentProjectScope } from "./agent-project-scope";
+import { requireProjectAccess } from "./projects";
 
 const uuid = () => Type.String({ format: "uuid" });
 const nullable = <T extends import("@sinclair/typebox").TSchema>(schema: T) => Type.Union([schema, Type.Null()]);
@@ -408,7 +410,9 @@ export function createExportActions(db: Database, runtime: ExportRuntime = {}) {
           const allowed = await memberProjects(db, context.userId, row.workspaceId, row.projectIds);
           return allowed.length === row.projectIds.length ? row : null;
         }));
-        return out(visible.filter((row): row is ExportRow => row !== null));
+        const agentProjects = await agentProjectIds(db, input.workspaceId);
+        const owned = visible.filter((row): row is ExportRow => row !== null);
+        return out(agentProjects ? owned.filter((row) => row.projectIds.every((projectId) => agentProjects.has(projectId))) : owned);
       },
     },
     getExportDownloadUrl: {
@@ -417,6 +421,7 @@ export function createExportActions(db: Database, runtime: ExportRuntime = {}) {
       output: Type.Object({ url: Type.String(), filename: Type.String(), expiresAt: Type.String() }),
       handler: async (context: { userId: string }, input: { exportId: string }) => {
         const row = await loadOwn(context.userId, input.exportId);
+        if (currentAgentProjectScope()) for (const projectId of row.projectIds) await requireProjectAccess(db, context.userId, projectId, "read");
         if (isExpired(row, now())) throw new ActionError("The Export has expired", 410);
         if (row.status !== "completed" || !row.fileKey || !row.completedAt) throw new ActionError("The Export is not ready", 409);
         const expiresAt = new Date(row.completedAt.getTime() + exportLinkTtlMs);

@@ -5,6 +5,7 @@ import { ActionError, requireWorkspaceRole } from "./members";
 import { listableWorkItem } from "./listable";
 import { compileFilterQuery, filterQueryLimits, filterQuerySyntaxHelp, weftFilterQueryRegistry } from "./filter-query";
 import { requireProjectAccess } from "./projects";
+import { agentProjectIds } from "./agent-project-scope";
 
 const resultOutput = Type.Object({
   id: Type.String(), projectId: Type.String(), displayId: Type.String(), title: Type.String(),
@@ -67,9 +68,13 @@ export function createSearchActions(db: Database) {
         const key = displayMatch ? displayMatch[1]!.toUpperCase() : null;
         const sequence = displayMatch ? Number(displayMatch[2]) : null;
         // Workspace Admins see every project; others see public projects and the private ones they belong to.
-        const visible = role === "Admin"
+        const visibleToOriginator = role === "Admin"
           ? sql`true`
           : sql`(p.visibility = 'public' or exists (select 1 from project_members pm where pm.project_id = p.id and pm.user_id = ${context.userId}))`;
+        const agentProjects = await agentProjectIds(db, input.workspaceId);
+        const visible = agentProjects
+          ? agentProjects.size ? sql`${visibleToOriginator} and p.id in (${sql.join([...agentProjects].map((id) => sql`${id}`), sql`, `)})` : sql`false`
+          : visibleToOriginator;
         const rows = await db.execute<{
           id: string; project_id: string; key: string; sequence: number; title: string; description_text: string; state_id: string; priority: string;
         }>(sql`

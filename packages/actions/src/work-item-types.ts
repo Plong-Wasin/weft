@@ -151,6 +151,24 @@ export function createWorkItemTypeActions(db: Database) {
      * Deletes a type. A type in use is refused until its work items move to another type (moveToTypeId). Values of properties the target
      * type lacks are dropped only when dropPropertyValues confirms it, and every moved live work item gets its own Activity.
      */
+    reorderWorkItemTypes: {
+      name: "reorder_work_item_types", kind: "write" as const,
+      input: Type.Object({ ...projectInput, typeIds: Type.Array(uuid(), { maxItems: maxTypesPerProject }) }), output: Type.Array(typeOutput),
+      handler: async (context: Context, input: { projectId: string; typeIds: string[] }) => {
+        const { project } = await requireProjectAccess(db, context.userId, input.projectId, "admin");
+        assertFeatureEnabled(project, "types");
+        return db.transaction(async (transaction) => {
+          const database = tx(transaction);
+          await database.execute(sql`select pg_advisory_xact_lock(hashtext(${`types:${project.id}`}))`);
+          const current = await database.select({ id: workItemTypes.id }).from(workItemTypes).where(eq(workItemTypes.projectId, project.id));
+          const sameSet = input.typeIds.length === current.length && new Set(input.typeIds).size === current.length && current.every((row) => input.typeIds.includes(row.id));
+          if (!sameSet) throw new ActionError("Reorder must list every work item type exactly once", 400);
+          for (const [position, typeId] of input.typeIds.entries()) await database.update(workItemTypes).set({ position }).where(eq(workItemTypes.id, typeId));
+          const rows = await database.select().from(workItemTypes).where(eq(workItemTypes.projectId, project.id)).orderBy(asc(workItemTypes.position), asc(workItemTypes.name));
+          return Promise.all(rows.map((row) => typeOut(database, row)));
+        });
+      },
+    },
     deleteWorkItemType: {
       name: "delete_work_item_type", kind: "write" as const,
       input: Type.Object({ typeId: uuid(), moveToTypeId: Type.Optional(uuid()), dropPropertyValues: Type.Optional(Type.Boolean()) }),
@@ -337,6 +355,22 @@ export function createWorkItemTypeActions(db: Database) {
       },
     },
     /** Deletes a property and its values on every work item (each live item gets an Activity). */
+    reorderCustomProperties: {
+      name: "reorder_custom_properties", kind: "write" as const,
+      input: Type.Object({ ...projectInput, propertyIds: Type.Array(uuid(), { maxItems: 100 }) }), output: Type.Array(propertyOutput),
+      handler: async (context: Context, input: { projectId: string; propertyIds: string[] }) => {
+        const { project } = await requireProjectAccess(db, context.userId, input.projectId, "admin");
+        return db.transaction(async (transaction) => {
+          const database = tx(transaction);
+          await database.execute(sql`select pg_advisory_xact_lock(hashtext(${`properties:${project.id}`}))`);
+          const current = await database.select({ id: customProperties.id }).from(customProperties).where(eq(customProperties.projectId, project.id));
+          const sameSet = input.propertyIds.length === current.length && new Set(input.propertyIds).size === current.length && current.every((row) => input.propertyIds.includes(row.id));
+          if (!sameSet) throw new ActionError("Reorder must list every custom property exactly once", 400);
+          for (const [position, propertyId] of input.propertyIds.entries()) await database.update(customProperties).set({ position }).where(eq(customProperties.id, propertyId));
+          return Promise.all((await loadProperties(database, project.id)).map((property) => propertyOut(database, property)));
+        });
+      },
+    },
     deleteCustomProperty: {
       name: "delete_custom_property", kind: "write" as const,
       input: Type.Object({ propertyId: uuid() }), output: Type.Object({ removed: Type.Boolean(), cleared: Type.Integer() }),

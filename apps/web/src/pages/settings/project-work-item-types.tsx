@@ -2,6 +2,7 @@ import React from "react";
 import { translate, type MessageKey } from "@weft/shared";
 import { actionResult } from "../../api";
 import { Note, RowList, Row, SettingsBlock } from "./settings-ui";
+import { SortableList, SortMenu } from "../../sortable-list";
 import { TypeIconMark, loadSuggestions, optionKinds, propertiesOfType, propertyKinds, useWorkItemTypes, type CustomProperty, type PropertyKind, type Suggestion, type WorkItemType } from "../../work-item-types";
 import type { Project } from "../../types";
 import { TypeForm, type TypeValues } from "./type-form";
@@ -31,10 +32,23 @@ export function WorkItemTypesSettings({ project }: { project: Project }) {
     return true;
   };
   const existingNames = new Set(types.map((type) => type.name.toLowerCase()));
+  // Role null means a workspace Admin who is no project member; the server decides.
+  const canReorder = project.role === "Admin" || project.role === null;
+  const moveType = (index: number, delta: -1 | 1) => {
+    const ids = types.map((type) => type.id);
+    [ids[index], ids[index + delta]] = [ids[index + delta]!, ids[index]!];
+    void run("reorder_work_item_types", { typeIds: ids }, "types.failed");
+  };
   const available = suggestions.filter((suggestion) => !existingNames.has(suggestion.name.toLowerCase()));
   return <SettingsBlock title={t("types.title")} description={typeVersusLabel()}>
     {!ready ? <p className="m-0 text-13 text-secondary">{t("types.loading")}</p> : <>
-      <RowList>{types.map((type) => <TypeRow key={type.id} type={type} types={types} properties={properties} onRun={run} />)}</RowList>
+      <SortableList ids={types.map((type) => type.id)} disabled={!canReorder} label={(id) => types.find((type) => type.id === id)?.name ?? ""}
+        onReorder={(ids) => void run("reorder_work_item_types", { typeIds: ids }, "types.failed")}
+        renderRow={(id, grip) => {
+          const index = types.findIndex((type) => type.id === id);
+          return <TypeRow type={types[index]!} types={types} properties={properties} onRun={run} grip={canReorder ? grip : null}
+            canUp={index > 0} canDown={index < types.length - 1} onMove={(delta) => moveType(index, delta)} />;
+        }} />
       <AddType onAdd={(body) => run("create_work_item_type", body, "types.failed")} />
       {available.length > 0 && <div className="grid gap-2" data-suggestions>
         <h3 className="m-0 text-14 font-semibold text-primary">{t("types.suggestions")}</h3>
@@ -49,13 +63,13 @@ export function WorkItemTypesSettings({ project }: { project: Project }) {
           </button>
         </Row>)}</RowList>
       </div>}
-      <PropertiesBlock types={types} properties={properties} onRun={run} />
+      <PropertiesBlock types={types} properties={properties} onRun={run} canReorder={canReorder} />
       {note && <Note note={note} error={error} />}
     </>}
   </SettingsBlock>;
 }
 
-function TypeRow({ type, types, properties, onRun }: { type: WorkItemType; types: WorkItemType[]; properties: CustomProperty[]; onRun: (name: string, body: Record<string, unknown>, failedKey: MessageKey) => Promise<boolean> }) {
+function TypeRow({ type, types, properties, onRun, grip, canUp, canDown, onMove }: { type: WorkItemType; types: WorkItemType[]; properties: CustomProperty[]; onRun: (name: string, body: Record<string, unknown>, failedKey: MessageKey) => Promise<boolean>; grip: React.ReactNode; canUp: boolean; canDown: boolean; onMove: (delta: -1 | 1) => void }) {
   const [editing, setEditing] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
   const [moveTo, setMoveTo] = React.useState("");
@@ -66,7 +80,8 @@ function TypeRow({ type, types, properties, onRun }: { type: WorkItemType; types
   const others = types.filter((other) => other.id !== type.id);
   // The only type cannot go: the button stays focusable so that it can say why, in a tooltip and in its accessible description.
   const cannotDelete = types.length <= 1;
-  return <Row>
+  return <>
+    {grip}
     <span className="grid min-w-0 flex-1 gap-3">
       <span className="flex flex-wrap items-start justify-between gap-3">
         <span className="flex min-w-0 items-start gap-2">
@@ -83,6 +98,7 @@ function TypeRow({ type, types, properties, onRun }: { type: WorkItemType; types
             title={cannotDelete ? t("types.deleteLast") : undefined} aria-describedby={cannotDelete ? reasonId : undefined}
             onClick={() => { if (cannotDelete) return; setDeleting((value) => !value); setEditing(false); }}>{t("types.delete")}</button>
           {cannotDelete && <span id={reasonId} className="sr-only">{t("types.deleteLast")}</span>}
+          {grip && <SortMenu name={type.name} canUp={canUp} canDown={canDown} onMove={onMove} />}
         </span>
       </span>
       {editing && <TypeForm key={type.id} idPrefix={`type-${type.id}`} initial={{ name: type.name, icon: type.icon, color: type.color, description: shownDescription }} submitLabel={t("types.save")}
@@ -105,7 +121,7 @@ function TypeRow({ type, types, properties, onRun }: { type: WorkItemType; types
         </span>
       </span>}
     </span>
-  </Row>;
+  </>;
 }
 
 type RunFn = (name: string, body: Record<string, unknown>, failedKey: MessageKey) => Promise<boolean>;
@@ -210,18 +226,29 @@ function AddType({ onAdd }: { onAdd: (body: Record<string, unknown>) => Promise<
   </section>;
 }
 
-function PropertiesBlock({ types, properties, onRun }: { types: WorkItemType[]; properties: CustomProperty[]; onRun: (name: string, body: Record<string, unknown>, failedKey: MessageKey) => Promise<boolean> }) {
+function PropertiesBlock({ types, properties, onRun, canReorder }: { types: WorkItemType[]; properties: CustomProperty[]; onRun: (name: string, body: Record<string, unknown>, failedKey: MessageKey) => Promise<boolean>; canReorder: boolean }) {
   const typeName = (id: string) => types.find((type) => type.id === id)?.name ?? "";
   return <div className="grid gap-3" data-properties>
     <h3 className="m-0 text-14 font-semibold text-primary">{t("types.properties")}</h3>
     <p className="m-0 text-13 text-secondary">{t("types.propertiesExplain")}</p>
     {properties.length === 0 && <p className="m-0 text-13 text-secondary">{t("types.noProperties")}</p>}
-    <RowList>{properties.map((property) => <PropertyRow key={property.id} property={property} types={types} typeName={typeName} onRun={onRun} />)}</RowList>
+    <SortableList ids={properties.map((property) => property.id)} disabled={!canReorder} label={(id) => properties.find((property) => property.id === id)?.name ?? ""}
+      onReorder={(ids) => void onRun("reorder_custom_properties", { propertyIds: ids }, "types.failed")}
+      renderRow={(id, grip) => {
+        const index = properties.findIndex((property) => property.id === id);
+        const move = (delta: -1 | 1) => {
+          const ids = properties.map((property) => property.id);
+          [ids[index], ids[index + delta]] = [ids[index + delta]!, ids[index]!];
+          void onRun("reorder_custom_properties", { propertyIds: ids }, "types.failed");
+        };
+        return <PropertyRow property={properties[index]!} types={types} typeName={typeName} onRun={onRun} grip={canReorder ? grip : null}
+          canUp={index > 0} canDown={index < properties.length - 1} onMove={move} />;
+      }} />
     <AddProperty types={types} onAdd={(body) => onRun("create_custom_property", body, "types.failed")} />
   </div>;
 }
 
-function PropertyRow({ property, types, typeName, onRun }: { property: CustomProperty; types: WorkItemType[]; typeName: (id: string) => string; onRun: (name: string, body: Record<string, unknown>, failedKey: MessageKey) => Promise<boolean> }) {
+function PropertyRow({ property, types, typeName, onRun, grip, canUp, canDown, onMove }: { property: CustomProperty; types: WorkItemType[]; typeName: (id: string) => string; onRun: (name: string, body: Record<string, unknown>, failedKey: MessageKey) => Promise<boolean>; grip: React.ReactNode; canUp: boolean; canDown: boolean; onMove: (delta: -1 | 1) => void }) {
   const [editing, setEditing] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
   const [name, setName] = React.useState(property.name);
@@ -241,7 +268,8 @@ function PropertyRow({ property, types, typeName, onRun }: { property: CustomPro
     }
     if (await onRun("update_custom_property", body, "types.failed")) setEditing(false);
   };
-  return <Row>
+  return <>
+    {grip}
     <span className="grid min-w-0 flex-1 gap-0.5">
       <span className="flex flex-wrap items-center gap-2"><span className="font-medium">{property.name}</span>
         <span className="rounded bg-layer-1 px-1.5 py-0.5 text-11 text-secondary">{t(`types.kind.${property.kind}`)}</span>
@@ -275,8 +303,9 @@ function PropertyRow({ property, types, typeName, onRun }: { property: CustomPro
     <span className="flex flex-wrap items-center gap-2">
       <button type="button" className="secondary" aria-label={replaceAll(t("types.editNamed"), { name: property.name })} onClick={() => { setEditing((value) => !value); setDeleting(false); }}>{t("types.edit")}</button>
       <button type="button" className="secondary" aria-label={replaceAll(t("types.deleteNamed"), { name: property.name })} onClick={() => { setDeleting((value) => !value); setEditing(false); }}>{t("types.delete")}</button>
+      {grip && <SortMenu name={property.name} canUp={canUp} canDown={canDown} onMove={onMove} />}
     </span>
-  </Row>;
+  </>;
 }
 
 function AddProperty({ types, initialTypeIds, onAdd, onCancel }: { types: WorkItemType[]; initialTypeIds?: string[]; onAdd: (body: Record<string, unknown>) => Promise<boolean>; onCancel?: () => void }) {

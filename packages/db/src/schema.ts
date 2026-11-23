@@ -236,6 +236,8 @@ export const labels = pgTable("labels", {
   projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   color: text("color").notNull().default("#6b7280"),
+  /** The project's Label order, set by an Admin with reorder_labels; new labels go last. */
+  position: integer("position").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [unique().on(table.projectId, table.name)]);
 

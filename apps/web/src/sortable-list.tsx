@@ -1,8 +1,19 @@
 import React from "react";
-import { GripVertical } from "lucide-react";
+import { GripVertical, MoreHorizontal } from "lucide-react";
 import { translate } from "@weft/shared";
+import { Popover, menuItemClass } from "./shell/popover";
 
 type Drag = { id: string; over: number };
+
+/** The row menu's Move up and Move down, for a row that is also reorderable with its grip. Moves are disabled at the ends. */
+export function SortMenu({ name, canUp, canDown, onMove }: { name: string; canUp: boolean; canDown: boolean; onMove: (delta: -1 | 1) => void }) {
+  return <Popover label={`${translate("sortable.actions")}: ${name}`} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-44">
+    {(close) => <>
+      <button type="button" role="menuitem" className={menuItemClass} disabled={!canUp} onClick={() => { close(); onMove(-1); }}>{translate("sortable.moveUp")}</button>
+      <button type="button" role="menuitem" className={menuItemClass} disabled={!canDown} onClick={() => { close(); onMove(1); }}>{translate("sortable.moveDown")}</button>
+    </>}
+  </Popover>;
+}
 
 /**
  * A bordered list whose rows reorder by dragging a handle (mouse, pen or touch) or by Arrow Up/Down on the focused handle.

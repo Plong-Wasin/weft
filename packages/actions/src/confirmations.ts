@@ -37,7 +37,7 @@ export const aiWriteActions = [
   "set_project_features",
   "create_project", "update_project", "archive_project", "unarchive_project", "rename_project_key", "join_project",
   "add_project_member", "remove_project_member",
-  "create_state", "update_state", "reorder_states", "create_label", "update_label",
+  "create_state", "update_state", "reorder_states", "create_label", "reorder_labels", "update_label",
   "update_comment", "delete_comment",
   "move_page_scope", "restore_wiki_page_version", "restore_work_item_description_version",
   "mark_notification_read", "mark_notification_unread", "mark_all_notifications_read",

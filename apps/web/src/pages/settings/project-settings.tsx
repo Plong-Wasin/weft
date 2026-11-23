@@ -232,7 +232,7 @@ export function ProjectStates() {
             event.preventDefault();
             if (await guard(await action("create_state", { projectId: project.id, group, name: newName[group] ?? "" }))) { setNewName({ ...newName, [group]: "" }); setAdding({ ...adding, [group]: false }); }
           }}>
-            <label>{translate("states.name")}<input required value={newName[group] ?? ""} onChange={(event) => setNewName({ ...newName, [group]: event.target.value })} /></label>
+            <label>{translate("states.name")}<input required autoFocus value={newName[group] ?? ""} onChange={(event) => setNewName({ ...newName, [group]: event.target.value })} /></label>
             <button>{translate("states.create")}</button>
             <button type="button" className="secondary" onClick={() => setAdding({ ...adding, [group]: false })}>{translate("settings.cancel")}</button>
           </form>}

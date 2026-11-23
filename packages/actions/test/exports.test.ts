@@ -192,6 +192,51 @@ test.concurrent("the worker writes the CSV for a known dataset: columns, archive
   });
 });
 
+test.concurrent("a completed Export download is refused after the owner loses private Project membership", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await s.projects.addProjectMember.handler({ userId: s.admin.id }, { projectId: s.secret.id, userId: s.member.id, role: "Member" });
+    const created = await s.request(s.member.id, [s.secret.id]);
+    await s.run();
+    const link = () => s.exportActions.getExportDownloadUrl.handler({ userId: s.member.id }, { exportId: created.id });
+    expect((await link()).url).toContain("/exports/");
+
+    await s.projects.removeProjectMember.handler({ userId: s.admin.id }, { projectId: s.secret.id, userId: s.member.id });
+    const error = await link().then(() => null, (caught: { status?: number; message?: string }) => caught);
+    expect(error).toMatchObject({ status: 404, message: "Export not found" });
+  });
+});
+
+test.concurrent("list_exports omits Exports for Projects the owner has left and still lists accessible Projects", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    await s.projects.addProjectMember.handler({ userId: s.admin.id }, { projectId: s.secret.id, userId: s.member.id, role: "Member" });
+    const lost = await s.request(s.member.id, [s.secret.id]);
+    const retained = await s.request(s.member.id, [s.project.id]);
+    await s.run(); await s.run();
+
+    await s.projects.removeProjectMember.handler({ userId: s.admin.id }, { projectId: s.secret.id, userId: s.member.id });
+    const listed = await s.exportActions.listExports.handler({ userId: s.member.id }, { workspaceId: s.workspace.id });
+
+    expect(listed.map((item) => item.id)).toContain(retained.id);
+    expect(listed.find((item) => item.id === retained.id)).toMatchObject({ status: "completed", projectIds: [s.project.id], projects: [{ id: s.project.id, key: "MOB", name: "Mobile" }] });
+    expect(listed.map((item) => item.id)).not.toContain(lost.id);
+    expect(JSON.stringify(listed)).not.toContain("SEC");
+    expect(JSON.stringify(listed)).not.toContain("Secret");
+  });
+});
+
+test.concurrent("a completed Export download still works while the owner remains a Project member", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const created = await s.request(s.member.id, [s.project.id]);
+    await s.run();
+
+    const link = await s.exportActions.getExportDownloadUrl.handler({ userId: s.member.id }, { exportId: created.id });
+    expect(link.url).toContain("/exports/");
+  });
+});
+
 test("csvCell escapes commas, quotes and line breaks and guards leading formula characters", () => {
   expect(csvCell("plain")).toBe("plain");
   expect(csvCell("a,b")).toBe('"a,b"');

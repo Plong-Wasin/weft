@@ -345,6 +345,8 @@ export function createExportActions(db: Database, runtime: ExportRuntime = {}) {
     const [row] = await db.select().from(exportTable).where(and(eq(exportTable.id, exportId), eq(exportTable.ownerId, userId)));
     if (!row) throw new ActionError("Export not found", 404);
     await requireWorkspaceRole(db, userId, row.workspaceId, "write");
+    const allowed = await memberProjects(db, userId, row.workspaceId, row.projectIds);
+    if (allowed.length !== row.projectIds.length) throw new ActionError("Export not found", 404);
     return row;
   }
 
@@ -402,7 +404,11 @@ export function createExportActions(db: Database, runtime: ExportRuntime = {}) {
         await requireWorkspaceRole(db, context.userId, input.workspaceId, "write");
         const rows = await db.select().from(exportTable)
           .where(and(eq(exportTable.workspaceId, input.workspaceId), eq(exportTable.ownerId, context.userId))).orderBy(desc(exportTable.createdAt), desc(exportTable.id));
-        return out(rows);
+        const visible = await Promise.all(rows.map(async (row) => {
+          const allowed = await memberProjects(db, context.userId, row.workspaceId, row.projectIds);
+          return allowed.length === row.projectIds.length ? row : null;
+        }));
+        return out(visible.filter((row): row is ExportRow => row !== null));
       },
     },
     getExportDownloadUrl: {

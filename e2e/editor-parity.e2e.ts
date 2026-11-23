@@ -5,6 +5,9 @@ import { eq } from "drizzle-orm";
 import { comments, createDatabase, users, workspaces, workItemDescriptionVersions } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 
+// AI is off when the server has no provider key, so the AI assist menu this flow checks needs a placeholder key (no call is made).
+Bun.env.OPENAI_API_KEY ??= "sk-e2e-placeholder-no-call";
+
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31158);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52158);
 const livePort = Number(Bun.env.E2E_LIVE_PORT ?? 31178);

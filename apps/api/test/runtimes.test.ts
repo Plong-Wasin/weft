@@ -2,10 +2,10 @@ import { afterAll, expect, test } from "bun:test";
 import { chmod, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { apiTokens, createDatabase, runTokens, runs, runtimeProfiles, type Database } from "@weft/db";
-import { eq } from "drizzle-orm";
-import { createAgentActions, createProjectActions, createRuntimeActions, createWorkItemActions } from "@weft/actions";
-import { withRollback } from "../../../packages/db/src/test-helpers";
+import { apiTokens, createDatabase, projectMembers, runTokens, runs, runtimeProfiles, workItems, type Database } from "@weft/db";
+import { and, eq } from "drizzle-orm";
+import { createAgentActions, createApiTokenActions, createProjectActions, createRuntimeActions, createRuntimeDispatchActions, createWorkItemActions } from "@weft/actions";
+import { createMemberFactory, withRollback } from "../../../packages/db/src/test-helpers";
 import { startDaemon } from "../../cli/src/daemon";
 import { createApp } from "../src/app";
 
@@ -37,6 +37,75 @@ test.concurrent("the API registers Daemon CLIs and keeps private Runtime rows ou
     expect((await registration.json() as { runtimes: unknown[] }).runtimes).toHaveLength(2);
     const visible = await app.handle(new Request(`http://localhost/actions/list_runtimes`, { method: "POST", headers: { cookie: owner.cookie, "content-type": "application/json" }, body: JSON.stringify({ workspaceId: workspace.id }) }));
     expect((await visible.json() as unknown[])).toHaveLength(2);
+  });
+});
+
+test.concurrent("a revoked Originator Project grant blocks a dispatched Member Agent's direct Run Action", async () => {
+  await withRollback(db, async (transaction) => {
+    const { app, post, signUp } = await setup(transaction);
+    const admin = await signUp();
+    const workspace = await (await post("/actions/create_workspace", { name: "Team", slug: `member-run-${crypto.randomUUID()}` }, admin.cookie)).json() as { id: string };
+    await post("/actions/set_autopilot_setting", { workspaceId: workspace.id, allowAutopilot: true }, admin.cookie);
+    const member = await createMemberFactory(transaction, workspace.id, "Member");
+    const originator = await createMemberFactory(transaction, workspace.id, "Member");
+    const projects = createProjectActions(transaction);
+    const project = await projects.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Member work", key: `MW${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private" });
+    await projects.addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: member.id, role: "Member" });
+    await projects.addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: originator.id, role: "Member" });
+    const personalToken = await createApiTokenActions(transaction).createApiToken.handler({ userId: member.id }, { name: "member daemon" });
+    const runtimeActions = createRuntimeActions(transaction);
+    const runtime = (await runtimeActions.registerDaemon.handler({ userId: member.id, apiTokenId: personalToken.id }, { hostname: "member-owner", version: "1", agentClis: ["codex"] })).runtimes[0]!;
+    await runtimeActions.shareRuntime.handler({ userId: member.id }, { runtimeId: runtime.id });
+    const agent = await createAgentActions(transaction).createAgent.handler({ userId: member.id }, { workspaceId: workspace.id, name: "Member Agent", instructions: "Use my project access", model: "default", runtimeId: runtime.id });
+    await createAgentActions(transaction).setAgentProjectAccess.handler({ userId: member.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id] });
+    await createAgentActions(transaction).setAgentAccess.handler({ userId: member.id }, { agentId: agent.id, userIds: [originator.id] });
+    const item = await createWorkItemActions(transaction).createWorkItem.handler({ userId: originator.id }, { projectId: project.id, title: "Before revocation", assigneeIds: [agent.userId] });
+    const [claimed] = await createRuntimeDispatchActions(transaction).claimRuns({ userId: member.id, daemonId: runtime.daemonId });
+    expect(claimed?.status).toBe("dispatched");
+    await projects.removeProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: originator.id });
+    const readRefused = await post("/actions/get_work_item", { workspaceId: workspace.id, displayId: item.displayId }, undefined, claimed!.token);
+    expect(readRefused.status).toBe(401);
+    const refused = await post("/actions/update_work_item", { workItemId: item.id, title: "After revocation" }, undefined, claimed!.token);
+    expect(refused.status).toBe(401);
+    const [revokedRun] = await transaction.select({ status: runs.status, failureReason: runs.failureReason }).from(runs).where(eq(runs.id, claimed!.runId));
+    expect(revokedRun).toEqual({ status: "failed", failureReason: "Project write access was revoked" });
+    const [stored] = await transaction.select({ title: workItems.title }).from(workItems).where(eq(workItems.id, item.id));
+    expect(stored?.title).toBe("Before revocation");
+  });
+});
+
+test.concurrent("the Daemon start endpoint rejects a claimed Run after Originator or Member-Agent creator Project access is removed", async () => {
+  await withRollback(db, async (transaction) => {
+    const { post, signUp } = await setup(transaction);
+    const admin = await signUp();
+    const workspace = await (await post("/actions/create_workspace", { name: "Team", slug: `start-auth-${crypto.randomUUID()}` }, admin.cookie)).json() as { id: string };
+    await post("/actions/set_autopilot_setting", { workspaceId: workspace.id, allowAutopilot: true }, admin.cookie);
+    const owner = await createMemberFactory(transaction, workspace.id, "Member");
+    const originator = await createMemberFactory(transaction, workspace.id, "Member");
+    const projectActions = createProjectActions(transaction);
+    const project = await projectActions.createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Start permissions", key: `SA${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "private" });
+    for (const userId of [owner.id, originator.id]) await projectActions.addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId, role: "Member" });
+    const personalToken = await createApiTokenActions(transaction).createApiToken.handler({ userId: owner.id }, { name: "member daemon" });
+    const registration = await (await post("/api/daemon/register", { hostname: "start-permission", version: "1", agentClis: ["codex"] }, undefined, personalToken.token)).json() as { daemonId: string; daemonToken: string; runtimes: Array<{ id: string }> };
+    const runtime = registration.runtimes[0]!;
+    await createRuntimeActions(transaction).shareRuntime.handler({ userId: owner.id }, { runtimeId: runtime.id });
+    const agents = createAgentActions(transaction);
+    const agent = await agents.createAgent.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Member Agent", model: "default", runtimeId: runtime.id });
+    await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id] });
+    await agents.setAgentAccess.handler({ userId: owner.id }, { agentId: agent.id, userIds: [owner.id, originator.id] });
+    const item = await createWorkItemActions(transaction).createWorkItem.handler({ userId: originator.id }, { projectId: project.id, title: "Run without access", assigneeIds: [agent.userId] });
+    const [claimed] = await createRuntimeDispatchActions(transaction).claimRuns({ userId: owner.id, daemonId: registration.daemonId });
+    expect(claimed?.status).toBe("dispatched");
+
+    const postStart = () => post("/api/daemon/runs/start", { runId: claimed!.runId, runtimeId: runtime.id }, undefined, registration.daemonToken);
+    await transaction.delete(projectMembers).where(and(eq(projectMembers.projectId, project.id), eq(projectMembers.userId, owner.id)));
+    expect((await postStart()).status).toBe(403);
+    await projectActions.addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: owner.id, role: "Member" });
+    await transaction.delete(projectMembers).where(and(eq(projectMembers.projectId, project.id), eq(projectMembers.userId, originator.id)));
+    expect((await postStart()).status).toBe(403);
+    const [stored] = await transaction.select({ status: runs.status }).from(runs).where(eq(runs.id, claimed!.runId));
+    expect(stored?.status).toBe("dispatched");
+    expect(item.id).toBeTruthy();
   });
 });
 

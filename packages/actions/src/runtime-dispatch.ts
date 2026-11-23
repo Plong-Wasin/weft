@@ -5,7 +5,7 @@ import { agentSkills, agents, comments, daemons, projects, runMessages, runToken
 import { ActionError } from "./members";
 import { enqueueJob } from "./jobs";
 import { createCommentActions } from "./comments";
-import { maxAutomaticRetries, retryAutomatically, startFollowUpRun, runtimeLabelOf } from "./runs";
+import { agentOwnerCanUseProject, agentRuntimeCanRun, canWriteProject, lockRunProjectWriteAccess, maxAutomaticRetries, retryAutomatically, startFollowUpRun, runtimeLabelOf } from "./runs";
 import { followUpCommentBlock } from "./follow-up-comments";
 import { subItemsClosedBlock } from "./sub-items-closed-prompt";
 import { queueRunResultEmail } from "./email-digest";
@@ -148,6 +148,11 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
       const [{ count: initiallyActiveDaemonRuns }] = await tx.select({ count: sql<number>`count(*)::int` }).from(runs).innerJoin(runtimes, eq(runtimes.id, runs.runtimeId)).where(and(eq(runtimes.daemonId, daemon.id), inArray(runs.status, ["dispatched", "running", "stopping"])));
       // A full Daemon cannot claim anything. Return before locking queued rows so a backlog cannot turn an empty poll into a queue scan.
       if (initiallyActiveDaemonRuns >= 20) return [];
+      // Runtime policy and sharing changes take Runtime locks before touching any bound Run. Lock every Runtime this Daemon
+      // can claim in a stable order before selecting queued Runs, so claim and unshare/profile/rebind never invert Runtime/Run.
+      const lockedRuntimes = await tx.select({ id: runtimes.id, enforceSandbox: runtimes.enforceSandbox }).from(runtimes)
+        .where(eq(runtimes.daemonId, daemon.id)).orderBy(asc(runtimes.id)).for("update");
+      const lockedRuntimeById = new Map(lockedRuntimes.map((runtime) => [runtime.id, runtime]));
       const claimed = [];
       let activeDaemonRuns = initiallyActiveDaemonRuns;
       let cursor: { createdAt: string; id: string } | undefined;
@@ -164,6 +169,29 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
         cursor = { createdAt: row.createdAtCursor, id: row.run.id };
         if (claimed.length >= claimLimit) break;
         if (activeDaemonRuns >= 20) break;
+        const revokedReason = !await agentRuntimeCanRun(tx, row.agent) ? "runtime_unshared"
+          : row.run.projectId && !await canWriteProject(tx, row.run.originatorId, row.run.projectId) ? "originator_project_access_revoked"
+            : null;
+        if (revokedReason) {
+          const [skipped] = await tx.update(runs).set({ status: "skipped", failureReason: revokedReason, finishedAt: now() }).where(and(eq(runs.id, row.run.id), eq(runs.status, "queued"))).returning({ id: runs.id });
+          if (skipped) {
+            if (row.run.workItemId) {
+              await enqueueNotification(tx, { kind: "run_skipped", workItemId: row.run.workItemId, commentId: row.run.commentId ?? undefined, actorId: row.agent.userId, recipientIds: [row.run.originatorId], detail: revokedReason });
+              // This Run is terminal. Starting the single waiting Follow-up advances the chain once; if it is also revoked,
+              // the next claim terminates it without creating another Follow-up, so revoked work cannot loop indefinitely.
+              await startFollowUpRun(tx, row.agent.id, row.run.workItemId);
+            }
+          }
+          continue;
+        }
+        if (row.run.projectId && !(await agentOwnerCanUseProject(tx, row.agent, row.run.projectId))) {
+          const [skipped] = await tx.update(runs).set({ status: "skipped", failureReason: "creator_access_revoked", finishedAt: now() }).where(and(eq(runs.id, row.run.id), eq(runs.status, "queued"))).returning({ id: runs.id });
+          if (skipped && row.run.workItemId) {
+            await enqueueNotification(tx, { kind: "run_skipped", workItemId: row.run.workItemId, commentId: row.run.commentId ?? undefined, actorId: row.agent.userId, recipientIds: [row.run.originatorId], detail: "creator_access_revoked" });
+            await startFollowUpRun(tx, row.agent.id, row.run.workItemId);
+          }
+          continue;
+        }
         const [{ count: agentCount }] = await tx.select({ count: sql<number>`count(*)::int` }).from(runs).where(and(eq(runs.agentId, row.agent.id), inArray(runs.status, ["dispatched", "running", "stopping"])));
         if (agentCount >= row.agent.maxConcurrentRuns) continue;
         const [item] = row.run.workItemId ? await tx.select({ title: workItems.title, description: workItems.descriptionMarkdown, sequence: workItems.sequence }).from(workItems).where(eq(workItems.id, row.run.workItemId)) : [];
@@ -172,7 +200,7 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
         const attachedSkills = await tx.select({ name: skills.name, description: skills.description, instructions: skills.instructions }).from(agentSkills).innerJoin(skills, eq(skills.id, agentSkills.skillId)).where(and(eq(agentSkills.agentId, row.agent.id), eq(skills.scope, "workspace")));
         // Profile edits, bindings and enforcement changes take the Runtime lock used by startRun. Claim snapshots the
         // exact effective policy while holding that same lock, so it cannot pair stale Agent/profile data with a new policy.
-        const [lockedRuntime] = await tx.select({ enforceSandbox: runtimes.enforceSandbox }).from(runtimes).where(eq(runtimes.id, row.runtime.id)).for("update");
+        const lockedRuntime = lockedRuntimeById.get(row.runtime.id);
         const [currentAgent] = await tx.select({ runtimeId: agents.runtimeId, runtimeProfileId: agents.runtimeProfileId }).from(agents).where(eq(agents.id, row.agent.id));
         if (!lockedRuntime || currentAgent?.runtimeId !== row.runtime.id) continue;
         const [profile] = currentAgent.runtimeProfileId ? await tx.select().from(runtimeProfiles).where(and(eq(runtimeProfiles.id, currentAgent.runtimeProfileId), eq(runtimeProfiles.runtimeId, row.runtime.id))) : [];
@@ -220,10 +248,16 @@ export function createRuntimeDispatchActions(db: Database, now: () => Date = () 
     }),
     startRun: async (runId: string, runtimeId: string, session?: { mode: "resumed" | "new"; reason: string }) => db.transaction(async (transaction) => {
       const tx = transaction as unknown as Database;
+      const [observedRun] = await tx.select().from(runs).where(eq(runs.id, runId));
+      if (observedRun?.runtimeId !== runtimeId || observedRun.status !== "dispatched") throw new ActionError("Run is not dispatched to this Runtime", 409);
       // Serialize the start boundary with enforcement changes. Whichever operation obtains this Runtime row lock first
       // defines whether this Run is already running when enforcement is enabled.
       const [runtime] = await tx.select({ enforceSandbox: runtimes.enforceSandbox }).from(runtimes).where(eq(runtimes.id, runtimeId)).for("update");
       if (!runtime) throw new ActionError("Run is not dispatched to this Runtime", 409);
+      const [currentAgent] = observedRun.agentId ? await tx.select({ createdBy: agents.createdBy, runtimeId: agents.runtimeId, memberOwned: agents.memberOwned }).from(agents).where(eq(agents.id, observedRun.agentId)).for("share") : [];
+      if (!currentAgent || currentAgent.runtimeId !== runtimeId || !(await agentRuntimeCanRun(tx, { runtimeId }))) throw new ActionError("The Agent is no longer bound to this shared Runtime", 403);
+      if (!(await lockRunProjectWriteAccess(tx, observedRun, currentAgent))) throw new ActionError("The Originator or Runtime owner no longer has Project write access", 403);
+      await lockRuntimeRun(tx, runId);
       const [candidate] = await tx.select({ runId: runs.id, policy: runs.runtimeSandboxPolicy, profileId: runtimeProfiles.id, profileSandbox: runtimeProfiles.sandbox, filesystemAllowlist: runtimeProfiles.filesystemAllowlist, networkAllowlist: runtimeProfiles.networkAllowlist }).from(runs)
         .innerJoin(agents, eq(agents.id, runs.agentId)).leftJoin(runtimeProfiles, and(eq(runtimeProfiles.id, agents.runtimeProfileId), eq(runtimeProfiles.runtimeId, runs.runtimeId)))
         .where(and(eq(runs.id, runId), eq(runs.runtimeId, runtimeId), eq(runs.status, "dispatched")));

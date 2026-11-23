@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { activities, agents, comments, confirmations, daemons, projectMembers, runMessages, runs, runtimeProfiles, runtimes, users, workItems, workspaceMembers, workspaces } from "@weft/db";
+import { activities, agents, comments, confirmations, daemons, projectMembers, projects, runMessages, runs, runtimeProfiles, runtimes, users, workItems, workspaceMembers, workspaces } from "@weft/db";
 import { steerMessageType, toDisplaySteps, type SteerMessage } from "./run-steps";
 import { agentMonthlyUsage } from "./agent-budget";
 import { estimateCostUsd, loadPriceTable, type PriceTable } from "./usage";
@@ -13,6 +13,7 @@ import { hasAgentAccess } from "./agent-access";
 import { emitRunFinished } from "./outbound-webhooks";
 import { openSecret } from "./integration-secrets";
 import { lockRuntimeRun, redactRuntimeSecrets, scrubRunMessages } from "./runtime-secret-comments";
+export { revokeAgentRuns } from "./run-revocation";
 
 type RunRow = typeof runs.$inferSelect;
 type Context = { userId: string };
@@ -159,7 +160,7 @@ export const followUpStatus = "follow_up";
 export const steerableRunStatuses = ["queued", "running", "waiting_confirmation"] as const;
 
 /** Why a wake did not start a Run. A skip never fails the action that asked for the wake (ADR 0013). */
-export const wakeSkipReasons = ["switch_off", "no_project_write", "active_run", "over_budget", "depth_limit", "no_agent_access", "hourly_limit"] as const;
+export const wakeSkipReasons = ["switch_off", "no_project_write", "runtime_unshared", "active_run", "over_budget", "depth_limit", "no_agent_access", "hourly_limit"] as const;
 export type WakeSkipReason = (typeof wakeSkipReasons)[number];
 
 /** What one target of an assignment or mention got: a started Run, a Follow-up Run it waits in (`waiting`), or a skip with its reason. */
@@ -195,7 +196,7 @@ export async function loadWakeStep(database: Database, runId: string | null | un
   return { runId: row.run.id, agentId: row.agent.id, agentUserId: row.agent.userId, originatorId: row.run.originatorId, depth: row.run.depth, workspaceId: row.run.workspaceId, canWakeAgents: row.agent.canWakeAgents };
 }
 
-type WakeTarget = { id: string; userId: string; name: string; budget: number | null; runtimeId: string | null };
+type WakeTarget = { id: string; userId: string; name: string; budget: number | null; runtimeId: string | null; createdBy?: string; memberOwned?: boolean };
 
 function skippedOutcome(target: WakeTarget, reason: WakeSkipReason): WakeOutcome {
   return { agentId: target.id, userId: target.userId, agentName: target.name, status: "skipped", reason, runId: null };
@@ -337,7 +338,7 @@ async function refuseWake(database: Database, refused: RefusedWake, reason: Wake
 }
 
 /** Whether a person may write in the project right now. Access is checked at every wake, so a person removed mid-chain is refused. */
-async function canWriteProject(database: Database, userId: string, projectId: string): Promise<boolean> {
+export async function canWriteProject(database: Database, userId: string, projectId: string): Promise<boolean> {
   try {
     await requireProjectAccess(database, userId, projectId, "write");
     return true;
@@ -345,6 +346,60 @@ async function canWriteProject(database: Database, userId: string, projectId: st
     if (error instanceof ActionError) return false;
     throw error;
   }
+}
+
+/** A Run on a Runtime can be queued only while that Runtime is currently shared with the workspace. */
+export async function agentRuntimeCanRun(database: Database, agent: { runtimeId: string | null }, lock = false): Promise<boolean> {
+  if (!agent.runtimeId) return true;
+  const query = database.select({ shared: runtimes.shared }).from(runtimes).where(eq(runtimes.id, agent.runtimeId));
+  const [runtime] = await (lock ? query.for("share") : query);
+  return runtime?.shared === true;
+}
+
+/** A Runtime Agent created by its current owner remains eligible only while that owner can still write its Project. */
+export async function agentOwnerCanUseProject(database: Database, agent: { createdBy?: string; runtimeId: string | null; memberOwned?: boolean }, projectId: string): Promise<boolean> {
+  if (!agent.memberOwned) return true;
+  if (!agent.runtimeId || !agent.createdBy) return false;
+  const [runtime] = await database.select({ ownerId: runtimes.ownerId, workspaceId: runtimes.workspaceId }).from(runtimes).where(eq(runtimes.id, agent.runtimeId));
+  if (runtime?.ownerId !== agent.createdBy) return false;
+  return canWriteProject(database, agent.createdBy, projectId);
+}
+
+/** Locks the Project write grants that authorize a Run until the caller commits its start or read. */
+export async function lockRunProjectWriteAccess(database: Database, run: Pick<RunRow, "projectId" | "agentId" | "workspaceId" | "originatorId">, agent: { createdBy?: string; runtimeId: string | null; memberOwned?: boolean }) {
+  if (!run.projectId || !run.agentId) return true;
+  const [project] = await database.select({ id: projects.id, workspaceId: projects.workspaceId }).from(projects).where(eq(projects.id, run.projectId)).for("share");
+  if (!project) return false;
+  const userIds = [...new Set([run.originatorId, ...(agent.memberOwned && agent.createdBy ? [agent.createdBy] : [])])].sort();
+  const workspaceIds = [...new Set([run.workspaceId, project.workspaceId])].sort();
+  await database.select({ userId: workspaceMembers.userId }).from(workspaceMembers)
+    .where(and(inArray(workspaceMembers.workspaceId, workspaceIds), inArray(workspaceMembers.userId, userIds))).orderBy(workspaceMembers.workspaceId, workspaceMembers.userId).for("share");
+  await database.select({ userId: projectMembers.userId }).from(projectMembers)
+    .where(and(eq(projectMembers.projectId, project.id), inArray(projectMembers.userId, userIds))).orderBy(projectMembers.userId).for("share");
+  if (project.workspaceId !== run.workspaceId) return false;
+  return await canWriteProject(database, run.originatorId, run.projectId) && await agentOwnerCanUseProject(database, agent, run.projectId);
+}
+
+/** Holds the authorization rows stable until a Run-token read has finished, so a concurrent revoke must serialize before or after it. */
+export async function withAgentRunProjectAuthorization<T>(database: Database, runId: string, read: (state: {
+  active: boolean; allowed: boolean; run: RunRow | null;
+}) => Promise<T>): Promise<T> {
+  return database.transaction(async (transaction) => {
+    const tx = transaction as unknown as Database;
+    const [observed] = await tx.select({ runtimeId: runs.runtimeId, workspaceId: runs.workspaceId, projectId: runs.projectId, agentId: runs.agentId, originatorId: runs.originatorId }).from(runs).where(eq(runs.id, runId));
+    if (!observed) return read({ active: false, allowed: false, run: null });
+    // Hold the authorization rows stable while the handler runs, but do not hold a Run lock: handlers use the global DB
+    // connection and may create follow-up Runs for the same work item. Holding a Run lock here can deadlock with that work.
+    if (observed.runtimeId) await tx.select({ id: runtimes.id }).from(runtimes).where(eq(runtimes.id, observed.runtimeId)).for("share");
+    const [agent] = observed.agentId ? await tx.select({ createdBy: agents.createdBy, runtimeId: agents.runtimeId, memberOwned: agents.memberOwned }).from(agents).where(eq(agents.id, observed.agentId)).for("share") : [];
+    // Membership revocation locks workspace/project member rows before cancelling Runs. Take those rows before checking Run state.
+    const projectAccess = agent ? await lockRunProjectWriteAccess(tx, observed, agent) : false;
+    const [run] = await tx.select().from(runs).where(eq(runs.id, runId));
+    if (!run || !["dispatched", "running"].includes(run.status)) return read({ active: false, allowed: false, run: run ?? null });
+    if (run.workspaceId !== observed.workspaceId || run.projectId !== observed.projectId || run.agentId !== observed.agentId || run.runtimeId !== observed.runtimeId) return read({ active: true, allowed: false, run });
+    if (!agent || agent.runtimeId !== run.runtimeId || !(await agentRuntimeCanRun(tx, { runtimeId: run.runtimeId }))) return read({ active: true, allowed: false, run });
+    return read({ active: true, allowed: projectAccess, run });
+  });
 }
 
 /**
@@ -360,6 +415,15 @@ export async function decideAndStartWake(database: Database, input: {
   commentId?: string | null; triggerId?: string | null; chain?: { wokenByRunId: string | null; depth: number };
 }): Promise<WakeOutcome> {
   const { target, workspaceId, projectId, workItemId, commentId, triggerId } = input;
+  if (!(await agentRuntimeCanRun(database, target, true))) {
+    if (input.waker === "agent" && input.step) return refuseWake(database, { step: input.step, target, workspaceId, projectId, workItemId, commentId }, "runtime_unshared");
+    return skippedOutcome(target, "runtime_unshared");
+  }
+  if (input.waker !== "agent" && !(await canWriteProject(database, input.originatorId, projectId))) return skippedOutcome(target, "no_project_write");
+  if (!(await agentOwnerCanUseProject(database, target, projectId))) {
+    if (input.waker === "agent" && input.step) return refuseWake(database, { step: input.step, target, workspaceId, projectId, workItemId, commentId }, "no_project_write");
+    return skippedOutcome(target, "no_project_write");
+  }
   // A person's request starts a chain of its own unless it names the chain it belongs to (a Follow-up Run's request does).
   if (input.waker !== "agent") return startWake(database, { waker: input.waker, actorId: input.originatorId, target, workspaceId, projectId, workItemId, originatorId: input.originatorId, commentId, triggerId, chain: input.chain ?? personChain });
   const step = input.step;
@@ -437,7 +501,7 @@ async function startWake(database: Database, input: {
  */
 export async function queueRunsForAssignees(database: Database, input: { originatorId: string; waker?: Waker; wakingRunId?: string | null; project: { id: string; workspaceId: string }; workItemId: string; assigneeUserIds: string[]; commentId?: string }): Promise<WakeOutcome[]> {
   if (input.assigneeUserIds.length === 0) return [];
-  const targets = await database.select({ id: agents.id, userId: agents.userId, name: users.name, budget: agents.monthlyTokenBudget, runtimeId: agents.runtimeId }).from(agents)
+  const targets = await database.select({ id: agents.id, userId: agents.userId, name: users.name, budget: agents.monthlyTokenBudget, runtimeId: agents.runtimeId, createdBy: agents.createdBy, memberOwned: agents.memberOwned }).from(agents)
     .innerJoin(users, eq(users.id, agents.userId))
     .innerJoin(projectMembers, and(eq(projectMembers.userId, agents.userId), eq(projectMembers.projectId, input.project.id)))
     .where(and(inArray(agents.userId, input.assigneeUserIds), eq(agents.enabled, true), eq(agents.workspaceId, input.project.workspaceId)))
@@ -462,6 +526,7 @@ export async function queueRunsForAssignees(database: Database, input: { origina
   const outcomes: WakeOutcome[] = [];
   for (const target of targets) {
     if (!writable) { outcomes.push(skippedOutcome(target, "no_project_write")); continue; }
+    if (!(await agentRuntimeCanRun(database, target))) { outcomes.push(skippedOutcome(target, "runtime_unshared")); continue; }
     if (!(await hasAgentAccess(database, target.id, input.originatorId))) {
       throw new AgentAccessDeniedError(`You do not have Agent access to ${target.name}. Ask its owner or an Admin to grant access.`, input.workItemId, target.name);
     }
@@ -571,34 +636,6 @@ export async function recoverAbandonedRun(database: Database, runId: string, now
   }
 }
 
-/** Revokes every active Run, leaving running Runtime work in stopping until its Daemon acknowledges cancellation. */
-export async function revokeAgentRuns(database: Database, agentId: string, actorId: string, reason: string, originatorId?: string) {
-  const active = await database.select().from(runs).where(and(eq(runs.agentId, agentId), ...(originatorId ? [eq(runs.originatorId, originatorId)] : []), inArray(runs.status, ["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input", "follow_up"])));
-  const now = new Date();
-  for (const run of active) {
-    await database.transaction(async (transaction) => {
-      const tx = transaction as unknown as Database;
-      await lockRuntimeRun(tx, run.id);
-      const [current] = await tx.select().from(runs).where(eq(runs.id, run.id)).for("update");
-      if (!current || !["queued", "dispatched", "running", "stopping", "waiting_confirmation", "awaiting_input", "follow_up"].includes(current.status)) return;
-      const running = ["running", "awaiting_input", "stopping"].includes(current.status);
-      if (!running) await scrubRunMessages(tx, run.id, current.runtimeEnvironmentSecrets);
-      const [updated] = await tx.update(runs).set({ status: running ? "stopping" : "failed", failureReason: reason, ...(running ? {} : { finishedAt: now, runtimeEnvironmentSecrets: null }) })
-        .where(eq(runs.id, run.id)).returning();
-      if (!updated) return;
-      if (!running) {
-        await withdrawConfirmations(tx, run.id);
-        await emitRunFinished(tx, run.id);
-        if (run.agentId && run.workItemId) await startFollowUpRun(tx, run.agentId, run.workItemId);
-      }
-      if (run.workItemId) await tx.insert(activities).values({
-        workspaceId: run.workspaceId, projectId: run.projectId, entityType: "work_item", entityId: run.workItemId,
-          field: "run_revoked", oldValue: { status: current.status }, newValue: { status: updated.status, reason }, actorId, source: "ui",
-      });
-    });
-  }
-}
-
 /**
  * Suspending a member stops their work in one workspace: Runs they started and Runs on Runtimes they own.
  * Queued Runs are cancelled; Runtime work is asked to stop and settles when its Daemon acknowledges.
@@ -674,7 +711,7 @@ export async function startRun(database: Database, runId: string, modelId?: stri
     const [run] = await tx.select().from(runs).where(eq(runs.id, runId));
     if (!run || run.status !== "queued" || !run.agentId) return "gone";
     // The Agent row is the lock: two workers starting Runs of one Agent take turns, so the count below cannot be raced past the limit.
-    const [agent] = await tx.select({ id: agents.id, userId: agents.userId, enabled: agents.enabled, budget: agents.monthlyTokenBudget, runtimeId: agents.runtimeId, maxConcurrentRuns: agents.maxConcurrentRuns, model: agents.model }).from(agents).where(eq(agents.id, run.agentId)).for("update");
+    const [agent] = await tx.select({ id: agents.id, userId: agents.userId, createdBy: agents.createdBy, memberOwned: agents.memberOwned, enabled: agents.enabled, budget: agents.monthlyTokenBudget, runtimeId: agents.runtimeId, maxConcurrentRuns: agents.maxConcurrentRuns, model: agents.model }).from(agents).where(eq(agents.id, run.agentId)).for("update");
     // A Run woken after its Agent was disabled (it waited on a Confirmation) never starts: it ends cancelled, not stuck queued.
     if (agent && !agent.enabled) {
       await tx.update(runs).set({ status: "cancelled", finishedAt: new Date() }).where(eq(runs.id, runId));
@@ -684,6 +721,22 @@ export async function startRun(database: Database, runId: string, modelId?: stri
     if (!agent) return "gone";
     // Runtime-bound Runs remain queued for daemon dispatch (ticket 05); the server worker never starts them.
     if (agent.runtimeId) return "gone";
+    if (!(await lockRunProjectWriteAccess(tx, run, agent))) {
+      const originatorAccess = await canWriteProject(tx, run.originatorId, run.projectId);
+      const reason = originatorAccess ? "creator_access_revoked" : "originator_project_access_revoked";
+      const [skipped] = await tx.update(runs).set({ status: "skipped", failureReason: reason, finishedAt: new Date() })
+        .where(and(eq(runs.id, runId), eq(runs.status, "queued"))).returning({ id: runs.id });
+      if (skipped) {
+        if (run.workItemId) {
+          await enqueueNotification(tx, { kind: "run_skipped", workItemId: run.workItemId, commentId: run.commentId ?? undefined, actorId: agent.userId, recipientIds: [run.originatorId], detail: reason });
+          // The skipped Run cannot produce more follow-ups. Advance the one already waiting; the worker rechecks its
+          // own authorization and terminally skips it if the same Project access has been revoked.
+          await startFollowUpRun(tx, agent.id, run.workItemId);
+        }
+        await emitRunFinished(tx, runId);
+      }
+      return "gone";
+    }
     const [current] = await tx.select({ id: runs.id }).from(runs).where(eq(runs.id, runId)).for("update");
     if (!current) return "gone";
     // A Run that waited in the queue while the budget ran out never starts.

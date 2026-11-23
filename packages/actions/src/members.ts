@@ -1,10 +1,11 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, count, eq, gt, inArray, isNull } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { projectMembers, projects, runtimes, users, workspaceInvites, workspaceMembers, workspaces } from "@weft/db";
+import { agents, projectMembers, projects, runtimes, users, workspaceInvites, workspaceMembers, workspaces } from "@weft/db";
 import { agentUserIds, withoutDisabledAgents } from "./agent-access";
 import { pauseCreatorRecurrences } from "./recurrence-pause";
 import { auditAgentChange } from "./agent-audit";
+import { revokeAgentRuns, revokeWorkspaceMemberRuns } from "./run-revocation";
 
 export const workspaceRoles = ["Admin", "Member", "Guest"] as const;
 export type WorkspaceRole = (typeof workspaceRoles)[number];
@@ -138,6 +139,9 @@ export function createMemberActions(db: Database, now: () => Date = () => new Da
           }
           await transaction.update(workspaceMembers).set({ role: input.role })
             .where(and(eq(workspaceMembers.workspaceId, input.workspaceId), eq(workspaceMembers.userId, input.userId)));
+          if (target.role !== "Guest" && input.role === "Guest") {
+            await revokeWorkspaceMemberRuns(transaction, input.workspaceId, input.userId, context.userId);
+          }
           if (target.role !== input.role) await auditAgentChange(transaction, {
             workspaceId: input.workspaceId, entityType: "member", entityId: input.workspaceId, field: "role",
             oldValue: { userId: input.userId, role: target.role }, newValue: { userId: input.userId, role: input.role }, actorId: context.userId,
@@ -156,6 +160,9 @@ export function createMemberActions(db: Database, now: () => Date = () => new Da
         await requireWorkspaceRole(db, context.userId, input.workspaceId, "admin");
         return db.transaction(async (tx) => {
           const transaction = tx as unknown as Database;
+          // The Agent dispatch path takes Runtime locks before touching Runs. Match that order when removing a Runtime owner.
+          const ownedRuntimes = await transaction.select({ id: runtimes.id }).from(runtimes)
+            .where(and(eq(runtimes.workspaceId, input.workspaceId), eq(runtimes.ownerId, input.userId))).orderBy(runtimes.id).for("update");
           const [target] = await transaction.select({ role: workspaceMembers.role, suspendedAt: workspaceMembers.suspendedAt }).from(workspaceMembers)
             .where(and(eq(workspaceMembers.workspaceId, input.workspaceId), eq(workspaceMembers.userId, input.userId))).for("update");
           if (!target) throw new ActionError("Member not found", 404);
@@ -169,7 +176,14 @@ export function createMemberActions(db: Database, now: () => Date = () => new Da
           // Project memberships go with the workspace membership, so a removed user can no longer be assigned.
           const workspaceProjects = transaction.select({ id: projects.id }).from(projects).where(eq(projects.workspaceId, input.workspaceId));
           await transaction.delete(projectMembers).where(and(eq(projectMembers.userId, input.userId), inArray(projectMembers.projectId, workspaceProjects)));
-          await transaction.update(runtimes).set({ shared: false }).where(and(eq(runtimes.workspaceId, input.workspaceId), eq(runtimes.ownerId, input.userId)));
+          if (ownedRuntimes.length) {
+            await transaction.update(runtimes).set({ shared: false }).where(inArray(runtimes.id, ownedRuntimes.map((runtime) => runtime.id)));
+            for (const { id: runtimeId } of ownedRuntimes) {
+              const bound = await transaction.select({ id: agents.id }).from(agents).where(eq(agents.runtimeId, runtimeId));
+              for (const agent of bound) await revokeAgentRuns(transaction, agent.id, context.userId, "Runtime sharing was revoked");
+            }
+          }
+          await revokeWorkspaceMemberRuns(transaction, input.workspaceId, input.userId, context.userId);
           await auditAgentChange(transaction, {
             workspaceId: input.workspaceId, entityType: "member", entityId: input.workspaceId, field: "removed",
             oldValue: { userId: input.userId, role: target.role }, newValue: null, actorId: context.userId,

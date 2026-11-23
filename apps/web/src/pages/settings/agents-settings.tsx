@@ -20,7 +20,8 @@ type TriggerEvent = "work_item_created" | "work_item_updated" | "state_changed" 
 type TriggerRow = { id: string; projectId: string; eventType: TriggerEvent | null; schedule: "daily" | "weekly" | "monthly" | "cron" | null; expression: string | null; paused: boolean };
 
 type RuntimeProfile = { id: string; runtimeId: string; name: string; sandbox: string; filesystemAllowlist: string[]; networkAllowlist: string[] };
-type RuntimeOption = { id: string; hostname: string; agentCli: string; online: boolean; shared: boolean };
+type RuntimeOption = { id: string; ownerId: string; hostname: string; agentCli: string; online: boolean; shared: boolean };
+type ManagedAgent = Pick<AgentRecord, "id" | "name" | "instructions" | "model" | "enabled" | "allProjects" | "projectIds" | "runtimeId" | "runtimeProfileId" | "runtimeProfileName" | "runtimeProfileSandbox" | "accessUserIds" | "cliModel" | "maxConcurrentRuns" | "maxToolCalls" | "maxTokens" | "timeoutSeconds" | "monthlyTokenBudget"> & { createdBy: string; memberOwned: boolean };
 type Draft = { name: string; instructions: string; model: string; autopilot: boolean; canWakeAgents: boolean; maxToolCalls: string; maxTokens: string; timeoutSeconds: string; monthlyTokenBudget: string; runtimeId: string; cliModel: string; maxConcurrentRuns: string };
 const emptyDraft: Draft = { name: "", instructions: "", model: "default", autopilot: false, canWakeAgents: false, maxToolCalls: "", maxTokens: "", timeoutSeconds: "", monthlyTokenBudget: "", runtimeId: "", cliModel: "", maxConcurrentRuns: "6" };
 const toDraft = (agent: AgentRecord): Draft => ({
@@ -60,11 +61,16 @@ function AgentForm({ draft, onChange, onSubmit, onCancel, runtimes, allowAutopil
 }
 
 /** Choose which projects an Agent is open to: opening a project makes the Agent a Member of it. */
-function AccessEditor({ agent, projects, onSaved, onFailed }: { agent: AgentRecord; projects: Project[]; onSaved: () => void; onFailed: () => void }) {
-  const [draft, setDraft] = React.useState({ allProjects: agent.allProjects, projectIds: agent.projectIds });
+function AccessEditor({ agent, projects, onSaved, onFailed, canSetAllProjects = true, projectsLoaded = true }: { agent: Pick<AgentRecord, "id" | "allProjects" | "projectIds">; projects: Project[]; onSaved: () => void; onFailed: () => void; canSetAllProjects?: boolean; projectsLoaded?: boolean }) {
+  const [draft, setDraft] = React.useState({ allProjects: canSetAllProjects ? agent.allProjects : false, projectIds: agent.projectIds });
   const [base, setBase] = React.useState({ allProjects: agent.allProjects, projectIds: agent.projectIds });
   const [saving, setSaving] = React.useState(false);
   const [projectQuery, setProjectQuery] = React.useState("");
+  React.useEffect(() => {
+    if (canSetAllProjects || !projectsLoaded) return;
+    const writableIds = new Set(projects.map((project) => project.id));
+    setDraft((current) => ({ allProjects: false, projectIds: current.projectIds.filter((projectId) => writableIds.has(projectId)) }));
+  }, [canSetAllProjects, projects, projectsLoaded]);
   const visibleProjects = projects.filter((project) => matchesProjectSearch(project, projectQuery));
   const dirty = draft.allProjects !== base.allProjects || [...draft.projectIds].sort().join() !== [...base.projectIds].sort().join();
   const save = async () => {
@@ -78,7 +84,8 @@ function AccessEditor({ agent, projects, onSaved, onFailed }: { agent: AgentReco
     onSaved();
   };
   return <fieldset className="grid gap-1 border-0 p-0"><legend className="text-13 font-medium text-secondary">{translate("agents.access")}</legend>
-    <label className="flex items-center gap-2"><input type="checkbox" checked={draft.allProjects} onChange={(event) => setDraft({ ...draft, allProjects: event.target.checked, projectIds: event.target.checked ? [] : draft.projectIds })} />{translate("agents.allProjects")}</label>
+    {!canSetAllProjects && projectsLoaded && (agent.allProjects || agent.projectIds.some((projectId) => !projects.some((project) => project.id === projectId))) && <p role="status" className="text-12 text-secondary">{translate("agents.revokedProjectAccess")}</p>}
+    {canSetAllProjects && <label className="flex items-center gap-2"><input type="checkbox" checked={draft.allProjects} onChange={(event) => setDraft({ ...draft, allProjects: event.target.checked, projectIds: event.target.checked ? [] : draft.projectIds })} />{translate("agents.allProjects")}</label>}
     {!draft.allProjects && <>
       <label className="grid gap-1 text-12 font-medium text-secondary">{translate("projects.find")}
         <input type="search" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder={translate("projects.searchPlaceholder")} className="px-2 py-1 text-13" />
@@ -89,6 +96,51 @@ function AccessEditor({ agent, projects, onSaved, onFailed }: { agent: AgentReco
     </>}
     <button type="button" disabled={!dirty || saving} onClick={() => void save()}>{translate("agents.save")}</button>
   </fieldset>;
+}
+
+function MemberAgentSettings({ agent, onSaved, onFailed }: { agent: ManagedAgent; onSaved: () => void; onFailed: () => void }) {
+  const [draft, setDraft] = React.useState({ name: agent.name, instructions: agent.instructions, model: agent.model, cliModel: agent.cliModel ?? "", maxConcurrentRuns: String(agent.maxConcurrentRuns), maxToolCalls: String(agent.maxToolCalls), maxTokens: String(agent.maxTokens), timeoutSeconds: String(agent.timeoutSeconds), monthlyTokenBudget: agent.monthlyTokenBudget === null ? "" : String(agent.monthlyTokenBudget) });
+  const [saving, setSaving] = React.useState(false);
+  const [retiring, setRetiring] = React.useState<Record<string, number> | null>(null);
+  const set = (key: keyof typeof draft) => (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setDraft({ ...draft, [key]: event.target.value });
+  const save = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setSaving(true);
+    const result = await action("update_agent", { agentId: agent.id, ...draft, cliModel: draft.cliModel || null, maxConcurrentRuns: optionalInt(draft.maxConcurrentRuns), maxToolCalls: optionalInt(draft.maxToolCalls), maxTokens: optionalInt(draft.maxTokens), timeoutSeconds: optionalInt(draft.timeoutSeconds), monthlyTokenBudget: optionalInt(draft.monthlyTokenBudget) ?? null });
+    setSaving(false);
+    result === null ? onFailed() : onSaved();
+  };
+  return <form className="grid gap-3 border-y border-subtle py-3" onSubmit={(event) => void save(event)}>
+    <strong>{translate("agents.myAgentSettings")}</strong>
+    <label>{translate("agents.name")}<input required maxLength={100} value={draft.name} onChange={set("name")} /></label>
+    <label>{translate("agents.instructions")}<textarea rows={4} value={draft.instructions} onChange={set("instructions")} /></label>
+    <label>{translate("agents.model")}<input required value={draft.model} onChange={set("model")} /></label>
+    <div className="grid gap-3 sm:grid-cols-2">
+      <label>{translate("agents.cliModel")}<input value={draft.cliModel} onChange={set("cliModel")} /></label>
+      <label>{translate("agents.concurrency")}<input type="number" min={1} max={20} value={draft.maxConcurrentRuns} onChange={set("maxConcurrentRuns")} /></label>
+      <label>{translate("agents.maxToolCalls")}<input type="number" min={1} max={100} value={draft.maxToolCalls} onChange={set("maxToolCalls")} /></label>
+      <label>{translate("agents.maxTokens")}<input type="number" min={1} max={1000000} value={draft.maxTokens} onChange={set("maxTokens")} /></label>
+      <label>{translate("agents.timeoutSeconds")}<input type="number" min={1} max={3600} value={draft.timeoutSeconds} onChange={set("timeoutSeconds")} /></label>
+      <label>{translate("agents.monthlyBudget")}<input type="number" min={1} value={draft.monthlyTokenBudget} onChange={set("monthlyTokenBudget")} /></label>
+    </div>
+    <div className="flex flex-wrap gap-2"><button type="submit" disabled={saving}>{translate("agents.save")}</button><button type="button" className="secondary" onClick={async () => {
+      const result = await action(agent.enabled ? "disable_agent" : "enable_agent", { agentId: agent.id });
+      result === null ? onFailed() : onSaved();
+    }}>{translate(agent.enabled ? "agents.disable" : "agents.enable")}</button><button type="button" className={dangerOutline} data-retire-trigger={agent.id} onClick={async () => {
+      const counts = await action<{ blocked: boolean; counts: Record<string, number> }>("get_agent_content_counts", { agentId: agent.id });
+      if (!counts) { onFailed(); return; }
+      if (counts.blocked) { setRetiring(counts.counts); return; }
+      if (window.confirm(translate("agents.deleteConfirm"))) {
+        const result = await action("delete_agent", { agentId: agent.id });
+        result === null ? onFailed() : onSaved();
+      }
+    }}>{translate("agents.delete")}</button></div>
+    {retiring && <RetirePanel agent={agent} counts={retiring} onClose={() => setRetiring(null)} onDisable={async () => {
+      setRetiring(null);
+      const result = await action("disable_agent", { agentId: agent.id });
+      result === null ? onFailed() : onSaved();
+    }} />}
+  </form>;
 }
 
 function AgentPeopleAccess({ agent, members, onSaved, onFailed }: { agent: Pick<AgentRecord, "id" | "runtimeId" | "accessUserIds">; members: Member[]; onSaved: () => void; onFailed: () => void }) {
@@ -223,13 +275,14 @@ function RetirePanel({ agent, counts, onClose, onDisable }: { agent: { id: strin
 /** Workspace Admins create, configure, enable, disable and delete Agents, and open them to projects. */
 export function WorkspaceAgents() {
   const { workspace, selfId } = useWorkspace();
-  const [isAdmin, setIsAdmin] = React.useState<boolean | null>(null);
+  const [workspaceRole, setWorkspaceRole] = React.useState<Member["role"] | null>(null);
   const [agents, setAgents] = React.useState<AgentRecord[]>([]);
   const [askable, setAskable] = React.useState<Array<{ id: string; name: string; codeCapable: boolean; ownerName: string | null; hasAccess: boolean }>>([]);
-  const [ownerAgents, setOwnerAgents] = React.useState<Array<Pick<AgentRecord, "id" | "name" | "runtimeId" | "runtimeProfileId" | "runtimeProfileName" | "runtimeProfileSandbox" | "accessUserIds">>>([]);
+  const [ownerAgents, setOwnerAgents] = React.useState<ManagedAgent[]>([]);
   const [manageableAgentIds, setManageableAgentIds] = React.useState<string[]>([]);
   const [members, setMembers] = React.useState<Member[]>([]);
   const [runtimes, setRuntimes] = React.useState<RuntimeOption[]>([]);
+  const [memberAgent, setMemberAgent] = React.useState({ name: "", instructions: "", model: "default", runtimeId: "" });
   const [projects, setProjects] = React.useState<Project[]>([]);
   const [projectsLoaded, setProjectsLoaded] = React.useState(false);
   const [workspaceSkills, setWorkspaceSkills] = React.useState<Array<{ id: string; name: string; description: string }>>([]);
@@ -244,11 +297,20 @@ export function WorkspaceAgents() {
     setProjectsLoaded(false);
     const members = await action<Member[]>("list_members", { workspaceId: workspace.id }) ?? [];
     setMembers(members);
-    const admin = members.find((member) => member.userId === selfId)?.role === "Admin";
-    setIsAdmin(admin);
+    const role = members.find((member) => member.userId === selfId)?.role ?? null;
+    setWorkspaceRole(role);
+    const admin = role === "Admin";
     if (!admin) {
-      setOwnerAgents(await action<Array<Pick<AgentRecord, "id" | "name" | "runtimeId" | "runtimeProfileId" | "runtimeProfileName" | "runtimeProfileSandbox" | "accessUserIds">>>("list_manageable_agent_access", { workspaceId: workspace.id }) ?? []);
+      const [runtimeRows, ownedAgents, visibleProjects] = await Promise.all([
+        action<RuntimeOption[]>("list_runtimes", { workspaceId: workspace.id }),
+        action<ManagedAgent[]>("list_manageable_agent_access", { workspaceId: workspace.id }),
+        action<Project[]>("list_projects", { workspaceId: workspace.id }),
+      ]);
+      setRuntimes(runtimeRows ?? []);
+      setOwnerAgents(ownedAgents ?? []);
+      setProjects((visibleProjects ?? []).filter((project) => !project.archived));
       setAskable(await action<Array<{ id: string; name: string; codeCapable: boolean; ownerName: string | null; hasAccess: boolean }>>("list_agents_for_viewer", { workspaceId: workspace.id }) ?? []);
+      setProjectsLoaded(true);
       return;
     }
     setOwnerAgents([]);
@@ -264,8 +326,25 @@ export function WorkspaceAgents() {
   const guard = async (result: unknown) => { setNote(result === null ? translate("agents.failed") : null); await load(); };
   const limits = (draft: Draft) => ({ maxToolCalls: optionalInt(draft.maxToolCalls), maxTokens: optionalInt(draft.maxTokens), timeoutSeconds: optionalInt(draft.timeoutSeconds) });
   const header = <SettingsHeader title={translate("agents.title")} description={translate("agents.desc")} />;
-  if (isAdmin === null) return <section>{header}</section>;
-  if (!isAdmin) return <section>{header}
+  if (workspaceRole === null) return <section>{header}</section>;
+  if (workspaceRole !== "Admin") return <section>{header}
+    {workspaceRole === "Member" && <SettingsBlock title={translate("agents.memberCreateTitle")}>
+      <p className="text-13 text-secondary">{translate("agents.memberCreateHelp")}</p>
+      {runtimes.filter((runtime) => runtime.ownerId === selfId && runtime.shared).length === 0
+        ? <p className="text-13 text-secondary">{translate("agents.memberNoRuntime")}</p>
+        : <form className="grid gap-3" onSubmit={async (event) => {
+          event.preventDefault();
+          const result = await action("create_agent", { workspaceId: workspace.id, ...memberAgent, runtimeId: memberAgent.runtimeId });
+          if (result !== null) setMemberAgent({ name: "", instructions: "", model: "default", runtimeId: "" });
+          await guard(result);
+        }}>
+          <label>{translate("agents.name")}<input required maxLength={100} value={memberAgent.name} onChange={(event) => setMemberAgent({ ...memberAgent, name: event.target.value })} /></label>
+          <label>{translate("agents.instructions")}<textarea rows={4} value={memberAgent.instructions} onChange={(event) => setMemberAgent({ ...memberAgent, instructions: event.target.value })} /></label>
+          <label>{translate("agents.model")}<input required value={memberAgent.model} onChange={(event) => setMemberAgent({ ...memberAgent, model: event.target.value })} /></label>
+          <label>{translate("agents.runsOn")}<select required value={memberAgent.runtimeId} onChange={(event) => setMemberAgent({ ...memberAgent, runtimeId: event.target.value })}><option value="">{translate("agents.selectOwnRuntime")}</option>{runtimes.filter((runtime) => runtime.ownerId === selfId && runtime.shared).map((runtime) => <option key={runtime.id} value={runtime.id}>{runtime.hostname} · {runtime.agentCli} · {translate(runtime.online ? "runtimes.online" : "runtimes.offline")}</option>)}</select></label>
+          <button type="submit">{translate("agents.create")}</button>
+        </form>}
+    </SettingsBlock>}
     <SettingsBlock title={translate("agents.askableTitle")}>
       <p className="text-13 text-secondary">{translate("agents.askableHelp")}</p>
       {askable.length === 0 ? <p className="text-secondary">{translate("agents.askableEmpty")}</p> : <RowList>{askable.map((agent) => <Row key={agent.id}>
@@ -273,8 +352,12 @@ export function WorkspaceAgents() {
         <span className="text-13 text-secondary">{agent.hasAccess ? translate("agents.askableUsable") : agent.ownerName ? translate("agents.askableAsk").replace("{name}", agent.ownerName) : translate("agents.askableAskAdmin")}</span>
       </Row>)}</RowList>}
     </SettingsBlock>
-    {ownerAgents.map((agent) => (
-      <div key={agent.id} className="grid gap-2 border-b border-subtle py-3"><div className="flex flex-wrap items-center gap-x-2"><Avatar name={agent.name} id={agent.id} agent /><strong>{agent.name}</strong><span className="text-13 text-secondary">{profileSummary(agent).join(" · ")}</span></div><AgentRuntimeProfile agent={agent} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} /><AgentRuntimeEnvironment agent={agent} onFailed={() => setNote(translate("agents.failed"))} /><AgentPeopleAccess agent={agent} members={members} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} /></div>
+    {workspaceRole === "Member" && ownerAgents.map((agent) => (
+      <div key={agent.id} data-owner-agent={agent.name} className="grid gap-2 border-b border-subtle py-3"><div className="flex flex-wrap items-center gap-x-2"><Avatar name={agent.name} id={agent.id} agent /><strong>{agent.name}</strong><span className="text-13 text-secondary">{profileSummary(agent).join(" · ")}</span></div>
+        {workspaceRole === "Member" && agent.memberOwned && agent.createdBy === selfId && <MemberAgentSettings agent={agent} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} />}
+        {workspaceRole === "Member" && agent.memberOwned && agent.createdBy === selfId && <AccessEditor agent={agent} projects={projects.filter((project) => project.role === "Admin" || project.role === "Member")} canSetAllProjects={false} projectsLoaded={projectsLoaded} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} />}
+        <AgentRuntimeProfile agent={agent} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} /><AgentRuntimeEnvironment agent={agent} onFailed={() => setNote(translate("agents.failed"))} /><AgentPeopleAccess agent={agent} members={members} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} />
+      </div>
     ))}
     {note && <Note note={note} />}
   </section>;

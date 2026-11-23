@@ -2,7 +2,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { agentAccess, agentProjects, agents, projectMembers, projects, runtimes, users, workspaceMembers } from "@weft/db";
 
-/** System ceilings for the per-run limits an admin may set on an Agent (spec "Limits"). */
+/** System ceilings for per-run limits an Admin or eligible Member creator may set on an Agent. */
 export const agentLimitDefaults = { maxToolCalls: 25, maxTokens: 200_000, timeoutSeconds: 1800 } as const;
 export const agentLimitCeilings = { maxToolCalls: 100, maxTokens: 1_000_000, timeoutSeconds: 3600 } as const;
 
@@ -12,7 +12,7 @@ export async function hasAgentAccess(db: Database, agentId: string, userId: stri
   return Boolean(grant);
 }
 
-/** Runtime owner controls Code-capable Agents; workspace Admins control server Agents. */
+/** Runtime owners control Code-capable Agent access; workspace Admins control server Agent access. Creator configuration rights are enforced by the Agent Actions. */
 export async function canManageAgentAccess(db: Database, agent: { workspaceId: string; runtimeId: string | null }, userId: string) {
   if (agent.runtimeId) {
     const [runtime] = await db.select({ ownerId: runtimes.ownerId }).from(runtimes).where(eq(runtimes.id, agent.runtimeId));

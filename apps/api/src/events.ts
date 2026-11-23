@@ -53,6 +53,7 @@ export function registerEventRoutes(app: Elysia<any, any, any, any, any, any, an
         };
         const deliver = async (signal: Signal) => {
           if (signal.type === "notification" && signal.userId !== caller.userId) return;
+          if (caller.source === "agent" && caller.agent?.workspaceId !== signal.workspaceId) return;
           if (!(await isMember(signal.workspaceId))) return;
           send(`event: ${signal.type}\ndata: ${JSON.stringify({ workspaceId: signal.workspaceId })}\n\n`);
         };

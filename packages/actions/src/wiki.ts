@@ -6,12 +6,12 @@ import { prepareRichTextGuarded, readWrittenFormOf, storedDocumentOf, storedDocu
 import { markdownToDoc, storedMarkdownToDoc, markdownToDocWithWarnings, WRITTEN_FORM_MAX_INPUT_LENGTH } from "./markdown-doc";
 import { Type } from "@sinclair/typebox";
 import { assertNotArchived } from "./triage";
-import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
 import { activities, agents, assets, collectionMembers, collections, comments, projectMembers, projects, users, wikiPageFavorites, wikiPageShares, wikiPageTemplates, wikiPageVersions, wikiPages, workItemPages, workItems, workspaceMembers } from "@weft/db";
 import { ActionError, requireWorkspaceRole, type WorkspaceRole } from "./members";
 import { accessibleProjects, requireProjectAccess } from "./projects";
-import { agentProjectIds } from "./agent-project-scope";
+import { agentProjectIds, currentAgentProjectScope } from "./agent-project-scope";
 import { assertFeatureEnabled } from "./features";
 import { validateRichTextAssets } from "./rich-text-validation";
 import { escapeLike } from "./search";
@@ -75,7 +75,7 @@ function canWriteWikiPage(input: {
 /** Shared authorization entry point for Wiki pages and their attached assets. */
 export async function requireWikiPageAccess(db: Database, userId: string, pageId: string, requirement: "read" | "write") {
   const [page] = await db.select().from(wikiPages).where(and(eq(wikiPages.id, pageId), isNull(wikiPages.deletedAt)));
-  if (!page) throw new ActionError("Wiki page not found", 404);
+  if (!page) throw new ActionError(currentAgentProjectScope() ? "Not found" : "Wiki page not found", 404);
   let shareRole: WikiShareRole | null = null;
   if (!page.projectId) {
     const [share] = await db.select({ role: wikiPageShares.role }).from(wikiPageShares).where(and(eq(wikiPageShares.pageId, pageId), eq(wikiPageShares.userId, userId)));
@@ -197,7 +197,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
   /** Public pages are open to every member; private pages only to their owner. A hidden page looks missing. */
   async function load(database: Database, userId: string, pageId: string, requirement: "read" | "write" | "owner", options: { allowArchived?: boolean; allowWorkspaceAdmin?: boolean } = {}) {
     const [page] = await database.select().from(wikiPages).where(and(eq(wikiPages.id, pageId), isNull(wikiPages.deletedAt)));
-    if (!page) throw new ActionError("Wiki page not found", 404);
+    if (!page) throw new ActionError(currentAgentProjectScope() ? "Not found" : "Wiki page not found", 404);
     if (page.archivedAt && requirement === "write" && !options.allowArchived) throw new ActionError("Page is archived", 400);
     let shareRole: WikiShareRole | null = null;
     if (!page.projectId) {
@@ -1310,6 +1310,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const agentProjects = await agentProjectIds(db, input.workspaceId);
         const rows = await db.select({ page: wikiPages, projectKey: projects.key }).from(wikiPages).leftJoin(projects, eq(projects.id, wikiPages.projectId)).where(and(
           eq(wikiPages.workspaceId, input.workspaceId), isNull(wikiPages.deletedAt), isNull(wikiPages.archivedAt),
+          ...(agentProjects ? [or(isNull(wikiPages.projectId), inArray(wikiPages.projectId, [...agentProjects]))!] : []),
           sql`(${wikiPages.projectId} is null or exists (select 1 from projects p where p.id = ${wikiPages.projectId} and p.pages_enabled = true))`,
           sql`(${wikiPages.projectId} is null or exists (
             select 1 from project_members m where m.project_id = ${wikiPages.projectId} and m.user_id = ${context.userId}))`,
@@ -1323,8 +1324,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           sql`(${wikiPages.title} ilike ${pattern} or ${wikiPages.contentText} ilike ${pattern}
             or to_tsvector('english', ${wikiPages.title} || ' ' || ${wikiPages.contentText}) @@ plainto_tsquery('english', ${query}))`,
         )).orderBy(sql`(${wikiPages.title} ilike ${pattern}) desc`, asc(wikiPages.sortOrder), asc(wikiPages.createdAt), asc(wikiPages.id)).limit(input.limit ?? 25);
-        return rows.filter(({ page }) => !page.projectId || !agentProjects || agentProjects.has(page.projectId))
-          .map(({ page: row, projectKey }) => ({ id: row.id, title: row.title, snippet: snippetOf(row.contentText, query), access: row.access as WikiAccess, projectId: row.projectId ?? null, projectKey: projectKey ?? null }));
+        return rows.map(({ page: row, projectKey }) => ({ id: row.id, title: row.title, snippet: snippetOf(row.contentText, query), access: row.access as WikiAccess, projectId: row.projectId ?? null, projectKey: projectKey ?? null }));
       },
     },
   };

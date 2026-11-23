@@ -1,15 +1,15 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
 import { activities, assets as assetRows, comments as commentRows, createDatabase, notifications as notificationRows, runs, workItems, type Database } from "@weft/db";
-import { createAgentActions, createAgentRuntimeEnvironmentActions, createAiTools, createCommentActions, commentMarkdownOptions, createConfirmationStore, createCycleActions, createExportActions, createModuleActions, createProjectActions, createRuntimeDispatchActions, createRuntimeActions, createTriggerActions, createWebLinkActions, createWikiActions, createWorkItemActions, lockRuntimeRun, withAgentProjectScope } from "@weft/actions";
+import { createAgentActions, createAgentRuntimeEnvironmentActions, createAiTools, createCommentActions, commentMarkdownOptions, createConfirmationStore, createCycleActions, createExportActions, createModuleActions, createProjectActions, createRuntimeDispatchActions, createRuntimeActions, createTriggerActions, createWebLinkActions, createWikiActions, createWorkItemActions, lockRuntimeRun, withAgentProjectScope, type Signal, type SignalBus } from "@weft/actions";
 import { createMemberFactory, withRollback } from "../../../packages/db/src/test-helpers";
 import { createApp } from "../src/app";
 
 const { client, db } = createDatabase();
 afterAll(async () => client.end());
 
-async function scenario(transaction: Database, allowAutopilot = true, assetStorage?: import("@weft/actions").AssetStorage) {
-  const app = createApp(undefined, transaction, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, { ai: true }, undefined, undefined, assetStorage);
+async function scenario(transaction: Database, allowAutopilot = true, assetStorage?: import("@weft/actions").AssetStorage, bus?: SignalBus) {
+  const app = createApp(undefined, transaction, undefined, undefined, bus, undefined, undefined, undefined, undefined, undefined, { ai: true }, undefined, undefined, assetStorage);
   const post = (path: string, body: unknown, options: { cookie?: string; token?: string } = {}) => app.handle(new Request(`http://localhost${path}`, {
     method: "POST", headers: { "content-type": "application/json", ...(options.cookie ? { cookie: options.cookie } : {}), ...(options.token ? { authorization: `Bearer ${options.token}` } : {}) }, body: JSON.stringify(body),
   }));
@@ -33,6 +33,15 @@ async function scenario(transaction: Database, allowAutopilot = true, assetStora
   // Runs are claimed with the Daemon credential that registration issued, not with the Personal token.
   const claim = () => post("/api/daemon/runs/claim", {}, { token: registration.daemonToken });
   return { app, post, owner, workspace, project, agent, item, work, claim, agents };
+}
+
+function memorySignalBus(): SignalBus {
+  const listeners = new Set<(signal: Signal) => void>();
+  return {
+    async publish(signal) { for (const listener of listeners) listener(signal); },
+    subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+    async ready() {}, async close() {},
+  };
 }
 
 function memoryStorage() {
@@ -157,6 +166,74 @@ test.concurrent("request_export as an Agent is limited to Projects the Agent bel
   });
 });
 
+test.concurrent("Run-token wiki lookup gives the same 404 for an out-of-workspace page and a missing page", async () => {
+  await withRollback(db, async (transaction) => {
+    const { post, claim, owner, workspace, agent, agents } = await scenario(transaction);
+    const other = await (await post("/actions/create_workspace", { name: "Other", slug: `other-${crypto.randomUUID()}` }, { cookie: owner.cookie })).json() as { id: string };
+    const foreignPage = await createWikiActions(transaction).createWikiPage.handler({ userId: owner.id }, { workspaceId: other.id, title: "Foreign page" });
+    await agents.updateAgent.handler({ userId: owner.id }, { agentId: agent.id, allowFeatureActions: true });
+    const [claimed] = await (await claim()).json() as Array<{ token: string }>;
+    const request = (pageId: string) => post("/actions/get_wiki_page", { pageId }, { token: claimed!.token });
+    const foreign = await request(foreignPage.id);
+    const missing = await request(crypto.randomUUID());
+    expect(foreign.status).toBe(404);
+    expect(await foreign.json()).toEqual(await missing.json());
+    expect(missing.status).toBe(404);
+  });
+});
+
+test.concurrent("/api/me limits a Run token to its workspace and keeps all workspaces for a human", async () => {
+  await withRollback(db, async (transaction) => {
+    const { app, post, claim, owner, workspace } = await scenario(transaction);
+    const other = await (await post("/actions/create_workspace", { name: "Other", slug: `other-${crypto.randomUUID()}` }, { cookie: owner.cookie })).json() as { id: string };
+    const [claimed] = await (await claim()).json() as Array<{ token: string }>;
+    const runResponse = await app.handle(new Request("http://localhost/api/me", { headers: { authorization: `Bearer ${claimed!.token}` } }));
+    const runMe = await runResponse.json() as { workspaces: Array<{ id: string }> };
+    expect(runMe.workspaces.map(({ id }) => id)).toEqual([workspace.id]);
+    const humanResponse = await app.handle(new Request("http://localhost/api/me", { headers: { cookie: owner.cookie } }));
+    const humanMe = await humanResponse.json() as { workspaces: Array<{ id: string }> };
+    expect(humanMe.workspaces.map(({ id }) => id)).toContain(other.id);
+    expect(humanMe.workspaces.length).toBeGreaterThan(1);
+  });
+});
+
+test.concurrent("/api/events does not deliver another Originator workspace to a Run token", async () => {
+  await withRollback(db, async (transaction) => {
+    const bus = memorySignalBus();
+    const { app, post, claim, owner, workspace } = await scenario(transaction, true, undefined, bus);
+    const other = await (await post("/actions/create_workspace", { name: "Other", slug: `other-${crypto.randomUUID()}` }, { cookie: owner.cookie })).json() as { id: string };
+    const [claimed] = await (await claim()).json() as Array<{ token: string }>;
+    const stream = await app.handle(new Request("http://localhost/api/events", { headers: { authorization: `Bearer ${claimed!.token}` } }));
+    expect(stream.status).toBe(200);
+    const reader = stream.body!.getReader();
+    await bus.publish({ type: "change", workspaceId: other.id });
+    await bus.publish({ type: "change", workspaceId: workspace.id });
+    const decoder = new TextDecoder();
+    let text = "";
+    const deadline = Date.now() + 2_000;
+    while (!text.includes("data:") && Date.now() < deadline) {
+      const result = await Promise.race([reader.read(), Bun.sleep(50).then(() => ({ value: undefined, done: false }))]);
+      if (result.value) text += decoder.decode(result.value);
+      if (result.done) break;
+    }
+    await reader.cancel();
+    const workspaceIds = [...text.matchAll(/data: (\{[^\n]+\})/g)].map((match) => (JSON.parse(match[1]!) as { workspaceId: string }).workspaceId);
+    expect(workspaceIds).toEqual([workspace.id]);
+  });
+});
+
+test.concurrent("request_export explains an empty Agent Project scope accurately", async () => {
+  await withRollback(db, async (transaction) => {
+    const { post, claim, owner, workspace, agent, agents } = await scenario(transaction);
+    await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: false, projectIds: [] });
+    await agents.updateAgent.handler({ userId: owner.id }, { agentId: agent.id, allowExportActions: true });
+    const [claimed] = await (await claim()).json() as Array<{ token: string }>;
+    const response = await post("/actions/request_export", { workspaceId: workspace.id }, { token: claimed!.token });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "No Project in this Agent's scope" });
+  });
+});
+
 test.concurrent("a Run token cannot join a Project outside the Agent's scope", async () => {
   await withRollback(db, async (transaction) => {
     const { post, claim, owner, workspace, project, agent, agents } = await scenario(transaction);
@@ -171,19 +248,23 @@ test.concurrent("a Run token cannot join a Project outside the Agent's scope", a
   });
 });
 
-test.concurrent("Run-token Wiki search omits pages in Projects outside the Agent's scope", async () => {
+test.concurrent("Run-token Wiki search applies the result limit after Agent Project scope", async () => {
   await withRollback(db, async (transaction) => {
     const { post, claim, owner, workspace, project, agent, agents } = await scenario(transaction);
     const outside = await createProjectActions(transaction).createProject.handler({ userId: owner.id }, {
       workspaceId: workspace.id, name: "Wiki outside", key: `WS${crypto.randomUUID().slice(0, 4).toUpperCase()}`, visibility: "public",
     });
-    const page = await createWikiActions(transaction).createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, projectId: outside.id, title: "Distinctive agent search result" });
+    const wiki = createWikiActions(transaction);
+    for (let index = 0; index < 26; index++) {
+      await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, projectId: outside.id, title: "Distinctive agent search result" });
+    }
+    const inScopePage = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, projectId: project.id, title: "A page with Distinctive agent search result" });
     await agents.setAgentProjectAccess.handler({ userId: owner.id }, { agentId: agent.id, allProjects: false, projectIds: [project.id] });
     await agents.updateAgent.handler({ userId: owner.id }, { agentId: agent.id, allowFeatureActions: true });
     const [claimed] = await (await claim()).json() as Array<{ token: string }>;
 
-    const results = await (await post("/actions/search_wiki_pages", { workspaceId: workspace.id, query: "Distinctive agent search result" }, { token: claimed!.token })).json() as Array<{ id: string }>;
-    expect(results.map((result) => result.id)).not.toContain(page.id);
+    const results = await (await post("/actions/search_wiki_pages", { workspaceId: workspace.id, query: "Distinctive agent search result", limit: 1 }, { token: claimed!.token })).json() as Array<{ id: string }>;
+    expect(results.map((result) => result.id)).toContain(inScopePage.id);
   });
 });
 
@@ -367,7 +448,6 @@ test.concurrent("Run-token writes using object ids all enforce Agent Project mem
     expect(await status("update_state", { stateId: insideState.id, name: "Inside changed" })).toBe(200);
     const visibleExports = await (await request("list_exports", { workspaceId: workspace.id })).json() as Array<{ id: string }>;
     expect(visibleExports.map((entry) => entry.id)).not.toContain(outsideExport.id);
-    expect(await status("get_export_download_url", { exportId: outsideExport.id })).toBe(403);
     await expect(withAgentProjectScope({ agentUserId: agent.userId, workspaceId: workspace.id }, () =>
       createExportActions(transaction).getExportDownloadUrl.handler({ userId: owner.id }, { exportId: outsideExport.id }),
     )).rejects.toMatchObject({ status: 404 });

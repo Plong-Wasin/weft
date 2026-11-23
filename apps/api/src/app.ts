@@ -701,7 +701,10 @@ export function createApp(
     .get("/api/me", async ({ request, set }) => {
       const caller = await resolveCaller(request);
       if (!caller) { set.status = 401; return { error: "Unauthenticated" }; }
-      const workspaces = await workspaceAction.userWorkspaces(caller.userId);
+      const allWorkspaces = await workspaceAction.userWorkspaces(caller.userId);
+      const workspaces = caller.source === "agent" && caller.agent
+        ? allWorkspaces.filter((workspace) => workspace.id === caller.agent!.workspaceId)
+        : allWorkspaces;
       const [user] = await db.select().from(users).where(eq(users.id, caller.userId));
       return {
         user: { ...user, locale: user.locale ?? defaultLocale ?? "en", localeSaved: user.locale !== null }, workspaces, canCreateWorkspace: await workspaceAction.canCreateWorkspace(caller.userId),

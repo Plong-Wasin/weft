@@ -25,7 +25,7 @@ const inviteTtlMs = 7 * 24 * 60 * 60 * 1000;
 /** Permission layer: Guest may only run read actions; Admin-only actions need level 20. */
 export async function requireWorkspaceRole(db: Database, userId: string, workspaceId: string, requirement: "read" | "write" | "admin"): Promise<WorkspaceRole> {
   const agentScope = currentAgentProjectScope();
-  if (agentScope && workspaceId !== agentScope.workspaceId) throw new ActionError("Workspace not found", 404);
+  if (agentScope && workspaceId !== agentScope.workspaceId) throw new ActionError("Not found", 404);
   const [member] = await db.select({ role: workspaceMembers.role, suspendedAt: workspaceMembers.suspendedAt }).from(workspaceMembers)
     .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.userId, userId)));
   if (!member) throw new ActionError("Forbidden", 403);

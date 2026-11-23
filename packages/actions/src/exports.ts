@@ -372,7 +372,7 @@ export function createExportActions(db: Database, runtime: ExportRuntime = {}) {
         if (chosen.length && agentProjects && allowed.some((project) => !agentProjects.has(project.id))) throw new ActionError("Project not found", 404);
         // The stored choice is always the concrete list, so the dedupe key of "all" follows the projects the caller has now.
         const projectIds = allowed.filter((project) => !agentProjects || agentProjects.has(project.id)).map((project) => project.id).sort();
-        if (projectIds.length === 0) throw new ActionError("You do not belong to any project", 400);
+        if (projectIds.length === 0) throw new ActionError(agentProjects ? "No Project in this Agent's scope" : "You do not belong to any project", 400);
         const format = input.format ?? "csv";
         // A member may have a few Exports open at once; an identical open one is still reported by the dedupe below.
         const openRows = await db.select({ id: exportTable.id, format: exportTable.format, projectIds: exportTable.projectIds }).from(exportTable).where(and(

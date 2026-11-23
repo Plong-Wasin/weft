@@ -1029,6 +1029,46 @@ test.concurrent("Project Wiki comments require project write access for every mu
   });
 });
 
+test.concurrent("listing Wiki comment replies uses a fixed number of queries and keeps thread order", async () => {
+  await withRollback(db, async (tx) => {
+    const { workspace, alice, wiki } = await setup(tx);
+    const page = await wiki.createWikiPage.handler({ userId: alice.id }, { workspaceId: workspace.id, title: "Query count" });
+    const addThread = async (body: string) => wiki.createWikiPageComment.handler({ userId: alice.id }, { pageId: page.id, body: doc(body), anchor: body });
+    const first = await addThread("first");
+    await wiki.replyWikiPageComment.handler({ userId: alice.id }, { commentId: first.id, body: doc("first reply") });
+
+    let selectCalls = 0;
+    const countingDb = new Proxy(tx, {
+      get(target, property) {
+        if (property === "select") return (...args: Parameters<Database["select"]>) => {
+          selectCalls++;
+          return target.select(...args);
+        };
+        const value = Reflect.get(target, property, target) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const listing = createWikiActions(countingDb);
+    selectCalls = 0;
+    const oneThread = await listing.listWikiPageComments.handler({ userId: alice.id }, { pageId: page.id });
+    const oneThreadSelects = selectCalls;
+
+    const second = await addThread("second");
+    await wiki.replyWikiPageComment.handler({ userId: alice.id }, { commentId: second.id, body: doc("second reply") });
+    const third = await addThread("third");
+    await wiki.replyWikiPageComment.handler({ userId: alice.id }, { commentId: third.id, body: doc("third reply") });
+    selectCalls = 0;
+    const threeThreads = await listing.listWikiPageComments.handler({ userId: alice.id }, { pageId: page.id });
+
+    expect(threeThreads).toHaveLength(3);
+    expect(threeThreads.map((thread) => thread.bodyText)).toEqual(["first", "second", "third"]);
+    expect(threeThreads.map((thread) => thread.replies.map((reply) => reply.bodyText))).toEqual([["first reply"], ["second reply"], ["third reply"]]);
+    expect(threeThreads.map((thread) => thread.anchor)).toEqual(["first", "second", "third"]);
+    expect(selectCalls).toBe(oneThreadSelects);
+    expect(oneThread).toMatchObject([{ bodyText: "first", anchor: "first", replies: [{ bodyText: "first reply" }] }]);
+  });
+});
+
 test.concurrent("a Member cannot hide, rename or share the default Collection", async () => {
   await withRollback(db, async (tx) => {
     const { workspace, alice, bob, admin, wiki, create, titles } = await setup(tx);

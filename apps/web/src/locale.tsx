@@ -35,6 +35,16 @@ export function adoptUserLocale(locale: unknown, remember = true) {
   if (remember) try { localStorage.setItem(STORAGE_KEY, locale); } catch { /* storage unavailable: the user setting still applies */ }
 }
 
+/**
+ * The language to show once the session loads. A saved account language wins and follows the person across devices.
+ * An unsaved one arrives as the instance default or English, which must not replace what the person already used
+ * on the sign-up or sign-in screen: keep that language and save it to the account.
+ */
+export function resolveSessionLocale(user: { locale?: unknown; localeSaved?: boolean }, current: Locale): { apply: Locale; persist: boolean } {
+  if (user.localeSaved === false) return { apply: current, persist: true };
+  return { apply: isLocale(user.locale) ? user.locale : current, persist: false };
+}
+
 export function LanguageSwitch({ signedIn, save, defaultLocale = null }: { signedIn: boolean; save: (locale: Locale) => Promise<boolean>; defaultLocale?: string | null }) {
   const locale = useLocale();
   const [failed, setFailed] = React.useState(false);

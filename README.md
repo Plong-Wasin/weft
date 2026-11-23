@@ -97,7 +97,12 @@ All variables go in `.env`; defaults are in `.env.example`.
 | AI | `AI_MODEL` | `gpt-6-luna` | Model id for the provider. |
 | AI | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | empty | Key for the chosen provider. |
 | AI | `AI_WEB_SEARCH` | `on` | `off` removes the chat's Web search switch. Web search uses the model provider's own search tool, so it exists only for `openai` and `anthropic`, and each chat starts with it off. |
+| AI | `WEFT_AI_ENABLED` | `true` | Only the exact value `false` turns provider-key AI off: the chat, the selection menu, filter by AI and `/api/ai/*` disappear. AI is also off when no provider key is set. Agents on local runtimes keep working. |
 | AI | `AI_REQUESTS_PER_MINUTE` | `20` | Per-user AI request limit; over the limit the API returns 429 `rate_limited`. |
+| AI | `AI_ASSIST_REQUESTS_PER_MINUTE` | `20` | Per-user AI assist request limit (the editor's AI assist); over the limit the API returns 429 `rate_limited`. |
+| Webhooks | `WEFT_OUTBOUND_WEBHOOKS_ENABLED` | `false` | `true` lets workspace Admins send signed events to HTTPS receivers. Only the exact value `true` turns it on; while off, nothing is sent or stored. |
+| Webhooks | `WEFT_OUTBOUND_WEBHOOKS_ALLOW_PRIVATE_NETWORKS` | `false` | `true` lets receivers sit on private, loopback or link-local addresses. Leave it `false` unless the receivers are inside your network. |
+| Webhooks | `WEFT_OUTBOUND_WEBHOOKS_ALLOW_PORTS` | unset | Extra receiver ports, comma separated, added to 80, 443 and 8443. Unreadable entries are ignored. |
 | Storage | `S3_PUBLIC_ENDPOINT` | `http://localhost:9000` | MinIO address as the browser sees it. |
 | Storage | `S3_ACCESS_KEY`, `S3_SECRET_KEY` | `weft`, `weft-secret` | MinIO root credentials, also used by the API. Change the secret. |
 | Storage | `S3_BUCKET`, `S3_REGION` | `weft-assets`, `us-east-1` | Bucket (created on start) and region. |

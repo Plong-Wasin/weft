@@ -11,7 +11,7 @@ const apiPort = Number(Bun.env.E2E_API_PORT ?? 31227);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52227);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
-const captureDir = `${process.cwd()}/.scratch-captures`;
+const captureDir = Bun.env.COMMENT_SCREENSHOT_DIR ?? `${process.cwd()}/.scratch-captures`;
 const servers: ReturnType<typeof Bun.spawn>[] = [];
 async function waitFor(url: string) {
   for (let attempt = 0; attempt < 100; attempt += 1) { try { if ((await fetch(url)).status < 500) return; } catch { /* starting */ } await Bun.sleep(200); }
@@ -61,6 +61,15 @@ try {
   await commentsActions.createComment.handler({ userId: agent.userId, source: "agent" }, {
     workItemId: item.id, parentId: legacy.id, bodyMarkdown: "Reviewed the access check. **Ready to proceed.**",
   });
+  const compactMarkdown = `##\n\n-\n\n<!-- empty paragraph -->\n\nBefore\n\n<!-- empty paragraph -->\n\n\`\`\`ts\nconst value = 1;\n\nreturn value;\n\`\`\`\n\nAfter\n\n---\n\n- Keep this checklist item\n\nReviewer: @{${reviewer.id}}\n\n<!-- empty paragraph -->\n\n### `;
+  const compactComment = await commentsActions.createComment.handler({ userId: adminId, source: "ui" }, { workItemId: item.id, bodyMarkdown: compactMarkdown });
+  const compactReplyMarkdown = "##\n\n<!-- empty paragraph -->\n\nReply text\n\n<!-- empty paragraph -->\n\n### ";
+  const compactReply = await commentsActions.createComment.handler({ userId: adminId, source: "ui" }, { workItemId: item.id, parentId: compactComment.id, bodyMarkdown: compactReplyMarkdown });
+  const timeline = await page.request.post(`${api}/actions/list_timeline`, { data: { workItemId: item.id, filter: "comments", sort: "oldest" } }).then((response) => response.json() as Promise<Array<{ comment: { id: string; markdown: string; replies: Array<{ id: string; markdown: string }> } | null }>>);
+  const compactEntry = timeline.find((entry) => entry.comment?.id === compactComment.id)?.comment;
+  const compactMarkdownApi = compactEntry?.markdown;
+  const compactReplyMarkdownApi = compactEntry?.replies.find((reply) => reply.id === compactReply.id)?.markdown;
+  if (!compactMarkdownApi?.includes("##") || !compactMarkdownApi.includes("###") || !compactMarkdownApi.includes("Keep this checklist item") || !compactMarkdownApi.includes("---") || !compactMarkdownApi.includes("const value = 1;\n\nreturn value;") || !compactReplyMarkdownApi?.includes("##") || !compactReplyMarkdownApi.includes("###") || !compactReplyMarkdownApi.includes("<!-- empty paragraph -->")) throw new Error(`Comment API output did not retain the original Markdown, internal code whitespace, or reply content: ${JSON.stringify(compactMarkdownApi)}`);
 
   const detailUrl = `${web}/${slug}/browse/REV-1`;
   mkdirSync(captureDir, { recursive: true });
@@ -71,10 +80,10 @@ try {
     await page.getByText("Reviewed the access check.").waitFor();
   };
   const capture = async (stage: "before" | "after" | "source", width: 1280 | 390, locale: "en" | "th") => {
-    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
-    await page.waitForTimeout(200);
+    await page.setViewportSize({ width, height: width === 390 ? 1000 : 900 });
+    await page.locator(`#comment-${legacy.id}`).evaluate((element) => element.scrollIntoView({ block: "center" }));
     const path = `${captureDir}/03-comments-${stage}-${width}-${locale}.png`;
-    await page.screenshot({ path, fullPage: true });
+    await page.screenshot({ path });
     console.log(path);
   };
 
@@ -82,6 +91,36 @@ try {
   await page.goto(detailUrl);
   await page.getByText("Reviewed the access check.").waitFor();
   await root.waitFor();
+  const compactRow = page.locator(`#comment-${compactComment.id}`);
+  await compactRow.locator(".comment-body .ProseMirror").first().waitFor();
+  const compactRendering = await compactRow.locator(".comment-body .ProseMirror").first().evaluate((element) => {
+    const blocks = Array.from(element.children);
+    const isEmptyBlock = (block: Element) => !block.textContent && !block.querySelector("img, [data-type='mention'], br:not(.ProseMirror-trailingBreak)");
+    return {
+      firstIsEmpty: blocks[0] ? isEmptyBlock(blocks[0]) : false,
+      lastIsEmpty: blocks.at(-1) ? isEmptyBlock(blocks.at(-1)!) : false,
+      emptyEdgeHeadings: blocks.filter((block) => /^H[1-6]$/.test(block.tagName) && isEmptyBlock(block)).length,
+      emptyEdgeLists: blocks.filter((block) => ["UL", "OL"].includes(block.tagName) && isEmptyBlock(block)).length,
+      emptyParagraphs: blocks.filter((block) => block.tagName === "P" && isEmptyBlock(block)).length,
+      code: element.querySelector("pre code")?.textContent ?? "",
+      listItem: Array.from(element.querySelectorAll("ul li")).find((item) => item.textContent)?.textContent ?? "",
+      mention: element.querySelector("[data-type='mention']")?.textContent ?? "",
+      hasHorizontalRule: !!element.querySelector("hr"),
+      firstMargin: getComputedStyle(blocks[0]!).marginBlockStart,
+      lastMargin: getComputedStyle(blocks.at(-1)!).marginBlockEnd,
+    };
+  });
+  if (compactRendering.firstIsEmpty || compactRendering.lastIsEmpty || compactRendering.emptyEdgeHeadings || compactRendering.emptyEdgeLists || compactRendering.emptyParagraphs !== 1) throw new Error(`Comment edge blocks were not compacted while preserving the internal blank paragraph: ${JSON.stringify(compactRendering)}`);
+  if (!compactRendering.code.includes("const value = 1;\n\nreturn value;")) throw new Error(`Comment code whitespace changed: ${JSON.stringify(compactRendering.code)}`);
+  if (compactRendering.listItem !== "Keep this checklist item" || !compactRendering.mention.includes("Reviewer") || !compactRendering.hasHorizontalRule) throw new Error(`Comment list, mention, or horizontal-rule content was not preserved: ${JSON.stringify(compactRendering)}`);
+  if (compactRendering.firstMargin !== "0px" || compactRendering.lastMargin !== "0px") throw new Error(`Comment edge layout retained outer block margins: ${JSON.stringify(compactRendering)}`);
+  const compactReplyRow = page.locator(`#comment-${compactReply.id}`);
+  const replyRendering = await compactReplyRow.locator(".comment-body .ProseMirror").evaluate((element) => {
+    const blocks = Array.from(element.children);
+    const isEmptyBlock = (block: Element) => !block.textContent && !block.querySelector("img, [data-type='mention'], br:not(.ProseMirror-trailingBreak)");
+    return { firstIsEmpty: isEmptyBlock(blocks[0]!), lastIsEmpty: isEmptyBlock(blocks.at(-1)!) };
+  });
+  if (replyRendering.firstIsEmpty || replyRendering.lastIsEmpty) throw new Error(`Reply edge blocks were not compacted: ${JSON.stringify(replyRendering)}`);
   if (await root.locator("table").count() !== 1) throw new Error("Legacy comment table did not render before conversion");
   if (!(await root.getByText("Reviewer").count())) throw new Error("Legacy comment mention did not render before conversion");
   for (const locale of ["en", "th"] as const) {
@@ -107,6 +146,18 @@ try {
     await converted.getByRole("button", { name: translate("editor.sourceMode", locale), exact: true }).click();
     await page.getByRole("button", { name: translate("comments.cancel", locale) }).last().click();
   }
+
+  await page.goto(detailUrl);
+  const compactForEditing = page.locator(`#comment-${compactComment.id}`);
+  await compactForEditing.getByRole("button", { name: translate("comments.edit", "th"), exact: true }).first().click();
+  await compactForEditing.getByRole("button", { name: translate("editor.sourceMode", "th"), exact: true }).click();
+  const compactSource = await compactForEditing.getByTestId("editor-source-text").inputValue();
+  if (!compactSource.includes("## ") || !compactSource.includes("### ") || !compactSource.includes("Keep this checklist item") || !compactSource.includes("Reviewer: @{Reviewer|") || !compactSource.includes("---") || !compactSource.includes("const value = 1;\n\nreturn value;")) throw new Error(`Editing did not preserve the original headings, list, mention, atom, or code in source mode: ${JSON.stringify(compactSource)}`);
+  await compactForEditing.getByRole("button", { name: translate("editor.sourceMode", "th"), exact: true }).click();
+  await compactForEditing.getByRole("button", { name: translate("comments.cancel", "th") }).click();
+  const timelineAfterEdit = await page.request.post(`${api}/actions/list_timeline`, { data: { workItemId: item.id, filter: "comments", sort: "oldest" } }).then((response) => response.json() as Promise<Array<{ comment: { id: string; markdown: string; replies: Array<{ id: string; markdown: string }> } | null }>>);
+  const compactEntryAfterEdit = timelineAfterEdit.find((entry) => entry.comment?.id === compactComment.id)?.comment;
+  if (compactEntryAfterEdit?.markdown !== compactMarkdownApi || compactEntryAfterEdit.replies.find((reply) => reply.id === compactReply.id)?.markdown !== compactReplyMarkdownApi) throw new Error("Opening and cancelling edit changed Comment or reply API output");
 
   await browser.close();
 } catch (error) {

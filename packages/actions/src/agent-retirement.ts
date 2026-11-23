@@ -56,6 +56,8 @@ export const agentNonContentColumns: Record<string, string> = {
   "agents.created_by": "The Agent's own settings: who set it up.",
   "ai_requests.user_id": "Usage meter row for AI chat requests; no authored content.",
   "api_tokens.user_id": "Credential; revoked with the Agent.",
+  "cli_device_authorizations.user_id": "Device sign-in authorization, not authored content.",
+  "cli_devices.owner_id": "CLI device registration, not authored content.",
   "comment_mentions.user_id": "Mention: a pointer to a comment, not content.",
   "confirmations.user_id": "Pending confirmation of an AI action; it expires and is not content.",
   "daemons.owner_id": "Daemon registration (a credential), not authored content.",

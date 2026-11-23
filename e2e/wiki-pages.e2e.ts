@@ -122,6 +122,80 @@ try {
   check((await call<{ parentId: string | null }>("get_wiki_page", { pageId: dragSource.id }))?.parentId === dragTarget.id, "drag nesting must persist after reload");
   console.log("wiki-pages ok: drag indicator and persisted nesting");
 
+  // Pages sit before or after a sibling: the top and bottom edges of a row place beside it, the middle nests.
+  // Arrow keys on the handle move a page beside its neighbour, and a move across Collections still asks first.
+  const alpha = await call<{ id: string }>("create_wiki_page", { workspaceId, title: "Order alpha" });
+  const beta = await call<{ id: string }>("create_wiki_page", { workspaceId, title: "Order beta" });
+  const gamma = await call<{ id: string }>("create_wiki_page", { workspaceId, title: "Order gamma" });
+  const elsewhere = await call<{ id: string }>("create_collection", { workspaceId, name: "Reorder elsewhere" });
+  await page.goto(`${web}/${slug}/wiki`);
+  const rowOf = (id: string) => page.locator(`[data-wiki-drop-id="page:${id}"]`);
+  const siblingOrder = async (ids: string[]) => (await call<Array<{ id: string; parentId: string | null }>>("list_wiki_pages", { workspaceId, archived: false }))
+    .filter((row) => row.parentId === null && ids.includes(row.id)).map((row) => row.id);
+  const yOf = async (id: string) => (await rowOf(id).boundingBox())?.y ?? Number.POSITIVE_INFINITY;
+  // Waits for the stored order, then for the sidebar to draw it, so a drag never starts on rows that are still moving.
+  const waitForOrder = async (ids: string[], expected: string[]) => {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      if (JSON.stringify(await siblingOrder(ids)) === JSON.stringify(expected)) {
+        const ys = await Promise.all(expected.map(yOf));
+        if (ys.every((y, index) => index === 0 || ys[index - 1]! < y)) return;
+      }
+      await Bun.sleep(100);
+    }
+    throw new Error(`order must be ${expected.map((id) => id.slice(0, 8)).join(", ")} but is ${(await siblingOrder(ids)).join(", ")}`);
+  };
+  const dragTo = async (sourceId: string, targetRow: string, edge: "top" | "middle" | "bottom", label: string | null) => {
+    const row = page.locator(`[data-wiki-drop-id="${targetRow}"]`);
+    await rowOf(sourceId).waitFor(); await row.waitFor();
+    const handle = await page.locator(`[data-wiki-drag-handle="${sourceId}"]`).boundingBox();
+    const target = await row.boundingBox();
+    check(!!handle && !!target, "reorder rows must be visible");
+    const y = edge === "top" ? target!.y + 3 : edge === "bottom" ? target!.y + target!.height - 3 : target!.y + target!.height / 2;
+    await page.mouse.move(handle!.x + handle!.width / 2, handle!.y + handle!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(target!.x + 80, y, { steps: 8 });
+    if (label) await page.getByText(label, { exact: true }).waitFor();
+    await page.mouse.up();
+  };
+
+  await dragTo(gamma.id, `page:${alpha.id}`, "top", translate("wikiSidebar.dropBefore"));
+  await waitForOrder([alpha.id, beta.id, gamma.id], [gamma.id, alpha.id, beta.id]);
+  await dragTo(beta.id, `page:${gamma.id}`, "bottom", translate("wikiSidebar.dropAfter"));
+  await waitForOrder([alpha.id, beta.id, gamma.id], [gamma.id, beta.id, alpha.id]);
+  console.log("wiki-pages ok: drag before the top edge and after the bottom edge");
+
+  // Keyboard: Arrow Down on gamma moves it after beta; Arrow Up on alpha moves it before gamma.
+  await page.locator(`[data-wiki-drag-handle="${gamma.id}"]`).focus();
+  await page.keyboard.press("ArrowDown");
+  await waitForOrder([alpha.id, beta.id, gamma.id], [beta.id, gamma.id, alpha.id]);
+  await page.locator(`[data-wiki-drag-handle="${alpha.id}"]`).focus();
+  await page.keyboard.press("ArrowUp");
+  await waitForOrder([alpha.id, beta.id, gamma.id], [beta.id, alpha.id, gamma.id]);
+  console.log("wiki-pages ok: keyboard Move up and Move down");
+
+  // The order survives a reload, and the sidebar draws the same top-to-bottom sequence as the stored order.
+  await page.reload();
+  await rowOf(alpha.id).waitFor();
+  check((await yOf(beta.id)) < (await yOf(alpha.id)) && (await yOf(alpha.id)) < (await yOf(gamma.id)), "sidebar must show the stored order after reload");
+  await waitForOrder([alpha.id, beta.id, gamma.id], [beta.id, alpha.id, gamma.id]);
+  console.log("wiki-pages ok: order persists after reload");
+
+  // A move into another Collection needs confirmation: dismissing leaves the page where it is, accepting moves it.
+  let collectionWarning = "";
+  page.once("dialog", async (dialog) => { collectionWarning = dialog.message(); await dialog.dismiss(); });
+  await dragTo(alpha.id, `collection:${elsewhere.id}`, "middle", null);
+  await page.waitForTimeout(300);
+  check(collectionWarning.includes("Move 1 page"), `cross-Collection drop must ask before moving: ${collectionWarning}`);
+  check((await call<{ collectionId: string | null }>("get_wiki_page", { pageId: alpha.id }))?.collectionId !== elsewhere.id, "dismissing the Collection confirmation must keep the page in place");
+  page.once("dialog", async (dialog) => { await dialog.accept(); });
+  await dragTo(alpha.id, `collection:${elsewhere.id}`, "middle", null);
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if ((await call<{ collectionId: string | null }>("get_wiki_page", { pageId: alpha.id }))?.collectionId === elsewhere.id) break;
+    await Bun.sleep(100);
+  }
+  check((await call<{ collectionId: string | null }>("get_wiki_page", { pageId: alpha.id }))?.collectionId === elsewhere.id, "accepting the Collection confirmation must move the page");
+  console.log("wiki-pages ok: cross-Collection move asks for confirmation");
+
   // Wiki lists every page; Pages of the project lists none yet.
   await page.goto(`${web}/${slug}/wiki`);
   await page.getByRole("main").getByRole("link", { name: "Handbook" }).waitFor();

@@ -128,6 +128,8 @@ export function sidecarPrompt(context: SidecarContext): string {
 }
 
 interface AiRoutesOptions {
+  /** False when AI is off: the /api/ai routes then answer 404. Defaults to on. */
+  enabled?: boolean;
   db: Database;
   /** Where a confirmed write publishes its live-update signal. */
   bus?: SignalBus;
@@ -197,6 +199,11 @@ const continuationTimeoutMs = 120_000;
 /** Chat routes are written directly (streaming is not an Action). Every chat is keyed by its owner. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>, options: AiRoutesOptions): void {
+  // AI off (WEFT_AI_ENABLED=false or no provider key): every /api/ai route answers 404, the same as a feature that is switched off.
+  if (options.enabled === false) {
+    app.all("/api/ai/*", ({ set }) => { set.status = 404; return { error: "Not found" }; });
+    return;
+  }
   const { db } = options;
   // Run tokens only reach /actions/*: an agent CLI must not confirm cards or start chats as its Originator.
   const resolveCaller = async (request: Request) => { const caller = await options.resolveCaller(request); return caller?.source === "agent" ? null : caller; };

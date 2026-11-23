@@ -345,6 +345,8 @@ export function createExportActions(db: Database, runtime: ExportRuntime = {}) {
     const [row] = await db.select().from(exportTable).where(and(eq(exportTable.id, exportId), eq(exportTable.ownerId, userId)));
     if (!row) throw new ActionError("Export not found", 404);
     await requireWorkspaceRole(db, userId, row.workspaceId, "write");
+    const allowed = await memberProjects(db, userId, row.workspaceId, row.projectIds);
+    if (allowed.length !== row.projectIds.length) throw new ActionError("Export not found", 404);
     return row;
   }
 

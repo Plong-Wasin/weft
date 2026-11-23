@@ -420,10 +420,10 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     <OutlinksPanel kind="work-item" id={item.id} run={action} refreshKey={descriptionOutlinksKey} updating={descriptionSaveState === "saving" || descriptionSaveState === "updating"} onRefreshComplete={onDescriptionOutlinksRefreshComplete} />
     <div role="group" className="flex w-full min-w-0 max-w-full flex-wrap gap-2 max-sm:grid max-sm:grid-cols-[auto_auto] max-sm:justify-start max-sm:[&>button]:whitespace-nowrap" aria-label={t("workItems.actions")}>
       {canWrite && <>
-        <button type="button" className="secondary" onClick={() => openAction("subItems")}>{t("workItems.addSubItemAction")}</button>
-        <button type="button" className="secondary" onClick={() => { setActiveForm("relations"); setCollapsed((current) => current.filter((value) => value !== "relations")); }}>{t("workItems.addRelationAction")}</button>
-        <button type="button" className="secondary" onClick={() => openAction("links")}>{t("workItems.addLinkAction")}</button>
-        <button type="button" className="secondary" onClick={() => { setActiveForm("attachments"); setCollapsed((current) => current.filter((value) => value !== "attachments")); attachmentPicker.current?.click(); }}>{t("workItems.attachAction")}</button>
+        <button type="button" className="rounded-md bg-transparent px-2 py-1 text-13 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={() => openAction("subItems")}>{t("workItems.addSubItemAction")}</button>
+        <button type="button" className="rounded-md bg-transparent px-2 py-1 text-13 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={() => { setActiveForm("relations"); setCollapsed((current) => current.filter((value) => value !== "relations")); }}>{t("workItems.addRelationAction")}</button>
+        <button type="button" className="rounded-md bg-transparent px-2 py-1 text-13 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={() => openAction("links")}>{t("workItems.addLinkAction")}</button>
+        <button type="button" className="rounded-md bg-transparent px-2 py-1 text-13 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={() => { setActiveForm("attachments"); setCollapsed((current) => current.filter((value) => value !== "attachments")); attachmentPicker.current?.click(); }}>{t("workItems.attachAction")}</button>
       </>}
     </div>
     {section("subItems", t("workItems.subItems"), subItems.length, <>

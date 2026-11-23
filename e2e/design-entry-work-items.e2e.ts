@@ -108,6 +108,31 @@ try {
     await context.close();
   }));
 
+  // Work item comments: Reply is the one visible action, the rest sit in More, Delete asks first, and a reply opens its editor with the name above it.
+  const commentContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "light", reducedMotion: "reduce" });
+  await commentContext.addCookies(client.cookies().map((c) => ({ ...c, domain: "localhost", path: "/" })));
+  const commentPage = await commentContext.newPage();
+  await commentPage.goto(`${web}${fillPath("/{slug}/browse/{workItem}", seed)!}`, { waitUntil: "load" });
+  const commentText = `Design check ${crypto.randomUUID().slice(0, 6)}`;
+  await commentPage.getByTestId("comment-editor").last().locator(".ProseMirror").click();
+  await commentPage.keyboard.type(commentText);
+  await commentPage.getByRole("button", { name: translate("comments.add"), exact: true }).click();
+  const commentRow = commentPage.locator("li[id^='comment-']").filter({ hasText: commentText }).first();
+  await commentRow.waitFor();
+  check(await commentRow.getByRole("button", { name: translate("comments.reply"), exact: true }).count() === 1, "a comment has no visible Reply button");
+  check(await commentRow.getByRole("button", { name: translate("comments.copyLink"), exact: true }).count() === 0, "Copy link is still a visible comment button");
+  await commentRow.getByRole("button", { name: translate("comments.more"), exact: true }).first().click();
+  await commentPage.getByRole("dialog", { name: translate("comments.more") }).getByRole("button", { name: translate("comments.delete"), exact: true }).click();
+  const deleteConfirm = commentRow.getByRole("group", { name: translate("comments.deleteConfirm") });
+  await deleteConfirm.waitFor();
+  await deleteConfirm.getByRole("button", { name: translate("comments.cancel"), exact: true }).click();
+  check(await commentRow.count() === 1 && await deleteConfirm.count() === 0, "cancelling Delete did not keep the comment");
+  await commentRow.getByRole("button", { name: translate("comments.reply"), exact: true }).click();
+  check(await commentRow.getByText(/^Replying to /).count() === 1, "a reply does not say whom it replies to");
+  await commentPage.waitForTimeout(200);
+  check(await commentPage.evaluate(() => !!document.activeElement?.closest("[data-testid='comment-editor']")), "a reply did not move focus to its editor");
+  await commentContext.close();
+
   await browser.close();
   console.log("design-entry-work-items e2e ok");
 } catch (error) {

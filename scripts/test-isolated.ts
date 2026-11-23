@@ -41,7 +41,7 @@ const timingSensitive = /written-form-(limits|round7)|migrate-schema-only|apps\/
 const slow = /written-form-(fair-queue|probation|pool-fairness|fuzz|worker)|migration-backfill/;
 
 /** The files that take longest in the default run (measured 2026-11-16, 20-40 s each): they start first, so the run never ends on one of them. */
-const startFirst = /rate-limits|stored-read-cap|round7-reads|read-handlers-under-key|apps\/live\/test\/server|apps\/web\/test\/pwa-build/;
+const startFirst = /rate-limits|stored-read-cap|round7-reads|read-handlers-under-key|apps\/live\/test\/server/;
 
 /** Every test file bun would pick up: the slowest known first, then the rest largest first (big files tend to be slow). */
 async function testFiles(): Promise<string[]> {

@@ -403,7 +403,8 @@ test.concurrent("a connected Daemon is told about queued work within seconds, wi
       const ws = new WebSocket(`ws://localhost:${app.server!.port}/api/daemon?token=${encodeURIComponent(registration.daemonToken)}`);
       await new Promise<void>((resolve, reject) => { ws.addEventListener("open", () => resolve(), { once: true }); ws.addEventListener("error", () => reject(new Error("WebSocket failed")), { once: true }); });
       ws.send(JSON.stringify({ type: "heartbeat" }));
-      await Bun.sleep(300);
+      // Time for the daemon socket to subscribe before the work item is created; a signal sent earlier is lost.
+      await Bun.sleep(1_000);
       const signal = new Promise<string>((resolve) => ws.addEventListener("message", (event) => { if (String(event.data).includes("work_available")) resolve("signalled"); }));
       await work.createWorkItem.handler({ userId: owner.id }, { projectId: project.id, title: "Queued later", assigneeIds: [second.userId] });
       expect(await Promise.race([signal, Bun.sleep(5_000).then(() => "late")])).toBe("signalled");

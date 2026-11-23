@@ -128,6 +128,8 @@ test.concurrent("live sessions enforce Share roles and disconnect the member whe
       const paragraph = (session: typeof ownerSession) => session.doc.getXmlFragment("default").get(0) as Y.XmlElement;
       editSession.doc.transact(() => (paragraph(editSession).get(0) as Y.XmlText).insert(5, " editable"));
       await ownerSession.waitFor(() => (paragraph(ownerSession).get(0) as Y.XmlText).toString().includes("editable"));
+      // The editor's text reaches the database after the debounce and the Written form conversion, which a busy two-core runner stretches past a fixed sleep.
+      await waitForCondition(async () => (await transaction.select().from(wikiPages).where(eq(wikiPages.id, page.id)))[0]?.contentText.includes("editable") ?? false);
       viewSession.doc.transact(() => (paragraph(viewSession).get(0) as Y.XmlText).insert(0, "denied "));
       await Bun.sleep(200);
       expect((paragraph(ownerSession).get(0) as Y.XmlText).toString()).not.toContain("denied");

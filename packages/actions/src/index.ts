@@ -180,6 +180,7 @@ export function createWorkspaceAction(db: Database, settings: WorkspaceGateSetti
 export * from "./realtime";
 export * from "./run-steps";
 export * from "./run-executor";
+export * from "./ai-flag";
 export * from "./integration-flag";
 export * from "./integration-deliveries";
 export * from "./outbound-webhooks";

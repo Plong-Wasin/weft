@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import { and, asc, eq, inArray, isNull, isNotNull, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { agentAccess, agents, labels, moduleMembers, modules, projectKeyAliases, projectMembers, projects, runtimes, users, workItemStates, workspaceMembers } from "@weft/db";
+import { agentAccess, agents, labels, projectKeyAliases, projectMembers, projects, runtimes, users, workItemStates, workspaceMembers } from "@weft/db";
 import { defaultStates } from "./work-items";
 import { agentUserIds, openProjectToAllProjectAgents, withoutDisabledAgents } from "./agent-access";
 import { triageGroup, triageStateName } from "./triage";
@@ -10,6 +10,7 @@ import { featureColumns, featuresForShape, featuresOf, featuresPatchSchema, feat
 import { ActionError, requireWorkspaceRole, roleLevel, workspaceRoles, type WorkspaceRole } from "./members";
 import { pauseCreatorRecurrences } from "./recurrence-pause";
 import { revokeProjectMemberRuns } from "./run-revocation";
+import { clearModuleRoles } from "./module-roles";
 
 export const projectKeyPattern = /^[A-Z][A-Z0-9]{1,11}$/;
 export const projectVisibilities = ["public", "private"] as const;
@@ -297,6 +298,7 @@ export function createProjectActions(db: Database) {
           }
           await database.update(projectMembers).set({ role: input.role }).where(eq(projectMembers.id, target.id));
           if (input.role === "Guest") {
+            await clearModuleRoles(database, { projectIds: [input.projectId], userId: input.userId });
             const [workspaceRole] = await database.select({ role: workspaceMembers.role }).from(workspaceMembers)
               .where(and(eq(workspaceMembers.workspaceId, target.workspaceId), eq(workspaceMembers.userId, input.userId)));
             if (workspaceRole?.role !== "Admin") {
@@ -324,9 +326,7 @@ export function createProjectActions(db: Database) {
             throw new ActionError("A project needs at least one Admin", 400);
           }
           await database.delete(projectMembers).where(eq(projectMembers.id, target.id));
-          const projectModules = database.select({ id: modules.id }).from(modules).where(eq(modules.projectId, input.projectId));
-          await database.update(modules).set({ leadId: null }).where(and(eq(modules.projectId, input.projectId), eq(modules.leadId, input.userId)));
-          await database.delete(moduleMembers).where(and(inArray(moduleMembers.moduleId, projectModules), eq(moduleMembers.userId, input.userId)));
+          await clearModuleRoles(database, { projectIds: [input.projectId], userId: input.userId });
           await revokeProjectMemberRuns(database, input.projectId, input.userId, context.userId);
           await pauseCreatorRecurrences(database, input.userId, { projectId: input.projectId }, "creator was removed from the project", context.userId);
           return { removed: true };

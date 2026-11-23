@@ -81,6 +81,22 @@ test.concurrent("concurrent Agent access edits preserve grants added from the sa
   });
 });
 
+test.concurrent("syncing Agent Projects clears its Module roles only in Projects it leaves", async () => {
+  await withRollback(db, async (transaction) => {
+    const { agents, admin, workspace, alpha, beta } = await setup(transaction);
+    const agent = await agents.createAgent.handler({ userId: admin.id }, { workspaceId: workspace.id, ...agentInput });
+    await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: true, projectIds: [] });
+    const modules = createModuleActions(transaction);
+    const left = await modules.createModule.handler({ userId: admin.id }, { projectId: alpha.id, name: "Agent roles", leadId: admin.id, memberIds: [agent.userId] });
+    const retained = await modules.createModule.handler({ userId: admin.id }, { projectId: beta.id, name: "Retained", leadId: admin.id, memberIds: [agent.userId] });
+
+    await agents.setAgentProjectAccess.handler({ userId: admin.id }, { agentId: agent.id, allProjects: false, projectIds: [beta.id] });
+
+    expect(await modules.getModule.handler({ userId: admin.id }, { moduleId: left.id })).toMatchObject({ leadId: admin.id, memberIds: [] });
+    expect(await modules.getModule.handler({ userId: admin.id }, { moduleId: retained.id })).toMatchObject({ leadId: admin.id, memberIds: [agent.userId] });
+  });
+});
+
 test.concurrent("Agent administration changes for access, Runtime, Trigger, Skill and Autopilot record their actor", async () => {
   await withRollback(db, async (transaction) => {
     const { agents, admin, member, workspace, alpha } = await setup(transaction);

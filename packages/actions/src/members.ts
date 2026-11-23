@@ -6,6 +6,7 @@ import { agentUserIds, withoutDisabledAgents } from "./agent-access";
 import { pauseCreatorRecurrences } from "./recurrence-pause";
 import { auditAgentChange } from "./agent-audit";
 import { revokeAgentRuns, revokeWorkspaceMemberRuns } from "./run-revocation";
+import { clearModuleRoles } from "./module-roles";
 
 export const workspaceRoles = ["Admin", "Member", "Guest"] as const;
 export type WorkspaceRole = (typeof workspaceRoles)[number];
@@ -174,8 +175,10 @@ export function createMemberActions(db: Database, now: () => Date = () => new Da
           await transaction.delete(workspaceMembers)
             .where(and(eq(workspaceMembers.workspaceId, input.workspaceId), eq(workspaceMembers.userId, input.userId)));
           // Project memberships go with the workspace membership, so a removed user can no longer be assigned.
-          const workspaceProjects = transaction.select({ id: projects.id }).from(projects).where(eq(projects.workspaceId, input.workspaceId));
-          await transaction.delete(projectMembers).where(and(eq(projectMembers.userId, input.userId), inArray(projectMembers.projectId, workspaceProjects)));
+          const workspaceProjects = await transaction.select({ id: projects.id }).from(projects).where(eq(projects.workspaceId, input.workspaceId));
+          const projectIds = workspaceProjects.map((project) => project.id);
+          await transaction.delete(projectMembers).where(and(eq(projectMembers.userId, input.userId), inArray(projectMembers.projectId, projectIds)));
+          await clearModuleRoles(transaction, { projectIds, userId: input.userId });
           if (ownedRuntimes.length) {
             await transaction.update(runtimes).set({ shared: false }).where(inArray(runtimes.id, ownedRuntimes.map((runtime) => runtime.id)));
             for (const { id: runtimeId } of ownedRuntimes) {

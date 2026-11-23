@@ -122,6 +122,18 @@ try {
   const oneLine = await tabHeight(translate("pages.tab.all"));
   const sharedHeight = await tabHeight(translate("pages.tab.shared"));
   check(sharedHeight <= oneLine + 1, `the "Shared with me" tab wraps on phone width (height ${sharedHeight}px, one line ${oneLine}px)`);
+  // The selected tab carries the accent underline; a class glued to the one before it (a missing space) loses it.
+  const underline = await page.getByRole("tab", { selected: true }).first().evaluate((node) => {
+    const probe = document.createElement("span");
+    probe.style.background = "var(--bg-accent-primary)";
+    document.body.append(probe);
+    const accent = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return { border: getComputedStyle(node).borderBottomColor, accent };
+  });
+  const idleUnderline = await page.getByRole("tab", { selected: false }).first().evaluate((node) => getComputedStyle(node).borderBottomColor);
+  check(idleUnderline === "rgba(0, 0, 0, 0)", `an unselected Wiki tab shows an underline (${idleUnderline})`);
+  check(underline.border === underline.accent, `the selected Wiki tab has no accent underline (border ${underline.border}, accent ${underline.accent})`);
   check(await noSideScroll(), "Wiki list scrolls the page sideways on phone width");
   console.log("wiki list ok: Shared with me on one line, no sideways scroll");
 

@@ -2222,6 +2222,8 @@ export const en = {
   "aiStatus.key.present": "Present",
   "aiStatus.key.missing": "Missing",
   "aiStatus.configured": "AI is configured and ready.",
+  "aiStatus.off.switched_off": "AI is switched off on this server (WEFT_AI_ENABLED is false). Agents on a Runtime keep working. To turn AI on, remove that setting or set it to true, then restart the API.",
+  "aiStatus.off.no_provider_key": "AI is off because the server has no API key for its provider. Agents on a Runtime keep working without one. To use the AI chat and the editor's AI assist, set the key in the server environment, then restart the API.",
   "aiStatus.missing": "AI is not configured: the API key is missing. Set it in the server environment, then restart the API.",
   "aiStatus.unknown": "Could not load the AI status.",
   "workItems.lastEditedBy": "Last edited by {name} {time}",

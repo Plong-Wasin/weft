@@ -6,11 +6,22 @@ export type AiState = "unknown" | "on" | "off";
 let state: AiState = "unknown";
 const listeners = new Set<() => void>();
 
-export function setAiEnabled(value: boolean) {
+export type AiOffReason = "switched_off" | "no_provider_key";
+let offReason: AiOffReason | null = null;
+
+/** `reason` says why AI is off (the server reports it); it is ignored while AI is on. */
+export function setAiEnabled(value: boolean, reason: AiOffReason | null = null) {
   const next: AiState = value ? "on" : "off";
-  if (state === next) return;
+  const nextReason = value ? null : reason;
+  if (state === next && offReason === nextReason) return;
   state = next;
+  offReason = nextReason;
   listeners.forEach((listener) => listener());
+}
+
+/** Why AI is off, or null while it is on or the cause is unknown. */
+export function useAiOffReason(): AiOffReason | null {
+  return React.useSyncExternalStore(subscribe, () => offReason, () => offReason);
 }
 
 function subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; }

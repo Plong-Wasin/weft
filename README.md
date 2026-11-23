@@ -97,7 +97,7 @@ All variables go in `.env`; defaults are in `.env.example`.
 | AI | `AI_MODEL` | `gpt-6-luna` | Model id for the provider. |
 | AI | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | empty | Key for the chosen provider. |
 | AI | `AI_WEB_SEARCH` | `on` | `off` removes the chat's Web search switch. Web search uses the model provider's own search tool, so it exists only for `openai` and `anthropic`, and each chat starts with it off. |
-| AI | `WEFT_AI_ENABLED` | `true` | Only the exact value `false` turns provider-key AI off: the chat, the selection menu, filter by AI and `/api/ai/*` disappear. AI is also off when no provider key is set. Agents on local runtimes keep working. |
+| AI | `WEFT_AI_ENABLED` | `true` | Only the exact value `false` turns provider-key AI off: the chat, the selection menu, filter by AI and `/api/ai/*` disappear. AI is also off when no provider key is set. Agents on local runtimes keep working, and server-side Agent Runs still use the provider key if one is set. |
 | AI | `AI_REQUESTS_PER_MINUTE` | `20` | Per-user AI request limit; over the limit the API returns 429 `rate_limited`. |
 | AI | `AI_ASSIST_REQUESTS_PER_MINUTE` | `20` | Per-user AI assist request limit (the editor's AI assist); over the limit the API returns 429 `rate_limited`. |
 | Webhooks | `WEFT_OUTBOUND_WEBHOOKS_ENABLED` | `false` | `true` lets workspace Admins send signed events to HTTPS receivers. Only the exact value `true` turns it on; while off, nothing is sent or stored. |

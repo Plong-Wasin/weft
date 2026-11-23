@@ -132,7 +132,7 @@ function AppRoutes() {
           <Route path="connect-ai" element={<ConnectAiSettings />} />
           <Route path="api-tokens" element={<ApiTokensPage />} />
           <Route path="usage" element={<WorkspaceUsage />} />
-          <Route path="ai" element={<AiGate><WorkspaceAi /></AiGate>} />
+          <Route path="ai" element={<WorkspaceAi />} />
           <Route path="integrations" element={<IntegrationsRoute />} />
           <Route path="webhooks" element={<OutboundWebhooksRoute />} />
           <Route path="projects/:projectKey" element={<ProjectSettingsLayout />}>

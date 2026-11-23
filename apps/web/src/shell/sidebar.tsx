@@ -229,7 +229,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       <NavLink to={paths.workspaceSkills(workspace.slug)} className={itemClass}>{translate("settings.skills")}</NavLink>
       <NavLink to={paths.workspaceExports(workspace.slug)} className={itemClass}>{translate("settings.exports")}</NavLink>
       {isWorkspaceAdmin && <NavLink to={paths.workspaceUsage(workspace.slug)} className={itemClass}>{translate("settings.usage")}</NavLink>}
-      <AiOnly><NavLink to={paths.workspaceAi(workspace.slug)} className={itemClass}>{translate("aiStatus.title")}</NavLink></AiOnly>
+      <NavLink to={paths.workspaceAi(workspace.slug)} className={itemClass}>{translate("aiStatus.title")}</NavLink>
       {integrationsOn && <NavLink to={paths.workspaceIntegrations(workspace.slug)} className={itemClass}>{translate("integrations.title")}</NavLink>}
       {webhooksOn && <NavLink to={paths.workspaceWebhooks(workspace.slug)} className={itemClass}>{translate("outboundWebhooks.nav")}</NavLink>}
       <NavLink to={paths.workspaceProjectOrder(workspace.slug)} className={itemClass}>{translate("settings.projectOrder")}</NavLink>

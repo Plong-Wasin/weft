@@ -115,10 +115,10 @@ export function RootLayout() {
   React.useEffect(() => {
     void (async () => {
       const response = await fetch(`${api}/api/config`).catch(() => null);
-      const config = response?.ok ? await response.json() as { defaultLocale?: string | null; minPasswordLength?: number; emailEnabled?: boolean; integrationsEnabled?: boolean; outboundWebhooksEnabled?: boolean; ai?: { enabled?: boolean } } : {};
+      const config = response?.ok ? await response.json() as { defaultLocale?: string | null; minPasswordLength?: number; emailEnabled?: boolean; integrationsEnabled?: boolean; outboundWebhooksEnabled?: boolean; ai?: { enabled?: boolean; reason?: string | null } } : {};
       setIntegrationsEnabled(config.integrationsEnabled === true);
       setOutboundWebhooksEnabled(config.outboundWebhooksEnabled === true);
-      setAiEnabled(config.ai?.enabled === true);
+      setAiEnabled(config.ai?.enabled === true, config.ai?.reason === "switched_off" || config.ai?.reason === "no_provider_key" ? config.ai.reason : null);
       const language = config.defaultLocale ?? null;
       setEmailEnabled(config.emailEnabled === true);
       setMinPasswordLength(Number.isInteger(config.minPasswordLength) && (config.minPasswordLength ?? 0) > 0 ? config.minPasswordLength! : 10);

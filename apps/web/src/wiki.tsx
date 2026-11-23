@@ -591,7 +591,7 @@ function ListControls({ pages, filters, update, shared = false }: { pages: Summa
   return <div className="grid gap-3">
     <div role="tablist" className="flex gap-x-3 overflow-x-auto border-b border-subtle sm:gap-x-4">
       {(["all", "public", "private", "archived", ...(shared ? ["shared" as const] : [])] as const).map((name) => <button key={name} role="tab" type="button" aria-selected={filters.tab === name} onClick={() => update("tab", name)}
-        className={`-mb-px whitespace-nowrap border-0 border-b-2 bg-transparent px-1 py-2 text-13 font-medium${filters.tab === name ? "border-b-[var(--bg-accent-primary)] text-accent-text" : "border-b-transparent text-secondary"}`}>{translate(`pages.tab.${name}` as MessageKey)}</button>)}
+        className={`-mb-px whitespace-nowrap border-0 border-b-2 bg-transparent px-1 py-2 text-13 font-medium ${filters.tab === name ? "border-b-[var(--bg-accent-primary)] text-accent-text" : "border-b-transparent text-secondary"}`}>{translate(`pages.tab.${name}` as MessageKey)}</button>)}
     </div>
     <div className="flex flex-wrap items-end gap-3 text-13">
       <label className="grid gap-1 text-secondary">{translate("pages.filter.owner")}<select aria-label={translate("pages.filter.owner")} value={filters.owner} onChange={(event) => update("owner", event.target.value)}>

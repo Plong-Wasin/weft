@@ -2224,6 +2224,8 @@ export const th: Record<keyof typeof en, string> = {
   "aiStatus.key.present": "มีแล้ว",
   "aiStatus.key.missing": "ยังไม่มี",
   "aiStatus.configured": "ตั้งค่า AI แล้วและพร้อมใช้งาน",
+  "aiStatus.off.switched_off": "AI ถูกปิดไว้ที่เซิร์ฟเวอร์นี้ (WEFT_AI_ENABLED เป็น false) Agent ที่รันบน Runtime ยังทำงานได้ หากต้องการเปิด AI ให้ลบค่านั้นหรือตั้งเป็น true แล้วรีสตาร์ท API",
+  "aiStatus.off.no_provider_key": "AI ปิดอยู่เพราะเซิร์ฟเวอร์ไม่มีคีย์ API ของผู้ให้บริการ Agent ที่รันบน Runtime ยังทำงานได้โดยไม่ต้องมีคีย์ หากต้องการใช้แชต AI และ AI ช่วยเขียนในตัวแก้ไข ให้ตั้งคีย์ในสภาพแวดล้อมของเซิร์ฟเวอร์ แล้วรีสตาร์ท API",
   "aiStatus.missing": "ยังไม่ได้ตั้งค่า AI: ไม่มีคีย์ API ให้ตั้งค่าในสภาพแวดล้อมของเซิร์ฟเวอร์ แล้วรีสตาร์ต API",
   "aiStatus.unknown": "โหลดสถานะ AI ไม่ได้",
   "workItems.lastEditedBy": "แก้ไขล่าสุดโดย {name} {time}",

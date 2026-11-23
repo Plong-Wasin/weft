@@ -512,6 +512,6 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
         if (continuation) continuationsRunning.delete(chat.id);
         throw error;
       }
-    }, { body: Type.Object({ id: Type.String({ format: "uuid" }), workspaceId: Type.String({ format: "uuid" }), messages: Type.Array(messageSchema), continuation: Type.Optional(Type.Boolean()), mode: Type.Optional(Type.Union([Type.Literal("ask"), Type.Literal("build"), Type.Literal("autopilot")])), webSearch: Type.Optional(Type.Boolean()), skillId: Type.Optional(Type.String({ format: "uuid" })), context: Type.Optional(Type.Object({ type: Type.Union([Type.Literal("work_item"), Type.Literal("wiki_page")]), id: Type.String({ maxLength: 64 }), title: Type.String({ maxLength: 500 }) })) }) });;
+    }, { body: Type.Object({ id: Type.String({ format: "uuid" }), workspaceId: Type.String({ format: "uuid" }), messages: Type.Array(messageSchema), continuation: Type.Optional(Type.Boolean()), mode: Type.Optional(Type.Union([Type.Literal("ask"), Type.Literal("build"), Type.Literal("autopilot")])), webSearch: Type.Optional(Type.Boolean()), skillId: Type.Optional(Type.String({ format: "uuid" })), context: Type.Optional(Type.Object({ type: Type.Union([Type.Literal("work_item"), Type.Literal("wiki_page")]), id: Type.String({ maxLength: 64 }), title: Type.String({ maxLength: 500 }) })) }) });
   app.use(ai);
 }

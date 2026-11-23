@@ -1,6 +1,6 @@
 // Browser flow for the AI switch (ticket 02). Two API processes on one seeded database:
 //   AI off  (WEFT_AI_ENABLED=false): no AI surface is shown to the Admin or to a Guest, and /<workspace>/ai, /<workspace>/ai/<id>
-//           and /<workspace>/settings/ai are not found.
+//           is not found; the AI settings page stays and says why AI is off.
 //   AI on   (a provider key set, switch unset): the same surfaces are shown, as before this change.
 // Run with `bun e2e/ai-switch.e2e.ts` (set DATABASE_URL to a --keep database, E2E_API_PORT, E2E_WEB_PORT, CHROMIUM_PATH as in docs/agents/testing.md).
 // No model is called: the placeholder key only makes the server count AI as on.
@@ -88,7 +88,7 @@ async function surfaces(page: Page, pages: { workItem: string; wikiPage: string 
 }
 
 async function aiRoutesNotFound(page: Page, chatId: string) {
-  for (const path of [`/${slug}/ai`, `/${slug}/ai/${chatId}`, `/${slug}/settings/ai`]) {
+  for (const path of [`/${slug}/ai`, `/${slug}/ai/${chatId}`]) {
     await page.goto(`${web}${path}`);
     await notFound(page).waitFor();
   }
@@ -125,8 +125,14 @@ try {
   // AI off: the Admin sees no AI surface, and every AI route is not found.
   const off = await surfaces(page, seeded);
   console.log("AI off, Admin:", JSON.stringify(off));
-  for (const [name, shown] of Object.entries(off)) check(shown === false, `AI off: ${name} is shown to the Admin`);
+  // The AI settings page is the one entry that stays: it explains why AI is off.
+  for (const [name, shown] of Object.entries(off)) if (name !== "settings") check(shown === false, `AI off: ${name} is shown to the Admin`);
+  check(off.settings === true, "AI off: the AI settings entry must stay so the cause can be read");
   await aiRoutesNotFound(page, "00000000-0000-4000-8000-000000000000");
+  await page.goto(`${web}/${slug}/settings/ai`);
+  const offReason = page.getByTestId("ai-off-reason");
+  await offReason.waitFor();
+  check((await offReason.textContent())?.includes("WEFT_AI_ENABLED") === true, "AI off: the settings page must name the switch as the cause");
   // API: the AI routes answer 404 and the config reports the switch as the cause.
   const config = await (await fetch(`${api}/api/config`)).json() as { ai: { enabled: boolean; reason: string | null } };
   check(config.ai.enabled === false && config.ai.reason === "switched_off", `config reports ${JSON.stringify(config.ai)}`);

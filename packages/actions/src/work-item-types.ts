@@ -147,10 +147,6 @@ export function createWorkItemTypeActions(db: Database) {
         return typeOut(db, row!);
       },
     },
-    /**
-     * Deletes a type. A type in use is refused until its work items move to another type (moveToTypeId). Values of properties the target
-     * type lacks are dropped only when dropPropertyValues confirms it, and every moved live work item gets its own Activity.
-     */
     reorderWorkItemTypes: {
       name: "reorder_work_item_types", kind: "write" as const,
       input: Type.Object({ ...projectInput, typeIds: Type.Array(uuid(), { maxItems: maxTypesPerProject }) }), output: Type.Array(typeOutput),
@@ -169,6 +165,10 @@ export function createWorkItemTypeActions(db: Database) {
         });
       },
     },
+    /**
+     * Deletes a type. A type in use is refused until its work items move to another type (moveToTypeId). Values of properties the target
+     * type lacks are dropped only when dropPropertyValues confirms it, and every moved live work item gets its own Activity.
+     */
     deleteWorkItemType: {
       name: "delete_work_item_type", kind: "write" as const,
       input: Type.Object({ typeId: uuid(), moveToTypeId: Type.Optional(uuid()), dropPropertyValues: Type.Optional(Type.Boolean()) }),
@@ -354,7 +354,6 @@ export function createWorkItemTypeActions(db: Database) {
         });
       },
     },
-    /** Deletes a property and its values on every work item (each live item gets an Activity). */
     reorderCustomProperties: {
       name: "reorder_custom_properties", kind: "write" as const,
       input: Type.Object({ ...projectInput, propertyIds: Type.Array(uuid(), { maxItems: 100 }) }), output: Type.Array(propertyOutput),
@@ -372,6 +371,7 @@ export function createWorkItemTypeActions(db: Database) {
         });
       },
     },
+    /** Deletes a property and its values on every work item (each live item gets an Activity). */
     deleteCustomProperty: {
       name: "delete_custom_property", kind: "write" as const,
       input: Type.Object({ propertyId: uuid() }), output: Type.Object({ removed: Type.Boolean(), cleared: Type.Integer() }),

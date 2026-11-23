@@ -5,6 +5,7 @@ import { formatDate, translate } from "@weft/shared";
 import { useQuery } from "@tanstack/react-query";
 import { action } from "../../api";
 import { aiStatusKey, requestAiStatus } from "../../ai-status";
+import { useAiOffReason, useAiState } from "../../ai-flag";
 import { useWorkspace } from "../../layouts/workspace-layout";
 import { roles, type Member } from "../../types";
 import { Avatar, AgentLabel } from "../../avatar";
@@ -144,10 +145,14 @@ export function WorkspaceInvites() {
 /** Whether the AI is configured: provider, model, and key present or missing. The key itself never reaches the browser. */
 export function WorkspaceAi() {
   const { workspace } = useWorkspace();
-  const { data, isPending } = useQuery({ queryKey: aiStatusKey(workspace.id), queryFn: () => requestAiStatus(workspace.id) });
+  const aiState = useAiState();
+  const offReason = useAiOffReason();
+  // With AI off the status route answers 404, so the page explains the cause from /api/config instead of asking it.
+  const { data, isPending } = useQuery({ queryKey: aiStatusKey(workspace.id), queryFn: () => requestAiStatus(workspace.id), enabled: aiState === "on" });
+  if (aiState === "unknown") return null;
   return <section>
     <SettingsHeader title={translate("aiStatus.title")} description={translate("aiStatus.desc")} />
-    {isPending ? null : !data ? <p role="alert" className="text-danger-primary">{translate("aiStatus.unknown")}</p> : <>
+    {aiState === "off" ? <p role="status" data-testid="ai-off-reason" className="text-secondary">{translate(offReason === "switched_off" ? "aiStatus.off.switched_off" : "aiStatus.off.no_provider_key")}</p> : isPending ? null : !data ? <p role="alert" className="text-danger-primary">{translate("aiStatus.unknown")}</p> : <>
       <SettingsBlock>
         <RowList>
           <Row><span className="flex-1 text-secondary">{translate("aiStatus.provider")}</span><span data-testid="ai-provider" className="font-medium">{data.provider}</span></Row>

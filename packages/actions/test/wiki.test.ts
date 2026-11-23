@@ -455,7 +455,7 @@ test.concurrent("moves a page before or after a sibling with the position parame
     // Only people who can see and edit the page may move it: a private page of someone else is not found, and a Guest cannot edit.
     const secret = await create(alice.id, "Secret", { access: "private" });
     expect((await failure(move(bob.id, { pageId: secret.id, parentId: null, siblingId: a.id, position: "before" })))?.status).toBe(404);
-    expect(await failure(move(guest.id, { pageId: b.id, parentId: null, siblingId: a.id, position: "before" }))).not.toBeNull();
+    expect((await failure(move(guest.id, { pageId: b.id, parentId: null, siblingId: a.id, position: "before" })))?.status).toBe(403);
     expect(await titles(alice.id)).toContain("B");
   });
 });

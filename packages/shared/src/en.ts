@@ -778,6 +778,8 @@ export const en = {
     "wiki.comments.text": "Comment text",
     "wiki.comments.add": "Add comment",
     "wiki.comments.reply": "Reply",
+    "wiki.comments.replyTo": "Reply to",
+    "wiki.comments.send": "Send",
     "wiki.comments.edit": "Edit comment",
     "wiki.comments.resolve": "Resolve",
     "wiki.comments.reopen": "Reopen",

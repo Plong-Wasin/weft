@@ -1,0 +1,134 @@
+// Browser end-to-end flow: design fixes for the Wiki, Analytics and phone layouts.
+// Wiki page comments: Reply opens an inline field under its thread, focused and labelled with the person it answers; Send submits it,
+// Escape closes it; a resolved thread offers no Reply. Phone width: a long Wiki page title wraps instead of clipping, the Analytics
+// project name is not cut off, the Wiki tabs keep "Shared with me" on one line, and no route scrolls the page sideways.
+// Run with `bun e2e/design-fixes-wiki-analytics.e2e.ts` (set DATABASE_URL to an isolated test database).
+import { chromium } from "playwright";
+import { translate } from "../packages/shared/src";
+
+const apiPort = Number(Bun.env.E2E_API_PORT ?? 31420);
+const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52420);
+const livePort = Number(Bun.env.E2E_LIVE_PORT ?? 31422);
+const api = `http://localhost:${apiPort}`;
+const web = `http://localhost:${webPort}`;
+const servers = [
+  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
+  Bun.spawn(["bun", "apps/live/src/index.ts"], { env: { ...Bun.env, LIVE_PORT: String(livePort), WEB_ORIGIN: web }, stdout: "inherit", stderr: "inherit" }),
+  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api, VITE_LIVE_URL: `ws://localhost:${livePort}` }, stdout: "ignore", stderr: "inherit" }),
+];
+
+async function waitFor(url: string) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
+    await Bun.sleep(200);
+  }
+  throw new Error(`${url} did not start`);
+}
+
+let failed = false;
+
+try {
+  await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
+  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
+  const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
+  const userName = "Design Tester";
+  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
+  const call = async <T>(name: string, body: unknown) => await (await page.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
+  const replyLabel = (name: string) => `${translate("wiki.comments.replyTo")} ${name}`;
+  // Anchor is an opaque string the editor reads back; any non-empty value stores a thread.
+  const anchor = btoa("[]");
+  const commentBody = (text: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
+
+  // Sign up and make a workspace with a project, a long-titled Wiki page carrying two comment threads, and a project for Analytics.
+  await page.goto(web);
+  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
+  await page.getByLabel(translate("auth.name")).fill(userName);
+  await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
+  await page.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
+  await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
+  await page.getByRole("button", { name: translate("auth.signUp") }).click();
+  await page.getByLabel(translate("workspace.name")).fill("Design fixes");
+  await page.getByLabel(translate("workspace.slug")).fill(slug);
+  await Promise.all([page.waitForResponse((response) => response.url().endsWith("/actions/create_workspace")), page.getByRole("button", { name: translate("workspace.create") }).click()]);
+  const me = await (await page.request.get(`${api}/api/me`)).json() as { workspaces: Array<{ id: string; slug: string }> };
+  const workspaceId = me.workspaces.find((item) => item.slug === slug)!.id;
+  await call("create_project", { workspaceId, name: "Field operations archive", key: "FOA", visibility: "public" });
+  const pageId = (await call<{ id: string }>("create_wiki_page", { workspaceId, title: "Quarterly operating review for the regional distribution network" })).id;
+  const openThread = (await call<{ id: string }>("create_wiki_page_comment", { pageId, body: commentBody("Open thread text"), anchor })).id;
+  const resolvedThread = (await call<{ id: string }>("create_wiki_page_comment", { pageId, body: commentBody("Resolved thread text"), anchor })).id;
+  await call("resolve_wiki_page_comment", { commentId: resolvedThread, resolved: true });
+
+  // Wiki page comments, at desktop width.
+  await page.goto(`${web}/${slug}/wiki/${pageId}`);
+  await page.getByTestId("wiki-details-toggle").click();
+  await page.getByRole("tab", { name: new RegExp(`^${translate("wiki.comments.tab")}`) }).click();
+  const openItem = page.locator("li", { hasText: "Open thread text" });
+  await openItem.getByRole("button", { name: translate("wiki.comments.reply"), exact: true }).click();
+  const replyField = page.getByRole("textbox", { name: replyLabel(userName), exact: true });
+  await replyField.waitFor();
+  check(await replyField.evaluate((node) => node === document.activeElement), "Reply must move focus to the inline reply field");
+  check(await page.getByRole("button", { name: translate("wiki.comments.add"), exact: true }).isVisible(), "the bottom compose box keeps its Add comment button");
+  await replyField.fill("Inline reply text");
+  await openItem.getByRole("button", { name: translate("wiki.comments.send"), exact: true }).click();
+  await openItem.getByText("Inline reply text").waitFor();
+  check((await page.getByRole("textbox", { name: replyLabel(userName), exact: true }).count()) === 0, "a sent reply closes its inline field");
+  console.log("wiki comment reply ok: inline field focused, sent, closed");
+
+  // Escape closes the inline field without sending.
+  await openItem.getByRole("button", { name: translate("wiki.comments.reply"), exact: true }).click();
+  await page.getByRole("textbox", { name: replyLabel(userName), exact: true }).waitFor();
+  await page.keyboard.press("Escape");
+  check((await page.getByRole("textbox", { name: replyLabel(userName), exact: true }).count()) === 0, "Escape must close the inline reply field");
+  console.log("wiki comment reply ok: Escape closes");
+
+  // A resolved thread offers no Reply.
+  await page.getByRole("checkbox", { name: translate("wiki.comments.showResolved") }).check();
+  const resolvedItem = page.locator("li", { hasText: "Resolved thread text" });
+  await resolvedItem.waitFor();
+  check((await resolvedItem.getByRole("button", { name: translate("wiki.comments.reply"), exact: true }).count()) === 0, "a resolved thread must not offer Reply");
+  console.log("wiki comment reply ok: resolved thread has no Reply");
+
+  // Phone width: the long title wraps, and no route scrolls the page sideways.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${web}/${slug}/wiki/${pageId}`);
+  const title = page.getByRole("textbox", { name: translate("wiki.untitled"), exact: true });
+  await title.waitFor();
+  const titleFits = await title.evaluate((node) => node.scrollHeight <= node.clientHeight + 1 && node.scrollWidth <= node.clientWidth + 1);
+  check(titleFits, "the Wiki page title must show its whole text on phone width");
+  const noSideScroll = () => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
+  check(await noSideScroll(), "Wiki page scrolls the page sideways on phone width");
+  console.log("wiki title ok: wraps on phone, no sideways scroll");
+
+  await page.goto(`${web}/${slug}/wiki`);
+  await page.getByRole("tab", { name: translate("pages.tab.shared"), exact: true }).waitFor();
+  // A one-line tab is as tall as the "All" tab; a wrapped label is taller.
+  const tabHeight = (name: string) => page.getByRole("tab", { name, exact: true }).evaluate((node) => node.getBoundingClientRect().height);
+  const oneLine = await tabHeight(translate("pages.tab.all"));
+  const sharedHeight = await tabHeight(translate("pages.tab.shared"));
+  check(sharedHeight <= oneLine + 1, `the "Shared with me" tab wraps on phone width (height ${sharedHeight}px, one line ${oneLine}px)`);
+  check(await noSideScroll(), "Wiki list scrolls the page sideways on phone width");
+  console.log("wiki list ok: Shared with me on one line, no sideways scroll");
+
+  await page.goto(`${web}/${slug}/analytics/overview`);
+  const projectName = page.getByText("Field operations archive", { exact: true }).last();
+  await projectName.waitFor();
+  const nameFits = await projectName.evaluate((node) => node.scrollWidth <= node.clientWidth + 1);
+  check(nameFits, "the Analytics project name is cut off on phone width");
+  check(await noSideScroll(), "Analytics overview scrolls the page sideways on phone width");
+  console.log("analytics ok: project name not cut off, no sideways scroll");
+
+  await page.goto(`${web}/${slug}/analytics/work-items`);
+  await page.getByText("Created vs Resolved").first().waitFor().catch(() => undefined);
+  check(await noSideScroll(), "Analytics work items scrolls the page sideways on phone width");
+  console.log("analytics ok: work items no sideways scroll");
+
+  console.log("design fixes wiki analytics: all checks passed");
+} catch (error) {
+  failed = true;
+  console.error(error);
+} finally {
+  for (const server of servers) server.kill();
+  process.exit(failed ? 1 : 0);
+}

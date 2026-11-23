@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
 import { activities, createDatabase, jobs, projectMembers, runs, workspaces, type Database } from "@weft/db";
-import { createAgentActions, createJobHandlers, createProjectActions, createRunActions, createCommentActions, createWorkItemActions, createTriggerActions, queueRunsForAssignees, runNextJob, startRun, createAutopilotSettingActions } from "../src";
+import { createAgentActions, createApiTokenActions, createJobHandlers, createProjectActions, createRunActions, createCommentActions, createRuntimeActions, createWorkItemActions, createTriggerActions, queueRunsForAssignees, runNextJob, startRun, createAutopilotSettingActions } from "../src";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
 const { client, db } = createDatabase();
@@ -184,6 +184,28 @@ test.concurrent("a member lists a work item's Runs and reads one; a Guest and an
     }
     await expect(s.runActions.listRuns.handler({ userId: s.guest.id }, { workItemId: item.id })).rejects.toMatchObject({ status: 403 });
     await expect(s.runActions.getRun.handler({ userId: s.member.id }, { runId: crypto.randomUUID() })).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+test.concurrent("a Runtime Agent's creator and workspace Admin can list its Runs; an unrelated Member cannot", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const token = await createApiTokenActions(transaction).createApiToken.handler({ userId: s.member.id }, { name: "daemon" });
+    const runtimeActions = createRuntimeActions(transaction);
+    const registered = await runtimeActions.registerDaemon.handler({ userId: s.member.id, apiTokenId: token.id }, { hostname: "owner-box", version: "1", agentClis: ["claude"] });
+    const runtime = registered.runtimes[0]!;
+    await runtimeActions.shareRuntime.handler({ userId: s.member.id }, { runtimeId: runtime.id });
+    const agent = await s.agents.createAgent.handler({ userId: s.member.id }, { workspaceId: s.workspace.id, name: "Member's Agent", model: "default", runtimeId: runtime.id });
+    await s.agents.setAgentProjectAccess.handler({ userId: s.member.id }, { agentId: agent.id, allProjects: false, projectIds: [s.project.id] });
+    const item = await newItem(s);
+    await s.work.updateWorkItem.handler({ userId: s.member.id }, { workItemId: item.id, assigneeIds: [agent.userId] });
+
+    const listedByCreator = await s.runActions.listAgentRuns.handler({ userId: s.member.id }, { agentId: agent.id });
+    expect(listedByCreator).toHaveLength(1);
+    expect(listedByCreator[0]).toMatchObject({ agentId: agent.id, workItemId: item.id });
+    expect(await s.runActions.listAgentRuns.handler({ userId: s.admin.id }, { agentId: agent.id })).toHaveLength(1);
+    const unrelated = await createMemberFactory(transaction, s.workspace.id, "Member");
+    await expect(s.runActions.listAgentRuns.handler({ userId: unrelated.id }, { agentId: agent.id })).rejects.toMatchObject({ status: 403 });
   });
 });
 

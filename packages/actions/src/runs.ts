@@ -9,7 +9,7 @@ import { enqueueJob } from "./jobs";
 import { enqueueNotification } from "./notifications";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
-import { hasAgentAccess } from "./agent-access";
+import { canManageAgentAccess, hasAgentAccess } from "./agent-access";
 import { emitRunFinished } from "./outbound-webhooks";
 import { openSecret } from "./integration-secrets";
 import { lockRuntimeRun, redactRuntimeSecrets, scrubRunMessages } from "./runtime-secret-comments";
@@ -826,8 +826,8 @@ export function createRunActions(db: Database) {
       handler: async (context: Context, input: { agentId: string }) => {
         const [agent] = await db.select().from(agents).where(eq(agents.id, input.agentId));
         if (!agent) throw new ActionError("Agent not found", 404);
-        await requireWorkspaceRole(db, context.userId, agent.workspaceId, "read");
-        if (await db.select({ id: agents.id }).from(agents).where(and(eq(agents.id, agent.id), eq(agents.userId, context.userId))).then((rows) => rows.length) === 0) await requireWorkspaceRole(db, context.userId, agent.workspaceId, "admin");
+        const workspaceRole = await requireWorkspaceRole(db, context.userId, agent.workspaceId, "read");
+        if (workspaceRole !== "Admin" && !(await canManageAgentAccess(db, agent, context.userId))) throw new ActionError("Forbidden", 403);
         const rows = await db.select().from(runs).where(eq(runs.agentId, agent.id)).orderBy(desc(runs.createdAt), desc(runs.id));
         const [membership] = await db.select({ role: workspaceMembers.role }).from(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, agent.workspaceId), eq(workspaceMembers.userId, context.userId)));
         return presentRuns(db, rows, await failureDetailAllowed(db, context.userId, membership?.role, rows));

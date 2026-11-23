@@ -2,6 +2,7 @@ import React from "react";
 import { useParams } from "react-router";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { translate } from "@weft/shared";
+import { EmptyState } from "./empty-state";
 import { surfaceEditorExtensions } from "./editor-extensions";
 
 const api = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
@@ -12,9 +13,10 @@ type LoadState = "loading" | "missing" | "failed";
 export function publishedLoadState(status: number): "missing" | "failed" { return status === 404 ? "missing" : "failed"; }
 
 export function PublishedPageStatus({ state, onRetry }: { state: LoadState; onRetry: () => void }) {
-  if (state === "loading") return <main className="mx-auto max-w-3xl p-8"><p role="status">{translate("published.loading")}</p></main>;
-  if (state === "missing") return <main className="mx-auto max-w-3xl p-8">{translate("published.notFound")}</main>;
-  return <main className="mx-auto max-w-3xl p-8"><p role="alert">{translate("published.loadFailed")}</p><button type="button" className="mt-4 rounded border px-3 py-1" onClick={onRetry}>{translate("published.retry")}</button></main>;
+  const shell = "grid min-h-screen place-items-center p-8";
+  if (state === "loading") return <main className={`${shell} text-secondary`}><p role="status" className="m-0 text-14">{translate("published.loading")}</p></main>;
+  if (state === "missing") return <main className={shell}><EmptyState title={translate("published.notFound")} /></main>;
+  return <main className={shell}><EmptyState title={translate("published.loadFailed")} action={<button type="button" className="secondary !min-h-11" onClick={onRetry}>{translate("published.retry")}</button>} /></main>;
 }
 
 export function PublishedWikiPage() {

@@ -8,6 +8,8 @@ export const users = pgTable("user", {
   emailVerified: boolean("email_verified").notNull().default(false),
   image: text("image"),
   locale: text("locale").notNull().default("en"),
+  /** Whether the floating AI menu shows when this person selects text. Off hides only that menu; AI assist stays on the slash command and shortcut. */
+  aiSelectionMenu: boolean("ai_selection_menu").notNull().default(true),
   /** A bot user created for an Agent: it has no credentials and never signs in. */
   isAgent: boolean("is_agent").notNull().default(false),
   /** Set by a workspace Admin's forced reset: every Action is refused until the person chooses a new password. */

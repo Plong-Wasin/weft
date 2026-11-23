@@ -8,6 +8,8 @@ import { translate, type MessageKey } from "@weft/shared";
 import { editorPalette } from "../../../packages/actions/src/wiki-editor-extensions";
 import { createWikiLowlight, wikiEditorExtensions } from "../../../packages/actions/src/wiki-editor-extensions";
 import { OPEN_LINK_EVENT, OPEN_SHORTCUTS_EVENT } from "./shortcuts";
+import { aiEnabledNow } from "./ai-flag";
+import { openAssist } from "./editor-assist";
 import { blockRangeOfSelection, moveTopLevelRange, duplicateTopLevelBlock, topLevelBlockAtSelection, topLevelBlocks } from "./wiki-block-moves";
 import { MermaidCodeBlock } from "./mermaid-diagram";
 import { acceptsSuggestionOnTab, revealOption, suggestRender } from "./suggest-list";
@@ -55,7 +57,7 @@ export const EditorPlaceholder = Placeholder.configure({
 });
 
 type SlashChain = ReturnType<ReturnType<SuggestionProps<SlashCommand, SlashCommand>["editor"]["chain"]>["focus"]>;
-type SlashCommand = { id: string; label: MessageKey; run: (chain: SlashChain, options: SlashMenuOptions, editor: SuggestionProps<SlashCommand, SlashCommand>["editor"]) => void };
+type SlashCommand = { id: string; label: MessageKey; run: (chain: SlashChain, options: SlashMenuOptions, editor: SuggestionProps<SlashCommand, SlashCommand>["editor"]) => void; /** Omitted when false: the command is not listed. */ available?: () => boolean };
 type SlashMenuOptions = { commands: SlashCommand[]; onImage?: () => void };
 const emojiChoices = ["😀", "😂", "😍", "👍", "🎉", "❤️", "🚀", "✅"];
 
@@ -194,6 +196,9 @@ export const MarkdownPaste = Extension.create({
 
 const heading = (level: 1 | 2 | 3 | 4 | 5 | 6, label: MessageKey): SlashCommand => ({ id: `heading${level}`, label, run: (chain) => { chain.setHeading({ level }).run(); } });
 
+/** Opens AI assist on the block the command is typed in. Listed only while AI is on; the shortcut Mod-Shift-J does the same. */
+const assistCommand: SlashCommand = { id: "aiAssist", label: "assist.menu", available: () => aiEnabledNow(), run: (chain, _options, editor) => { chain.run(); openAssist(editor, { fromPreviousBlock: true }); } };
+
 /** Block commands every editor offers. */
 export const blockCommands: SlashCommand[] = [
   { id: "text", label: "wiki.tool.text", run: (chain) => { chain.setParagraph().run(); } },
@@ -203,6 +208,7 @@ export const blockCommands: SlashCommand[] = [
   { id: "blockquote", label: "wiki.tool.quote", run: (chain) => { chain.toggleBlockquote().run(); } },
   { id: "codeBlock", label: "wiki.tool.codeBlock", run: (chain) => { chain.toggleCodeBlock().run(); } },
   { id: "divider", label: "wiki.tool.divider", run: (chain) => { chain.setHorizontalRule().run(); } },
+  assistCommand,
 ];
 
 /** The Wiki editor's richer set: all six heading levels, to-do list, table, callout, emoji, text color and image. */
@@ -219,6 +225,7 @@ export const wikiCommands: SlashCommand[] = [
   { id: "emoji", label: "wiki.insert.emoji", run: (chain, _options, editor) => { chain.run(); showEmojiPicker(editor); } },
   { id: "color", label: "wiki.insert.color", run: (chain) => { chain.setColor(editorPalette[5]).run(); } },
   { id: "image", label: "wiki.insert.image", run: (chain, options) => { chain.run(); options.onImage?.(); } },
+  assistCommand,
 ];
 
 /** The ":" emoji choices: a glyph and its name, matched by the name typed after the colon. */
@@ -396,7 +403,7 @@ export const SlashMenu = Extension.create<SlashMenuOptions>({
       allowedPrefixes: null,
       // Suggestion matches on the selection, so a read-only viewer clicking after "/x" would otherwise get a menu that edits the page.
       allow: ({ editor }) => editor.isEditable,
-      items: ({ query }) => options.commands.filter((command) => translate(command.label).toLowerCase().includes(query.toLowerCase())),
+      items: ({ query }) => options.commands.filter((command) => (!command.available || command.available()) && translate(command.label).toLowerCase().includes(query.toLowerCase())),
       command: ({ editor, range, props: command }) => applyCommand(editor, range, command, options),
       render: slashMenu,
     })];

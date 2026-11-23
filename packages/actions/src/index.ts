@@ -33,6 +33,7 @@ export * from "./write-gate";
 export * from "./autopilot-settings";
 export * from "./confirmations";
 export * from "./locale";
+export * from "./ai-preferences";
 export * from "./features";
 export * from "./cycles";
 export * from "./analytics";

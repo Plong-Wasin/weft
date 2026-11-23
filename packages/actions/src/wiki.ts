@@ -863,6 +863,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
           if (parent?.access === "private" && page.ownerId !== context.userId) throw new ActionError("Only your own pages can be moved under a private page", 403);
         }
         if ((input.siblingId === undefined) !== (input.position === undefined)) throw new ActionError("A sibling position needs both siblingId and position", 400);
+        if (input.siblingId !== undefined && input.sortOrder !== undefined) throw new ActionError("Send either sortOrder or a sibling position, not both", 400);
         let sortOrder = input.sortOrder;
         if (input.siblingId !== undefined && input.position !== undefined) {
           if (input.siblingId === page.id) throw new ActionError("A page cannot sit beside itself", 400);

@@ -134,7 +134,7 @@ export function ProjectLabels() {
   // The order is the whole list's: with a search filter on, a drag or Move would only see some of the labels, so it waits until the filter is cleared.
   const reorderable = canAdmin && labelQuery.trim() === "";
   const reorderLabels = async (ids: string[]) => {
-    setLabels((current) => ids.map((id) => current.find((label) => label.id === id)!));
+    setLabels((current) => ids.flatMap((id) => current.find((label) => label.id === id) ?? []));
     await guard(await action("reorder_labels", { projectId: project.id, labelIds: ids }));
   };
   return <section>

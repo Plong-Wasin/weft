@@ -179,6 +179,25 @@ test.concurrent("live access is refreshed before writes and archived pages conne
       const [persisted] = await transaction.select().from(wikiPages).where(eq(wikiPages.id, archived.id));
       expect(persisted?.contentText).not.toContain("denied");
     } finally { archivedSession.destroy(); await archivedServer.destroy(); }
+
+    const member = await createMemberFactory(transaction, workspace.id, "Member");
+    const { createProjectActions } = await import("../../../packages/actions/src/projects");
+    const projectActions = createProjectActions(transaction);
+    const project = await projectActions.createProject.handler({ userId: owner.id }, { workspaceId: workspace.id, name: "Archived project", key: "ARCH", visibility: "public" });
+    await projectActions.addProjectMember.handler({ userId: owner.id }, { projectId: project.id, userId: member.id, role: "Member" });
+    const projectPage = await wiki.createWikiPage.handler({ userId: owner.id }, { workspaceId: workspace.id, projectId: project.id, title: "Archived project page", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "start" }] }] } });
+    await projectActions.archiveProject.handler({ userId: owner.id }, { projectId: project.id });
+    const projectServer = createLiveServer({ db: transaction, authenticate: async (token) => token === member.id ? member.id : null });
+    await projectServer.listen();
+    const projectSession = createHocuspocusProvider(projectServer.url, projectPage.id, member.id);
+    try {
+      await projectSession.synced;
+      projectSession.doc.transact(() => ((projectSession.doc.getXmlFragment("default").get(0) as Y.XmlElement).get(0) as Y.XmlText).insert(0, "denied "));
+      await Bun.sleep(900);
+      const [persisted] = await transaction.select().from(wikiPages).where(eq(wikiPages.id, projectPage.id));
+      expect(persisted?.contentText).not.toContain("denied");
+      expect(persisted?.contentText).toBe("start");
+    } finally { projectSession.destroy(); await projectServer.destroy(); }
   });
 });
 

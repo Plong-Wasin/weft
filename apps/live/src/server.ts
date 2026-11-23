@@ -251,7 +251,9 @@ export function createLiveServer(options: {
               await actions.processPageContentEffects(effects as unknown as Database, { userId: context?.userId ?? page.ownerId, source: "ui" }, updated!, page.content, content, !latest || Date.now() - latest.createdAt.getTime() >= 5 * 60_000);
             });
           } catch (error) {
-            console.warn(`Skipped content effects for wiki page ${page.id}`, error);
+            const message = `Skipped content effects for wiki page ${page.id}`;
+            if (options.warn) warn(`${message}: ${error instanceof Error ? error.message : String(error)}`);
+            else console.warn(message, error);
           }
         }
       }); } finally { bumpSaveEpoch(document); }

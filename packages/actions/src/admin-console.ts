@@ -1,7 +1,7 @@
 import { Type } from "@sinclair/typebox";
-import { and, desc, eq, gte, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lt, notInArray, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
-import { accounts, activities, apiTokens, oauthAccessToken, oauthRefreshToken, sessions, users, workspaceMembers } from "@weft/db";
+import { accounts, activities, apiTokens, cliDevices, oauthAccessToken, oauthRefreshToken, sessions, users, workspaceMembers } from "@weft/db";
 import { agentUserIds } from "./agent-access";
 import { auditAgentChange } from "./agent-audit";
 import { csvCell } from "./exports";
@@ -10,7 +10,7 @@ import { pauseCreatorRecurrences } from "./recurrence-pause";
 import { revokeMemberRuns } from "./runs";
 
 /** Activity kinds the audit page shows: changes an Admin makes to how the workspace runs and who may use it. */
-export const auditKinds = ["agent", "runtime", "trigger", "skill", "workspace", "member", "api_token"] as const;
+export const auditKinds = ["agent", "runtime", "trigger", "skill", "workspace", "member", "api_token", "cli_device"] as const;
 export type AuditKind = (typeof auditKinds)[number];
 
 type Context = { userId: string; via?: "session" | "token" | "oauth"; sessionId?: string };
@@ -290,7 +290,10 @@ export function createAdminConsoleActions(
         await personMembership(db, input.workspaceId, input.userId);
         // api_tokens carry no workspace, so an Admin sees them only when they administer every workspace the person belongs to.
         await requireAccountWideAdmin(db, context.userId, input.userId, "see their API tokens");
-        const rows = await db.select().from(apiTokens).where(eq(apiTokens.userId, input.userId)).orderBy(desc(apiTokens.createdAt), desc(apiTokens.id));
+        const rows = await db.select().from(apiTokens).where(and(
+          eq(apiTokens.userId, input.userId), isNull(apiTokens.cliDeviceId),
+          notInArray(apiTokens.id, db.select({ tokenId: cliDevices.tokenId }).from(cliDevices)),
+        )).orderBy(desc(apiTokens.createdAt), desc(apiTokens.id));
         const current = now();
         return rows.map((row) => ({
           id: row.id, name: row.name, kind: row.daemonOnly ? "daemon" as const : "personal" as const, prefix: row.tokenPrefix,
@@ -312,6 +315,8 @@ export function createAdminConsoleActions(
           const [owner] = token ? await transaction.select({ userId: workspaceMembers.userId }).from(workspaceMembers)
             .where(and(eq(workspaceMembers.workspaceId, input.workspaceId), eq(workspaceMembers.userId, token.userId))) : [];
           if (!token || !owner || token.revokedAt) throw new ActionError("Token not found", 404);
+          const [device] = await transaction.select({ id: cliDevices.deviceId }).from(cliDevices).where(eq(cliDevices.tokenId, token.id));
+          if (device || token.cliDeviceId) throw new ActionError("Revoke the CLI device to remove its combined CLI and Daemon access", 409);
           await requireAccountWideAdmin(transaction, context.userId, token.userId, "revoke their API tokens");
           await transaction.update(apiTokens).set({ revokedAt: now() }).where(eq(apiTokens.id, token.id));
           await auditAgentChange(transaction, {

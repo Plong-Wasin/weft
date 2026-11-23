@@ -8,7 +8,7 @@ import { ThemeSwitch } from "./theme-switch";
 import { authClient } from "../auth-client";
 
 /** Sign in and sign up. Sign in is the default (most visits are returning users); an invite link opens on sign-up, and `inviteToken` rides along so the new account joins the inviting workspace. */
-export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch, minPasswordLength = 10, emailEnabled = false }: { api: string; inviteToken: string | null; onSignedIn: () => Promise<void>; languageSwitch: React.ReactNode; minPasswordLength?: number; emailEnabled?: boolean }) {
+export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch, minPasswordLength = 10, emailEnabled = false, contextualNotice }: { api: string; inviteToken: string | null; onSignedIn: () => Promise<void>; languageSwitch: React.ReactNode; minPasswordLength?: number; emailEnabled?: boolean; contextualNotice?: string }) {
   const oauthSignIn = window.location.pathname === "/oauth/sign-in";
   const [mode, setMode] = React.useState<"sign-in" | "sign-up" | "forgot">(inviteToken ? "sign-up" : "sign-in");
   const callbackError = new URLSearchParams(window.location.search).get("error");
@@ -103,6 +103,7 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch, minPa
     <h1 className="text-balance text-20 font-semibold leading-tight text-primary">{translate("app.welcome")}
       <span className="block text-tertiary">{translate(mode === "sign-up" ? "auth.createYourAccount" : "auth.welcomeBack")}</span>
     </h1>
+    {contextualNotice && <p role="note" className="mt-4 rounded-md bg-layer-1 px-3 py-2 text-13 text-secondary">{contextualNotice}</p>}
     {inviteToken && <p role="status" className="mt-4 rounded-md bg-accent-subtle px-3 py-2 text-13 text-accent-text">{translate("invite.signInToJoin")}</p>}
     {authSettings === null ? <p role="status" className="mt-8 text-13 text-secondary">{translate("auth.loading")}</p> : <>
     {authSettings.microsoftSignInEnabled && <div className="mt-8 grid gap-2">

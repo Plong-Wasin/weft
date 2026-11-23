@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { childEnvironment, consumeRedactedOutput, daemonStatus, login, redactRuntimeEnvironment, startDaemon, startDaemonBackground, stopDaemon } from "../src/daemon";
+import { childEnvironment, consumeRedactedOutput, daemonStatus, login, redactRuntimeEnvironment, renewCliCredential, startDaemon, startDaemonBackground, stopDaemon } from "../src/daemon";
 import { agentCliAdapters } from "../src/agent-cli";
 import { main } from "../src/program";
 
@@ -11,23 +11,361 @@ const scratch: string[] = [];
 const isolatedConfig = async () => { const directory = await mkdtemp(join(tmpdir(), "weft-daemon-config-")); scratch.push(directory); return directory; };
 afterAll(async () => { await Promise.all(scratch.map((path) => rm(path, { recursive: true, force: true }))); });
 
-test("weft login accepts a state-matched browser callback and stores the CLI token", async () => {
+test("weft login prints the device code and stores a private device credential", async () => {
   const configHome = await mkdtemp(join(tmpdir(), "weft-login-")); scratch.push(configHome);
   const logs: string[] = [];
-  const apiFetch = async (input: string | URL | Request) => {
-    const auth = new URL(input.toString());
-    const callback = new URL(auth.searchParams.get("callback")!);
-    callback.searchParams.set("state", auth.searchParams.get("state")!);
-    callback.searchParams.set("token", "weft_test_token");
-    return Response.redirect(callback, 302);
+  const apiFetch = async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
+    if (url.pathname.endsWith("/device-authorization") && init?.method === "POST") return Response.json({ deviceSecret: "terminal-secret", userCode: "ABCD2345", verificationUrl: "https://weft.example/cli/authorize?code=ABCD2345", expiresAt: new Date(Date.now() + 300_000).toISOString(), interval: 2 }, { status: 201 });
+    if (url.pathname.endsWith("/poll")) return Response.json({ status: "approved" });
+    if (url.pathname.endsWith("/exchange")) return Response.json({ token: "weft_test_token", exchangeId: "exchange-id" });
+    if (url.pathname.endsWith("/finalize")) return Response.json({ status: "completed" });
+    return Response.json({ error: "Unexpected request" }, { status: 404 });
   };
-  await login({ env: { WEFT_API_URL: "https://weft.example", XDG_CONFIG_HOME: configHome, WEFT_HOSTNAME: "devbox" }, fetch: apiFetch, stdout: (text) => logs.push(text), openBrowser: async (url) => {
-    const redirect = await apiFetch(url);
-    await fetch(redirect.headers.get("location")!);
+  await login({ env: { WEFT_API_URL: "https://weft.example", XDG_CONFIG_HOME: configHome, WEFT_HOSTNAME: "devbox" }, fetch: apiFetch, sleep: async () => {}, stdout: (text) => logs.push(text), openBrowser: async (url) => {
+    expect(url).toContain("ABCD2345");
   } });
   const saved = JSON.parse(await readFile(join(configHome, "weft/config.json"), "utf8"));
-  expect(saved).toEqual({ token: "weft_test_token", apiUrl: "https://weft.example" });
+  expect(saved).toMatchObject({ token: "weft_test_token", apiUrl: "https://weft.example" });
+  expect(saved.deviceId).toMatch(/^[0-9a-f-]{36}$/i);
   expect(logs.join("")).toContain("Signed in to https://weft.example");
+  expect(logs.join("")).toContain("Enter code: ABCD2345");
+  expect(logs.join("")).not.toContain("weft_test_token");
+});
+
+test("weft login keeps the saved credential on denial, expiry, polling failure, and exchange failure", async () => {
+  const previous = { token: "weft_previous_credential", apiUrl: "https://weft.example", deviceId: crypto.randomUUID() };
+  for (const failure of ["poll", "exchange", "denied", "expired"] as const) {
+    const configHome = await mkdtemp(join(tmpdir(), `weft-login-${failure}-`)); scratch.push(configHome);
+    const directory = join(configHome, "weft"); await mkdir(directory, { recursive: true, mode: 0o700 });
+    const configPath = join(directory, "config.json");
+    await writeFile(configPath, `${JSON.stringify(previous)}\n`, { mode: 0o600 });
+    const fetcher = async (input: string | URL | Request) => {
+      const url = new URL(input.toString());
+      if (url.pathname.endsWith("/device-authorization")) return Response.json({ deviceSecret: "device-secret", userCode: "ABCD2345", verificationUrl: "https://weft.example/cli/authorize?code=ABCD2345", interval: 2 });
+      if (url.pathname.endsWith("/poll")) {
+        if (failure === "poll") return Response.json({ error: "temporarily unavailable" }, { status: 503 });
+        return Response.json({ status: failure === "denied" || failure === "expired" ? failure : "approved" });
+      }
+      if (url.pathname.endsWith("/exchange")) return Response.json({ error: "exchange unavailable" }, { status: 503 });
+      throw new Error(`Unexpected URL: ${url.pathname}`);
+    };
+    const expected = failure === "poll" ? "Could not check sign-in status" : failure === "exchange" ? "credential exchange failed" : failure === "denied" ? "Sign-in was denied" : "Sign-in request expired";
+    await expect(login({ env: { XDG_CONFIG_HOME: configHome }, fetch: fetcher, sleep: async () => {}, openBrowser: async () => {} })).rejects.toThrow(expected);
+    expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual(previous);
+  }
+});
+
+test("Ctrl+C cancels the device request and leaves the previous credential in place", async () => {
+  const configHome = await mkdtemp(join(tmpdir(), "weft-login-cancel-")); scratch.push(configHome);
+  const directory = join(configHome, "weft"); await mkdir(directory, { recursive: true, mode: 0o700 });
+  const previous = { token: "weft_previous", apiUrl: "https://weft.example", deviceId: crypto.randomUUID() };
+  const configPath = join(directory, "config.json"); await writeFile(configPath, `${JSON.stringify(previous)}\n`, { mode: 0o600 });
+  let cancelled = false;
+  const fetcher = async (input: string | URL | Request) => {
+    const url = new URL(input.toString());
+    if (url.pathname.endsWith("/device-authorization")) return Response.json({ deviceSecret: "device-secret", userCode: "ABCD2345", verificationUrl: "https://weft.example/cli/authorize?code=ABCD2345", interval: 2 });
+    if (url.pathname.endsWith("/cancel")) { cancelled = true; return Response.json({ status: "cancelled" }); }
+    throw new Error(`Unexpected request: ${url.pathname}`);
+  };
+  const output: string[] = [];
+  await login({ env: { XDG_CONFIG_HOME: configHome }, fetch: fetcher, signal: AbortSignal.abort(), stdout: (text) => output.push(text), openBrowser: async () => {} });
+  expect(cancelled).toBe(true);
+  expect(output.join("")).toContain("Sign-in cancelled");
+  expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual(previous);
+});
+
+test("Ctrl+C during waiting or polling cannot complete an approved sign-in", async () => {
+  for (const phase of ["sleep", "poll"] as const) {
+    const configHome = await isolatedConfig();
+    const controller = new AbortController();
+    let cancelled = false;
+    let exchanged = false;
+    const fetcher = async (input: string | URL | Request) => {
+      const path = new URL(input.toString()).pathname;
+      if (path.endsWith("/device-authorization")) return Response.json({ deviceSecret: "device-secret", userCode: "ABCD2345", verificationUrl: "https://weft.example/cli/authorize?code=ABCD2345", interval: 2 });
+      if (path.endsWith("/poll")) { if (phase === "poll") controller.abort(); return Response.json({ status: "approved" }); }
+      if (path.endsWith("/cancel")) { cancelled = true; return Response.json({ status: "cancelled" }); }
+      if (path.endsWith("/exchange")) { exchanged = true; return Response.json({ token: "unexpected", exchangeId: "unexpected" }); }
+      throw new Error(`Unexpected request: ${path}`);
+    };
+    await login({ env: { XDG_CONFIG_HOME: configHome }, fetch: fetcher, signal: controller.signal, sleep: async () => { if (phase === "sleep") controller.abort(); }, stdout: () => {}, openBrowser: async () => {} });
+    expect(cancelled).toBe(true);
+    expect(exchanged).toBe(false);
+  }
+});
+
+test("Ctrl+C interrupts an in-flight approval poll", async () => {
+  const configHome = await isolatedConfig();
+  const controller = new AbortController();
+  let cancelled = false;
+  const fetcher = async (input: string | URL | Request, init?: RequestInit) => {
+    const path = new URL(input.toString()).pathname;
+    if (path.endsWith("/device-authorization")) return Response.json({ deviceSecret: "device-secret", userCode: "ABCD2345", verificationUrl: "https://weft.example/cli/authorize?code=ABCD2345", interval: 2 });
+    if (path.endsWith("/poll")) return await new Promise<Response>((_resolve, reject) => {
+      if (!init?.signal) { reject(new Error("Poll cannot be interrupted")); return; }
+      init.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      controller.abort();
+    });
+    if (path.endsWith("/cancel")) { cancelled = true; return Response.json({ status: "cancelled" }); }
+    throw new Error(`Unexpected request: ${path}`);
+  };
+  await login({ env: { XDG_CONFIG_HOME: configHome }, fetch: fetcher, signal: controller.signal, sleep: async () => {}, stdout: () => {}, openBrowser: async () => {} });
+  expect(cancelled).toBe(true);
+});
+
+test("Ctrl+C during a held credential exchange cancels the exchange and preserves the installed credential", async () => {
+  const configHome = await mkdtemp(join(tmpdir(), "weft-login-held-exchange-")); scratch.push(configHome);
+  const directory = join(configHome, "weft"); await mkdir(directory, { recursive: true, mode: 0o700 });
+  const previous = { token: "weft_previous", apiUrl: "https://weft.example", deviceId: crypto.randomUUID() };
+  const configPath = join(directory, "config.json"); await writeFile(configPath, `${JSON.stringify(previous)}\n`, { mode: 0o600 });
+  const controller = new AbortController();
+  let reachExchange!: () => void;
+  const exchangeReached = new Promise<void>((resolve) => { reachExchange = resolve; });
+  let cancelled = false;
+  const fetcher = async (input: string | URL | Request, init?: RequestInit) => {
+    const path = new URL(input.toString()).pathname;
+    if (path.endsWith("/device-authorization")) return Response.json({ deviceSecret: "device-secret", userCode: "ABCD2345", verificationUrl: "https://weft.example/cli/authorize?code=ABCD2345", interval: 2 });
+    if (path.endsWith("/poll")) return Response.json({ status: "approved" });
+    if (path.endsWith("/exchange")) {
+      expect(init?.signal).toBe(controller.signal);
+      reachExchange();
+      return await new Promise<Response>((_resolve, reject) => init!.signal!.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
+    }
+    if (path.endsWith("/cancel")) { cancelled = true; return Response.json({ status: "cancelled" }); }
+    throw new Error(`Unexpected request: ${path}`);
+  };
+  const loginPromise = login({ env: { XDG_CONFIG_HOME: configHome }, fetch: fetcher, signal: controller.signal, sleep: async () => {}, stdout: () => {}, openBrowser: async () => {} });
+  await exchangeReached;
+  controller.abort();
+  await loginPromise;
+  expect(cancelled).toBe(true);
+  expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual(previous);
+});
+
+test("the actual CLI SIGINT handler aborts a held exchange", async () => {
+  const configHome = await mkdtemp(join(tmpdir(), "weft-login-sigint-")); scratch.push(configHome);
+  let cancelled = false;
+  const fetcher = async (input: string | URL | Request, init?: RequestInit) => {
+    const path = new URL(input.toString()).pathname;
+    if (path.endsWith("/device-authorization")) return Response.json({ deviceSecret: "device-secret", userCode: "ABCD2345", verificationUrl: "https://weft.example/cli/authorize?code=ABCD2345", interval: 2 });
+    if (path.endsWith("/poll")) return Response.json({ status: "approved" });
+    if (path.endsWith("/exchange")) return await new Promise<Response>((_resolve, reject) => {
+      init!.signal!.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      setTimeout(() => process.emit("SIGINT"), 0);
+    });
+    if (path.endsWith("/cancel")) { cancelled = true; return Response.json({ status: "cancelled" }); }
+    throw new Error(`Unexpected request: ${path}`);
+  };
+  const errors: string[] = [];
+  const status = await main(["bun", "weft", "--api-url", "https://weft.example", "login"], {
+    env: { XDG_CONFIG_HOME: configHome }, fetch: fetcher, stdout: () => {}, stderr: (text) => errors.push(text), openBrowser: async () => {},
+  });
+  expect(status).toBe(0);
+  expect(cancelled).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test("a lost exchange response is cancelled so its unfinalized credential cannot be stranded", async () => {
+  const configHome = await mkdtemp(join(tmpdir(), "weft-login-lost-exchange-")); scratch.push(configHome);
+  const previous = { token: "weft_previous", apiUrl: "https://weft.example", deviceId: crypto.randomUUID() };
+  const directory = join(configHome, "weft"); await mkdir(directory, { recursive: true, mode: 0o700 });
+  const configPath = join(directory, "config.json"); await writeFile(configPath, `${JSON.stringify(previous)}\n`, { mode: 0o600 });
+  let exchangeCommitted = false;
+  let credentialRevoked = false;
+  const fetcher = async (input: string | URL | Request) => {
+    const path = new URL(input.toString()).pathname;
+    if (path.endsWith("/device-authorization")) return Response.json({ deviceSecret: "device-secret", userCode: "ABCD2345", verificationUrl: "https://weft.example/cli/authorize?code=ABCD2345", interval: 2 });
+    if (path.endsWith("/poll")) return Response.json({ status: "approved" });
+    if (path.endsWith("/exchange")) { exchangeCommitted = true; throw new Error("response lost after commit"); }
+    if (path.endsWith("/cancel")) { credentialRevoked = exchangeCommitted; return Response.json({ status: "cancelled" }); }
+    throw new Error(`Unexpected request: ${path}`);
+  };
+  await expect(login({ env: { XDG_CONFIG_HOME: configHome }, fetch: fetcher, sleep: async () => {}, stdout: () => {}, openBrowser: async () => {} })).rejects.toThrow("unused credential was revoked");
+  expect(exchangeCommitted).toBe(true);
+  expect(credentialRevoked).toBe(true);
+  expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual(previous);
+});
+
+test("a failed atomic config replacement leaves the old credential saved and never finalizes server replacement", async () => {
+  const configHome = await mkdtemp(join(tmpdir(), "weft-login-save-failure-")); scratch.push(configHome);
+  const directory = join(configHome, "weft"); await mkdir(directory, { recursive: true, mode: 0o700 });
+  const previous = { token: "weft_previous", apiUrl: "https://weft.example", deviceId: crypto.randomUUID() };
+  const configPath = join(directory, "config.json"); await writeFile(configPath, `${JSON.stringify(previous)}\n`, { mode: 0o600 });
+  let finalized = false;
+  const fetcher = async (input: string | URL | Request) => {
+    const url = new URL(input.toString());
+    if (url.pathname.endsWith("/device-authorization")) return Response.json({ deviceSecret: "device-secret", userCode: "ABCD2345", verificationUrl: "https://weft.example/cli/authorize?code=ABCD2345", interval: 2 });
+    if (url.pathname.endsWith("/poll")) return Response.json({ status: "approved" });
+    if (url.pathname.endsWith("/exchange")) return Response.json({ token: "weft_new", exchangeId: "exchange-id" });
+    if (url.pathname.endsWith("/finalize")) { finalized = true; return Response.json({ status: "completed" }); }
+    throw new Error(`Unexpected request: ${url.pathname}`);
+  };
+  await expect(login({ env: { XDG_CONFIG_HOME: configHome }, fetch: fetcher, sleep: async () => {}, openBrowser: async () => {}, replaceConfig: async () => { throw new Error("filesystem refused replacement"); } })).rejects.toThrow("credential could not be saved");
+  expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual(previous);
+  expect(finalized).toBe(false);
+});
+
+test("the global --api-url option selects the server for device sign-in", async () => {
+  const configHome = await mkdtemp(join(tmpdir(), "weft-login-server-")); scratch.push(configHome);
+  const urls: string[] = [];
+  let browserUrl = "";
+  const fetcher = async (input: string | URL | Request) => {
+    const url = new URL(input.toString()); urls.push(url.toString());
+    if (url.pathname.endsWith("/device-authorization")) return Response.json({ deviceSecret: "device-secret", userCode: "ABCD2345", verificationUrl: "https://selected.example/cli/authorize?code=ABCD2345", interval: 2 }, { status: 201 });
+    if (url.pathname.endsWith("/poll")) return Response.json({ status: "approved" });
+    if (url.pathname.endsWith("/exchange")) return Response.json({ token: "weft_selected", exchangeId: "exchange-id" });
+    if (url.pathname.endsWith("/finalize")) return Response.json({ status: "completed" });
+    return Response.json({ error: "Unexpected request" }, { status: 404 });
+  };
+  const status = await main(["bun", "weft", "--api-url", "https://selected.example", "login"], {
+    env: { XDG_CONFIG_HOME: configHome }, fetch: fetcher, openBrowser: (url) => { browserUrl = url; }, stdout: () => {}, stderr: () => {}, signal: new AbortController().signal,
+  });
+  expect(status).toBe(0);
+  expect(urls.every((url) => url.startsWith("https://selected.example/"))).toBe(true);
+  expect(browserUrl).toStartWith("https://selected.example/");
+  expect(JSON.parse(await readFile(join(configHome, "weft/config.json"), "utf8")).apiUrl).toBe("https://selected.example");
+});
+
+test("ordinary CLI commands never send a saved server A credential to explicit server B", async () => {
+  const configHome = await isolatedConfig();
+  const secret = "weft_saved_server_a_secret";
+  await mkdir(join(configHome, "weft"), { recursive: true });
+  await writeFile(join(configHome, "weft", "config.json"), JSON.stringify({ token: secret, apiUrl: "https://server-a.example" }));
+  const requests: Array<{ url: string; authorization: string | null }> = [];
+  const fetcher = async (input: string | URL | Request, init?: RequestInit) => {
+    requests.push({ url: String(input), authorization: new Headers(init?.headers).get("authorization") });
+    return Response.json([]);
+  };
+  const errors: string[] = [];
+  const status = await main(["bun", "weft", "--api-url", "https://server-b.example", "list-states", "--project-id", "project"], {
+    env: { XDG_CONFIG_HOME: configHome }, fetch: fetcher, stdout: () => {}, stderr: (text) => errors.push(text),
+  });
+  expect(status).toBe(1);
+  expect(requests).toEqual([]);
+  expect(errors.join("")).toContain("saved Weft sign-in is for https://server-a.example");
+  expect(errors.join("")).not.toContain(secret);
+});
+
+test("ordinary CLI commands require sign-in for a legacy credential whose server is unknown", async () => {
+  const configHome = await isolatedConfig();
+  await mkdir(join(configHome, "weft"), { recursive: true });
+  const secret = "weft_legacy_unknown_server_secret";
+  await writeFile(join(configHome, "weft", "config.json"), JSON.stringify({ token: secret, deviceId: "legacy-device" }));
+  let requests = 0;
+  const errors: string[] = [];
+  const status = await main(["bun", "weft", "--api-url", "https://server-b.example", "list-states", "--project-id", "project"], {
+    env: { XDG_CONFIG_HOME: configHome }, fetch: async () => { requests++; return Response.json([]); }, stdout: () => {}, stderr: (text) => errors.push(text),
+  });
+  expect(status).toBe(1);
+  expect(requests).toBe(0);
+  expect(errors.join("")).toContain("legacy Weft sign-in has no recorded server");
+  expect(errors.join("")).not.toContain(secret);
+});
+
+test("explicit CLI and environment tokens remain usable against a selected server", async () => {
+  const configHome = await isolatedConfig();
+  const savedSecret = "weft_saved_server_a_secret";
+  await mkdir(join(configHome, "weft"), { recursive: true });
+  await writeFile(join(configHome, "weft", "config.json"), JSON.stringify({ token: savedSecret, apiUrl: "https://server-a.example" }));
+  for (const [args, env, expected] of [
+    [["--token", "weft_flag_server_b", "list-states", "--project-id", "project"], {}, "weft_flag_server_b"],
+    [["list-states", "--project-id", "project"], { WEFT_TOKEN: "weft_env_server_b" }, "weft_env_server_b"],
+  ] as const) {
+    const requests: Array<{ url: string; authorization: string | null; redirect: RequestRedirect | undefined }> = [];
+    const status = await main(["bun", "weft", "--api-url", "https://server-b.example", ...args], {
+      env: { XDG_CONFIG_HOME: configHome, ...env },
+      fetch: async (input, init) => { requests.push({ url: String(input), authorization: new Headers(init?.headers).get("authorization"), redirect: init?.redirect }); return Response.json([]); },
+      stdout: () => {}, stderr: () => {},
+    });
+    expect(status).toBe(0);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ url: "https://server-b.example/actions/list_states", authorization: `Bearer ${expected}`, redirect: "error" });
+    expect(JSON.stringify(requests)).not.toContain(savedSecret);
+  }
+});
+
+test("same-origin saved CLI credentials still work and authenticated requests refuse redirects", async () => {
+  const configHome = await isolatedConfig();
+  await mkdir(join(configHome, "weft"), { recursive: true });
+  await writeFile(join(configHome, "weft", "config.json"), JSON.stringify({ token: "weft_server_a", apiUrl: "https://server-a.example" }));
+  const requests: Array<{ url: string; authorization: string | null; redirect: RequestRedirect | undefined }> = [];
+  const status = await main(["bun", "weft", "--api-url", "https://server-a.example", "list-states", "--project-id", "project"], {
+    env: { XDG_CONFIG_HOME: configHome },
+    fetch: async (input, init) => { requests.push({ url: String(input), authorization: new Headers(init?.headers).get("authorization"), redirect: init?.redirect }); return Response.json([]); },
+    stdout: () => {}, stderr: () => {},
+  });
+  expect(status).toBe(0);
+  expect(requests).toHaveLength(1);
+  expect(requests[0]).toMatchObject({ url: "https://server-a.example/actions/list_states", authorization: "Bearer weft_server_a", redirect: "error" });
+});
+
+test("denied or cancelled legacy login keeps its unknown-server config byte-for-byte", async () => {
+  for (const result of ["denied", "cancelled"] as const) {
+    const configHome = await isolatedConfig();
+    const configPath = join(configHome, "weft", "config.json");
+    await mkdir(join(configHome, "weft"), { recursive: true });
+    const legacy = '{"token":"weft_legacy_unknown_server","deviceId":"legacy-device"}\n';
+    await writeFile(configPath, legacy);
+    const fetcher = async (input: string | URL | Request) => {
+      const path = new URL(input.toString()).pathname;
+      if (path.endsWith("/device-authorization")) return Response.json({ deviceSecret: "device-secret", userCode: "ABCD2345", verificationUrl: "https://server-b.example/cli/authorize?code=ABCD2345", interval: 2 }, { status: 201 });
+      if (path.endsWith("/poll")) return Response.json({ status: result });
+      if (path.endsWith("/cancel")) return Response.json({ status: "cancelled" });
+      throw new Error(`Unexpected request to ${path}`);
+    };
+    if (result === "denied") {
+      await expect(login({ env: { XDG_CONFIG_HOME: configHome, WEFT_API_URL: "https://server-b.example" }, fetch: fetcher, sleep: async () => {}, stdout: () => {}, openBrowser: async () => {} })).rejects.toThrow("Sign-in was denied");
+    } else {
+      await login({ env: { XDG_CONFIG_HOME: configHome, WEFT_API_URL: "https://server-b.example" }, fetch: fetcher, signal: AbortSignal.abort(), sleep: async () => {}, stdout: () => {}, openBrowser: async () => {} });
+    }
+    expect(await readFile(configPath, "utf8")).toBe(legacy);
+  }
+});
+
+test("pending recovery sends only its candidate token to the candidate server and never falls back cross-origin", async () => {
+  const configHome = await isolatedConfig();
+  await mkdir(join(configHome, "weft"), { recursive: true });
+  const oldToken = "weft_server_a_secret";
+  const candidateToken = "weft_server_b_candidate";
+  await writeFile(join(configHome, "weft", "config.json"), JSON.stringify({
+    token: oldToken, apiUrl: "https://server-a.example", deviceId: crypto.randomUUID(),
+    pendingCredential: { token: candidateToken, exchangeId: "exchange-b", apiUrl: "https://server-b.example", deviceId: crypto.randomUUID() },
+  }));
+  const requests: Array<{ url: string; authorization: string | null }> = [];
+  await expect(renewCliCredential({ env: { XDG_CONFIG_HOME: configHome }, fetch: async (input, init) => {
+    requests.push({ url: String(input), authorization: new Headers(init?.headers).get("authorization") });
+    return Response.json({ error: "not finalized" }, { status: 503 });
+  } }, "https://server-b.example")).rejects.toThrow("awaiting server confirmation");
+  expect(requests).toEqual([{ url: "https://server-b.example/api/cli/device-authorization/finalize", authorization: `Bearer ${candidateToken}` }]);
+  expect(JSON.stringify(requests)).not.toContain(oldToken);
+  expect(JSON.parse(await readFile(join(configHome, "weft", "config.json"), "utf8")).token).toBe(oldToken);
+});
+
+test("concurrent renewal calls recover a pending credential once before using the installed replacement", async () => {
+  const configHome = await isolatedConfig();
+  await mkdir(join(configHome, "weft"), { recursive: true });
+  const deviceId = crypto.randomUUID();
+  await writeFile(join(configHome, "weft", "config.json"), JSON.stringify({
+    token: "weft_old", apiUrl: "https://server-a.example", deviceId,
+    pendingCredential: { token: "weft_candidate", exchangeId: "exchange-a", apiUrl: "https://server-a.example", deviceId },
+  }));
+  const calls: Array<{ path: string; authorization: string | null }> = [];
+  const fetcher = async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(input.toString());
+    calls.push({ path: url.pathname, authorization: new Headers(init?.headers).get("authorization") });
+    if (url.pathname.endsWith("/finalize")) return Response.json({ status: "completed" });
+    if (url.pathname.endsWith("/renew")) return Response.json({ status: "active" });
+    throw new Error(`Unexpected request: ${url.pathname}`);
+  };
+  const results = await Promise.all([
+    renewCliCredential({ env: { XDG_CONFIG_HOME: configHome }, fetch: fetcher }, "https://server-a.example"),
+    renewCliCredential({ env: { XDG_CONFIG_HOME: configHome }, fetch: fetcher }, "https://server-a.example"),
+  ]);
+  expect(results).toEqual(["weft_candidate", "weft_candidate"]);
+  expect(calls.filter((call) => call.path.endsWith("/finalize"))).toEqual([{ path: "/api/cli/device-authorization/finalize", authorization: "Bearer weft_candidate" }]);
+  expect(calls.every((call) => call.authorization !== "Bearer weft_old")).toBe(true);
+  expect(JSON.parse(await readFile(join(configHome, "weft", "config.json"), "utf8"))).toMatchObject({ token: "weft_candidate", apiUrl: "https://server-a.example", deviceId });
 });
 
 test("daemon status reports a live record and removes a stale record", async () => {
@@ -91,11 +429,17 @@ test("background start returns while a separate Daemon registers with a fake ser
   const configHome = await mkdtemp(join(tmpdir(), "weft-daemon-blackbox-")); scratch.push(configHome);
   let registrations = 0;
   let stopRequests = 0;
+  let websocketTarget = "";
+  let websocketAuthorization = "";
   const server = Bun.serve({
     port: 0,
     fetch(request, instance) {
       const path = new URL(request.url).pathname;
-      if (path === "/api/daemon") return instance.upgrade(request) ? undefined : new Response("WebSocket required", { status: 400 });
+      if (path === "/api/daemon") {
+        websocketTarget = request.url;
+        websocketAuthorization = request.headers.get("authorization") ?? "";
+        return instance.upgrade(request) ? undefined : new Response("WebSocket required", { status: 400 });
+      }
       if (path === "/api/daemon/register") { registrations++; return Response.json({ daemonId: "fake-daemon", runtimes: [], daemonToken: "weft_daemon_fake" }); }
       if (path === "/api/daemon/stop") { stopRequests++; return Response.json({ ok: true }); }
       if (path === "/api/daemon/runs/claim") return Response.json([]);
@@ -115,6 +459,10 @@ test("background start returns while a separate Daemon registers with a fake ser
     const deadline = Date.now() + 20_000;
     while (registrations === 0 && Date.now() < deadline) await Bun.sleep(20);
     expect(registrations).toBeGreaterThan(0);
+    const handshakeDeadline = Date.now() + 5_000;
+    while (!websocketTarget && Date.now() < handshakeDeadline) await Bun.sleep(20);
+    expect(new URL(websocketTarget).search).toBe("");
+    expect(websocketAuthorization).toBe("Bearer weft_daemon_fake");
     await stopDaemon({ env: { XDG_CONFIG_HOME: configHome }, stdout: () => {} });
     daemonPid = undefined;
     expect(stopRequests).toBe(1);
@@ -155,6 +503,45 @@ test("daemon startup does not open a WebSocket when shutdown arrives during regi
 
   expect(socketCreations).toBe(0);
   await expect(readFile(join(configHome, "weft", "daemon-credential.json"), "utf8")).rejects.toThrow();
+});
+
+test("daemon start refuses a saved credential for a different explicit server before spawning or sending it", async () => {
+  const configHome = await isolatedConfig();
+  const directory = join(configHome, "weft"); await mkdir(directory, { recursive: true });
+  const credential = "weft_saved_server_a_secret";
+  await writeFile(join(directory, "config.json"), JSON.stringify({ token: credential, apiUrl: "https://server-a.example" }));
+  const env = { XDG_CONFIG_HOME: configHome, WEFT_API_URL: "https://server-b.example", PATH: "" };
+  let requests = 0;
+  let spawned = false;
+  const fetcher = async () => { requests++; return Response.json({}); };
+  await expect(startDaemon({ env, fetch: fetcher })).rejects.toThrow("Your saved Weft sign-in is for https://server-a.example, but this command targets https://server-b.example");
+  const errors: string[] = [];
+  const code = await main(["bun", "weft", "--api-url", "https://server-b.example", "daemon", "start"], {
+    env: { XDG_CONFIG_HOME: configHome, PATH: "" }, stdout: () => {}, stderr: (text) => errors.push(text), fetch: fetcher,
+    backgroundSpawn: () => { spawned = true; return { pid: process.pid, unref() {} }; },
+  });
+  expect(code).toBe(1);
+  expect(errors.join("")).toContain("Your saved Weft sign-in is for https://server-a.example");
+  expect(errors.join("")).not.toContain(credential);
+  expect(requests).toBe(0);
+  expect(spawned).toBe(false);
+});
+
+test("global api-url reaches the background Daemon child and its status record", async () => {
+  const configHome = await isolatedConfig();
+  const directory = join(configHome, "weft"); await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, "config.json"), JSON.stringify({ token: "server-a-token", apiUrl: "https://server-a.example" }));
+  let childEnv: Record<string, string | undefined> | undefined;
+  const output: string[] = [];
+  const code = await main(["bun", "weft", "--api-url", "https://server-b.example", "daemon", "start"], {
+    env: { XDG_CONFIG_HOME: configHome, WEFT_TOKEN: "server-b-token", PATH: "" }, stdout: (text) => output.push(text), stderr: () => {},
+    fetch: async () => Response.json({ version: "0.0.0" }),
+    backgroundSpawn: (_argv, options) => { childEnv = options?.env; return { pid: process.pid, unref() {} }; },
+  });
+  expect(code).toBe(0);
+  expect(childEnv?.WEFT_API_URL).toBe("https://server-b.example");
+  expect((JSON.parse(await readFile(join(directory, "daemon.json"), "utf8")) as { apiUrl: string }).apiUrl).toBe("https://server-b.example");
+  expect(output.join("")).not.toContain("server-b-token");
 });
 
 test("Claude and Codex adapters build non-interactive commands and extract streamed final output", () => {
@@ -254,7 +641,14 @@ test("daemon detects Claude and Codex on the injected PATH, registers them, and 
   await startDaemon({
     env: { XDG_CONFIG_HOME: configHome, PATH: path, WEFT_HOSTNAME: "devbox" },
     fetch: async (input, init) => { expect(new URL(String(input)).origin).toBe("https://weft.example"); expect(new Headers(init?.headers).get("authorization")).toBe("Bearer weft_cli"); if (String(input).endsWith("/api/daemon/register")) { registration = JSON.parse(String(init?.body)); observed.advertisedCapabilities = new Headers(init?.headers).get("x-weft-capabilities"); } return Response.json({ daemonId: "daemon-id", runtimes: [], daemonToken: "weft_daemon_test" }); },
-    webSocket: (url) => { expect(url).toContain("weft.example"); expect(url).toContain("token=weft_daemon_test"); return new FakeSocket() as unknown as WebSocket; },
+    webSocket: (url, options) => {
+      const target = new URL(url);
+      expect(target.origin).toBe("wss://weft.example");
+      expect(target.pathname).toBe("/api/daemon");
+      expect(target.search).toBe("");
+      expect(new Headers(options?.headers).get("authorization")).toBe("Bearer weft_daemon_test");
+      return new FakeSocket() as unknown as WebSocket;
+    },
     signal: controller.signal, heartbeatMs: 5,
   });
   expect(registration).toMatchObject({ hostname: "devbox", version: "1.0.0", agentClis: ["claude", "codex"], rotate: true });
@@ -318,7 +712,11 @@ test("daemon reconnects with exponential backoff after dropped WebSockets", asyn
   await startDaemon({
     env: { XDG_CONFIG_HOME: await isolatedConfig(), WEFT_TOKEN: "weft_daemon", WEFT_API_URL: "https://weft.example", PATH: "" },
     fetch: async () => { registrations++; return Response.json({ daemonId: "daemon-id", runtimes: [], daemonToken: "weft_daemon_test" }); },
-    webSocket: () => new DroppedSocket() as unknown as WebSocket,
+    webSocket: (url, options) => {
+      expect(new URL(url).search).toBe("");
+      expect(new Headers(options?.headers).get("authorization")).toBe("Bearer weft_daemon_test");
+      return new DroppedSocket() as unknown as WebSocket;
+    },
     signal: controller.signal,
     sleep: async (ms) => { waits.push(ms); if (waits.length === 2) controller.abort(); },
   });
@@ -644,6 +1042,49 @@ test("a cancel arriving on a new WebSocket after a reconnect still kills the Run
   expect(acked).toBe(true);
 });
 
+test("a revoked Daemon recovers pending Run cancellations after registration is refused", async () => {
+  const path = await mkdtemp(join(tmpdir(), "weft-revoked-recovery-")); scratch.push(path);
+  await writeFile(join(path, "claude"), "#!/bin/sh\nexec sleep 30\n"); await chmod(join(path, "claude"), 0o755);
+  const configHome = await isolatedConfig();
+  await mkdir(join(configHome, "weft"), { recursive: true });
+  await writeFile(join(configHome, "weft", "daemon-credential.json"), JSON.stringify({ token: "weft_daemon_revoked" }));
+  const controller = new AbortController();
+  let registrations = 0; let recovered = false; let acked = false; let claimed = false;
+  class Socket extends EventTarget {
+    readyState = 0;
+    constructor() { super(); setTimeout(() => {
+      this.readyState = 1; this.dispatchEvent(new Event("open"));
+      this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ type: "work_available" }) }));
+      setTimeout(() => this.close(), 350);
+    }, 0); }
+    send() {}
+    close() { this.readyState = 3; this.dispatchEvent(new Event("close")); }
+  }
+  await startDaemon({
+    env: { XDG_CONFIG_HOME: configHome, WEFT_TOKEN: "weft_personal", WEFT_API_URL: "https://weft.example", PATH: `${path}:${Bun.env.PATH}` },
+    fetch: async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/daemon/register")) {
+        registrations += 1;
+        if (registrations > 1) return Response.json({ error: "revoked" }, { status: 401 });
+        return Response.json({ daemonId: "daemon-id", runtimes: [] });
+      }
+      if (url.endsWith("/api/daemon/runs/claim")) {
+        if (claimed) return Response.json([]);
+        claimed = true;
+        return Response.json([{ runId: "run-revoked", runtimeId: "rt-1", agentCli: "claude", instructions: "Do it", request: "R", model: null, token: "weft_run_x" }]);
+      }
+      if (url.endsWith("/api/daemon/runs/cancellations")) { recovered = true; return Response.json({ runIds: ["run-revoked"] }); }
+      if (url.endsWith("/api/daemon/runs/cancel-ack")) { acked = true; setTimeout(() => controller.abort(), 0); }
+      return Response.json({ ok: true });
+    },
+    webSocket: () => new Socket() as unknown as WebSocket,
+    signal: controller.signal, sleep: async () => {}, safetyPollMs: 60_000,
+  });
+  expect(recovered).toBe(true);
+  expect(acked).toBe(true);
+});
+
 test("the Daemon kills a Run's CLI when the server says the Run is no longer active, and when its own time limit passes", async () => {
   const path = await mkdtemp(join(tmpdir(), "weft-inactive-")); scratch.push(path);
   await writeFile(join(path, "claude"), `#!/bin/sh\nwhile true; do echo '{"type":"assistant","message":{"content":[{"type":"text","text":"tick"}]}}'; sleep 0.1; done\n`); await chmod(join(path, "claude"), 0o755);
@@ -703,6 +1144,7 @@ test("a Daemon whose credential file holds a revoked token sends rotate:true aft
   const controller = new AbortController();
   const registrations: Array<{ rotate?: boolean }> = [];
   const claimedWith: string[] = [];
+  const socketAuthorization: string[] = [];
   let socket: ScriptedSocket | undefined;
   const ScriptedSocket = socketDouble();
   await startDaemon({
@@ -728,13 +1170,19 @@ test("a Daemon whose credential file holds a revoked token sends rotate:true aft
       }
       return Response.json({ ok: true });
     },
-    webSocket: () => { socket = new ScriptedSocket() as unknown as ScriptedSocket; return socket as unknown as WebSocket; },
+    webSocket: (url, options) => {
+      expect(new URL(url).search).toBe("");
+      socketAuthorization.push(new Headers(options?.headers).get("authorization") ?? "");
+      socket = new ScriptedSocket() as unknown as ScriptedSocket;
+      return socket as unknown as WebSocket;
+    },
     signal: controller.signal, sleep: async () => {}, safetyPollMs: 5, heartbeatMs: 60_000,
   });
   expect(registrations.map((body) => body.rotate)).toEqual([false, true]);
   // Polls during the refused socket's last moments may also use the revoked credential; the first and the last claim decide the test.
   expect(claimedWith[0]).toBe("Bearer weft_daemon_revoked");
   expect(claimedWith.at(-1)).toBe("Bearer weft_daemon_fresh");
+  expect(socketAuthorization).toEqual(["Bearer weft_daemon_revoked", "Bearer weft_daemon_fresh"]);
   expect(JSON.parse(await readFile(join(configHome, "weft", "daemon-credential.json"), "utf8"))).toEqual({ token: "weft_daemon_fresh" });
 });
 

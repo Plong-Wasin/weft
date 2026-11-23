@@ -19,7 +19,7 @@ export function EditorToolbar({ editor, label, testId, onImage, source, end }: {
     const text = shortcut ? withShortcut(name, shortcut) : name;
     return <button key={name} type="button" className="editor-tool" aria-label={name} title={text} aria-pressed={active} onMouseDown={(event) => event.preventDefault()} onClick={onClick}><Icon aria-hidden size={14} /></button>;
   };
-  const separator = <span key="sep" aria-hidden className="editor-tool-sep" />;
+  const separator = (id: string) => <span key={id} aria-hidden className="editor-tool-sep" />;
   const ed = editor;
   return <div role="toolbar" aria-label={label} data-testid={testId} className="editor-toolbar">
     {tool(translate("wiki.tool.bold"), "B", Bold, run((chain) => chain.toggleBold().run()), ed?.isActive("bold"))}
@@ -27,12 +27,12 @@ export function EditorToolbar({ editor, label, testId, onImage, source, end }: {
     {tool(translate("wiki.tool.underline"), "U", Underline, run((chain) => chain.toggleUnderline().run()), ed?.isActive("underline"))}
     {tool(translate("wiki.tool.strike"), "Shift+S", Strikethrough, run((chain) => chain.toggleStrike().run()), ed?.isActive("strike"))}
     {tool(translate("wiki.tool.code"), "E", Code, run((chain) => chain.toggleCode().run()), ed?.isActive("code"))}
-    {separator}
+    {separator("sep-marks")}
     {tool(translate("wiki.tool.bulletList"), "Shift+8", List, run((chain) => chain.toggleBulletList().run()), ed?.isActive("bulletList"))}
     {tool(translate("wiki.tool.orderedList"), "Shift+7", ListOrdered, run((chain) => chain.toggleOrderedList().run()), ed?.isActive("orderedList"))}
     {tool(translate("wiki.insert.todo"), "Shift+9", ListChecks, run((chain) => chain.toggleTaskList().run()), ed?.isActive("taskList"))}
     {tool(translate("wiki.tool.quote"), "Shift+B", Quote, run((chain) => chain.toggleBlockquote().run()), ed?.isActive("blockquote"))}
-    {separator}
+    {separator("sep-lists")}
     <LinkButton key="link" editor={editor} />
     {tool(translate("wiki.insert.table"), null, Table2, run((chain) => chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()))}
     {onImage && tool(translate("wiki.insert.image"), null, ImagePlus, onImage)}

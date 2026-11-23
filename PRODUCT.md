@@ -40,4 +40,5 @@ Working app in `apps/web`, `GLOSSARY.md`, `README.md`, `docs/adr/`, `docs/mcp.md
 - One Action surface: no capability lives in only one client.
 - Self-hosting is a first-class path, not an afterthought.
 - Use the glossary's words consistently across UI, AI, CLI, and docs.
-- Familiar project-management patterns beat novelty; users arrive knowing Plane-like tools.
+- Familiar project-management structure beats novelty, but the surface stays calm: capability is kept, clutter is not. One primary action is visible per row, card and screen; the rest is one step away (see `DESIGN.md` Direction and ADR-0019).
+- Quiet by default: neutral surfaces, colour only for the primary action, focus and status, boxes and borders only where they carry meaning.

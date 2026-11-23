@@ -1,11 +1,12 @@
 import { setIntegrationsEnabled } from "../integrations-flag";
+import { setAiEnabled } from "../ai-flag";
 import { setOutboundWebhooksEnabled } from "../outbound-webhooks-flag";
 import React from "react";
 import { Navigate, Outlet, useMatch, useNavigate, useOutletContext } from "react-router";
-import { translate } from "@weft/shared";
+import { getLocale, translate } from "@weft/shared";
 import { action, api } from "../api";
 import { useLiveUpdates } from "../live-updates";
-import { LanguageSwitch, adoptUserLocale, initLocale, useLocale } from "../locale";
+import { LanguageSwitch, adoptUserLocale, initLocale, resolveSessionLocale, useLocale } from "../locale";
 import { paths } from "../routes";
 import type { Current, Workspace } from "../types";
 import { AuthScreen } from "./auth-screen";
@@ -97,7 +98,10 @@ export function RootLayout() {
     if (window.location.pathname === paths.passwordChange()) navigate("/", { replace: true });
     let data: Current | null = loaded;
     if (!data) { setCurrent(null); return; }
-    adoptUserLocale(data.user.locale, data.user.localeSaved !== false);
+    const sessionLocale = resolveSessionLocale(data.user, getLocale());
+    adoptUserLocale(sessionLocale.apply);
+    // Best effort: a failed save leaves the language on this device only, and the next load tries again.
+    if (sessionLocale.persist) void action("set_my_locale", { locale: sessionLocale.apply });
     if (inviteToken) {
       const joined = await action<{ slug: string }>("accept_invite", { token: inviteToken });
       // Reload the user so the joined workspace is in the list before the workspace route opens.
@@ -111,9 +115,11 @@ export function RootLayout() {
   React.useEffect(() => {
     void (async () => {
       const response = await fetch(`${api}/api/config`).catch(() => null);
-      const config = response?.ok ? await response.json() as { defaultLocale?: string | null; minPasswordLength?: number; emailEnabled?: boolean; integrationsEnabled?: boolean; outboundWebhooksEnabled?: boolean } : {};
+      const config = response?.ok ? await response.json() as { defaultLocale?: string | null; minPasswordLength?: number; emailEnabled?: boolean; integrationsEnabled?: boolean; outboundWebhooksEnabled?: boolean; ai?: { enabled?: boolean; reason?: string | null } } : {};
       setIntegrationsEnabled(config.integrationsEnabled === true);
       setOutboundWebhooksEnabled(config.outboundWebhooksEnabled === true);
+      // A failed config load leaves AI "unknown" instead of switching a whole section off with no reason.
+      if (config.ai) setAiEnabled(config.ai.enabled === true, config.ai?.reason === "switched_off" || config.ai?.reason === "no_provider_key" ? config.ai.reason : null);
       const language = config.defaultLocale ?? null;
       setEmailEnabled(config.emailEnabled === true);
       setMinPasswordLength(Number.isInteger(config.minPasswordLength) && (config.minPasswordLength ?? 0) > 0 ? config.minPasswordLength! : 10);

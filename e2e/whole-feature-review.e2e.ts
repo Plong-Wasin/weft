@@ -181,7 +181,7 @@ try {
       await commentEditor.locator(".ProseMirror").getByText("A comment from the whole feature review.").waitFor();
       await page.getByRole("button", { name: translate("comments.add", locale) }).click();
       const existingComment = page.locator("li[id^='comment-']").last();
-      await existingComment.getByRole("button", { name: translate("comments.edit", locale), exact: true }).click();
+      await existingComment.getByRole("button", { name: translate("comments.more", locale), exact: true }).first().click(); await page.getByRole("dialog", { name: translate("comments.more", locale) }).getByRole("button", { name: translate("comments.edit", locale), exact: true }).click();
       const edit = existingComment.getByTestId("comment-editor");
       await edit.waitFor();
       for (const width of [1280, 390] as const) {
@@ -195,7 +195,7 @@ try {
       await existingComment.getByRole("button", { name: translate("comments.cancel", locale), exact: true }).click();
     } else {
       const existingComment = page.locator("li[id^='comment-']").last();
-      await existingComment.getByRole("button", { name: translate("comments.edit", locale), exact: true }).click();
+      await existingComment.getByRole("button", { name: translate("comments.more", locale), exact: true }).first().click(); await page.getByRole("dialog", { name: translate("comments.more", locale) }).getByRole("button", { name: translate("comments.edit", locale), exact: true }).click();
       const commentEditor = existingComment.getByTestId("comment-editor");
       for (const width of [1280, 390] as const) {
         await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });

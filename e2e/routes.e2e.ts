@@ -4,6 +4,8 @@ import { chromium, type Page } from "playwright";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
+// AI is on only with a provider key: a placeholder keeps the AI surfaces shown here, and no model is called.
+Bun.env.OPENAI_API_KEY ??= "sk-e2e-placeholder-no-call";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3109);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5209);

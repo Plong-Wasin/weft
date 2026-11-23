@@ -20,7 +20,7 @@ const textModel = () => new MockLanguageModelV4({
 test.concurrent("the language setting persists per user, shows in /api/me, and steers the AI reply language", async () => {
   await withRollback(db, async (transaction) => {
     const model = textModel();
-    const app = createApp(undefined, transaction, undefined, model);
+    const app = createApp(undefined, transaction, undefined, model, undefined, undefined, undefined, undefined, undefined, undefined, { ai: true });
     const call = async (path: string, body?: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
       method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     }));
@@ -53,11 +53,11 @@ test.concurrent("the language setting persists per user, shows in /api/me, and s
 
 test.concurrent("DEFAULT_LANGUAGE reaches signed-out config and unsaved users, while saved language wins", async () => {
   await withRollback(db, async (transaction) => {
-    const app = createApp(undefined, transaction, undefined, undefined, undefined, { defaultLanguage: "th" });
+    const app = createApp(undefined, transaction, undefined, undefined, undefined, { defaultLanguage: "th" }, undefined, undefined, undefined, undefined, { ai: true });
     const call = async (path: string, body?: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
       method: body === undefined ? "GET" : "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     }));
-    expect(await (await call("/api/config")).json()).toEqual({ defaultLocale: "th", minPasswordLength: 10, emailEnabled: false, integrationsEnabled: true, outboundWebhooksEnabled: false });
+    expect(await (await call("/api/config")).json()).toEqual({ defaultLocale: "th", minPasswordLength: 10, emailEnabled: false, integrationsEnabled: true, outboundWebhooksEnabled: false, ai: { enabled: true, reason: null } });
     const email = `${crypto.randomUUID()}@example.test`;
     const response = await call("/api/auth/sign-up/email", { name: "Language", email, password: "a-secure-password" });
     const cookie = response.headers.get("set-cookie")!.split(";")[0]!;
@@ -65,7 +65,7 @@ test.concurrent("DEFAULT_LANGUAGE reaches signed-out config and unsaved users, w
     await call("/actions/set_my_locale", { locale: "en" }, cookie);
     expect(await (await call("/api/me", undefined, cookie)).json()).toMatchObject({ user: { locale: "en", localeSaved: true } });
 
-    const englishApp = createApp(undefined, transaction, undefined, undefined, undefined, { defaultLanguage: "en" });
+    const englishApp = createApp(undefined, transaction, undefined, undefined, undefined, { defaultLanguage: "en" }, undefined, undefined, undefined, undefined, { ai: true });
     const englishSignUp = await englishApp.handle(new Request("http://localhost/api/auth/sign-up/email", {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ name: "English default", email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" }),
@@ -78,8 +78,8 @@ test.concurrent("DEFAULT_LANGUAGE reaches signed-out config and unsaved users, w
 test("invalid DEFAULT_LANGUAGE is ignored with a startup warning", async () => {
   const warning = spyOn(console, "warn").mockImplementation(() => {});
   try {
-    const app = createApp(undefined, db, undefined, undefined, undefined, { defaultLanguage: "fr" });
-    expect(await (await app.handle(new Request("http://localhost/api/config"))).json()).toEqual({ defaultLocale: null, minPasswordLength: 10, emailEnabled: false, integrationsEnabled: true, outboundWebhooksEnabled: false });
+    const app = createApp(undefined, db, undefined, undefined, undefined, { defaultLanguage: "fr" }, undefined, undefined, undefined, undefined, { ai: true });
+    expect(await (await app.handle(new Request("http://localhost/api/config"))).json()).toEqual({ defaultLocale: null, minPasswordLength: 10, emailEnabled: false, integrationsEnabled: true, outboundWebhooksEnabled: false, ai: { enabled: true, reason: null } });
     expect(warning).toHaveBeenCalledWith("Ignoring invalid DEFAULT_LANGUAGE=fr; expected en or th.");
   } finally { warning.mockRestore(); }
 });

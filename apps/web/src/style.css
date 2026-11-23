@@ -136,6 +136,11 @@
 /* AI assist keeps the selection visibly marked while its preview is open. */
 @layer components {
 .mention { color: var(--txt-accent-primary); font-weight: 600; }
+/* Another editor's caret: a thin line in their colour with the name floating above it. Without these rules the name is plain inline text that paints a whole line in their colour. */
+.collaboration-carets__caret { position: relative; margin-inline: -1px; border-inline-start: 1px solid; border-inline-end: 1px solid; word-break: normal; pointer-events: none; }
+.collaboration-carets__label { position: absolute; bottom: 100%; left: -1px; padding: 0 .3rem; border-radius: 3px 3px 3px 0; color: #fff; font-size: .6875rem; font-weight: 600; line-height: 1.3; white-space: nowrap; user-select: none; pointer-events: none; animation: caret-name-fade 3s ease-out forwards; }
+/* The name shows when the caret appears or moves, then fades so it does not sit over the text. */
+@keyframes caret-name-fade { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
 .wiki-editor .ProseMirror table { border-collapse: collapse; table-layout: fixed; width: 100%; }
 .comment-editor[data-source-mode] > :not([data-testid="editor-source-mode"]),
 .wiki-editor[data-source-mode] > :not([data-testid="editor-source-mode"]) { display: none !important; }

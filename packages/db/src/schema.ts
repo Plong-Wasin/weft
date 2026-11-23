@@ -8,6 +8,8 @@ export const users = pgTable("user", {
   emailVerified: boolean("email_verified").notNull().default(false),
   image: text("image"),
   locale: text("locale").notNull().default("en"),
+  /** Whether the floating AI menu shows when this person selects text. Off hides only that menu; AI assist stays on the slash command and shortcut. */
+  aiSelectionMenu: boolean("ai_selection_menu").notNull().default(true),
   /** A bot user created for an Agent: it has no credentials and never signs in. */
   isAgent: boolean("is_agent").notNull().default(false),
   /** Set by a workspace Admin's forced reset: every Action is refused until the person chooses a new password. */
@@ -236,6 +238,8 @@ export const labels = pgTable("labels", {
   projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   color: text("color").notNull().default("#6b7280"),
+  /** The project's Label order, set by an Admin with reorder_labels; new labels go last. */
+  position: integer("position").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [unique().on(table.projectId, table.name)]);
 

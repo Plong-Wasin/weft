@@ -1,6 +1,6 @@
 # Weft
 
-An AI-native project management tool with a Plane-like UI. Teams track work items and write wiki pages; an AI assistant reads the data and proposes changes that a human confirms.
+An AI-native project management tool with a calm, uncluttered UI built on a familiar project-management structure. Teams track work items and write wiki pages; an AI assistant reads the data and proposes changes that a human confirms.
 
 ## Language
 

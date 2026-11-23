@@ -33,6 +33,7 @@ export * from "./write-gate";
 export * from "./autopilot-settings";
 export * from "./confirmations";
 export * from "./locale";
+export * from "./ai-preferences";
 export * from "./features";
 export * from "./cycles";
 export * from "./analytics";
@@ -180,6 +181,7 @@ export function createWorkspaceAction(db: Database, settings: WorkspaceGateSetti
 export * from "./realtime";
 export * from "./run-steps";
 export * from "./run-executor";
+export * from "./ai-flag";
 export * from "./integration-flag";
 export * from "./integration-deliveries";
 export * from "./outbound-webhooks";

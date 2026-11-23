@@ -2,7 +2,7 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
 import { convertToModelMessages, generateText, jsonSchema, stepCountIs, streamText, tool, type LanguageModel, type UIMessage } from "ai";
 import { Type } from "@sinclair/typebox";
-import type { Elysia } from "elysia";
+import { Elysia } from "elysia";
 import { ActionError, createActionList, createAiTools, createChatStore, createConfirmationStore, isChatMode, proposalOutcome, type ChatMode, requireProjectAccess, requireWorkspaceRole, type ActionContext, type ChatMessage, type SignalBus } from "@weft/actions";
 import { confirmations as confirmationRows, skills, users, workspaces, workspaceMembers, type Database } from "@weft/db";
 import { isLocale, type Locale } from "@weft/shared";
@@ -128,6 +128,8 @@ export function sidecarPrompt(context: SidecarContext): string {
 }
 
 interface AiRoutesOptions {
+  /** False when AI is off: the /api/ai routes then answer 404. Defaults to on. */
+  enabled?: boolean;
   db: Database;
   /** Where a confirmed write publishes its live-update signal. */
   bus?: SignalBus;
@@ -237,7 +239,19 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
     return null;
   }
 
-  app
+  // The AI routes live in their own instance so the AI-off guard below covers only them, never a route registered after this call.
+  const ai = new Elysia();
+  // AI off (WEFT_AI_ENABLED=false or no provider key): every model route answers 404, the same as a feature that is switched off.
+  // The Confirmation routes stay: they call no model, and a card created before AI went off (an AI chat's or a server-side Agent Run's proposal) must still be answerable. Agents never delete (ADR 0010), so a Runtime Agent creates no card.
+  if (options.enabled === false) {
+    // onRequest runs before body validation, so a malformed body gets the same 404 as a valid one.
+    ai.onRequest(({ request }) => {
+      const path = new URL(request.url).pathname;
+      if (!path.startsWith("/api/ai/") || path.startsWith("/api/ai/confirmations/")) return;
+      return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: { "content-type": "application/json" } });
+    });
+  }
+  ai
     .post("/api/ai/status", async ({ body, request, set }) => {
       const caller = await member(request, body.workspaceId, set);
       if ("error" in caller) return caller;
@@ -499,4 +513,5 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
         throw error;
       }
     }, { body: Type.Object({ id: Type.String({ format: "uuid" }), workspaceId: Type.String({ format: "uuid" }), messages: Type.Array(messageSchema), continuation: Type.Optional(Type.Boolean()), mode: Type.Optional(Type.Union([Type.Literal("ask"), Type.Literal("build"), Type.Literal("autopilot")])), webSearch: Type.Optional(Type.Boolean()), skillId: Type.Optional(Type.String({ format: "uuid" })), context: Type.Optional(Type.Object({ type: Type.Union([Type.Literal("work_item"), Type.Literal("wiki_page")]), id: Type.String({ maxLength: 64 }), title: Type.String({ maxLength: 500 }) })) }) });
+  app.use(ai);
 }

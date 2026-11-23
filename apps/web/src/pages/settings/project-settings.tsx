@@ -8,7 +8,7 @@ import { projectFeatureKeys, type ProjectFeatureKey } from "../../project-nav";
 import { useProject, useRouteProject, type ProjectContext } from "../../layouts/project-layout";
 import { useWorkspace } from "../../layouts/workspace-layout";
 import { Avatar } from "../../avatar";
-import { SortableList } from "../../sortable-list";
+import { SortableList, SortMenu } from "../../sortable-list";
 import { Popover, menuItemClass } from "../../shell/popover";
 import { roles, stateGroups, type Label, type Member, type Project, type WorkState } from "../../types";
 import { ProjectMergeSetting } from "./project-merge-setting";
@@ -131,6 +131,12 @@ export function ProjectLabels() {
   React.useEffect(() => { void load(); }, [load]);
   const guard = async (result: unknown) => { setNote(result === null ? translate("workItems.failed") : null); await load(); return result !== null; };
   const visibleLabels = labels.filter((label) => label.name.toLocaleLowerCase().includes(labelQuery.trim().toLocaleLowerCase()));
+  // The order is the whole list's: with a search filter on, a drag or Move would only see some of the labels, so it waits until the filter is cleared.
+  const reorderable = canAdmin && labelQuery.trim() === "";
+  const reorderLabels = async (ids: string[]) => {
+    setLabels((current) => ids.flatMap((id) => current.find((label) => label.id === id) ?? []));
+    await guard(await action("reorder_labels", { projectId: project.id, labelIds: ids }));
+  };
   return <section>
     <SettingsHeader title={translate("labels.title")} description={translate("settings.labelsDesc")} />
     {canAdmin && <form className="mb-5 mt-0 flex flex-wrap items-end gap-3" onSubmit={async (event) => { event.preventDefault(); if (await guard(await action("create_label", { projectId: project.id, name, color }))) setName(""); }}>
@@ -140,20 +146,33 @@ export function ProjectLabels() {
     </form>}
     {labels.length === 0 ? <p className="text-secondary">{translate("labels.empty")}</p> : <>
     <search className="mb-3 block"><label className="grid max-w-sm gap-1 text-13 text-secondary">{translate("picker.search")}<input type="search" autoComplete="off" value={labelQuery} onChange={(event) => setLabelQuery(event.target.value)} /></label></search>
-    {visibleLabels.length === 0 ? <p className="text-secondary">{translate("picker.noMatches")}</p> : <RowList>{visibleLabels.map((label) => <Row key={label.id}>
-      {editing?.id === label.id ? <form className="my-0 flex flex-1 flex-wrap items-center gap-2" onSubmit={async (event) => { event.preventDefault(); if (await guard(await action("update_label", { labelId: label.id, name: editing.name, color: editing.color }))) setEditing(null); }}>
-        <input required aria-label={translate("labels.name")} value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} />
-        <input type="color" aria-label={translate("labels.color")} value={editing.color} onChange={(event) => setEditing({ ...editing, color: event.target.value })} className="h-8 w-10 rounded-md border border-strong bg-surface-1 p-0.5" />
-        <button>{translate("labels.save")}</button>
-        <button type="button" className="secondary" onClick={() => setEditing(null)}>{translate("settings.cancel")}</button>
-      </form> : <>
-        <span aria-hidden className="size-3 shrink-0 rounded-full" style={{ background: label.color }} /><span className="flex-1 truncate">{label.name}</span>
-        {canAdmin && <>
-          <button type="button" className="secondary" onClick={() => setEditing({ id: label.id, name: label.name, color: label.color })}>{translate("labels.edit")}</button>
-          <button type="button" className="secondary" onClick={async () => guard(await action("delete_label", { labelId: label.id }))}>{translate("labels.delete")}</button>
+    {visibleLabels.length === 0 ? <p className="text-secondary">{translate("picker.noMatches")}</p> : <SortableList ids={visibleLabels.map((label) => label.id)} disabled={!reorderable || editing !== null} label={(id) => labels.find((label) => label.id === id)?.name ?? ""}
+      onReorder={reorderLabels}
+      renderRow={(id, grip) => {
+        const label = labels.find((candidate) => candidate.id === id)!;
+        const index = labels.indexOf(label);
+        const moveLabel = (delta: -1 | 1) => {
+          const ids = labels.map((candidate) => candidate.id);
+          [ids[index], ids[index + delta]] = [ids[index + delta]!, ids[index]!];
+          void reorderLabels(ids);
+        };
+        return <>
+          {canAdmin && grip}
+        {editing?.id === label.id ? <form className="my-0 flex flex-1 flex-wrap items-center gap-2" onSubmit={async (event) => { event.preventDefault(); if (await guard(await action("update_label", { labelId: label.id, name: editing.name, color: editing.color }))) setEditing(null); }}>
+          <input required aria-label={translate("labels.name")} value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} />
+          <input type="color" aria-label={translate("labels.color")} value={editing.color} onChange={(event) => setEditing({ ...editing, color: event.target.value })} className="h-8 w-10 rounded-md border border-strong bg-surface-1 p-0.5" />
+          <button>{translate("labels.save")}</button>
+          <button type="button" className="secondary" onClick={() => setEditing(null)}>{translate("settings.cancel")}</button>
+        </form> : <>
+          <span aria-hidden className="size-3 shrink-0 rounded-full" style={{ background: label.color }} /><span className="flex-1 truncate">{label.name}</span>
+          {canAdmin && <>
+            <button type="button" className="secondary" onClick={() => setEditing({ id: label.id, name: label.name, color: label.color })}>{translate("labels.edit")}</button>
+            <button type="button" className="secondary" onClick={async () => guard(await action("delete_label", { labelId: label.id }))}>{translate("labels.delete")}</button>
+            <SortMenu name={label.name} canUp={reorderable && index > 0} canDown={reorderable && index < labels.length - 1} onMove={moveLabel} />
+          </>}
         </>}
-      </>}
-    </Row>)}</RowList>}</>}
+        </>;
+      }} />}</>}
     <Note note={note} error />
   </section>;
 }
@@ -165,6 +184,7 @@ export function ProjectStates() {
   const canAdmin = canAdminOf(project);
   const [states, setStates] = React.useState<WorkState[]>([]);
   const [newName, setNewName] = React.useState<Record<string, string>>({});
+  const [adding, setAdding] = React.useState<Record<string, boolean>>({});
   const [editing, setEditing] = React.useState<{ id: string; name: string } | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
   const load = React.useCallback(async () => setStates(await action<WorkState[]>("list_states", { projectId: project.id }) ?? []), [project.id]);
@@ -206,13 +226,17 @@ export function ProjectStates() {
               </>}
             </>;
           }} />}
-        {canAdmin && <form className="my-0 flex flex-wrap items-end gap-3" onSubmit={async (event) => {
-          event.preventDefault();
-          if (await guard(await action("create_state", { projectId: project.id, group, name: newName[group] ?? "" }))) setNewName({ ...newName, [group]: "" });
-        }}>
-          <label>{translate("states.name")}<input required value={newName[group] ?? ""} onChange={(event) => setNewName({ ...newName, [group]: event.target.value })} /></label>
-          <button>{translate("states.add")}</button>
-        </form>}
+        {canAdmin && <div className="grid justify-items-start gap-3">
+          <button type="button" className="secondary" aria-expanded={adding[group] === true} onClick={() => setAdding({ ...adding, [group]: !adding[group] })}>{translate("states.add")}</button>
+          {adding[group] && <form className="my-0 flex flex-wrap items-end gap-3" onSubmit={async (event) => {
+            event.preventDefault();
+            if (await guard(await action("create_state", { projectId: project.id, group, name: newName[group] ?? "" }))) { setNewName({ ...newName, [group]: "" }); setAdding({ ...adding, [group]: false }); }
+          }}>
+            <label>{translate("states.name")}<input required autoFocus value={newName[group] ?? ""} onChange={(event) => setNewName({ ...newName, [group]: event.target.value })} /></label>
+            <button>{translate("states.create")}</button>
+            <button type="button" className="secondary" onClick={() => setAdding({ ...adding, [group]: false })}>{translate("settings.cancel")}</button>
+          </form>}
+        </div>}
       </SettingsBlock>;
     })}
     <Note note={note} error />

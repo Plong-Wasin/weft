@@ -39,7 +39,7 @@ function scriptedModel() {
 test.concurrent("streams an answer using Read actions, persists the chat with usage, and keeps it private from admins", async () => {
   await withRollback(db, async (transaction) => {
     const model = scriptedModel();
-    const app = createApp(undefined, transaction, undefined, model);
+    const app = createApp(undefined, transaction, undefined, model, undefined, undefined, undefined, undefined, undefined, undefined, { ai: true });
     const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
       method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
     }));
@@ -97,7 +97,7 @@ test.concurrent("chat applies an authorized Skill to the model but stores only i
       { type: "text-delta", id: "t1", delta: "answer" }, { type: "text-end", id: "t1" },
       { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage },
     ]) });
-    const app = createApp(undefined, transaction, undefined, model);
+    const app = createApp(undefined, transaction, undefined, model, undefined, undefined, undefined, undefined, undefined, undefined, { ai: true });
     const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
       method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
     }));
@@ -164,7 +164,7 @@ test.concurrent("a proposed Write action waits for Confirmation, then runs as th
     const lazy = new MockLanguageModelV4({ doStream: async (options) => model!.doStream(options) });
     const published: unknown[] = [];
     const bus = { publish: async (signal: unknown) => { published.push(signal); }, subscribe: () => () => {}, ready: async () => {}, close: async () => {} };
-    const app = createApp(undefined, transaction, undefined, lazy, bus);
+    const app = createApp(undefined, transaction, undefined, lazy, bus, undefined, undefined, undefined, undefined, undefined, { ai: true });
     const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
       method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
     }));
@@ -238,7 +238,7 @@ test.concurrent("a continuation tells the model about rejected and failed cards,
   await withRollback(db, async (transaction) => {
     let model: MockLanguageModelV4 | undefined;
     const lazy = new MockLanguageModelV4({ doStream: async (options) => model!.doStream(options) });
-    const app = createApp(undefined, transaction, undefined, lazy);
+    const app = createApp(undefined, transaction, undefined, lazy, undefined, undefined, undefined, undefined, undefined, undefined, { ai: true });
     const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
       method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
     }));
@@ -319,7 +319,7 @@ test.concurrent("a continuation can propose again and be continued again; a refu
   await withRollback(db, async (transaction) => {
     let model: MockLanguageModelV4 | undefined;
     const lazy = new MockLanguageModelV4({ doStream: async (options) => model!.doStream(options) });
-    const app = createApp(undefined, transaction, undefined, lazy);
+    const app = createApp(undefined, transaction, undefined, lazy, undefined, undefined, undefined, undefined, undefined, undefined, { ai: true });
     const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
       method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
     }));
@@ -354,7 +354,7 @@ test.concurrent("a continuation needs an assistant turn that proposed something 
   await withRollback(db, async (transaction) => {
     let model: MockLanguageModelV4 | undefined;
     const lazy = new MockLanguageModelV4({ doStream: async (options) => model!.doStream(options) });
-    const app = createApp(undefined, transaction, undefined, lazy);
+    const app = createApp(undefined, transaction, undefined, lazy, undefined, undefined, undefined, undefined, undefined, undefined, { ai: true });
     const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
       method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
     }));
@@ -384,7 +384,7 @@ test.concurrent("a new user message supersedes the chat's pending Confirmations 
   await withRollback(db, async (transaction) => {
     let model: MockLanguageModelV4 | undefined;
     const lazy = new MockLanguageModelV4({ doStream: async (options) => model!.doStream(options) });
-    const app = createApp(undefined, transaction, undefined, lazy);
+    const app = createApp(undefined, transaction, undefined, lazy, undefined, undefined, undefined, undefined, undefined, undefined, { ai: true });
     const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
       method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
     }));
@@ -442,7 +442,7 @@ test("provider and model come from env; unsupported providers are rejected", () 
 test.concurrent("chat discovers only the caller's Skills by name and description, and leaves empty libraries alone", async () => {
   await withRollback(db, async (transaction) => {
     const model = textModel();
-    const app = createApp(undefined, transaction, undefined, model);
+    const app = createApp(undefined, transaction, undefined, model, undefined, undefined, undefined, undefined, undefined, undefined, { ai: true });
     const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
       method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
     }));
@@ -492,7 +492,7 @@ function textModel() {
 test.concurrent("a user past the per-minute request limit gets a clear error, other users are unaffected", async () => {
   await withRollback(db, async (transaction) => {
     const model = textModel();
-    const app = createApp(undefined, transaction, undefined, model, undefined, { aiRequestsPerMinute: 2 });
+    const app = createApp(undefined, transaction, undefined, model, undefined, { aiRequestsPerMinute: 2 }, undefined, undefined, undefined, undefined, { ai: true });
     const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
       method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
     }));
@@ -522,7 +522,7 @@ test.concurrent("a user past the per-minute request limit gets a clear error, ot
 test.concurrent("replaying the same message id still counts against the per-minute limit", async () => {
   await withRollback(db, async (transaction) => {
     const model = textModel();
-    const app = createApp(undefined, transaction, undefined, model, undefined, { aiRequestsPerMinute: 2 });
+    const app = createApp(undefined, transaction, undefined, model, undefined, { aiRequestsPerMinute: 2 }, undefined, undefined, undefined, undefined, { ai: true });
     const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
       method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
     }));
@@ -540,7 +540,7 @@ test.concurrent("replaying the same message id still counts against the per-minu
 
 test.concurrent("every assistant reply is stored as its own message with its own id", async () => {
   await withRollback(db, async (transaction) => {
-    const app = createApp(undefined, transaction, undefined, textModel());
+    const app = createApp(undefined, transaction, undefined, textModel(), undefined, undefined, undefined, undefined, undefined, undefined, { ai: true });
     const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
       method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
     }));
@@ -568,7 +568,7 @@ test.concurrent("a Sidecar chat passes only the entity id and title as context; 
         { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage },
       ]),
     });
-    const app = createApp(undefined, transaction, undefined, model);
+    const app = createApp(undefined, transaction, undefined, model, undefined, undefined, undefined, undefined, undefined, undefined, { ai: true });
     const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
       method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
     }));
@@ -616,7 +616,7 @@ test.concurrent("Ask mode: the model is offered no Write tools and told it canno
         { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage },
       ]),
     });
-    const app = createApp(undefined, transaction, undefined, model);
+    const app = createApp(undefined, transaction, undefined, model, undefined, undefined, undefined, undefined, undefined, undefined, { ai: true });
     const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, {
       method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
     }));
@@ -654,7 +654,7 @@ test.concurrent("Autopilot requires the workspace switch and a non-Guest; allowe
       { type: "text-delta", id: "t1", delta: "Done." }, { type: "text-end", id: "t1" },
       { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage },
     ]) });
-    const app = createApp(undefined, transaction, undefined, model);
+    const app = createApp(undefined, transaction, undefined, model, undefined, undefined, undefined, undefined, undefined, undefined, { ai: true });
     const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, { method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body) }));
     const signUp = async (name: string) => (await call("/api/auth/sign-up/email", { name, email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" })).headers.get("set-cookie")!.split(";")[0]!;
     const admin = await signUp("Admin");
@@ -696,7 +696,7 @@ test.concurrent("Autopilot applies a safe Write immediately and records the Auto
         { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage },
       ]);
     } });
-    const app = createApp(undefined, transaction, undefined, model);
+    const app = createApp(undefined, transaction, undefined, model, undefined, undefined, undefined, undefined, undefined, undefined, { ai: true });
     const call = async (path: string, body: unknown, cookie?: string) => app.handle(new Request(`http://localhost${path}`, { method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body) }));
     const cookie = (await call("/api/auth/sign-up/email", { name: "Admin", email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" })).headers.get("set-cookie")!.split(";")[0]!;
     const workspace = await (await call("/actions/create_workspace", { name: "Team", slug: `t-${crypto.randomUUID()}` }, cookie)).json() as { id: string };

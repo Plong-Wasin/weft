@@ -159,7 +159,7 @@ export function createProjectActions(db: Database) {
           db.select({ id: workItemStates.id, projectId: workItemStates.projectId, name: workItemStates.name, group: workItemStates.group }).from(workItemStates)
             .where(inArray(workItemStates.projectId, projectIds)).orderBy(asc(workItemStates.projectId), asc(workItemStates.sortOrder)),
           db.select({ id: labels.id, projectId: labels.projectId, name: labels.name }).from(labels)
-            .where(inArray(labels.projectId, projectIds)).orderBy(asc(labels.projectId), asc(labels.name)),
+            .where(inArray(labels.projectId, projectIds)).orderBy(asc(labels.projectId), asc(labels.position), asc(labels.name)),
         ]);
         return { projects: visibleProjects.map(({ output }) => output), states, labels: projectLabels };
       },

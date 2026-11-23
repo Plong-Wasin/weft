@@ -1,8 +1,9 @@
-import { Extension } from "@tiptap/core";
+import { Extension, type Editor } from "@tiptap/core";
 import { Fragment, Slice, type Node as PMNode } from "@tiptap/pm/model";
-import { Plugin, PluginKey, type EditorState, type Transaction } from "@tiptap/pm/state";
+import { Plugin, PluginKey, TextSelection, type EditorState, type Transaction } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { api } from "./api";
+import { aiEnabledNow } from "./ai-flag";
 
 export const ASSIST_TASKS = ["rephrase", "fix_grammar", "summarize", "translate", "expand", "shorten"] as const;
 export type AssistTask = (typeof ASSIST_TASKS)[number];
@@ -97,9 +98,30 @@ export function insertBelow(state: EditorState, to: number, text: string): Trans
 
 const highlightKey = new PluginKey<{ range: AssistRange | null }>("aiAssistHighlight");
 
+/** Fired on the document by the slash command and Mod-Shift-J. The AI assist menu of the editor whose view it names opens its task picker. */
+export const ASSIST_OPEN_EVENT = "weft:open-assist";
+
+/** Opens AI assist on the editor's selection, or on the block the cursor is in when nothing is selected. A slash command typed on an empty line has no text of its own, so it asks for the block above. */
+export function openAssist(editor: Editor, options: { fromPreviousBlock?: boolean } = {}) {
+  const { state } = editor;
+  if (state.selection.empty) {
+    let target = state.selection.$from;
+    if (options.fromPreviousBlock && target.parent.textContent === "" && target.depth > 0 && target.before(target.depth) > 0) {
+      const previous = state.doc.resolve(target.before(target.depth) - 1);
+      if (previous.parent.isTextblock) target = previous;
+    }
+    if (target.parent.isTextblock) editor.view.dispatch(state.tr.setSelection(TextSelection.create(state.doc, target.start(), target.end())));
+  }
+  document.dispatchEvent(new CustomEvent(ASSIST_OPEN_EVENT, { detail: { view: editor.view } }));
+}
+
 /** Shareable AI assist extension: keeps the selection visibly marked while the Assist preview is open, mapping it through edits. */
 export const AiAssist = Extension.create({
   name: "aiAssist",
+  addKeyboardShortcuts() {
+    // Mod-Shift-J opens AI assist. With AI off it is not claimed, so the browser and the editor keep their own handling.
+    return { "Mod-Shift-j": ({ editor }) => { if (!aiEnabledNow()) return false; openAssist(editor); return true; } };
+  },
   addProseMirrorPlugins() {
     return [new Plugin({
       key: highlightKey,

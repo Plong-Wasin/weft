@@ -105,6 +105,26 @@ test.concurrent("adding items: at most one Cycle, skipped items are reported, Ac
   });
 });
 
+test.concurrent("adding items skips archived Cycle memberships without failing the batch", async () => {
+  await withRollback(db, async (transaction) => {
+    const { cycles, admin, member, project, item } = await setup(transaction);
+    const archivedItem = await item("Archived source");
+    const writableItem = await item("Writable candidate");
+    const source = await cycles.createCycle.handler({ userId: member.id }, { projectId: project.id, name: "Past", startDate: day(-1), endDate: day(6) });
+    const target = await cycles.createCycle.handler({ userId: member.id }, { projectId: project.id, name: "Current", startDate: day(-1), endDate: day(6) });
+    await cycles.addCycleItems.handler({ userId: member.id }, { cycleId: source.id, workItemIds: [archivedItem.id] });
+    await cycles.updateCycle.handler({ userId: member.id }, { cycleId: source.id, startDate: day(-20), endDate: day(-10) });
+    await cycles.archiveCycle.handler({ userId: admin.id }, { cycleId: source.id });
+
+    const result = await cycles.addCycleItems.handler({ userId: member.id }, { cycleId: target.id, workItemIds: [archivedItem.id, writableItem.id] });
+    expect(result).toEqual({ added: [writableItem.id], skipped: [{ workItemId: archivedItem.id, cycleId: source.id }] });
+
+    const archivedTarget = await cycles.createCycle.handler({ userId: member.id }, { projectId: project.id, name: "Archived target", startDate: day(-20), endDate: day(-10) });
+    await cycles.archiveCycle.handler({ userId: admin.id }, { cycleId: archivedTarget.id });
+    await expect(cycles.addCycleItems.handler({ userId: member.id }, { cycleId: archivedTarget.id, workItemIds: [writableItem.id] })).rejects.toMatchObject({ message: "Cycle is archived", status: 400 });
+  });
+});
+
 test.concurrent("adding Cycle candidates moves only when the selected source membership still matches", async () => {
   await withRollback(db, async (transaction) => {
     const { cycles, member, project, item } = await setup(transaction);

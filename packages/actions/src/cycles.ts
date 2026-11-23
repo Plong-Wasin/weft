@@ -309,7 +309,7 @@ export function createCycleActions(db: Database) {
           const database = tx(transaction);
           const memberships = ids.length ? await database.select({ workItemId: cycleItems.workItemId, cycleId: cycleItems.cycleId })
             .from(cycleItems).where(inArray(cycleItems.workItemId, ids)) : [];
-          const sourceIds = memberships.map((row) => row.cycleId);
+          const sourceIds = input.move ? memberships.map((row) => row.cycleId) : [];
           const lockedCycles = await lockWritableCycles(database, [cycle.id, ...sourceIds], project.id);
           const targetNow = lockedCycles.find((row) => row.id === cycle.id)!;
           if (cycleStatus(targetNow.startDate, targetNow.endDate) === "completed") throw new ActionError("Cannot add work items to a Cycle that has ended", 400);

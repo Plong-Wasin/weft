@@ -169,7 +169,7 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
     {editing === row.id
       ? <CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} initial={row.body} submitLabel={translate("comments.save")} onCancel={() => setEditing(null)} onSubmit={async (body) => { await guard(await actionResult("update_comment", { commentId: row.id, body })); setEditing(null); }} />
       : <CommentBody body={row.body} />}
-    <div className="flex flex-wrap items-center gap-2">
+    <div data-comment-actions={row.id} className="flex flex-wrap items-center gap-2">
       {editing !== row.id && row.parentId === null && canComment && replying !== row.id && <button type="button" className="rounded-md bg-transparent px-1 py-0.5 text-13 font-medium text-accent-text hover:underline" onClick={() => setReplying(row.id)}>{translate("comments.reply")}</button>}
       {editing !== row.id && <Popover label={translate("comments.more")} className="flex items-center rounded-md border border-subtle bg-surface-1 px-2 py-0.5 text-13 font-medium text-primary hover:bg-layer-transparent-hover" panelRole="dialog" panelClassName="grid min-w-40 gap-1 p-2" trigger={<span>{translate("comments.more")}</span>}>
         {(close) => <>
@@ -182,10 +182,10 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
         </>}
       </Popover>}
     </div>
-    {confirmDelete === row.id && <div role="group" aria-label={translate("comments.deleteConfirm")} className="flex flex-wrap items-center gap-2 text-13 text-primary">
+    {confirmDelete === row.id && <div role="alertdialog" aria-label={translate("comments.deleteConfirm")} className="flex flex-wrap items-center gap-2 text-13 text-primary">
       <span>{translate("comments.deleteConfirm")}</span>
       <button type="button" className="rounded-md bg-danger-primary px-3 py-1 text-13 font-medium text-on-color hover:bg-danger-primary-hover" onClick={async () => { setConfirmDelete(null); guard(await action("delete_comment", { commentId: row.id })); }}>{translate("comments.delete")}</button>
-      <button type="button" className="secondary" onClick={() => setConfirmDelete(null)}>{translate("comments.cancel")}</button>
+      <button type="button" className="secondary" autoFocus onClick={() => { setConfirmDelete(null); requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-comment-actions="${row.id}"] button[aria-haspopup]`)?.focus()); }}>{translate("comments.cancel")}</button>
     </div>}
     {versions?.commentId === row.id && <ol aria-label={translate("comments.history")}>
       {versions.rows.length === 0 && <li>{translate("comments.historyEmpty")}</li>}

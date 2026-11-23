@@ -827,10 +827,15 @@ export function createRunActions(db: Database) {
         const [agent] = await db.select().from(agents).where(eq(agents.id, input.agentId));
         if (!agent) throw new ActionError("Agent not found", 404);
         const workspaceRole = await requireWorkspaceRole(db, context.userId, agent.workspaceId, "read");
-        if (workspaceRole !== "Admin" && !(await canManageAgentAccess(db, agent, context.userId))) throw new ActionError("Forbidden", 403);
-        const rows = await db.select().from(runs).where(eq(runs.agentId, agent.id)).orderBy(desc(runs.createdAt), desc(runs.id));
-        const [membership] = await db.select({ role: workspaceMembers.role }).from(workspaceMembers).where(and(eq(workspaceMembers.workspaceId, agent.workspaceId), eq(workspaceMembers.userId, context.userId)));
-        return presentRuns(db, rows, await failureDetailAllowed(db, context.userId, membership?.role, rows));
+        if (workspaceRole !== "Admin" && agent.userId !== context.userId && !(await canManageAgentAccess(db, agent, context.userId))) throw new ActionError("Forbidden", 403);
+        let rows = await db.select().from(runs).where(eq(runs.agentId, agent.id)).orderBy(desc(runs.createdAt), desc(runs.id));
+        if (workspaceRole !== "Admin") {
+          const readableProjects = await db.select({ id: projects.id }).from(projects).leftJoin(projectMembers, and(eq(projectMembers.projectId, projects.id), eq(projectMembers.userId, context.userId)))
+            .where(and(eq(projects.workspaceId, agent.workspaceId), or(eq(projects.visibility, "public"), eq(projectMembers.userId, context.userId))));
+          const readableProjectIds = new Set(readableProjects.map((project) => project.id));
+          rows = rows.filter((row) => readableProjectIds.has(row.projectId));
+        }
+        return presentRuns(db, rows, await failureDetailAllowed(db, context.userId, workspaceRole, rows));
       },
     },
     getRunTranscript: {

@@ -52,6 +52,11 @@ export function nextSelection(selected: number, count: number, key: string): num
   return key === "ArrowDown" ? (selected + 1) % count : (selected - 1 + count) % count;
 }
 
+/** Tab accepts only a live, pickable suggestion; Shift-Tab, IME and status/empty menus keep native editor navigation. */
+export function acceptsSuggestionOnTab(event: Pick<KeyboardEvent, "key" | "shiftKey" | "isComposing" | "keyCode">, pickable: boolean): boolean {
+  return event.key === "Tab" && !event.shiftKey && !event.isComposing && event.keyCode !== 229 && pickable;
+}
+
 /** Scrolls the popup just enough that the option is fully visible; the page does not move. */
 export function revealOption(list: HTMLElement, option: HTMLElement) {
   if (option.offsetTop < list.scrollTop) list.scrollTop = option.offsetTop;
@@ -141,6 +146,12 @@ export function suggestRender<T>(options: ListOptions<T>) {
         box?.follow(props.clientRect);
       },
       onKeyDown: ({ event }: { event: KeyboardEvent }) => {
+        const selectedItem = current?.items[selected];
+        const menuReady = !!current && current.items.length > 0 && options.notice?.(current) == null;
+        if (acceptsSuggestionOnTab(event, menuReady && !!selectedItem && !options.disabled?.(selectedItem))) {
+          current!.command(selectedItem!);
+          return true;
+        }
         if (!current || current.items.length === 0 || options.notice?.(current) != null) return false;
         if (event.key === "ArrowDown" || event.key === "ArrowUp") {
           selected = nextSelection(selected, current.items.length, event.key);

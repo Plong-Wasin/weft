@@ -39,7 +39,7 @@ const selectedInView = (list: Locator) => list.evaluate((element) => {
 const selectedIndex = (list: Locator) => list.evaluate((element) => Array.from(element.querySelectorAll('[role="option"]')).findIndex((option) => option.getAttribute("aria-selected") === "true"));
 
 /** The mention list: headings, agent avatars, one highlight rule, wrap-around scrolling, and the picks. */
-async function checkMentionPopup(page: Page, editor: Locator, label: string) {
+async function checkMentionPopup(page: Page, editor: Locator, label: string, disabledName?: string) {
   await page.keyboard.type("@");
   const list = page.getByRole("listbox", { name: translate("wiki.mentionMembers"), exact: true });
   await list.waitFor();
@@ -100,11 +100,35 @@ async function checkMentionPopup(page: Page, editor: Locator, label: string) {
   await page.keyboard.press("Backspace");
   await page.keyboard.type("@");
   await list.waitFor();
-  const clicked = agentNames[agentNames.length - 1]!;
+  const clicked = "Flint";
   const mentionsBeforeClick = await editor.locator(".mention", { hasText: clicked }).count();
   await list.getByRole("option", { name: clicked, exact: true }).click();
   await list.waitFor({ state: "detached" });
   check(await editor.locator(".mention", { hasText: clicked }).count() === mentionsBeforeClick + 1, `${label}: mouse pick did not insert the clicked mention`);
+  await editor.click(); await page.keyboard.press("Control+a"); await page.keyboard.press("Backspace"); await page.keyboard.type("@");
+  await list.waitFor();
+  const beforeShiftTab = await editor.locator(".mention").count();
+  await page.keyboard.press("Shift+Tab");
+  check(await editor.locator(".mention").count() === beforeShiftTab && await editor.evaluate((element) => document.activeElement !== element), `${label}: Shift-Tab should move focus without accepting the highlighted mention`);
+
+  if (disabledName) {
+    await editor.click(); await page.keyboard.press("Control+a"); await page.keyboard.press("Backspace"); await page.keyboard.type("@");
+    await list.waitFor();
+    const disabled = list.getByRole("option").filter({ hasText: disabledName });
+    check(await disabled.getAttribute("aria-disabled") === "true", `${label}: ${disabledName} should be an unavailable suggestion`);
+    const targetIndex = await disabled.evaluate((element) => [...element.parentElement!.querySelectorAll('[role="option"]')].indexOf(element));
+    for (let step = 0; step < targetIndex; step++) await page.keyboard.press("ArrowDown");
+    check(await list.locator('[aria-selected="true"]').getAttribute("aria-disabled") === "true", `${label}: disabled suggestion was not highlighted`);
+    const beforeIme = await editor.locator(".mention").count();
+    const imeTabPrevented = await editor.evaluate((element) => {
+      const event = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true, isComposing: true, keyCode: 229 });
+      element.dispatchEvent(event);
+      return event.defaultPrevented;
+    });
+    check(!imeTabPrevented && await editor.locator(".mention").count() === beforeIme, `${label}: synthetic IME Tab must not accept a disabled suggestion`);
+    await page.keyboard.press("Tab");
+    check(await editor.locator(".mention").count() === beforeIme && await editor.evaluate((element) => document.activeElement !== element), `${label}: Tab must leave the editor without accepting a disabled suggestion`);
+  }
   console.log(`case passed: ${label} mention popup look, keyboard wrap, Enter, Escape and mouse pick`);
 }
 
@@ -158,9 +182,11 @@ try {
   const call = async <T>(name: string, body: unknown) => await (await page.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
   const me = await (await page.request.get(`${api}/api/me`)).json() as { workspaces: Array<{ id: string }> };
   const workspaceId = me.workspaces[0]!.id;
+  let inaccessibleAgentId: string | undefined;
   for (const name of agentNames) {
     const agent = await call<{ id?: string }>("create_agent", { workspaceId, name, instructions: "", model: "default" });
     check(agent.id !== undefined, `create_agent ${name} failed`);
+    if (name === "Grove") inaccessibleAgentId = agent.id;
     // Agents need project access to be picked in a work item comment; the Wiki list does not check it.
     await call("set_agent_project_access", { agentId: agent.id, allProjects: true, projectIds: [] });
   }
@@ -196,10 +222,12 @@ try {
   await checkEmojiPopup(page, wikiEditor);
 
   // Comment editor on the work item.
+  check(inaccessibleAgentId !== undefined, "Grove Agent id was not captured");
+  await call("set_agent_access", { agentId: inaccessibleAgentId, userIds: [] });
   await page.goto(`${web}/${slug}/browse/MOB-1`);
   const comment = page.getByTestId("comment-editor").locator(".ProseMirror");
   await comment.click();
-  await checkMentionPopup(page, comment, "comment");
+  await checkMentionPopup(page, comment, "comment", "Grove");
   console.log("mention-popups: all cases passed");
 } catch (error) {
   failed = true;

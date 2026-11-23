@@ -10,7 +10,7 @@ import { createWikiLowlight, wikiEditorExtensions } from "../../../packages/acti
 import { OPEN_LINK_EVENT, OPEN_SHORTCUTS_EVENT } from "./shortcuts";
 import { blockRangeOfSelection, moveTopLevelRange, duplicateTopLevelBlock, topLevelBlockAtSelection, topLevelBlocks } from "./wiki-block-moves";
 import { MermaidCodeBlock } from "./mermaid-diagram";
-import { revealOption, suggestRender } from "./suggest-list";
+import { acceptsSuggestionOnTab, revealOption, suggestRender } from "./suggest-list";
 import { isAllowedLinkScheme } from "../../../packages/actions/src/written-form-attributes";
 
 /**
@@ -350,6 +350,10 @@ function slashMenu() {
     onUpdate: update,
     onKeyDown: ({ event }: { event: KeyboardEvent }) => {
       if (!props || props.items.length === 0) return false;
+      if (acceptsSuggestionOnTab(event, props.items.length > 0)) {
+        props.command(props.items[selected]!);
+        return true;
+      }
       if (event.key === "ArrowDown") {
         selected = (selected + 1) % props.items.length;
         paint();

@@ -138,6 +138,17 @@ try {
   await page.keyboard.type(" [[zzz-no-such-thing");
   await list.waitFor();
   await list.locator(".suggest-notice").filter({ hasText: translate("reference.empty") }).waitFor();
+  const emptyBeforeTab = await wikiEditor.innerText();
+  const emptyTabPrevented = await wikiEditor.evaluate((element) => {
+    const event = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+    element.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  check(!emptyTabPrevented && await wikiEditor.innerText() === emptyBeforeTab, "Tab in a no-result menu must remain unhandled and keep the typed query");
+  const linksBeforeEmptyTab = await wikiEditor.locator("a").count();
+  await page.keyboard.press("Tab");
+  check(await wikiEditor.locator("a").count() === linksBeforeEmptyTab && await wikiEditor.evaluate((element) => document.activeElement !== element), "native Tab from a no-result menu must leave the editor without inserting a reference");
+  await wikiEditor.click();
   await page.keyboard.press("Escape");
   await list.waitFor({ state: "detached" });
   check((await wikiEditor.innerText()).includes("[[zzz-no-such-thing"), "Escape must keep the typed [[ and text");
@@ -150,6 +161,12 @@ try {
   await page.keyboard.type(" [[dark");
   await list.waitFor();
   await list.locator(".suggest-notice").filter({ hasText: translate("reference.loading") }).waitFor();
+  const loadingTabPrevented = await wikiEditor.evaluate((element) => {
+    const event = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true, isComposing: true, keyCode: 229 });
+    element.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  check(!loadingTabPrevented && await list.locator(".suggest-notice").filter({ hasText: translate("reference.loading") }).count() === 1, "synthetic IME Tab during loading must not accept or consume the key");
   release();
   await page.unroute("**/actions/search_work_items");
   await page.route("**/actions/search_work_items", (route) => route.fulfill({ status: 500, contentType: "application/json", body: "{}" }));
@@ -164,6 +181,28 @@ try {
   await list.waitFor({ state: "detached" });
   await page.keyboard.press("Control+a"); await page.keyboard.press("Backspace");
 
+  // With no suggestion open, Tab moves through table cells and Shift-Tab returns to the prior cell.
+  await wikiEditor.click(); await page.keyboard.type("/");
+  await page.getByRole("listbox", { name: translate("editor.slashMenu") }).getByRole("option", { name: translate("wiki.insert.table"), exact: true }).click();
+  const tabTable = wikiEditor.locator("table").last();
+  await tabTable.locator("td, th").nth(0).locator("p").click();
+  await page.keyboard.type("Table first");
+  await page.keyboard.press("Tab");
+  await page.keyboard.type("Table second");
+  await page.keyboard.press("Shift+Tab");
+  check(await tabTable.locator("td, th").nth(0).innerText() === "Table first" && await tabTable.locator("td, th").nth(1).innerText() === "Table second", "table Tab and Shift-Tab must navigate cells without a suggestion menu");
+  await wikiEditor.click(); await page.keyboard.press("Control+a"); await page.keyboard.press("Backspace");
+
+  // With no suggestion open, Tab nests a list item and Shift-Tab lifts it back out.
+  await wikiEditor.click(); await page.keyboard.type("/");
+  await page.getByRole("listbox", { name: translate("editor.slashMenu") }).getByRole("option", { name: translate("wiki.tool.bulletList"), exact: true }).click();
+  await page.keyboard.type("List parent"); await page.keyboard.press("Enter"); await page.keyboard.type("List child");
+  await page.keyboard.press("Tab");
+  await wikiEditor.locator("ul ul li").filter({ hasText: "List child" }).waitFor();
+  await page.keyboard.press("Shift+Tab");
+  check(await wikiEditor.locator("ul ul").count() === 0, "Shift-Tab must return a nested list item to the top level");
+  await wikiEditor.click(); await page.keyboard.press("Control+a"); await page.keyboard.press("Backspace");
+
   // Enter picks the highlighted row by keyboard: the second row of a fresh search.
   await page.keyboard.type(" [[dark mode variant");
   await list.waitFor();
@@ -173,6 +212,14 @@ try {
   await page.keyboard.press("Enter");
   await list.waitFor({ state: "detached" });
   check(await link(wikiEditor, expectedLabel).count() === 1, `keyboard Enter did not insert the highlighted row as "${expectedLabel}"`);
+
+  // Tab accepts the selected reference while Shift-Tab retains normal editor navigation.
+  await page.keyboard.type(" [[MOB-1");
+  await list.getByRole("option", { name: /Dark mode toggle/ }).first().waitFor();
+  await page.keyboard.press("Tab");
+  await list.waitFor({ state: "detached" });
+  const tabLinkCount = await link(wikiEditor, "MOB-1 Dark mode toggle").count();
+  check(tabLinkCount === 1, `Tab did not insert the selected Work item reference; found ${tabLinkCount}: ${await wikiEditor.innerText()}`);
 
   // "@" still opens the mention list only.
   await page.keyboard.press("Control+a"); await page.keyboard.press("Backspace");

@@ -242,7 +242,7 @@ export function registerAiRoutes(app: Elysia<any, any, any, any, any, any, any>,
   // The AI routes live in their own instance so the AI-off guard below covers only them, never a route registered after this call.
   const ai = new Elysia();
   // AI off (WEFT_AI_ENABLED=false or no provider key): every model route answers 404, the same as a feature that is switched off.
-  // The Confirmation routes stay: they call no model, and a Runtime Agent's deletion still waits there for a person (ADR 0009).
+  // The Confirmation routes stay: they call no model, and a card created before AI went off (an AI chat's or a server-side Agent Run's proposal) must still be answerable. Agents never delete (ADR 0010), so a Runtime Agent creates no card.
   if (options.enabled === false) {
     // onRequest runs before body validation, so a malformed body gets the same 404 as a valid one.
     ai.onRequest(({ request }) => {

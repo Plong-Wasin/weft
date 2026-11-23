@@ -72,7 +72,7 @@ test.concurrent("with AI off a Runtime Agent Run still claims and calls ordinary
   });
 });
 
-// A Runtime Agent's deletion still waits for a person's Confirmation (ADR 0009), and that Confirmation is answered on these routes: AI off must not strand it.
+// A Confirmation card created before AI went off (an AI chat's or a server-side Agent Run's proposal) is answered on these routes: AI off must not strand it. They call no model.
 test.concurrent("with AI off the Confirmation routes stay reachable while the model routes answer 404", async () => {
   await withRollback(db, async (tx) => {
     const app = appWithAi(tx, false);

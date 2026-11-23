@@ -82,6 +82,14 @@ test.concurrent("a request names only projects the caller belongs to; a private 
   });
 });
 
+test.concurrent("a human with no project membership keeps the existing empty project message", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const member = await createMemberFactory(transaction, s.workspace.id, "Member");
+    await expect(s.request(member.id, [])).rejects.toMatchObject({ status: 400, message: "You do not belong to any project" });
+  });
+});
+
 test.concurrent("a request makes a queued Export owned by the caller and one job; users list only their own", async () => {
   await withRollback(db, async (transaction) => {
     const s = await setup(transaction);

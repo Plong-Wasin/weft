@@ -3,6 +3,7 @@ import { and, desc, eq, inArray, isNull, lte, lt, sql } from "drizzle-orm";
 import { aiRequests, apiTokens, cliDeviceAuthorizations, collectionMembers, collections, comments, confirmations, intakeItems, notifications, projectMembers, projects, recurrences, runs, sessions, users, wikiPageShares, workItems, workItemAssignees, wikiPages, workspaceInvites, workspaceMembers, type Database } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { requireProjectAccess } from "./projects";
+import { agentProjectIds } from "./agent-project-scope";
 import { enqueueJob, type JobHandlers } from "./jobs";
 import { exportJobType, handleExportJob, handleExportCleanup } from "./exports";
 import type { ExportStorage } from "./storage";
@@ -297,6 +298,7 @@ export function createNotificationActions(db: Database) {
       visibleItems.set(row.workItemId, await canViewNotificationItem(db, userId, row.workItemId, row.projectId));
     }
     const visiblePages = new Map<string, boolean>();
+    const agentProjects = await agentProjectIds(db, workspaceId);
     for (const row of rows) if (row.wikiPageId) {
       const [share] = row.pageAccess === "private" && row.pageOwnerId !== userId && !row.pageProjectId
         ? await db.select({ userId: wikiPageShares.userId }).from(wikiPageShares).where(and(eq(wikiPageShares.pageId, row.wikiPageId), eq(wikiPageShares.userId, userId)))
@@ -315,7 +317,7 @@ export function createNotificationActions(db: Database) {
       else if (!row.pageProjectId) visiblePages.set(row.wikiPageId, true);
       else {
         const [member] = await db.select({ userId: projectMembers.userId }).from(projectMembers).where(and(eq(projectMembers.projectId, row.pageProjectId), eq(projectMembers.userId, userId)));
-        visiblePages.set(row.wikiPageId, Boolean(member));
+        visiblePages.set(row.wikiPageId, Boolean(member) && (!agentProjects || agentProjects.has(row.pageProjectId)));
       }
     }
     return rows.filter((row) => row.kind === "secret_output_blocked" ? true : row.recurrenceId !== null ? visibleProjects.get(row.recurrenceProjectId!) : (row.workItemId

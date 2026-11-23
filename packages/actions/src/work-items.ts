@@ -25,10 +25,12 @@ import { existingStableReferences, setOutlinksFromDocument, syncLegacyPageLinks 
 import { validateRichTextAssets } from "./rich-text-validation";
 import { makeUnavailableReferencesPlainText } from "./outlinks";
 import { requireWikiPageAccess } from "./wiki";
+import { currentAgentProjectScope } from "./agent-project-scope";
 
 export const stateGroups = ["backlog", "unstarted", "started", "completed", "cancelled"] as const;
 export type StateGroup = (typeof stateGroups)[number];
 export const descriptionVersionIntervalMs = 5 * 60_000;
+const workItemNotFound = () => currentAgentProjectScope() ? "Not found" : "Work item not found";
 export const priorities = ["urgent", "high", "medium", "low", "none"] as const;
 export type Priority = (typeof priorities)[number];
 /** "auto_rule": a project's automatic close or archive rule, written as the system with the rule's reason. */
@@ -893,7 +895,7 @@ export function createWorkItemActions(db: Database) {
       handler: async (context: Context, input: { workspaceId: string; displayId: string }) => {
         await requireWorkspaceRole(db, context.userId, input.workspaceId, "read");
         const match = /^([A-Za-z][A-Za-z0-9]*)-(\d+)$/.exec(input.displayId);
-        if (!match) throw new ActionError("Work item not found", 404);
+        if (!match) throw new ActionError(workItemNotFound(), 404);
         const key = match[1]!.toUpperCase();
         const sequence = Number(match[2]);
         let [project] = await db.select().from(projects).where(and(eq(projects.workspaceId, input.workspaceId), eq(projects.key, key)));
@@ -901,10 +903,10 @@ export function createWorkItemActions(db: Database) {
           const [alias] = await db.select({ projectId: projectKeyAliases.projectId }).from(projectKeyAliases).where(and(eq(projectKeyAliases.workspaceId, input.workspaceId), eq(projectKeyAliases.key, key)));
           if (alias) [project] = await db.select().from(projects).where(eq(projects.id, alias.projectId));
         }
-        if (!project) throw new ActionError("Work item not found", 404);
+        if (!project) throw new ActionError(workItemNotFound(), 404);
         await requireProjectAccess(db, context.userId, project.id, "read");
         const [item] = await db.select().from(workItems).where(and(eq(workItems.projectId, project.id), eq(workItems.sequence, sequence), liveWorkItems));
-        if (!item) throw new ActionError("Work item not found", 404);
+        if (!item) throw new ActionError(workItemNotFound(), 404);
         const markdownOptions = await workItemMarkdownOptions(db, context.userId, project.workspaceId, project.id, item.descriptionMarkdown ?? "");
         const result = (await hydrate(db, [item], project.key, markdownOptions))[0]!;
         const stored = result.description;

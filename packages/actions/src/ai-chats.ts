@@ -1,5 +1,6 @@
 import { FormatRegistry } from "@sinclair/typebox";
 import { withWrittenFormKey } from "./written-form-pool";
+import { withAgentProjectScope } from "./agent-project-scope";
 import { Value } from "@sinclair/typebox/value";
 import { and, asc, desc, eq, gt, min, sql } from "drizzle-orm";
 import type { Database } from "@weft/db";
@@ -163,6 +164,9 @@ export function createAiTools(db: Database, chat: { userId: string; workspaceId:
   return createActionList(db)
     .filter((action) => action.kind === "read" ? !HIDDEN_FROM_AI.has(action.name) : chat.mode !== "ask" && (aiWriteActions as readonly string[]).includes(action.name) && !(chat.agent && recurrenceWrites.has(action.name)))
     .map((action) => {
+      const invoke = (input: unknown) => withWrittenFormKey("system:ai-chat", () => chat.agent
+        ? withAgentProjectScope({ agentUserId: chat.agent.agentUserId, workspaceId: chat.workspaceId }, () => action.handler(context, input as never))
+        : action.handler(context, input as never));
       const full = JSON.parse(JSON.stringify(action.input)) as JsonSchemaObject;
       const scoped = "workspaceId" in (full.properties ?? {});
       const properties = { ...(full.properties ?? {}) };
@@ -188,7 +192,7 @@ export function createAiTools(db: Database, chat: { userId: string; workspaceId:
               const decision = writeDecision(action.name, autopilot);
               if (decision === "refused") return JSON.stringify({ error: "This action is not available to the AI." });
               if (decision === "run") {
-                const result = await withWrittenFormKey("system:ai-chat", () => action.handler(context, input as never));
+                const result = await invoke(input);
                 // The API route and the confirm route publish a change signal after a write; an Autopilot write runs here, so it must publish too or open editors and lists stay stale until a refresh.
                 try {
                   const scope = await resolveSignalScope(db, input, result);
@@ -208,7 +212,7 @@ export function createAiTools(db: Database, chat: { userId: string; workspaceId:
           }
           try {
             // Registry handlers run their own permission check and throw ActionError.
-            const result = await withWrittenFormKey("system:ai-chat", () => action.handler(context, input as never));
+            const result = await invoke(input);
             // get_skill takes no workspace: a chat must not load a Skill of another workspace the user also belongs to.
             if (action.name === "get_skill" && (result as { workspaceId?: string }).workspaceId !== chat.workspaceId) throw new ActionError("Skill not found", 404);
             return wrapRetrieved(action.name, result);

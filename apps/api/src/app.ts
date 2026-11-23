@@ -1,9 +1,9 @@
 import { Elysia } from "elysia";
 import { Type } from "@sinclair/typebox";
 import { cors } from "@elysiajs/cors";
-import { createMailerFromEnv, type Mailer, ActionError, AgentAccessDeniedError, actionRegistry, createActionList, createApiTokenActions, createRuntimeDispatchActions, aiWriteActions, HIDDEN_FROM_AI, skillWriteActions, createWorkspaceAction, registerAction, writeDecision, type ActionContext, type SignalBus, containsRuntimeSecretValue, openSecret, recordSecretOutputBlockedNotifications, withAgentRunProjectAuthorization, mintApiToken, DEFAULT_TOKEN_MS, CLI_DEVICE_INACTIVITY_MS, CLI_DEVICE_ROTATION_INTERVAL_MS, lockCliDeviceLifecycle, expireCliDeviceAuthorizations } from "@weft/actions";
+import { createMailerFromEnv, type Mailer, ActionError, AgentAccessDeniedError, actionRegistry, createActionList, createApiTokenActions, createRuntimeDispatchActions, aiWriteActions, HIDDEN_FROM_AI, skillWriteActions, createWorkspaceAction, registerAction, writeDecision, type ActionContext, type SignalBus, containsRuntimeSecretValue, openSecret, recordSecretOutputBlockedNotifications, withAgentRunProjectAuthorization, withAgentProjectScope, mintApiToken, DEFAULT_TOKEN_MS, CLI_DEVICE_INACTIVITY_MS, CLI_DEVICE_ROTATION_INTERVAL_MS, lockCliDeviceLifecycle, expireCliDeviceAuthorizations } from "@weft/actions";
 import { and, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
-import { agents, apiTokens, cliDevices, cliDeviceAuthorizations, collections, comments, createDatabase, oauthAccessToken, oauthClient, runs, runtimes, users, wikiPages, workItems, type Database } from "@weft/db";
+import { agents, apiTokens, cliDevices, cliDeviceAuthorizations, collections, comments, createDatabase, cycles, modules, oauthAccessToken, oauthClient, projectMembers, projects, runs, runtimes, users, wikiPages, workItems, workspaceMembers, type Database } from "@weft/db";
 import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
 import { createAuth, minimumPasswordLength, type AuthOptions } from "./auth";
 import { microsoftAuthSettings, microsoftEnabled } from "./microsoft-auth";
@@ -701,7 +701,10 @@ export function createApp(
     .get("/api/me", async ({ request, set }) => {
       const caller = await resolveCaller(request);
       if (!caller) { set.status = 401; return { error: "Unauthenticated" }; }
-      const workspaces = await workspaceAction.userWorkspaces(caller.userId);
+      const allWorkspaces = await workspaceAction.userWorkspaces(caller.userId);
+      const workspaces = caller.source === "agent" && caller.agent
+        ? allWorkspaces.filter((workspace) => workspace.id === caller.agent!.workspaceId)
+        : allWorkspaces;
       const [user] = await db.select().from(users).where(eq(users.id, caller.userId));
       return {
         user: { ...user, locale: user.locale ?? defaultLocale ?? "en", localeSaved: user.locale !== null }, workspaces, canCreateWorkspace: await workspaceAction.canCreateWorkspace(caller.userId),
@@ -785,7 +788,12 @@ export function createApp(
         // Converter work is charged to the user (a token is only a sub-limit of its user, so many tokens are still one caller); a caller without a user is keyed by address and workspace.
         const bodyWorkspace = (body as { workspaceId?: string } | null)?.workspaceId ?? "";
         const converterKey = caller.userId ? `user:${caller.userId}` : `ip:${clientAddress(request, Number(Bun.env.TRUSTED_PROXY_HOPS ?? 0))}:${bodyWorkspace}`;
-        const executeAction = () => withWrittenFormKey(converterKey, () => (action.handler as (context: ActionContext, input: unknown) => Promise<unknown>)(caller, body), (caller as { apiTokenId?: string }).apiTokenId);
+        const executeAction = async () => {
+          const invoke = () => withWrittenFormKey(converterKey, () => (action.handler as (context: ActionContext, input: unknown) => Promise<unknown>)(caller, body), (caller as { apiTokenId?: string }).apiTokenId);
+          return caller.agent
+            ? withAgentProjectScope({ agentUserId: caller.agent.agentUserId, workspaceId: caller.agent.workspaceId ?? "" }, invoke)
+            : invoke();
+        };
         let result: unknown;
         if (caller.source === "agent" && caller.agent && action.kind === "read") {
           const guarded = await withAgentRunProjectAuthorization(db, caller.agent.runId, async (state) => {

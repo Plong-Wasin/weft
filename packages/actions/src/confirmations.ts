@@ -11,6 +11,7 @@ import { wakeRun } from "./runs";
 import { requireWikiPageAccess } from "./wiki";
 import { liveWorkItems } from "./triage";
 import { wikiContentOf } from "./wiki-content";
+import { agentProjectIds, withAgentProjectScope } from "./agent-project-scope";
 
 /** A Confirmation card stays valid for 24 hours. */
 export const confirmationTtlMs = 24 * 60 * 60 * 1000;
@@ -115,6 +116,37 @@ async function workspaceOfTarget(db: Database, input: Record<string, unknown>): 
   return null;
 }
 
+async function projectOfTarget(db: Database, input: Record<string, unknown>): Promise<string | null> {
+  if (typeof input.workItemId === "string") return (await db.select({ projectId: workItems.projectId }).from(workItems).where(eq(workItems.id, input.workItemId)))[0]?.projectId ?? null;
+  if (typeof input.pageId === "string") return (await db.select({ projectId: wikiPages.projectId }).from(wikiPages).where(eq(wikiPages.id, input.pageId)))[0]?.projectId ?? null;
+  if (typeof input.cycleId === "string") return (await db.select({ projectId: cycles.projectId }).from(cycles).where(eq(cycles.id, input.cycleId)))[0]?.projectId ?? null;
+  if (typeof input.moduleId === "string") return (await db.select({ projectId: modules.projectId }).from(modules).where(eq(modules.id, input.moduleId)))[0]?.projectId ?? null;
+  if (typeof input.intakeItemId === "string") return (await db.select({ projectId: intakeItems.projectId }).from(intakeItems).where(eq(intakeItems.id, input.intakeItemId)))[0]?.projectId ?? null;
+  if (typeof input.viewId === "string") return (await db.select({ projectId: views.projectId }).from(views).where(eq(views.id, input.viewId)))[0]?.projectId ?? null;
+  if (typeof input.projectId === "string") return (await db.select({ projectId: projects.id }).from(projects).where(eq(projects.id, input.projectId)))[0]?.projectId ?? null;
+  if (typeof input.stateId === "string") return (await db.select({ projectId: workItemStates.projectId }).from(workItemStates).where(eq(workItemStates.id, input.stateId)))[0]?.projectId ?? null;
+  if (typeof input.labelId === "string") return (await db.select({ projectId: labels.projectId }).from(labels).where(eq(labels.id, input.labelId)))[0]?.projectId ?? null;
+  if (typeof input.commentId === "string") {
+    const [comment] = await db.select({ projectId: comments.projectId, workItemId: comments.workItemId, wikiPageId: comments.wikiPageId }).from(comments).where(eq(comments.id, input.commentId));
+    if (comment?.projectId) return comment.projectId;
+    if (comment?.workItemId) return (await db.select({ projectId: workItems.projectId }).from(workItems).where(eq(workItems.id, comment.workItemId)))[0]?.projectId ?? null;
+    if (comment?.wikiPageId) return (await db.select({ projectId: wikiPages.projectId }).from(wikiPages).where(eq(wikiPages.id, comment.wikiPageId)))[0]?.projectId ?? null;
+  }
+  if (typeof input.webLinkId === "string") {
+    const [link] = await db.select({ projectId: workItems.projectId }).from(webLinks).innerJoin(workItems, eq(workItems.id, webLinks.workItemId)).where(eq(webLinks.id, input.webLinkId));
+    return link?.projectId ?? null;
+  }
+  if (typeof input.notificationId === "string") {
+    const [notification] = await db.select({ workItemId: notifications.workItemId, wikiPageId: notifications.wikiPageId, commentId: notifications.commentId }).from(notifications).where(eq(notifications.id, input.notificationId));
+    if (notification?.workItemId) return (await db.select({ projectId: workItems.projectId }).from(workItems).where(eq(workItems.id, notification.workItemId)))[0]?.projectId ?? null;
+    if (notification?.wikiPageId) return (await db.select({ projectId: wikiPages.projectId }).from(wikiPages).where(eq(wikiPages.id, notification.wikiPageId)))[0]?.projectId ?? null;
+    if (notification?.commentId) return projectOfTarget(db, { commentId: notification.commentId });
+  }
+  if (typeof input.pointId === "string") return (await db.select({ projectId: estimates.projectId }).from(estimatePoints).innerJoin(estimates, eq(estimates.id, estimatePoints.estimateId)).where(eq(estimatePoints.id, input.pointId)))[0]?.projectId ?? null;
+  if (typeof input.recurrenceId === "string") return (await db.select({ projectId: recurrences.projectId }).from(recurrences).where(eq(recurrences.id, input.recurrenceId)))[0]?.projectId ?? null;
+  return null;
+}
+
 function diffOf(before: Snapshot, after: Snapshot): DiffEntry[] {
   if (!before || !after) return [];
   return Object.keys(after).filter((field) => JSON.stringify(before[field]) !== JSON.stringify(after[field])).map((field) => ({ field, before: before[field], after: after[field] }));
@@ -173,16 +205,26 @@ export function createConfirmationStore(db: Database, options: { now?: () => Dat
       }
       const data: Record<string, unknown> = { ...payload };
       await requireWorkspaceRole(db, input.userId, input.workspaceId, roleFor(input.action));
-      // Every target id the input carries must be in the chat's workspace: extra keys must not hide a foreign target behind a local one.
-      for (const key of targetKeys) {
-        if (typeof data[key] === "string" && (!uuidPattern.test(data[key] as string) || await workspaceOfTarget(db, { [key]: data[key] }) !== input.workspaceId)) throw new ActionError("Target not found in this workspace", 404);
-      }
-      const snapshot = await snapshotOf(db, input.userId, data);
-      const [row] = await db.insert(confirmations).values({
-        workspaceId: input.workspaceId, chatId: input.chatId ?? null, runId: input.runId ?? null, toolCallId: input.toolCallId ?? null, userId: input.userId, action: input.action,
-        input: data, snapshot, expiresAt: new Date(now().getTime() + confirmationTtlMs),
-      }).returning();
-      return card(row!);
+      const createCard = async () => {
+        // Every target id the input carries must be in the workspace and Project scope; extra keys cannot hide a foreign target.
+        const projectIds = input.runId ? await agentProjectIds(db, input.workspaceId) : null;
+        for (const key of targetKeys) {
+          if (typeof data[key] !== "string") continue;
+          if (!uuidPattern.test(data[key] as string) || await workspaceOfTarget(db, { [key]: data[key] }) !== input.workspaceId) throw new ActionError("Target not found in this workspace", 404);
+          const projectId = await projectOfTarget(db, { [key]: data[key] });
+          if (projectIds && projectId && !projectIds.has(projectId)) throw new ActionError("Target not found in this workspace", 404);
+        }
+        const snapshot = await snapshotOf(db, input.userId, data);
+        const [row] = await db.insert(confirmations).values({
+          workspaceId: input.workspaceId, chatId: input.chatId ?? null, runId: input.runId ?? null, toolCallId: input.toolCallId ?? null, userId: input.userId, action: input.action,
+          input: data, snapshot, expiresAt: new Date(now().getTime() + confirmationTtlMs),
+        }).returning();
+        return card(row!);
+      };
+      if (!input.runId) return createCard();
+      const [run] = await db.select({ agentUserId: agentTable.userId }).from(runs).innerJoin(agentTable, eq(agentTable.id, runs.agentId)).where(eq(runs.id, input.runId));
+      if (!run) throw new ActionError("The Agent of this Run no longer exists", 409);
+      return withAgentProjectScope({ agentUserId: run.agentUserId, workspaceId: input.workspaceId }, createCard);
     },
 
     async get(userId: string, id: string): Promise<ConfirmationCard | null> {
@@ -224,7 +266,10 @@ export function createConfirmationStore(db: Database, options: { now?: () => Dat
       if (!claimed) return { status: "already_resolved" };
       let result: unknown;
       try {
-        result = await action.handler(await confirmedContext(db, userId, row), input as never);
+        const context = await confirmedContext(db, userId, row);
+        result = row.runId && context.agent
+          ? await withAgentProjectScope({ agentUserId: context.agent.agentUserId, workspaceId: row.workspaceId }, () => action.handler(context, input as never))
+          : await action.handler(context, input as never);
       } catch (error) {
         // The action did not complete: never leave the card "confirmed" without a result. Unexpected errors still surface as server errors.
         if (error instanceof ActionError) return failWith(error);

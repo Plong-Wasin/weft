@@ -87,8 +87,8 @@ try {
       await Bun.write(`${logDir}/${prefix}_${lane}.log`, log);
     };
     await Promise.all(Array.from({ length: count }, (_, index) => drain(`w${index}`, () => queue.shift())));
-    // The timing-sensitive files run once the pool is done and the machine is quiet, a few at a time: most of their time is waiting on purpose, not computing.
-    await Promise.all(Array.from({ length: Math.min(2, alone.length) }, (_, index) => drain(`alone${index}`, () => alone.shift())));
+    // The timing-sensitive files run once the pool is done and the machine is quiet, a few at a time: most of their time is waiting on purpose, not computing. With two workers or fewer (a two-core CI runner) they run one at a time, because two of them side by side use up the cores their deadlines count on.
+    await Promise.all(Array.from({ length: Math.min(count > 2 ? 2 : 1, alone.length) }, (_, index) => drain(`alone${index}`, () => alone.shift())));
     console.log(`${totals.pass} pass\n${totals.fail} fail\nRan ${totals.tests} tests across ${total} files in ${Math.round((Date.now() - started) / 1000)}s`);
     console.log(`logs: ${logDir}/${prefix}_*.log`);
     code = totals.fail === 0 && totals.failedFiles === 0 ? 0 : 1;

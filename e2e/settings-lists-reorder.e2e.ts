@@ -31,10 +31,11 @@ const t = (key: string) => translate(key as never);
 const say = (key: string, values: Record<string, string>) => Object.entries(values).reduce((text, [name, value]) => text.split(`{${name}}`).join(value), t(key));
 let failed = false;
 
+let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
   mkdirSync(shots, { recursive: true });
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
+  browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
   const page = await context.newPage();
   page.on("pageerror", (error) => console.error("pageerror:", error.message));
@@ -105,8 +106,8 @@ try {
 
   // Pickers: the create modal's Labels picker lists the labels in the stored order.
   await page.goto(`${web}${paths.workItems(slug, "MOB")}`);
-  await page.getByRole("button", { name: t("workItems.new"), exact: true }).first().click();
-  const modal = page.getByRole("dialog");
+  await page.getByRole("button", { name: t("workItems.addNew"), exact: true }).first().click();
+  const modal = page.getByRole("dialog", { name: t("workItems.modal.title") });
   await modal.getByRole("button", { name: new RegExp(`^${t("workItems.labels")}`) }).click();
   const labelOptions = await page.getByRole("menuitemcheckbox").allTextContents();
   check(JSON.stringify(labelOptions.map((name) => name.trim()).filter((name) => ["Alpha", "Bravo", "Charlie"].includes(name))) === JSON.stringify(["Alpha", "Charlie", "Bravo"]), `labels picker order is ${labelOptions.join(",")}`);
@@ -141,6 +142,11 @@ try {
   check(JSON.stringify(await propertyNames()) === JSON.stringify(["Owner team", "Area"]), "custom property order did not persist across reload");
   console.log("PASS custom properties: keyboard reorder persists after reload");
 
+  // On the Features page every grip shown is backed (3 types + 2 properties) and enabled for the Admin.
+  check(await page.locator("[data-grip]").count() >= 5, "expected grips in the reorderable settings lists");
+  check(await page.locator("[data-grip]:disabled").count() === 0, "a grip in settings is disabled for the Admin");
+  console.log("PASS every settings grip is backed and enabled for the Admin");
+
   // Panel: the work item shows its custom properties in the stored order.
   await page.goto(`${web}${paths.workItem(slug, "MOB-1")}`);
   await page.getByText("Owner team", { exact: true }).first().waitFor();
@@ -149,17 +155,12 @@ try {
   await page.screenshot({ path: `${shots}/work-item-panel-1440.png` });
   console.log("PASS work item panel shows the stored custom property order");
 
-  // No grip in settings is decorative: every one that is shown is enabled for the Admin, and each list reorders.
-  check(await page.locator("[data-grip]").count() >= 5, "expected grips in the reorderable settings lists");
-  check(await page.locator("[data-grip]:disabled").count() === 0, "a grip in settings is disabled for the Admin");
-  console.log("PASS every settings grip is backed and enabled for the Admin");
-
-  await browser.close();
   console.log("settings-lists-reorder: all checks passed");
 } catch (error) {
   failed = true;
   console.error(error);
 } finally {
+  await browser?.close();
   for (const server of servers) server.kill();
   if (failed) process.exitCode = 1;
 }

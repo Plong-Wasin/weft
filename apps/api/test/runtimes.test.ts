@@ -261,6 +261,8 @@ test.concurrent("a stale claimed sandbox policy gets a 409 and fails without spa
       const [runCredential] = await transaction.select({ expiresAt: runTokens.expiresAt }).from(runTokens).where(eq(runTokens.runId, rows[0]!.id));
       expect(terminalRun).toMatchObject({ status: "failed", runtimeEnvironmentSecrets: null });
       expect(runCredential!.expiresAt.getTime()).toBeLessThanOrEqual(Date.now());
+      // The Run turns failed on the server before the daemon sees the 409 answer to its start call, so wait for the answer instead of reading it at once.
+      for (let i = 0; i < 200 && startStatus === undefined; i++) await Bun.sleep(25);
       expect(startStatus).toBe(409);
       expect(await Bun.file(marker).exists()).toBe(false);
     } finally {

@@ -115,6 +115,22 @@ test.concurrent("validation: dates, status, lead outside the project", async () 
   });
 });
 
+test.concurrent("Module leads and members must have a project write role", async () => {
+  await withRollback(db, async (transaction) => {
+    const { modules, member, guest, project } = await setup(transaction);
+    const module = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "People" });
+    const code = (promise: Promise<unknown>) => promise.then(() => 200, (error: { status: number }) => error.status);
+
+    expect(await code(modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Guest lead", leadId: guest.id }))).toBe(400);
+    expect(await code(modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Guest member", memberIds: [guest.id] }))).toBe(400);
+    expect(await code(modules.updateModule.handler({ userId: member.id }, { moduleId: module.id, leadId: guest.id }))).toBe(400);
+    expect(await code(modules.updateModule.handler({ userId: member.id }, { moduleId: module.id, memberIds: [guest.id] }))).toBe(400);
+
+    const valid = await modules.createModule.handler({ userId: member.id }, { projectId: project.id, name: "Writable people", leadId: member.id, memberIds: [member.id] });
+    expect(valid).toMatchObject({ leadId: member.id, memberIds: [member.id] });
+  });
+});
+
 test.concurrent("a work item is in many Modules and one Cycle at once; Activity records module ids and source", async () => {
   await withRollback(db, async (transaction) => {
     const { modules, member, project, item } = await setup(transaction);

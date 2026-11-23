@@ -97,11 +97,13 @@ export function createModuleActions(db: Database) {
     return { module: found, project };
   }
 
-  /** Lead and members must be able to work in the project: a project member or a workspace Admin. */
+  /** Lead and members must be able to write in the project, or be a workspace Admin. */
   async function assertPeople(database: Database, project: { id: string; workspaceId: string }, userIds: string[]) {
     const ids = [...new Set(userIds)];
     if (ids.length === 0) return;
-    const inProject = await database.select({ userId: projectMembers.userId }).from(projectMembers).where(and(eq(projectMembers.projectId, project.id), inArray(projectMembers.userId, ids)));
+    const inProject = await database.select({ userId: projectMembers.userId }).from(projectMembers).where(and(
+      eq(projectMembers.projectId, project.id), inArray(projectMembers.userId, ids), inArray(projectMembers.role, ["Admin", "Member"]),
+    ));
     const admins = await database.select({ userId: workspaceMembers.userId }).from(workspaceMembers)
       .where(and(eq(workspaceMembers.workspaceId, project.workspaceId), eq(workspaceMembers.role, "Admin"), inArray(workspaceMembers.userId, ids)));
     const ok = new Set([...inProject, ...admins].map((row) => row.userId));

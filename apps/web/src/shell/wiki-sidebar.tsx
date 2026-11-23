@@ -22,14 +22,14 @@ function PageTree({ workspace, pages, parentId, activeId, open, toggle, depth, d
   return <ul className="m-0 grid list-none gap-0.5 p-0">{level.map((page) => {
     const children = pages.filter((child) => child.parentId === page.id);
     const expanded = open.has(page.id);
-    return <li key={page.id}>
-      <div data-wiki-drop-id={`page:${page.id}`} className={`relative flex items-center ${over === `page:${page.id}` && overKind === "nest" ? "rounded-md bg-accent-primary/15 ring-1 ring-accent-primary" : ""} ${dragging === page.id ? "opacity-50" : ""}`} style={{ paddingLeft: `${depth * 0.75}rem` }}>
+    return <li key={page.id} className="min-w-0">
+      <div data-wiki-drop-id={`page:${page.id}`} className={`relative flex min-w-0 items-center ${over === `page:${page.id}` && overKind === "nest" ? "rounded-md bg-accent-primary/15 ring-1 ring-accent-primary" : ""} ${dragging === page.id ? "opacity-50" : ""}`} style={{ paddingLeft: `${depth * 0.75}rem` }}>
         {over === `page:${page.id}` && overKind === "before" && <span aria-hidden data-wiki-drop-line="before" className="pointer-events-none absolute inset-x-0 -top-px h-0.5 rounded bg-accent-primary" />}
         {over === `page:${page.id}` && overKind === "after" && <span aria-hidden data-wiki-drop-line="after" className="pointer-events-none absolute inset-x-0 -bottom-px h-0.5 rounded bg-accent-primary" />}
         {children.length > 0
           ? <button type="button" aria-expanded={expanded} aria-label={`${translate("wikiSidebar.toggle")}: ${page.title}`} onClick={() => toggle(page.id)} className="grid size-5 shrink-0 place-items-center rounded !bg-transparent !p-0 text-tertiary hover:!bg-layer-transparent-hover"><ChevronRight aria-hidden size={12} className={`transition-transform ${expanded ? "rotate-90" : ""}`} /></button>
           : <span className="size-5 shrink-0" />}
-        <NavLink to={paths.wikiPage(workspace.slug, page.id)} className={({ isActive }) => `${row(isActive)} flex-1`}><FileText aria-hidden size={13} className="shrink-0" /><span className="truncate">{page.title}</span></NavLink>
+        <NavLink to={paths.wikiPage(workspace.slug, page.id)} className={({ isActive }) => `${row(isActive)} min-w-0 flex-1`}><FileText aria-hidden size={13} className="shrink-0" /><span className="truncate">{page.title}</span></NavLink>
         {over === `page:${page.id}` && <span className="px-1 text-11 font-medium text-accent-primary">{translate(overKind === "before" ? "wikiSidebar.dropBefore" : overKind === "after" ? "wikiSidebar.dropAfter" : "wikiSidebar.dropNest")}</span>}
         {page.canEdit && <button type="button" aria-label={`${translate("sortable.reorder")}: ${page.title}`} data-wiki-drag-handle={page.id} onPointerDown={(event) => dragStart(page.id, event)} onKeyDown={(event) => {
           // Arrow Up places the page before its previous sibling and Arrow Down after its next one, in the order shown here.
@@ -166,7 +166,7 @@ export function WikiSidebar({ workspace, selfId }: { workspace: Workspace; selfI
     return () => { window.removeEventListener("keydown", onEscape); window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", end); window.removeEventListener("pointercancel", end); };
   }, [dragging, over, pages]);
   return <>
-    <button type="button" onClick={() => void create()} className="mb-1 flex w-full items-center justify-center gap-1.5"><Plus aria-hidden size={14} />{translate("wiki.new")}</button>
+    <button type="button" onClick={() => void create()} className={`${row(false)} mb-1 w-full`}><Plus aria-hidden size={13} />{translate("wiki.new")}</button>
     <NavLink end to={paths.wiki(workspace.slug)} className={({ isActive }) => row(isActive)}>{translate("sidebar.allPages")}</NavLink>
     <p className="px-2 pb-0.5 pt-3 text-12 font-medium text-tertiary">{translate("wikiSidebar.collections")}</p>
     <p role="status" className="sr-only">{announcement}</p>

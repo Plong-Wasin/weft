@@ -10,7 +10,7 @@ import * as Y from "yjs";
 import { Mention } from "../../../packages/actions/src/wiki-editor-extensions";
 import { OutlinksPanel } from "./outlinks-panel";
 import { mentionRender } from "./suggest-list";
-import { formatDate, translate, translateDynamic, type MessageKey } from "@weft/shared";
+import { formatDate, getLocale, translate, translateDynamic, type MessageKey } from "@weft/shared";
 import { AttachmentsPanel, useAssetImages } from "./asset-images";
 import { AssistMenu } from "./assist-menu";
 import { AiAssist } from "./editor-assist";
@@ -573,6 +573,8 @@ function DetailsPanelFrame({ wide, onDismiss, children }: { wide: boolean; onDis
 }
 
 const roleIcon = (page: Summary) => page.access === "private" ? <Lock aria-hidden size={14} className="text-tertiary" /> : <Globe aria-hidden size={14} className="text-tertiary" />;
+/** The list shows the day only: the time made the date columns wrap to three lines on a phone. */
+const formatDay = (value: string) => new Intl.DateTimeFormat(getLocale() === "th" ? "th-TH" : "en-US", { dateStyle: "medium" }).format(new Date(value));
 const rowLink = "flex items-center gap-2 text-14 text-primary hover:underline";
 type ListTab = "all" | "public" | "private" | "archived" | "shared";
 type ListOrder = "name" | "created" | "updated";
@@ -662,7 +664,7 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
   return <section aria-label={translate("wiki.title")} className="grid gap-4">
     <header className="flex items-center justify-between gap-3">
       <h1 className="text-20 font-semibold text-primary">{translate("wiki.title")}</h1>
-      <div className="flex gap-2"><button type="button" onClick={() => setCollectionDialog({ kind: "create" })} className="secondary">{translate("wiki.collection.new")}</button><button type="button" onClick={() => void create()} className="inline-flex items-center gap-1.5"><Plus aria-hidden size={14} />{translate("wiki.new")}</button></div>
+      <div className="flex gap-2"><button type="button" onClick={() => setCollectionDialog({ kind: "create" })} className="secondary">{translate("wiki.collection.new")}</button><button type="button" onClick={() => void create()} className="primary inline-flex items-center gap-1.5"><Plus aria-hidden size={14} />{translate("wiki.new")}</button></div>
     </header>
     {failed && <p role="alert">{translate("wiki.failed")}</p>}
     <ListControls pages={pages} filters={filters} update={update} shared />
@@ -672,7 +674,7 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
     {(shown.length > 0 || collections.length > 0) && <div className="overflow-x-auto"><table className="w-full border-collapse text-left text-13">
       <thead><tr className="border-b border-subtle text-12 text-tertiary"><th className="py-2 font-medium">{translate("wiki.col.name")}</th><th className="py-2 font-medium">{translate("wiki.access")}</th><th className="hidden py-2 font-medium md:table-cell">{translate("pages.created")}</th><th className="py-2 font-medium">{translate("pages.updated")}</th><th className="hidden py-2 font-medium md:table-cell">{translate("wiki.col.nested")}</th></tr></thead>
       <tbody>{collections.map((collection) => <React.Fragment key={collection.id}>
-        <tr className="border-b border-subtle bg-surface-1"><th colSpan={5} className="py-2 pr-2 text-left font-semibold text-primary"><div className="flex items-center gap-2"><span>{collection.icon} {collectionLabel(collection)}{collection.visibility === "private" ? ` · ${translate("wiki.access.private")}` : ""}</span><Popover label={`${translate("wiki.collection.actions")}: ${collection.name}`} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-72">
+        <tr className="border-b border-subtle"><th colSpan={5} className="pb-2 pr-2 pt-6 text-left font-semibold text-primary"><div className="flex items-center gap-2"><span>{collection.icon} {collectionLabel(collection)}{collection.visibility === "private" ? ` · ${translate("wiki.access.private")}` : ""}</span><Popover label={`${translate("wiki.collection.actions")}: ${collection.name}`} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-72">
           {(close) => <>
             <MenuItem icon={Pencil} onClick={() => { close(); setCollectionDialog({ kind: "rename", collection }); }}>{translate("wiki.collection.rename")}</MenuItem>
             {!collection.isDefault && <MenuItem icon={collection.visibility === "public" ? EyeOff : Globe} onClick={async () => { close(); await call("set_collection_visibility", { collectionId: collection.id, visibility: collection.visibility === "public" ? "private" : "public" }); await refreshCollections(); }}>{translate(collection.visibility === "public" ? "wiki.collection.makePrivate" : "wiki.collection.makePublic")}</MenuItem>}
@@ -680,9 +682,9 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
           </>}
         </Popover></div></th></tr>
         {flatten(shown.filter((page) => page.collectionId === collection.id)).map(({ page, depth, nested }) => <tr key={page.id} className="border-b border-subtle hover:bg-layer-transparent-hover">
-        <td className="py-2" style={{ paddingLeft: `${depth * 1.25}rem` }}><Link className={rowLink} to={paths.wikiPage(workspace.slug, page.id)}><FileText aria-hidden size={14} className="text-secondary" />{page.title}</Link></td>
-        <td className="py-2 text-secondary"><span className="inline-flex items-center gap-1.5">{roleIcon(page)}{translate(`wiki.access.${page.access}` as MessageKey)}</span></td>
-        <td className="hidden py-2 text-secondary md:table-cell">{formatDate(page.createdAt)}</td><td className="py-2 text-secondary">{formatDate(page.updatedAt)}</td>
+        <td className="py-2" style={{ paddingLeft: `${depth * 1.25}rem` }}><Link className={rowLink} to={paths.wikiPage(workspace.slug, page.id)}><FileText aria-hidden size={14} className="shrink-0 text-secondary" />{page.title}</Link></td>
+        <td className="py-2 align-middle text-secondary"><span className="inline-flex items-center gap-1.5 align-middle">{roleIcon(page)}{translate(`wiki.access.${page.access}` as MessageKey)}</span></td>
+        <td className="hidden py-2 text-secondary md:table-cell">{formatDay(page.createdAt)}</td><td className="py-2 text-secondary">{formatDay(page.updatedAt)}</td>
         <td className="hidden py-2 text-secondary md:table-cell">{nested}</td>
       </tr>)}
       </React.Fragment>)}</tbody>
@@ -933,7 +935,7 @@ export function ProjectPagesPage({ workspace, project, canWrite }: { workspace: 
     {isLoading && <p role="status">{translate("wiki.loading")}</p>}
     {!isLoading && shown.length === 0 && <p className="text-secondary">{translate("pages.empty")}</p>}
     <ul className="grid">{shown.map((page) => <li key={page.id} className="flex items-center justify-between gap-2 border-b border-subtle py-2 hover:bg-layer-transparent-hover">
-      <Link className={rowLink} to={paths.page(workspace.slug, project.key, page.id)}><FileText aria-hidden size={14} className="text-secondary" />{page.title}</Link>
+      <Link className={rowLink} to={paths.page(workspace.slug, project.key, page.id)}><FileText aria-hidden size={14} className="shrink-0 text-secondary" />{page.title}</Link>
       <span className="flex items-center gap-2">{roleIcon(page)}{canWrite && <button type="button" className="secondary" aria-label={`${translate("wiki.unlink")}: ${page.title}`} onClick={() => void move(page.id, null)}>{translate("wiki.unlink")}</button>}</span>
     </li>)}</ul>
     {canWrite && linkable.length > 0 && <label className="grid max-w-xs gap-1 text-13 text-secondary">{translate("pages.linkExisting")}

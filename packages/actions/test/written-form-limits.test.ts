@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 import { markdownToDocWithWarnings } from "../src/markdown-doc";
 import { prepareRichText, richTextMarkdown } from "../src/rich-markdown";
 
+/** CI runners are slower and noisier than a workstation; the limits below guard against quadratic blow-ups, which run far past three times over. */
+const slack = Number(Bun.env.WEFT_TIMING_SLACK ?? 1);
 const codes = (source: string) => markdownToDocWithWarnings(source).warningDetails.map(({ code }) => code);
 const timed = <T>(run: () => T) => { const started = performance.now(); const value = run(); return { value, ms: performance.now() - started }; };
 
@@ -38,11 +40,11 @@ test("a 200 KB prose document with ordinary bold and links is accepted through t
   const source = Array.from({ length: Math.floor(200_000 / (line.length + 2)) }, () => line).join("\n\n");
   const text = timed(() => prepareRichText(undefined, source, "body", "bodyMarkdown", {}, "verbatim"));
   expect(text.value.markdown).toBe(source);
-  expect(text.ms).toBeLessThan(1_500);
+  expect(text.ms).toBeLessThan(1_500 * slack);
   const document = markdownToDocWithWarnings(source).document;
   const editor = timed(() => prepareRichText(document, undefined, "content", "contentMarkdown", {}, "derived"));
   expect(editor.value.markdown.length).toBeGreaterThan(130_000);
-  expect(editor.ms).toBeLessThan(1_500);
+  expect(editor.ms).toBeLessThan(1_500 * slack);
 });
 
 test("hostile text with stray closers or unmatched delimiters is refused quickly; the editor path never sees it", () => {
@@ -55,7 +57,7 @@ test("hostile text with stray closers or unmatched delimiters is refused quickly
   // A document that holds the same characters as text is escaped by the serializer, so it parses back in linear time.
   const document = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "a] ".repeat(30_000) }] }] };
   const { ms } = timed(() => prepareRichText(document, undefined, "content", "contentMarkdown", {}, "derived"));
-  expect(ms).toBeLessThan(1_500);
+  expect(ms).toBeLessThan(1_500 * slack);
 });
 
 test("richTextMarkdown output of dense marks parses back with no budget refusal", () => {

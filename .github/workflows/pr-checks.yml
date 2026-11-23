@@ -50,6 +50,7 @@ jobs:
       - run: bun run test:isolated --workers=2
         env:
           DATABASE_URL: postgres://weft:weft@localhost:54329/weft
+          WEFT_TIMING_SLACK: "3"
 
   checks:
     name: checks

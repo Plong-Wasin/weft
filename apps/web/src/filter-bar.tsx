@@ -124,5 +124,5 @@ function FilterQueryGenerate({ scope, onQuery }: { scope: FilterQueryScope; onQu
 }
 
 export function FilterQueryToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
-  return <button type="button" aria-pressed={open} aria-label={t("layout.filterQuery.toggle")} title={t("layout.filterQuery.toggle")} className={`${ghost} ${open ? "bg-layer-1" : ""}`} onClick={onToggle}><Code2 aria-hidden size={14} /><span>{t("layout.filterQuery.button")}</span></button>;
+  return <button type="button" aria-pressed={open} aria-label={t("layout.filterQuery.toggle")} title={t("layout.filterQuery.toggle")} className={`${ghost} ${open ? "bg-layer-1" : ""}`} onClick={onToggle}><Code2 aria-hidden size={14} /><span className="max-sm:sr-only">{t("layout.filterQuery.button")}</span></button>;
 }

@@ -152,7 +152,8 @@ export function SaveAsViewButton({ params, project, workspaceSlug }: { params: L
   const [open, setOpen] = React.useState(false);
   const navigate = useNavigate();
   return <>
-    <button type="button" className={ghost} onClick={() => setOpen(true)}><BookmarkPlus aria-hidden size={14} />{t("views.saveAs")}</button>
+    {/* On phone the label drops out of the toolbar (the icon and title remain), so the toolbar fits in two rows. */}
+    <button type="button" className={ghost} aria-label={t("views.saveAs")} title={t("views.saveAs")} onClick={() => setOpen(true)}><BookmarkPlus aria-hidden size={14} /><span className="max-sm:sr-only">{t("views.saveAs")}</span></button>
     {open && <ViewFormModal mode="save" target={{ projectId: project.id }} settings={paramsToSettings(params)} onClose={() => setOpen(false)} onSaved={(view) => { setOpen(false); navigate(paths.view(workspaceSlug, project.key, view.id)); }} />}
   </>;
 }

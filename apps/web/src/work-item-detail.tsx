@@ -404,7 +404,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
         onKeyDown={(event) => { handleImeSafeEnter(event.nativeEvent, () => event.currentTarget.blur()); }} />
     </div>
     {/* Beside the description (wide page with the panel shown) the Properties panel already holds these, so the bar is for the other layouts. */}
-    <div role="group" aria-label={t("workItems.quickProperties")} data-quick-properties className={`flex flex-wrap items-center gap-2 ${mode === "page" && propertiesOpen ? "lg:hidden" : ""} ${mode === "peek" ? "@[800px]:hidden" : ""}`}>
+    <div role="group" aria-label={t("workItems.quickProperties")} data-quick-properties className={`max-sm:grid max-sm:grid-cols-2 flex flex-wrap items-center gap-2 ${mode === "page" && propertiesOpen ? "lg:hidden" : ""} ${mode === "peek" ? "@[800px]:hidden" : ""}`}>
       {keyPickers.state}{keyPickers.priority}{keyPickers.assignees}{keyPickers.due}
     </div>
     <div className="min-h-16 min-w-0 max-w-full">
@@ -417,7 +417,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       {t("workItems.lastEditedBy").replace("{name}", lastDescriptionEdit.name).replace("{time}", relativeTime(lastDescriptionEdit.at))} ▾
     </button>}
     <OutlinksPanel kind="work-item" id={item.id} run={action} refreshKey={descriptionOutlinksKey} updating={descriptionSaveState === "saving" || descriptionSaveState === "updating"} onRefreshComplete={onDescriptionOutlinksRefreshComplete} />
-    <div role="group" className="flex w-full min-w-0 max-w-full flex-wrap gap-2" aria-label={t("workItems.actions")}>
+    <div role="group" className="flex w-full min-w-0 max-w-full flex-wrap gap-2 max-sm:grid max-sm:grid-cols-[auto_auto] max-sm:justify-start max-sm:[&>button]:whitespace-nowrap" aria-label={t("workItems.actions")}>
       {canWrite && <>
         <button type="button" className="secondary" onClick={() => openAction("subItems")}>{t("workItems.addSubItemAction")}</button>
         <button type="button" className="secondary" onClick={() => { setActiveForm("relations"); setCollapsed((current) => current.filter((value) => value !== "relations")); }}>{t("workItems.addRelationAction")}</button>

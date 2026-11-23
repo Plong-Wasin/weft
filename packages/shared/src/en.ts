@@ -1922,6 +1922,8 @@ export const en = {
   "wikiSidebar.emptyCollection": "No pages yet",
   "wikiSidebar.dropNest": "Nest here",
   "wikiSidebar.dropTopLevel": "Make top-level",
+  "wikiSidebar.dropBefore": "Place before this page",
+  "wikiSidebar.dropAfter": "Place after this page",
   "sidebar.favorites": "Favorites",
   "sidebar.workspace": "Workspace",
   "sidebar.toggleProject": "Toggle project menu",

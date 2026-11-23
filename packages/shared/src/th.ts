@@ -1924,6 +1924,8 @@ export const th: Record<keyof typeof en, string> = {
   "wikiSidebar.emptyCollection": "ยังไม่มีหน้า",
   "wikiSidebar.dropNest": "ย้ายมาเป็นหน้าย่อย",
   "wikiSidebar.dropTopLevel": "ย้ายเป็นหน้าหลัก",
+  "wikiSidebar.dropBefore": "วางก่อนหน้านี้",
+  "wikiSidebar.dropAfter": "วางหลังหน้านี้",
   "sidebar.favorites": "รายการโปรด",
   "sidebar.workspace": "พื้นที่ทำงาน",
   "sidebar.starred": "ที่ติดดาว",

@@ -136,7 +136,7 @@ try {
     if ((await converted.locator("table").count()) !== 1) throw new Error("Converted comment table did not render");
     if (!(await converted.getByText("Reviewer").count())) throw new Error("Converted comment mention did not render");
     for (const width of [1280, 390] as const) await capture("after", width, locale);
-    await converted.getByRole("button", { name: translate("comments.edit", locale) }).click();
+    await converted.getByRole("button", { name: translate("comments.more", locale), exact: true }).first().click(); await converted.getByRole("button", { name: translate("comments.edit", locale) }).click();
     const editor = converted.getByTestId("comment-editor");
     await converted.getByRole("button", { name: translate("editor.sourceMode", locale), exact: true }).click();
     await editor.getByTestId("editor-source-text").waitFor();
@@ -149,7 +149,7 @@ try {
 
   await page.goto(detailUrl);
   const compactForEditing = page.locator(`#comment-${compactComment.id}`);
-  await compactForEditing.getByRole("button", { name: translate("comments.edit", "th"), exact: true }).first().click();
+  await compactForEditing.getByRole("button", { name: translate("comments.more", "th"), exact: true }).first().click(); await compactForEditing.getByRole("button", { name: translate("comments.edit", "th"), exact: true }).first().click();
   await compactForEditing.getByRole("button", { name: translate("editor.sourceMode", "th"), exact: true }).click();
   const compactSource = await compactForEditing.getByTestId("editor-source-text").inputValue();
   if (!compactSource.includes("## ") || !compactSource.includes("### ") || !compactSource.includes("Keep this checklist item") || !compactSource.includes("Reviewer: @{Reviewer|") || !compactSource.includes("---") || !compactSource.includes("const value = 1;\n\nreturn value;")) throw new Error(`Editing did not preserve the original headings, list, mention, atom, or code in source mode: ${JSON.stringify(compactSource)}`);

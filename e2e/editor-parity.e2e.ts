@@ -337,7 +337,7 @@ try {
   const savedTableComment = page.locator("li[id^='comment-']").filter({ hasText: "Inserted Comment table" }).last();
   await savedTableComment.waitFor();
   check(await savedTableComment.locator("table").count() === 1, "submitting a table Comment did not preserve its table");
-  await savedTableComment.getByRole("button", { name: translate("comments.edit"), exact: true }).click();
+  await savedTableComment.getByRole("button", { name: translate("comments.more"), exact: true }).first().click(); await savedTableComment.getByRole("button", { name: translate("comments.edit"), exact: true }).click();
   const editComment = savedTableComment.getByTestId("comment-editor").locator(".ProseMirror");
   await editComment.locator("table").waitFor();
   check(await editComment.locator("table").count() === 1, "editing an existing Comment lost its table");

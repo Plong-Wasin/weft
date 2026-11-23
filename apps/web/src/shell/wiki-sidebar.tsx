@@ -166,7 +166,7 @@ export function WikiSidebar({ workspace, selfId }: { workspace: Workspace; selfI
     return () => { window.removeEventListener("keydown", onEscape); window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", end); window.removeEventListener("pointercancel", end); };
   }, [dragging, over, pages]);
   return <>
-    <button type="button" onClick={() => void create()} className="mb-1 flex w-full items-center justify-center gap-1.5"><Plus aria-hidden size={14} />{translate("wiki.new")}</button>
+    <button type="button" onClick={() => void create()} className={`${row(false)} mb-1 w-full`}><Plus aria-hidden size={13} />{translate("wiki.new")}</button>
     <NavLink end to={paths.wiki(workspace.slug)} className={({ isActive }) => row(isActive)}>{translate("sidebar.allPages")}</NavLink>
     <p className="px-2 pb-0.5 pt-3 text-12 font-medium text-tertiary">{translate("wikiSidebar.collections")}</p>
     <p role="status" className="sr-only">{announcement}</p>

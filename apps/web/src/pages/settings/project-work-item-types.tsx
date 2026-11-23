@@ -90,6 +90,7 @@ function TypeRow({ type, types, properties, onRun, grip, canUp, canDown, onMove 
             <span className="font-medium">{type.name}</span>
             {shownDescription && <span className="text-13 text-secondary">{shownDescription}</span>}
             <span className="text-12 text-tertiary">{type.workItems === 1 ? replaceAll(t("types.countOne"), { count: "1" }) : replaceAll(t("types.count"), { count: String(type.workItems) })}</span>
+            {types[0]?.id === type.id && <span className="text-12 text-accent-text">{t("types.defaultForNew")}</span>}
           </span>
         </span>
         <span className="flex flex-wrap items-center gap-2">

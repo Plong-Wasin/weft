@@ -1329,6 +1329,7 @@ export const en = {
     "features.typesSuits": "Suits: teams whose work comes in different kinds.",
     "activity.field.type": "Type",
     "types.title": "Work item types",
+    "types.defaultForNew": "Default for new items",
     "types.explain": "A type says what kind of work an item is, and each item has exactly one. A label is a tag you can add to many items: use a type for the kind and labels for anything else.",
     "types.loading": "Loading types...",
     "types.type": "Type",

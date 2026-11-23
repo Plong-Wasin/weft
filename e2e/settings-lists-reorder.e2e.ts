@@ -128,6 +128,8 @@ try {
   await page.reload();
   await gripOf(page, "Request").waitFor();
   check(JSON.stringify(await typeNames()) === JSON.stringify(["Request", "Task", "Bug"]), "type order did not persist across reload");
+  // The first type is the default for new items, so the list says which row that is.
+  check(await typeRows.first().getByText(t("types.defaultForNew")).count() === 1 && await typeRows.nth(1).getByText(t("types.defaultForNew")).count() === 0, "the default tag must sit on the first type only");
   await page.screenshot({ path: `${shots}/types-reordered-1440.png` });
   console.log("PASS work item types: Move up persists after reload");
 

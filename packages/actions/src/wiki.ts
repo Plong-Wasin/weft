@@ -1181,11 +1181,10 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         const { page } = await load(db, context.userId, input.pageId, "read");
         const rows = await db.select({ comment: comments, authorName: users.name }).from(comments).innerJoin(users, eq(users.id, comments.authorId)).where(and(eq(comments.wikiPageId, input.pageId), isNull(comments.parentId), isNull(comments.deletedAt), input.includeResolved ? sql`true` : isNull(comments.resolvedAt))).orderBy(asc(comments.createdAt));
         // Every comment and reply of the page is parsed in ONE stored-read job, then finished in order.
-        const threads = [];
-        for (const { comment, authorName } of rows) {
-          const replies = await db.select({ comment: comments, authorName: users.name }).from(comments).innerJoin(users, eq(users.id, comments.authorId)).where(and(eq(comments.parentId, comment.id), isNull(comments.deletedAt))).orderBy(asc(comments.createdAt));
-          threads.push({ comment, authorName, replies });
-        }
+        const replies = rows.length ? await db.select({ comment: comments, authorName: users.name }).from(comments).innerJoin(users, eq(users.id, comments.authorId)).where(and(inArray(comments.parentId, rows.map(({ comment }) => comment.id)), isNull(comments.deletedAt))).orderBy(asc(comments.createdAt)) : [];
+        const repliesOf = new Map<string, typeof replies>();
+        for (const reply of replies) repliesOf.set(reply.comment.parentId!, [...(repliesOf.get(reply.comment.parentId!) ?? []), reply]);
+        const threads = rows.map(({ comment, authorName }) => ({ comment, authorName, replies: repliesOf.get(comment.id) ?? [] }));
         const flat = threads.flatMap((thread) => [thread.comment, ...thread.replies.map((reply) => reply.comment)]);
         const markdowns: string[] = [];
         for (const comment of flat) markdowns.push(comment.bodyMarkdown ?? await readWrittenFormOf(comment.body, comment.bodyText));

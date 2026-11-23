@@ -17,6 +17,7 @@ const flags: Flag[] = [
   { name: "WEFT_OUTBOUND_WEBHOOKS_ENABLED", default: "false", readmeDefault: "`false`" },
   { name: "WEFT_OUTBOUND_WEBHOOKS_ALLOW_PRIVATE_NETWORKS", default: "false", readmeDefault: "`false`" },
   { name: "WEFT_OUTBOUND_WEBHOOKS_ALLOW_PORTS", default: "", readmeDefault: "unset" },
+  { name: "WEFT_AI_ENABLED", default: "true", readmeDefault: "`true`" },
   { name: "AI_WEB_SEARCH", default: "on", readmeDefault: "`on`" },
   { name: "AI_ASSIST_REQUESTS_PER_MINUTE", default: "20", readmeDefault: "`20`" },
 ];

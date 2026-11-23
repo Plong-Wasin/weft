@@ -2,7 +2,7 @@ import { afterAll, expect, spyOn, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { and, eq, sql } from "drizzle-orm";
 import { comments as commentsTable, createDatabase, outlinks, projectMembers, workItems } from "@weft/db";
-import { createCommentActions, createProjectActions, createWikiActions, createWorkItemActions, workItemMarkdownOptions } from "../src";
+import { createCommentActions, createIntakeActions, createProjectActions, createWikiActions, createWorkItemActions, workItemMarkdownOptions } from "../src";
 import { createOutlinkActions, referencesInWrittenForm, setOutlinkPart } from "../src/outlinks";
 import { createMemberFactory, createWorkspaceFactory, withRollback } from "../../db/src/test-helpers";
 
@@ -144,6 +144,33 @@ test("Outlinks and Backlinks omit sources and targets the viewer cannot open", a
     await expect(actions.listOutlinks.handler({ userId: outsider.id }, { kind: "work-item", id: privateSource.id })).rejects.toMatchObject({ status: 404 });
     await expect(actions.listOutlinks.handler({ userId: outsider.id }, { kind: "wiki", id: hiddenWikiPage.id })).rejects.toMatchObject({ status: 404 });
     await expect(actions.listOutlinks.handler({ userId: outsider.id }, { kind: "page", id: hiddenProjectPage.id })).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+test("backlinks hide pending intake sources from other Guests until acceptance", async () => {
+  await withRollback(db, async (tx) => {
+    const workspace = await createWorkspaceFactory(tx);
+    const admin = await createMemberFactory(tx, workspace.id, "Admin");
+    const member = await createMemberFactory(tx, workspace.id, "Member");
+    const creator = await createMemberFactory(tx, workspace.id, "Guest");
+    const otherGuest = await createMemberFactory(tx, workspace.id, "Guest");
+    const project = await createProjectActions(tx).createProject.handler({ userId: admin.id }, { workspaceId: workspace.id, name: "Public", key: "PUB", visibility: "public" });
+    await createProjectActions(tx).addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: member.id, role: "Member" });
+    await createProjectActions(tx).addProjectMember.handler({ userId: admin.id }, { projectId: project.id, userId: creator.id, role: "Guest" });
+    const target = await createWorkItemActions(tx).createWorkItem.handler({ userId: admin.id }, { projectId: project.id, title: "Referenced item" });
+    const intakeItem = await createIntakeActions(tx).submitIntakeItem.handler({ userId: creator.id }, { projectId: project.id, title: "Pending intake title" });
+    await setOutlinkPart(tx, "work-item", intakeItem.workItemId, "body", [{ kind: "work-item", id: target.id }]);
+    const actions = createOutlinkActions(tx);
+    const backlinks = async (userId: string) => actions.listBacklinks.handler({ userId }, { kind: "work-item", id: target.id });
+
+    expect((await backlinks(otherGuest.id)).map(({ id }) => id)).not.toContain(intakeItem.workItemId);
+    expect((await backlinks(creator.id)).map(({ id }) => id)).toContain(intakeItem.workItemId);
+    expect((await backlinks(member.id)).map(({ id }) => id)).toContain(intakeItem.workItemId);
+    await expect(actions.listOutlinks.handler({ userId: otherGuest.id }, { kind: "work-item", id: intakeItem.workItemId })).rejects.toMatchObject({ status: 404 });
+    expect(await actions.listOutlinks.handler({ userId: creator.id }, { kind: "work-item", id: intakeItem.workItemId })).toHaveLength(1);
+
+    await createIntakeActions(tx).acceptIntakeItem.handler({ userId: member.id }, { intakeItemId: intakeItem.id });
+    expect((await backlinks(otherGuest.id)).map(({ id }) => id)).toContain(intakeItem.workItemId);
   });
 });
 

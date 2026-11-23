@@ -2,12 +2,13 @@ import { Type } from "@sinclair/typebox";
 import { and, asc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import { markdownToDocWithWarnings } from "./markdown-doc";
 import { needsWorker, prepareRichTextGuarded, runInWorker, WrittenFormTimeout, WRITTEN_FORM_INLINE_LIMIT } from "./written-form-pool";
-import { comments, collectionMembers, collections, outlinks, projectMembers, projects, users, wikiPageShares, wikiPages, workItemPages, workItems, type Database } from "@weft/db";
+import { comments, collectionMembers, collections, intakeItems, outlinks, projectMembers, projects, users, wikiPageShares, wikiPages, workItemPages, workItems, type Database } from "@weft/db";
 import { ActionError, requireWorkspaceRole } from "./members";
 import { featuresOf } from "./features";
 import { wikiContentFromYState } from "./wiki-yjs";
 import { requireProjectAccess } from "./projects";
 import { requireWikiPageAccess } from "./wiki";
+import { canViewNotificationItem } from "./email-digest";
 
 /** Test seam: runs after a page was converted and before its Markdown is written. */
 export const rebuildPageMarkdownHooks: { beforeWrite?: (pageId: string) => Promise<void> } = {};
@@ -61,12 +62,14 @@ async function visibleTargets(db: Database, userId: string, workspaceId: string,
   for (const target of targets) if (["work-item", "page", "wiki"].includes(target.kind)) idsByKind.set(target.kind as OutlinkKind, [...new Set([...(idsByKind.get(target.kind as OutlinkKind) ?? []), target.id])]);
   const itemIds = idsByKind.get("work-item") ?? [];
   if (itemIds.length) {
-    const rows = await db.select({ item: workItems, project: projects, memberId: projectMembers.userId }).from(workItems)
+    const rows = await db.select({ item: workItems, project: projects, memberId: projectMembers.userId, intakeItemId: intakeItems.id }).from(workItems)
       .innerJoin(projects, eq(projects.id, workItems.projectId))
+      .leftJoin(intakeItems, eq(intakeItems.workItemId, workItems.id))
       .leftJoin(projectMembers, and(eq(projectMembers.projectId, projects.id), eq(projectMembers.userId, userId)))
       .where(and(inArray(workItems.id, itemIds), eq(projects.workspaceId, workspaceId), isNull(workItems.deletedAt)));
     for (const row of rows) {
       if (row.project.visibility !== "public" && workspaceRole !== "Admin" && !row.memberId) continue;
+      if (row.intakeItemId && !await canViewNotificationItem(db, userId, row.item.id, row.project.id)) continue;
       result.set(targetKey("work-item", row.item.id), { id: row.item.id, kind: "work-item", title: row.item.title, displayId: `${row.project.key}-${row.item.sequence}`, project: row.project.name, projectKey: row.project.key, collection: null });
     }
   }
@@ -179,9 +182,10 @@ export function createOutlinkActions(db: Database) {
   type Context = { userId: string };
   async function entity(context: Context, kind: OutlinkKind, id: string) {
     if (kind === "work-item") {
-      const [row] = await db.select({ item: workItems, project: projects }).from(workItems).innerJoin(projects, eq(projects.id, workItems.projectId)).where(eq(workItems.id, id));
+      const [row] = await db.select({ item: workItems, project: projects, intakeItemId: intakeItems.id }).from(workItems).innerJoin(projects, eq(projects.id, workItems.projectId)).leftJoin(intakeItems, eq(intakeItems.workItemId, workItems.id)).where(eq(workItems.id, id));
       if (!row || row.item.deletedAt) throw new ActionError("Work item not found", 404);
       await requireProjectAccess(db, context.userId, row.project.id, "read");
+      if (row.intakeItemId && !await canViewNotificationItem(db, context.userId, id, row.project.id)) throw new ActionError("Work item not found", 404);
       return { id, kind, title: row.item.title, displayId: `${row.project.key}-${row.item.sequence}`, project: row.project.name, projectKey: row.project.key, collection: null, workspaceId: row.project.workspaceId };
     }
     const page = await requireWikiPageAccess(db, context.userId, id, "read");

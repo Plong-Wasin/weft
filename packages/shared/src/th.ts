@@ -307,7 +307,7 @@ export const th: Record<keyof typeof en, string> = {
   "agents.logTranscriptLoading": "กำลังโหลดขั้นตอน…",
   "agents.logTranscriptFailed": "โหลดขั้นตอนของ Run นี้ไม่สำเร็จ",
   "agents.logToolDetails": "ข้อมูลขาเข้าและผลลัพธ์",
-  "agents.logWorkItemUnavailable": "Work item",
+  "agents.logWorkItemUnavailable": "รายการงาน",
   "agents.logRuntimeProfile": "โปรไฟล์ Runtime",
   "agents.logSandboxEnforced": "บังคับใช้ Sandbox",
   "agents.logSandboxNotEnforced": "ไม่บังคับใช้ Sandbox",

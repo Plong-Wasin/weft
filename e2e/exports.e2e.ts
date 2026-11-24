@@ -97,13 +97,43 @@ try {
   const names = [...new TextDecoder("latin1").decode(zip).matchAll(/(MOB|WEB)\.json/g)].map((match) => match[0]);
   check(names.includes("MOB.json") && names.includes("WEB.json"), "ZIP is missing a project file");
 
+  // A transient history failure can be retried, while a permission denial stays distinct.
+  const historyUrl = `${api}/actions/list_exports`;
+  let failHistoryOnce = true;
+  const failFirstHistoryRequest = async (route: import("playwright").Route) => {
+    if (failHistoryOnce) {
+      failHistoryOnce = false;
+      await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Unavailable" }) });
+    } else await route.continue();
+  };
+  await admin.route(historyUrl, failFirstHistoryRequest);
+  await admin.reload();
+  await admin.getByText(translate("exports.listFailed")).waitFor();
+  await admin.getByRole("button", { name: translate("exports.retry") }).click();
+  await admin.getByRole("button", { name: translate("exports.download") }).first().waitFor();
+  await admin.unroute(historyUrl);
+
+  await admin.route(historyUrl, (route) => route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ error: "Forbidden" }) }));
+  await admin.reload();
+  await admin.getByText(translate("exports.notAllowed")).waitFor();
+  check(await admin.getByText(translate("exports.listFailed")).count() === 0, "permission denial showed transient failure");
+  await admin.unroute(historyUrl);
+  await admin.reload();
+  await admin.getByRole("button", { name: translate("exports.download") }).first().waitFor();
+
   // The same page works on a phone.
   await admin.setViewportSize({ width: 390, height: 844 });
+  failHistoryOnce = true;
+  await admin.route(historyUrl, failFirstHistoryRequest);
+  await admin.reload();
+  await admin.getByText(translate("exports.listFailed")).waitFor();
+  await admin.getByRole("button", { name: translate("exports.retry") }).click();
   await admin.getByRole("button", { name: translate("exports.download") }).first().waitFor();
   await fits(admin, "390px");
+  await admin.unroute(historyUrl);
   await adminContext.close(); await browser.close();
   await client.end();
-  console.log("exports ok: request, worker build, status, download, CSV content, JSON ZIP of all projects, 1440px and 390px");
+  console.log("exports ok: request, worker build, status, download, CSV content, JSON ZIP of all projects, 503 retry, distinct 403 denial, desktop/mobile, 1440px and 390px");
 } finally {
   for (const server of servers) server.kill();
   s3.stop(true);

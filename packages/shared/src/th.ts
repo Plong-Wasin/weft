@@ -566,6 +566,7 @@ export const th: Record<keyof typeof en, string> = {
   "board.reorderHint": "กดลูกศรซ้ายหรือขวาเพื่อย้ายการ์ดข้ามคอลัมน์ และกดลูกศรขึ้นหรือลงเพื่อเรียงลำดับในการ์ด",
   "board.reorderColumnsHint": "กดลูกศรซ้ายหรือขวาเพื่อย้ายระหว่างคอลัมน์",
   "board.moved": "ย้าย {name} ไปที่ {column} ตำแหน่งที่ {position}",
+  "board.refreshFailed": "บันทึกการย้ายแล้ว แต่โหลดบอร์ดใหม่ไม่สำเร็จ โปรดโหลดหน้าใหม่เพื่อดูตำแหน่งล่าสุด",
   "board.movedTo": "ย้าย {name} ไปที่ {column}",
   "states.moveDown": "เลื่อนลง",
   "states.remove": "นำออก",

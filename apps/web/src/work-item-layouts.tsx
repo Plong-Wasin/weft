@@ -165,10 +165,11 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   }), [projectId, cycleId, moduleId, board, params.sort, params.dir, run]);
   const load = React.useCallback(async () => {
     const result = await fetchItems(params.q);
-    if ("error" in result) { setQueryError(params.q.trim() ? result.error : null); return; }
+    if ("error" in result) { setQueryError(params.q.trim() ? result.error : null); return false; }
     setQueryError(null);
     setItems(result.data);
     setLoaded(true);
+    return true;
   }, [fetchItems, params.q]);
   // A different project, cycle or module starts again as not loaded; this effect is declared before the load so its reset never lands after the new list.
   React.useEffect(() => { setLoaded(false); }, [projectId, cycleId, moduleId]);
@@ -338,9 +339,9 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     else if (boardGroup === "priority") { if (item.priority === column) return false; result = await action("update_work_item", { workItemId: id, priority: column }); }
     else if (boardGroup === "assignee") { if ((item.assigneeIds[0] ?? "none") === column) return false; result = await action("update_work_item", { workItemId: id, assigneeIds: column === "none" ? [] : [column] }); }
     else return false;
-    setNote(result === null ? t("workItems.failed") : null);
-    await load();
-    return result !== null;
+    const refreshed = await load();
+    setNote(result === null ? t("workItems.failed") : refreshed ? null : t("board.refreshFailed"));
+    return result !== null && refreshed;
   };
 
   const personName = (id: string) => people.find((person) => person.userId === id)?.name ?? id;

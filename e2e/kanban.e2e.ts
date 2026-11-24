@@ -138,6 +138,7 @@ try {
   await page.keyboard.press("ArrowRight");
   await page.keyboard.press("ArrowRight");
   await page.waitForTimeout(2200);
+  await page.getByRole("alert").getByText("The move was saved, but the board could not refresh. Reload the page to see the latest order.").waitFor({ timeout: 5000 });
   check(refreshFailureMoves === 1, `stale board replayed a queued move ${refreshFailureMoves} times`);
   check((await page.locator('[data-testid="board"] [role="status"]').textContent()) === "", "unconfirmed keyboard move was announced as successful");
   check(await page.evaluate(() => document.activeElement?.getAttribute("data-reorder")) === await page.getByTestId("card-MOB-1").getAttribute("data-card-id"), "timed-out refresh lost focus from the reorder handle");

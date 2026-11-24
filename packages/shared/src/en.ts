@@ -564,6 +564,7 @@ export const en = {
     "board.reorderHint": "Use left and right arrows to move between columns; use up and down arrows to reorder within a column.",
     "board.reorderColumnsHint": "Use the left and right arrow keys to move between columns.",
     "board.moved": "{name} moved to {column}, position {position}",
+    "board.refreshFailed": "The move was saved, but the board could not refresh. Reload the page to see the latest order.",
     "board.movedTo": "{name} moved to {column}",
     "states.moveDown": "Move down",
     "states.remove": "Remove",

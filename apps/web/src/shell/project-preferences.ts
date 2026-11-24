@@ -106,6 +106,8 @@ export function useProjectPreferences(workspaceId: string, enabled = true) {
   const prefs = query.data ?? [];
   const reload = React.useCallback(async () => { await client.invalidateQueries({ queryKey: key }); }, [client, key]);
   const current = React.useCallback(() => client.getQueryData<ProjectPreference[]>(key) ?? [], [client, key]);
+  const orderWrites = React.useRef<Promise<void>>(Promise.resolve());
+  const orderRevision = React.useRef(0);
 
   const setPreference = React.useCallback(async (projectId: string, patch: { starred?: boolean; expanded?: boolean }) => {
     const before = current();
@@ -116,11 +118,22 @@ export function useProjectPreferences(workspaceId: string, enabled = true) {
   }, [client, key, current, reload]);
 
   const setOrder = React.useCallback(async (order: string[]) => {
+    const revision = ++orderRevision.current;
     client.setQueryData<ProjectPreference[]>(key, orderAsPreferences(current(), order));
-    const saved = await action<ProjectPreference[]>("set_project_order", { workspaceId, projectIds: order });
-    if (saved) client.setQueryData<ProjectPreference[]>(key, saved);
-    else await reload();
-  }, [client, key, current, reload, workspaceId]);
+    const write = orderWrites.current.then(async () => {
+      const saved = await action<ProjectPreference[]>("set_project_order", { workspaceId, projectIds: order });
+      if (saved) {
+        if (revision === orderRevision.current) client.setQueryData<ProjectPreference[]>(key, saved);
+        return { saved: true, restored: false };
+      }
+      if (revision !== orderRevision.current) return { saved: false, restored: false };
+      const restored = await action<ProjectPreference[]>("list_project_preferences", { workspaceId });
+      if (revision === orderRevision.current && restored !== null) client.setQueryData<ProjectPreference[]>(key, restored);
+      return { saved: false, restored: revision === orderRevision.current && restored !== null };
+    });
+    orderWrites.current = write.then(() => undefined, () => undefined);
+    return write;
+  }, [client, key, current, workspaceId]);
 
   const resetOrder = React.useCallback(async () => {
     client.setQueryData<ProjectPreference[]>(key, current().map((pref) => ({ ...pref, position: null })));

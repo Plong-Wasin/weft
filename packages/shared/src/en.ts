@@ -2004,6 +2004,8 @@ export const en = {
   "sidebar.dragHandle": "Drag to reorder",
   "sidebar.reorderHint": "Drag, or press the Up and Down arrow keys, to reorder",
   "sidebar.projectMoved": "{project} moved to position {position} of {total} in the {group} group.",
+  "sidebar.projectMoveFailed": "Couldn't save the project order. The saved order has been restored.",
+  "sidebar.projectMoveRestoreFailed": "Couldn't save the project order, and the saved order couldn't be reloaded.",
   "sidebar.projectSwitcher": "Project",
   "sidebar.backToWorkspace": "Back to Workspace settings",
   "sidebar.projectOptions": "Project options",

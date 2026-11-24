@@ -166,6 +166,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
   const drag = React.useRef<{ id: string; starred: boolean } | null>(null);
   // A keyboard move keeps focus on the moved project: the list re-sorts, so focus is set once the new order is in the cache.
   const focusAfterMove = React.useRef<string | null>(null);
+  const latestOrderMove = React.useRef(0);
   React.useEffect(() => {
     const id = focusAfterMove.current;
     if (!id) return;
@@ -182,22 +183,26 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
         const group = projectList.filter((item) => Boolean(preferenceOf(prefs, item.id)?.starred) === isStarred);
         const groupIds = new Set(group.map((item) => item.id));
         const groupOrder = order.filter((id) => groupIds.has(id));
-        setReorderAnnouncement(translate("sidebar.projectMoved")
+        const successMessage = translate("sidebar.projectMoved")
           .replace("{project}", project.name)
           .replace("{position}", String(groupOrder.indexOf(projectId) + 1))
           .replace("{total}", String(group.length))
-          .replace("{group}", translate(isStarred ? "sidebar.starred" : "projects.title")));
+          .replace("{group}", translate(isStarred ? "sidebar.starred" : "projects.title"));
+        const moveId = ++latestOrderMove.current;
+        void setOrder(order).then((result) => {
+          if (moveId !== latestOrderMove.current) return;
+          setReorderAnnouncement(result.saved ? successMessage : translate(result.restored ? "sidebar.projectMoveFailed" : "sidebar.projectMoveRestoreFailed"));
+        });
       }
       focusAfterMove.current = projectId;
-      void setOrder(order);
     },
     drop: (fromId, toId) => {
       const order = dropWithinGroup(projectList, prefs, fromId, toId);
-      if (order) void setOrder(order);
+      if (order) { latestOrderMove.current += 1; void setOrder(order); }
     },
-    star: (projectId, starred) => void setPreference(projectId, { starred }),
+    star: (projectId, starred) => { latestOrderMove.current += 1; void setPreference(projectId, { starred }); },
     expand: (projectId, expanded) => void setPreference(projectId, { expanded }),
-    reset: async () => { await resetOrder(); },
+    reset: async () => { latestOrderMove.current += 1; await resetOrder(); },
   };
   // Project mode: one project's settings. While the list loads the sections show at once; once it is loaded, a key that is not in it gets the Workspace mode list.
   const inProjectSettings = section === "settings" && Boolean(projectKey) && (data === undefined || projectList.some((project) => project.key === projectKey));

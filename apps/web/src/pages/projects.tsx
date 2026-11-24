@@ -42,18 +42,18 @@ export function ProjectsPanel() {
     }}>
       <h2 className="m-0 text-16 font-semibold text-primary">{translate("projects.createTitle")}</h2>
       <div className="grid gap-4 sm:grid-cols-2">
-        <label className="text-13 font-medium text-secondary">{translate("projects.name")}<input autoFocus required value={name} onChange={(event) => {
+        <label className="text-13 font-medium text-secondary">{translate("projects.name")}<input className="text-16 md:text-14" autoFocus required value={name} onChange={(event) => {
           const value = event.target.value;
           setName(value);
           if (suggestKey) setKey(sanitizeProjectKey(value));
         }} /></label>
-        <label className="text-13 font-medium text-secondary">{translate("projects.key")}<input required pattern="[A-Z][A-Z0-9]{1,11}" title={translate("projects.keyHint")} aria-describedby="project-key-help" value={key} onChange={(event) => {
+        <label className="text-13 font-medium text-secondary">{translate("projects.key")}<input className="text-16 md:text-14" required pattern="[A-Z][A-Z0-9]{1,11}" title={translate("projects.keyHint")} aria-describedby="project-key-help" value={key} onChange={(event) => {
           setSuggestKey(false);
           setKey(event.target.value.toUpperCase());
         }} /></label>
       </div>
       <p id="project-key-help" className="m-0 text-13 text-secondary">{translate("projects.keyHelp")}</p>
-      <label className="w-full max-w-xs text-13 font-medium text-secondary">{translate("projects.visibility")}<select value={visibility} onChange={(event) => setVisibility(event.target.value as Visibility)}>
+      <label className="w-full max-w-xs text-13 font-medium text-secondary">{translate("projects.visibility")}<select className="text-16 md:text-14" value={visibility} onChange={(event) => setVisibility(event.target.value as Visibility)}>
         <option value="public">{translate("projects.visibility.public")}</option>
         <option value="private">{translate("projects.visibility.private")}</option>
       </select></label>

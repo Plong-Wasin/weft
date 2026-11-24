@@ -258,6 +258,14 @@ try {
   await page.getByRole("button", { name: translate("workspace.switch") }).click();
   await page.getByRole("menuitemradio", { name: "E2E team" }).waitFor();
   await page.getByRole("menuitem", { name: translate("workspace.new") }).click();
+  const createWorkspaceDialog = page.getByRole("dialog", { name: translate("workspace.new") });
+  await createWorkspaceDialog.waitFor();
+  check(await page.getByLabel(translate("workspace.name")).evaluate((element) => element === document.activeElement), "workspace name input is not focused when the create form opens");
+  await createWorkspaceDialog.getByRole("button", { name: translate("workspace.close") }).click();
+  const newWorkspaceItem = page.getByRole("menuitem", { name: translate("workspace.new") });
+  await newWorkspaceItem.waitFor();
+  check(await newWorkspaceItem.evaluate((element) => element === document.activeElement), "workspace switcher does not restore focus to New workspace after cancel");
+  await newWorkspaceItem.click();
   await page.getByLabel(translate("workspace.name")).fill("Second team");
   await page.getByLabel(translate("workspace.slug")).fill(second);
   await page.getByRole("button", { name: translate("workspace.create") }).click();

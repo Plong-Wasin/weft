@@ -168,6 +168,18 @@ function descriptionPlainText(node: unknown): string {
   return type === "doc" ? parts.filter(Boolean).join("\n") : parts.join("");
 }
 
+/** Snapshots the item's current description as a Description Version, unless a version already holds the same text. */
+async function snapshotDescription(database: Database, item: ItemRow, userId: string) {
+  if (!item.descriptionText) return;
+  const contentMarkdown = item.descriptionMarkdown ?? await writtenFormOf(item.description);
+  const versions = await database.select({ content: workItemDescriptionVersions.content, contentMarkdown: workItemDescriptionVersions.contentMarkdown })
+    .from(workItemDescriptionVersions).where(eq(workItemDescriptionVersions.workItemId, item.id));
+  for (const version of versions) {
+    if ((version.contentMarkdown ?? await writtenFormOf(version.content)) === contentMarkdown) return;
+  }
+  await database.insert(workItemDescriptionVersions).values({ workItemId: item.id, contentMarkdown, contentText: item.descriptionText, createdBy: userId });
+}
+
 export async function writtenDescription(document: unknown, markdown?: string, options: MarkdownOptions = {}) {
   const prepared = await prepareRichTextGuarded(document, markdown, "description", "descriptionMarkdown", options, "verbatim");
   return { ...prepared, text: descriptionPlainText(prepared.document) };
@@ -548,8 +560,8 @@ export function createWorkItemActions(db: Database) {
       descriptionWarningDetails = description.warningDetails;
       const [latestVersion] = await database.select({ createdAt: workItemDescriptionVersions.createdAt }).from(workItemDescriptionVersions)
         .where(eq(workItemDescriptionVersions.workItemId, item.id)).orderBy(desc(workItemDescriptionVersions.createdAt), desc(workItemDescriptionVersions.id)).limit(1);
-      if (item.descriptionText && (!latestVersion || Date.now() - latestVersion.createdAt.getTime() >= descriptionVersionIntervalMs)) {
-        await database.insert(workItemDescriptionVersions).values({ workItemId: item.id, contentMarkdown: item.descriptionMarkdown ?? await writtenFormOf(item.description), contentText: item.descriptionText, createdBy: context.userId });
+      if (!latestVersion || Date.now() - latestVersion.createdAt.getTime() >= descriptionVersionIntervalMs) {
+        await snapshotDescription(database, item, context.userId);
       }
       changes.push({ field: "description", column: { descriptionMarkdown: description.markdown, descriptionDoc: description.document, descriptionText: description.text }, oldValue: item.descriptionMarkdown ?? await writtenFormOf(item.description), newValue: description.markdown });
     }
@@ -1151,7 +1163,7 @@ export function createWorkItemActions(db: Database) {
           assertNotArchived(current);
           const [version] = await database.select().from(workItemDescriptionVersions).where(and(eq(workItemDescriptionVersions.id, input.versionId), eq(workItemDescriptionVersions.workItemId, current.id)));
           if (!version) throw new ActionError("Version not found", 404);
-          if (current.descriptionText) await database.insert(workItemDescriptionVersions).values({ workItemId: current.id, contentMarkdown: current.descriptionMarkdown ?? await writtenFormOf(current.description), contentText: current.descriptionText, createdBy: context.userId });
+          await snapshotDescription(database, current, context.userId);
           const versionMarkdown = version.contentMarkdown ?? await writtenFormOf(version.content);
           const restoredDocument = await storedDocumentOf(versionMarkdown, { preserveUnresolvedReferences: true });
           await validateRichTextAssets(database, restoredDocument, "work_item", current.id, context.userId);

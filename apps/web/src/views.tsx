@@ -17,6 +17,29 @@ const t = (key: string) => translate(key as MessageKey);
 const primary = "rounded-md border-0 bg-accent-primary px-3 py-1 text-13 font-medium text-on-color hover:bg-accent-primary-hover disabled:opacity-60";
 const ghost = "flex items-center gap-1.5 rounded-md border border-subtle bg-surface-1 px-2.5 py-1 text-13 font-medium text-primary hover:bg-layer-transparent-hover";
 
+/** Native modal behavior keeps focus inside the overlay and returns it to the opener. */
+function ViewDialog({ title, onClose, children, className = "", descriptionId, safeFocus = false }: { title: string; onClose: () => void; children: React.ReactNode; className?: string; descriptionId?: string; safeFocus?: boolean }) {
+  const dialog = React.useRef<HTMLDialogElement>(null);
+  const titleId = React.useId();
+  const pointerStartedOutside = React.useRef(false);
+  React.useLayoutEffect(() => {
+    const element = dialog.current;
+    if (!element) return;
+    element.showModal();
+    const initialFocus = safeFocus ? element.querySelector<HTMLElement>("[data-safe-action]") : element.querySelector<HTMLElement>("input:not([type=hidden]), select, textarea") ?? element.querySelector<HTMLElement>("button");
+    initialFocus?.focus();
+    return () => { if (element.open) element.close(); };
+  }, []);
+  const isOutside = (event: React.PointerEvent<HTMLDialogElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom;
+  };
+  return <dialog ref={dialog} aria-labelledby={titleId} aria-describedby={descriptionId} {...({ closedby: "any" } as Record<string, string>)} className={`fixed inset-0 m-auto grid max-h-[calc(100dvh-2rem)] gap-4 overflow-auto rounded-lg border border-subtle bg-surface-1 p-5 text-primary shadow-xl backdrop:bg-backdrop [overscroll-behavior:contain] ${className}`} onClose={onClose} onPointerDown={(event) => { pointerStartedOutside.current = isOutside(event); }} onPointerUp={(event) => { if (pointerStartedOutside.current && isOutside(event)) dialog.current?.close(); pointerStartedOutside.current = false; }}>
+    <h2 id={titleId} className="m-0 text-18 font-semibold text-primary">{title}</h2>
+    {children}
+  </dialog>;
+}
+
 type Scope = { workspaceSlug: string; project: Project; selfId: string };
 /** Owner, or an Admin (a project Admin or a workspace Admin, whose project role is null), may change a View. */
 const canChange = (view: SavedView, scope: Scope) => view.ownerId === scope.selfId || scope.project.role === "Admin" || scope.project.role === null;
@@ -48,15 +71,10 @@ export function ViewFormModal({ mode, view, target, settings, onClose, onSaved }
     if (!saved) { setNote(t("views.failed")); return; }
     onSaved(saved);
   };
-  return <>
-    <div aria-hidden className="fixed inset-0 z-40 bg-backdrop" onClick={onClose} />
-    <div role="dialog" aria-modal="true" aria-label={title} className="fixed left-1/2 top-[10vh] z-50 w-[calc(100vw-1.5rem)] max-w-lg -translate-x-1/2 overflow-auto rounded-lg border border-subtle bg-surface-1 shadow-xl">
-      <form className="my-0 grid gap-4 p-5" onSubmit={(event) => void submit(event)}>
-        <div className="flex items-center gap-2">
-          <h2 className="m-0 flex-1 text-18 font-semibold text-primary">{title}</h2>
-          <button type="button" className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={t("views.cancel")} onClick={onClose}><X aria-hidden size={16} /></button>
-        </div>
-        <label className="grid gap-1 text-13 text-secondary">{t("views.name")}<input autoFocus required maxLength={100} value={name} className="w-full text-14" onChange={(event) => setName(event.target.value)} /></label>
+  return <ViewDialog title={title} onClose={onClose} className="max-w-lg">
+      <form className="my-0 grid gap-4" onSubmit={(event) => void submit(event)}>
+        <button type="button" className="absolute right-4 top-4 rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={t("views.cancel")} onClick={onClose}><X aria-hidden size={16} /></button>
+        <label className="grid gap-1 text-13 text-secondary">{t("views.name")}<input required maxLength={100} value={name} className="w-full text-14" onChange={(event) => setName(event.target.value)} /></label>
         <label className="grid gap-1 text-13 text-secondary">{t("views.description")}<textarea rows={3} maxLength={2000} value={description} className="w-full text-14" onChange={(event) => setDescription(event.target.value)} /></label>
         <label className="grid gap-1 text-13 text-secondary">{t("views.access")}
           <select value={access} className="text-14" onChange={(event) => setAccess(event.target.value as SavedView["access"])}>
@@ -68,25 +86,20 @@ export function ViewFormModal({ mode, view, target, settings, onClose, onSaved }
           <button type="submit" disabled={busy || name.trim() === ""} className={primary}>{t(mode === "edit" ? "views.save" : "views.create")}</button>
         </div>
       </form>
-    </div>
-  </>;
+  </ViewDialog>;
 }
 
 export function DeleteViewModal({ view, onClose, onDeleted }: { view: SavedView; onClose: () => void; onDeleted: () => void }) {
   const [note, setNote] = React.useState<string | null>(null);
   const label = t("views.delete");
-  return <>
-    <div aria-hidden className="fixed inset-0 z-40 bg-backdrop" onClick={onClose} />
-    <div role="alertdialog" aria-modal="true" aria-label={label} className="fixed left-1/2 top-[15vh] z-50 grid w-[calc(100vw-1.5rem)] max-w-md -translate-x-1/2 gap-4 rounded-lg border border-subtle bg-surface-1 p-5 shadow-xl">
-      <h2 className="m-0 text-18 font-semibold text-primary">{label}</h2>
-      <p className="m-0 text-14 text-secondary">{t("views.deleteConfirm").replace("{name}", view.name)}</p>
+  return <ViewDialog title={label} onClose={onClose} descriptionId="delete-view-description" safeFocus>
+      <p id="delete-view-description" className="m-0 text-14 text-secondary">{t("views.deleteConfirm").replace("{name}", view.name)}</p>
       {note && <p role="alert" className="m-0 text-13 text-danger-text">{note}</p>}
       <div className="flex justify-end gap-2">
-        <button type="button" className="secondary" onClick={onClose}>{t("views.cancel")}</button>
+        <button type="button" data-safe-action className="secondary" onClick={onClose}>{t("views.cancel")}</button>
         <button type="button" className={primary} onClick={async () => { if ((await action("delete_view", { viewId: view.id })) === null) setNote(t("views.failed")); else onDeleted(); }}>{t("views.deleteAction")}</button>
       </div>
-    </div>
-  </>;
+  </ViewDialog>;
 }
 
 /** The menu of a View: edit and delete for the owner or an Admin, copy link for anyone. */
@@ -153,7 +166,7 @@ export function SaveAsViewButton({ params, project, workspaceSlug }: { params: L
   const navigate = useNavigate();
   return <>
     {/* On phone the label drops out of the toolbar (the icon and title remain), so the toolbar fits in two rows. */}
-    <button type="button" className={ghost} aria-label={t("views.saveAs")} title={t("views.saveAs")} onClick={() => setOpen(true)}><BookmarkPlus aria-hidden size={14} /><span className="max-sm:sr-only">{t("views.saveAs")}</span></button>
+    <button type="button" className={ghost} aria-label={t("views.saveAs")} title={t("views.saveAs")} onClick={(event) => { event.currentTarget.focus(); setOpen(true); }}><BookmarkPlus aria-hidden size={14} /><span className="max-sm:sr-only">{t("views.saveAs")}</span></button>
     {open && <ViewFormModal mode="save" target={{ projectId: project.id }} settings={paramsToSettings(params)} onClose={() => setOpen(false)} onSaved={(view) => { setOpen(false); navigate(paths.view(workspaceSlug, project.key, view.id)); }} />}
   </>;
 }

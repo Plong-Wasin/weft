@@ -172,10 +172,14 @@ function descriptionPlainText(node: unknown): string {
 async function snapshotDescription(database: Database, item: ItemRow, userId: string) {
   if (!item.descriptionText) return;
   const contentMarkdown = item.descriptionMarkdown ?? await writtenFormOf(item.description);
-  const versions = await database.select({ content: workItemDescriptionVersions.content, contentMarkdown: workItemDescriptionVersions.contentMarkdown })
-    .from(workItemDescriptionVersions).where(eq(workItemDescriptionVersions.workItemId, item.id));
-  for (const version of versions) {
-    if ((version.contentMarkdown ?? await writtenFormOf(version.content)) === contentMarkdown) return;
+  // Compared in the database so an edit does not read every stored version; only legacy rows without Markdown are converted here.
+  const [same] = await database.select({ id: workItemDescriptionVersions.id }).from(workItemDescriptionVersions)
+    .where(and(eq(workItemDescriptionVersions.workItemId, item.id), eq(workItemDescriptionVersions.contentMarkdown, contentMarkdown))).limit(1);
+  if (same) return;
+  const legacy = await database.select({ content: workItemDescriptionVersions.content }).from(workItemDescriptionVersions)
+    .where(and(eq(workItemDescriptionVersions.workItemId, item.id), isNull(workItemDescriptionVersions.contentMarkdown)));
+  for (const version of legacy) {
+    if (await writtenFormOf(version.content) === contentMarkdown) return;
   }
   await database.insert(workItemDescriptionVersions).values({ workItemId: item.id, contentMarkdown, contentText: item.descriptionText, createdBy: userId });
 }

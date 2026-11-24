@@ -1279,6 +1279,8 @@ export const en = {
     "intake.snoozedTill": "Snoozed until {date}",
     "intake.duplicateOf": "Duplicate of {id}",
     "intake.failed": "That decision was not allowed.",
+    "intake.loadFailed": "Could not load. Try again.",
+    "intake.retry": "Try again",
     "intake.tab.open": "Open",
     "intake.tab.closed": "Closed",
     "intake.add": "Submit to Intake",

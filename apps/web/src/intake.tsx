@@ -55,9 +55,9 @@ const statusTone: Record<Outcome, string> = {
   pending: "bg-warning-subtle text-warning-primary", snoozed: "bg-layer-2 text-secondary", accepted: "bg-success-subtle text-success-text",
   rejected: "bg-danger-subtle text-danger-text", duplicate: "bg-layer-2 text-secondary",
 };
-const primaryButton = "rounded-md bg-accent-primary px-3 py-1.5 text-13 font-medium text-on-color hover:opacity-90 disabled:opacity-50";
-const quietButton = "rounded-md border border-subtle bg-surface-1 px-3 py-1.5 text-13 font-medium text-primary hover:bg-layer-transparent-hover disabled:opacity-50";
-const iconButton = "grid size-8 place-items-center rounded-md border border-subtle bg-surface-1 p-0 text-secondary hover:bg-layer-transparent-hover hover:text-primary disabled:opacity-40";
+const primaryButton = "min-h-9 rounded-md bg-accent-primary px-3 py-1.5 text-13 font-medium text-on-color hover:opacity-90 disabled:opacity-50";
+const quietButton = "min-h-9 rounded-md border border-subtle bg-surface-1 px-3 py-1.5 text-13 font-medium text-primary hover:bg-layer-transparent-hover disabled:opacity-50";
+const iconButton = "grid size-9 place-items-center rounded-md border border-subtle bg-surface-1 p-0 text-secondary hover:bg-layer-transparent-hover hover:text-primary disabled:opacity-40";
 const field = "w-full rounded-md border border-subtle bg-surface-1 px-2.5 py-1.5 text-14 text-primary";
 
 function StatusBadge({ item }: { item: IntakeItem }) {
@@ -193,10 +193,12 @@ function SnoozeModal({ onClose, onSnooze }: { onClose: () => void; onSnooze: (ti
 function AcceptModal({ action, projectId, onClose, onAccept }: { action: Call; projectId: string; onClose: () => void; onAccept: (stateId: string) => void }) {
   const [states, setStates] = React.useState<IntakeState[]>([]);
   const [stateId, setStateId] = React.useState("");
+  const [failed, setFailed] = React.useState(false);
   React.useEffect(() => {
     let active = true;
     void action<IntakeState[]>("list_states", { projectId }).then((rows) => {
       if (!active) return;
+      setFailed(!rows);
       const normal = (rows ?? []).filter((state) => state.group !== "triage");
       setStates(normal);
       setStateId((current) => current || normal.find((state) => state.group === "backlog")?.id || "");
@@ -205,6 +207,7 @@ function AcceptModal({ action, projectId, onClose, onAccept }: { action: Call; p
   }, [action, projectId]);
   return <Modal title={t("intake.acceptIntoState")} onClose={onClose}>
     <form className="my-0 grid gap-3" onSubmit={(event) => { event.preventDefault(); if (stateId) onAccept(stateId); }}>
+      {failed && <p role="alert" className="m-0 text-13 text-danger-text">{t("intake.loadFailed")}</p>}
       <label className="grid gap-1 text-13 text-secondary">{t("workItems.state")}
         <select autoFocus required aria-label={t("workItems.state")} value={stateId} className={field} onChange={(event) => setStateId(event.target.value)}>
           {states.map((state) => <option key={state.id} value={state.id}>{state.name}</option>)}
@@ -355,7 +358,7 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
           <button type="button" className={quietButton} onClick={() => void run("reject_intake_item", {})}>{t("intake.reject")}</button>
         </>}
         {canDecide && unsnoozed && <button type="button" className={quietButton} onClick={() => void run("unsnooze_intake_item", {})}>{t("intake.unsnooze")}</button>}
-        <Popover label={t("intake.more")} align="right" className="size-8 justify-center border border-subtle bg-surface-1" trigger={<MoreHorizontal aria-hidden size={16} />}>
+        <Popover label={t("intake.more")} align="right" className="size-9 justify-center border border-subtle bg-surface-1" trigger={<MoreHorizontal aria-hidden size={16} />}>
           {(close) => <>
             {canDecide && undecided && <>
               <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setDialog("snooze"); }}><Clock aria-hidden size={14} />{t("intake.snooze")}</button>
@@ -423,6 +426,7 @@ export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, 
   const tab: Tab = params.get("currentTab") === "closed" ? "closed" : "open";
   const selectedId = params.get("inboxIssueId");
   const [items, setItems] = React.useState<IntakeItem[] | null>(null);
+  const [loadFailed, setLoadFailed] = React.useState(false);
   const [adding, setAdding] = React.useState(false);
   const [drafts, setDrafts] = React.useState<Record<string, IntakeDraft>>({});
   const [failedUploads, setFailedUploads] = React.useState<Record<string, File[]>>({});
@@ -440,7 +444,10 @@ export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, 
   const load = React.useCallback(async () => {
     if (!enabled) { setItems(null); return; }
     const lists = await Promise.all(tabOutcomes[tab].map((outcome) => action<IntakeItem[]>("list_intake_items", { projectId, outcome })));
-    setItems(lists.flatMap((list) => list ?? []).sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+    // A failed list is not an empty Intake: keep the items unknown so the retry prompt shows instead of "Nothing waiting".
+    const failed = lists.some((list) => list === null);
+    setLoadFailed(failed);
+    setItems(failed ? null : lists.flatMap((list) => list ?? []).sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
   }, [action, projectId, enabled, tab]);
   React.useEffect(() => { setItems(null); void load(); }, [load]);
   const select = React.useCallback((id: string | null, nextTab: Tab = tab) => {
@@ -501,6 +508,7 @@ export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, 
             {value === "open" && tab === "open" && items && <span data-testid="intake-open-count" className="rounded-full bg-accent-primary/20 px-1.5 py-0.5 text-11 font-semibold text-accent-primary">{items.length}</span>}
           </button>)}
         </div>
+        {loadFailed && <div role="alert" className="flex flex-wrap items-center gap-2 px-4 py-3 text-13 text-danger-text"><span>{t("intake.loadFailed")}</span><button type="button" className={quietButton} onClick={() => void load()}>{t("intake.retry")}</button></div>}
         <ul aria-label={t("intake.list")} className="m-0 min-h-0 flex-1 list-none overflow-auto p-0">
           {(items ?? []).map((item) => <ListRow key={item.id} item={item} selected={item.id === selectedId} onSelect={() => select(item.id)} />)}
         </ul>

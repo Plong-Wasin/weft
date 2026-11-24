@@ -33,7 +33,8 @@ export function DescriptionEditor({ workspaceId, workItemId, owner, mentionPeopl
     extensions: [...surfaceEditorExtensions({ surface: "full", mention: mentionExtension(peopleRef), image: extension }), ListIndent, BlockKeyboardShortcuts, MarkdownPaste, CodeBlockCopy, EmojiSuggestions, ReferencePicker.configure({ workspaceId }), AiAssist, SlashMenu.configure({ commands: [...blockCommands, ...wikiCommands.filter((command) => ["todo", "table", "callout", "emoji", "color", "image"].includes(command.id))], onImage: () => picker.current?.click() }), SafeLinkClick, EditorPlaceholder], content: normalizeAssetImages((initial as object | null) ?? ""), editable,
     onUpdate: ({ editor: current }) => onChange(current.getJSON()),
   });
-  React.useEffect(() => { editor?.setEditable(editable); }, [editor, editable]);
+  // Tiptap's setEditable emits `update` by default, even with no document change; that fired onChange on every load and saved the description untouched.
+  React.useEffect(() => { editor?.setEditable(editable, false); }, [editor, editable]);
   return <div>
     {editable
       ? <EditorToolbar editor={editor} label={translate("wiki.toolbar")} testId="description-toolbar" onImage={imageUploads && workItemId ? () => picker.current?.click() : undefined} source={editor?.isEditable ? { active: sourceActive, onToggle: () => sourceToggle.current?.() } : undefined} end={status} />

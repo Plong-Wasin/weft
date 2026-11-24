@@ -79,6 +79,9 @@ try {
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "desktop Inbox overflows horizontally");
 
   await page.setViewportSize({ width: 390, height: 844 });
+  const notificationActionHeights = await page.locator('section[aria-labelledby="inbox-title"] ul li button').evaluateAll((buttons) => buttons.map((button) => button.getBoundingClientRect().height));
+  check(notificationActionHeights.length > 0, "mobile Inbox must show notification actions");
+  check(notificationActionHeights.every((height) => height >= 44), `mobile notification actions must be at least 44px tall, found ${notificationActionHeights.join(", ")}`);
   await page.screenshot({ path: `${shots}/inbox-390.png`, fullPage: true });
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "mobile Inbox overflows horizontally");
   await page.goto(`${web}/${slug}`);

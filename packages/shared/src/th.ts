@@ -518,6 +518,7 @@ export const th: Record<keyof typeof en, string> = {
   "layout.filter.priority": "ความสำคัญ",
   "layout.filter.assignee": "ผู้รับผิดชอบ",
   "layout.filter.label": "ป้ายกำกับ",
+  "layout.filter.noMatches": "ไม่พบตัวกรองที่ตรงกับคำค้น",
   "layout.unassigned": "ไม่มีผู้รับผิดชอบ",
   "layout.sort": "เรียงตาม",
   "layout.sort.manual": "เรียงเอง",

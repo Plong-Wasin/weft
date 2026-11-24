@@ -516,6 +516,7 @@ export const en = {
     "layout.filter.priority": "Priority",
     "layout.filter.assignee": "Assignee",
     "layout.filter.label": "Label",
+    "layout.filter.noMatches": "No filters match your search.",
     "layout.unassigned": "Unassigned",
     "layout.sort": "Order by",
     "layout.sort.manual": "Manual order",

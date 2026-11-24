@@ -23,15 +23,22 @@ export function FilterPicker({ sections, filters, count, onChange, onClear }: { 
   const [open, setOpen] = React.useState<string | null>(null);
   const label = count > 0 ? t("layout.filtersActive").replace("{count}", String(count)) : t("layout.filters");
   const needle = search.trim().toLowerCase();
+  const matchingDates = dateFilters.filter((key) => !needle || t(`layout.filter.${key}`).toLowerCase().includes(needle));
+  const matchingSections = sections.filter((section) => {
+    const sectionMatches = t(`layout.filter.${section.key}`).toLowerCase().includes(needle);
+    const shown = section.options.filter((option) => !needle || option.name.toLowerCase().includes(needle));
+    return !needle || sectionMatches || shown.length > 0;
+  });
+  const hasMatches = matchingSections.length > 0 || matchingDates.length > 0;
   const toggle = (key: NamedFilter, id: string, on: boolean) => onChange({ ...filters, [key]: on ? [...filters[key], id] : filters[key].filter((other) => other !== id) });
   return <Popover label={label} className={ghost} panelRole="dialog" panelClassName="grid w-72 max-w-[calc(100vw-2rem)] max-h-[70vh] gap-1 overflow-auto p-2" trigger={<><Filter aria-hidden size={14} /><span>{label}</span></>}>
     {() => <>
       <label className="relative my-0 block"><span className="sr-only">{t("layout.filter.search")}</span>
         <Search aria-hidden size={14} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-tertiary" />
         <input type="search" value={search} placeholder={t("layout.filter.search")} className="w-full pl-7" onChange={(event) => setSearch(event.target.value)} /></label>
-      {sections.map((section) => {
-        const shown = section.options.filter((option) => !needle || option.name.toLowerCase().includes(needle));
-        if (needle && shown.length === 0) return null;
+      {matchingSections.map((section) => {
+        const sectionMatches = t(`layout.filter.${section.key}`).toLowerCase().includes(needle);
+        const shown = section.options.filter((option) => !needle || sectionMatches || option.name.toLowerCase().includes(needle));
         const expanded = needle !== "" || open === section.key;
         const selected = filters[section.key].length;
         return <div key={section.key} className="grid gap-1">
@@ -44,7 +51,7 @@ export function FilterPicker({ sections, filters, count, onChange, onClear }: { 
           </fieldset>}
         </div>;
       })}
-      {(!needle || dateFilters.some((key) => t(`layout.filter.${key}`).toLowerCase().includes(needle))) && dateFilters.map((key) => {
+      {matchingDates.map((key) => {
         const expanded = needle !== "" || open === key;
         const range = filters[key];
         return <div key={key} className="grid gap-1">
@@ -57,6 +64,7 @@ export function FilterPicker({ sections, filters, count, onChange, onClear }: { 
           </fieldset>}
         </div>;
       })}
+      {needle && !hasMatches && <p role="status" className="m-0 px-2 py-2 text-13 text-secondary">{t("layout.filter.noMatches")}</p>}
       {count > 0 && <button type="button" className="secondary mt-1" onClick={onClear}>{t("layout.clear")}</button>}
     </>}
   </Popover>;

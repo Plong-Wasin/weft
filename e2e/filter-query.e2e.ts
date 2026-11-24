@@ -66,6 +66,20 @@ try {
   // 1. Picking a filter updates the list, the chip and the filter query text.
   await page.getByRole("button", { name: translate("layout.filters") }).click();
   const dialog = page.getByRole("dialog", { name: translate("layout.filters") });
+  const filterSearch = dialog.getByRole("searchbox", { name: translate("layout.filter.search") });
+  await filterSearch.fill(translate("layout.filter.priority"));
+  const priorityGroup = dialog.getByRole("button", { name: translate("layout.filter.priority") });
+  await priorityGroup.waitFor();
+  await dialog.getByRole("group", { name: translate("layout.filter.priority") }).getByLabel(translate("workItems.priority.high")).waitFor();
+  await filterSearch.fill("no-such-filter");
+  await dialog.getByRole("status").getByText(translate("layout.filter.noMatches")).waitFor();
+  await filterSearch.fill("");
+  await page.setViewportSize({ width: 390, height: 844 });
+  const panel = dialog;
+  const panelBox = await panel.boundingBox();
+  check(panelBox !== null && panelBox.x >= 0 && panelBox.x + panelBox.width <= 390, "filter picker overflows the mobile viewport");
+  await page.screenshot({ path: `${shots}/filter-picker-390.png` });
+  await page.setViewportSize({ width: 1440, height: 900 });
   await dialog.getByRole("button", { name: translate("layout.filter.priority") }).click();
   await dialog.getByRole("group", { name: translate("layout.filter.priority") }).getByLabel(translate("workItems.priority.high")).check();
   await waitTitles("Alpha");

@@ -1,5 +1,5 @@
 import React from "react";
-import { ChevronsLeft, ChevronsRight, Plus } from "lucide-react";
+import { ChevronsLeft, ChevronsRight, GripVertical, Plus } from "lucide-react";
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
 
 const t = (key: string) => translate(key as MessageKey);
@@ -8,6 +8,9 @@ export interface BoardColumn<T> { key: string; name: string; icon?: React.ReactN
 interface Draggable { id: string; displayId: string }
 type Over = { column: string; before: string | null } | null;
 type Drag = { id: string; x: number; y: number; width: number; height: number; offsetX: number; offsetY: number; over: Over };
+type KeyboardMoveKey = "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown";
+type KeyboardMove = { id: string; column: string; key: KeyboardMoveKey };
+type FocusIntent = { id: string; handle: HTMLElement; board: HTMLDivElement; valid: boolean };
 
 /** Distance (px) the pointer must travel before a mouse or pen press becomes a drag. */
 const slop = 5;
@@ -19,12 +22,14 @@ const edge = 48;
  * Kanban columns with cards that drag with the pointer (mouse, pen, or a touch long-press). The component
  * only reports where a card was dropped; the caller decides which Action that means.
  */
-export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag, onDrop, collapsed, onToggle, canAdd, onAdd, quick, quickForm }: {
+export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag, reorderWithinColumn, announcePosition, onDrop, collapsed, onToggle, canAdd, onAdd, quick, quickForm }: {
   columns: Array<BoardColumn<T>>;
-  renderCard: (item: T) => React.ReactNode;
+  renderCard: (item: T, reorderHandle: React.ReactNode) => React.ReactNode;
   ghost: (item: T) => React.ReactNode;
   canDrag: boolean;
-  onDrop: (id: string, column: string, beforeId: string | null) => void;
+  reorderWithinColumn: boolean;
+  announcePosition: boolean;
+  onDrop: (id: string, column: string, beforeId: string | null, sourceColumn: string) => void | boolean | Promise<void | boolean>;
   collapsed: string[];
   onToggle: (column: string) => void;
   canAdd: boolean;
@@ -33,13 +38,41 @@ export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag
   quickForm: (column: string) => React.ReactNode;
 }) {
   const [drag, setDrag] = React.useState<Drag | null>(null);
+  const [announce, setAnnounce] = React.useState("");
   const scroller = React.useRef<HTMLDivElement>(null);
+  const keyboardQueue = React.useRef<KeyboardMove[]>([]);
+  const keyboardBusy = React.useRef(false);
+  const focusAfterMove = React.useRef<{ id: string; column: string; intent: FocusIntent } | null>(null);
+  const focusIntent = React.useRef<FocusIntent | null>(null);
+  const keyboardColumn = React.useRef(new Map<string, string>());
+  const latest = React.useRef({ columns, collapsed, canDrag, reorderWithinColumn, announcePosition, onDrop });
+  latest.current = { columns, collapsed, canDrag, reorderWithinColumn, announcePosition, onDrop };
   const live = React.useRef<{ drag: Drag | null; byId: Map<string, T>; scrollSpeed: number }>({ drag: null, byId: new Map(), scrollSpeed: 0 });
   const justDragged = React.useRef(false);
   /** True from a touch press until it ends: the long-press that starts a drag must not open the browser context menu. */
   const touching = React.useRef(false);
   const everything = columns.flatMap((column) => column.items);
   live.current.byId = new Map(everything.map((item) => [item.id, item]));
+
+  React.useEffect(() => {
+    const invalidateOnFocus = (event: FocusEvent) => {
+      const intent = focusIntent.current;
+      if (intent && event.target !== intent.handle && event.target !== intent.board) intent.valid = false;
+    };
+    const invalidateOnPointer = (event: PointerEvent) => {
+      const intent = focusIntent.current;
+      if (intent && !intent.board.contains(event.target as Node)) intent.valid = false;
+    };
+    document.addEventListener("focusin", invalidateOnFocus);
+    document.addEventListener("pointerdown", invalidateOnPointer, true);
+    return () => {
+      document.removeEventListener("focusin", invalidateOnFocus);
+      document.removeEventListener("pointerdown", invalidateOnPointer, true);
+    };
+  }, []);
+
+  const mayRestoreFocus = (intent: FocusIntent) => intent.valid
+    && (document.activeElement === intent.handle || document.activeElement === intent.board || document.activeElement === document.body);
 
   /** Where the pointer would drop: the column under it and the card it lands above (null = end of the column). */
   const targetAt = (x: number, y: number, id: string): Over => {
@@ -55,7 +88,7 @@ export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag
     return { column, before: null };
   };
 
-  const start = (event: React.PointerEvent<HTMLElement>, item: T) => {
+  const start = (event: React.PointerEvent<HTMLElement>, item: T, sourceColumn: string) => {
     if (!canDrag || (event.pointerType === "mouse" && event.button !== 0)) return;
     if ((event.target as HTMLElement).closest("input, select, textarea, [role=menu], [role=dialog], [data-no-drag]")) return;
     const card = event.currentTarget;
@@ -100,7 +133,7 @@ export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag
       setDrag(null);
       justDragged.current = true;
       setTimeout(() => { justDragged.current = false; }, 0);
-      if (commit && finished?.over) onDrop(item.id, finished.over.column, finished.over.before);
+      if (commit && finished?.over) void onDrop(item.id, finished.over.column, finished.over.before, sourceColumn);
     };
     const up = () => stop(true);
     const cancel = () => stop(false);
@@ -137,7 +170,142 @@ export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag
 
   const dragged = drag ? live.current.byId.get(drag.id) : undefined;
 
-  return <div ref={scroller} className="flex min-h-96 items-start gap-3 overflow-x-auto pb-3" data-testid="board">
+  React.useLayoutEffect(() => {
+    const pending = focusAfterMove.current;
+    if (!pending) return;
+    if (!mayRestoreFocus(pending.intent)) { focusAfterMove.current = null; return; }
+    if (!columns.some((column) => column.key === pending.column && column.items.some((item) => item.id === pending.id))) return;
+    const handle = scroller.current?.querySelector<HTMLButtonElement>(`[data-reorder="${CSS.escape(pending.id)}"][data-reorder-column="${CSS.escape(pending.column)}"]`);
+    if (!handle) return;
+    handle.scrollIntoView({ block: "nearest", inline: "nearest" });
+    pending.intent.handle = handle;
+    handle.focus({ preventScroll: true });
+    focusAfterMove.current = null;
+  }, [columns]);
+
+  /** Apply queued arrows against the newest board snapshot so repeated presses don't reuse stale groups. */
+  const processKeyboardQueue = async () => {
+    if (keyboardBusy.current) return;
+    keyboardBusy.current = true;
+    let announcement: string | null = null;
+    try {
+      while (keyboardQueue.current.length > 0) {
+        const { id, column, key } = keyboardQueue.current.shift()!;
+        const state = latest.current;
+        if (!state.canDrag) continue;
+        const intent = focusIntent.current;
+        const sourceColumn = keyboardColumn.current.get(id) ?? column;
+        const source = state.columns.find((candidate) => candidate.key === sourceColumn && candidate.items.some((card) => card.id === id));
+        if (!source) continue;
+        const item = source.items.find((card) => card.id === id)!;
+        const itemIndex = source.items.findIndex((card) => card.id === id);
+        let destination = source;
+        let before: string | null = null;
+        let position = itemIndex + 1;
+        if (key === "ArrowLeft" || key === "ArrowRight") {
+          const visible = state.columns.filter((column) => !state.collapsed.includes(column.key));
+          const visibleIndex = visible.findIndex((column) => column.key === source.key);
+          const next = visible[visibleIndex + (key === "ArrowRight" ? 1 : -1)];
+          if (!next) continue;
+          destination = next;
+          position = Math.min(itemIndex, destination.items.length) + 1;
+          before = destination.items[position - 1]?.id ?? null;
+        } else {
+          if (!state.reorderWithinColumn || source.items.length < 2) continue;
+          if (key === "ArrowUp") { before = source.items[itemIndex - 1]?.id ?? null; position = itemIndex; }
+          else { before = source.items[itemIndex + 2]?.id ?? null; position = itemIndex + 2; }
+          if ((key === "ArrowUp" && itemIndex === 0) || (key === "ArrowDown" && itemIndex === source.items.length - 1)) continue;
+        }
+        const expected = [...destination.items.filter((card) => card.id !== id)];
+        const insertion = before ? expected.findIndex((card) => card.id === before) : expected.length;
+        expected.splice(insertion < 0 ? expected.length : insertion, 0, item);
+        if (destination.key !== source.key && intent?.id === id) focusAfterMove.current = { id, column: destination.key, intent };
+        let result: void | boolean;
+        try { result = await state.onDrop(id, destination.key, before, source.key); }
+        catch {
+          focusAfterMove.current = null;
+          focusIntent.current = null;
+          keyboardQueue.current = [];
+          announcement = null;
+          break;
+        }
+        if (result === false) {
+          focusAfterMove.current = null;
+          focusIntent.current = null;
+          keyboardQueue.current = [];
+          announcement = null;
+          break;
+        }
+        const deadline = performance.now() + 2_000;
+        let settled = false;
+        let leftResults = false;
+        while (performance.now() < deadline) {
+          leftResults = !latest.current.columns.some((column) => column.items.some((card) => card.id === id));
+          if (leftResults) { settled = true; break; }
+          const actual = latest.current.columns.find((column) => column.key === destination.key);
+          settled = !!actual && actual.items.some((card) => card.id === id) && (!state.announcePosition || actual.items.map((card) => card.id).join("\0") === expected.map((card) => card.id).join("\0"));
+          if (settled) break;
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        }
+        if (!settled) {
+          keyboardQueue.current = [];
+          focusAfterMove.current = null;
+          const handle = scroller.current?.querySelector<HTMLButtonElement>(`[data-reorder="${CSS.escape(id)}"][data-reorder-column="${CSS.escape(source.key)}"]`);
+          if (intent?.id === id && mayRestoreFocus(intent) && handle) {
+            intent.handle = handle;
+            handle.focus({ preventScroll: true });
+          }
+          announcement = null;
+          break;
+        }
+        keyboardColumn.current.set(id, destination.key);
+        if (leftResults || focusAfterMove.current?.id === id) {
+          focusAfterMove.current = null;
+          if (intent?.id === id && mayRestoreFocus(intent) && scroller.current) {
+            intent.handle = scroller.current;
+            scroller.current.focus({ preventScroll: true });
+          }
+        }
+        announcement = state.announcePosition && !leftResults
+          ? t("board.moved").replace("{name}", item.displayId).replace("{column}", destination.name).replace("{position}", String(position))
+          : t("board.movedTo").replace("{name}", item.displayId).replace("{column}", destination.name);
+      }
+    } catch {
+      keyboardQueue.current = [];
+      focusAfterMove.current = null;
+      focusIntent.current = null;
+      announcement = null;
+    } finally {
+      keyboardBusy.current = false;
+      keyboardColumn.current.clear();
+      if (!focusAfterMove.current) focusIntent.current = null;
+      if (announcement) setAnnounce(announcement);
+    }
+  };
+
+  /** Move a card with the keyboard using the same drop action as pointer dragging. */
+  const moveByKeyboard = (id: string, column: string, event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (!latest.current.canDrag || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+    if ((event.key === "ArrowUp" || event.key === "ArrowDown") && !latest.current.reorderWithinColumn) return;
+    event.preventDefault();
+    if (!focusIntent.current || focusIntent.current.id !== id) {
+      const board = scroller.current;
+      if (board) focusIntent.current = { id, handle: event.currentTarget, board, valid: document.activeElement === event.currentTarget || document.activeElement === board };
+    }
+    setAnnounce("");
+    keyboardQueue.current.push({ id, column, key: event.key as KeyboardMoveKey });
+    void processKeyboardQueue();
+  };
+
+  const reorderHandle = (item: T, column: string) => <button type="button" data-reorder={item.id} data-reorder-column={column} disabled={!canDrag}
+    aria-label={`${t("sortable.reorder")}: ${item.displayId}`} aria-keyshortcuts={reorderWithinColumn ? "ArrowLeft ArrowRight ArrowUp ArrowDown" : "ArrowLeft ArrowRight"} title={t(reorderWithinColumn ? "board.reorderHint" : "board.reorderColumnsHint")}
+    className="grid size-7 shrink-0 touch-none cursor-grab place-items-center rounded-md bg-transparent p-0 text-tertiary hover:bg-layer-transparent-hover hover:text-primary"
+    onKeyDown={(event) => { moveByKeyboard(item.id, column, event); }}>
+    <GripVertical aria-hidden size={14} />
+  </button>;
+
+  return <div ref={scroller} tabIndex={-1} className="flex min-h-96 items-start gap-3 overflow-x-auto pb-3" data-testid="board">
+    <span role="status" aria-live="polite" className="sr-only">{announce}</span>
     {columns.map((column) => {
       const closed = collapsed.includes(column.key);
       const over = drag?.over?.column === column.key;
@@ -161,10 +329,10 @@ export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag
             {drag?.over?.column === column.key && drag.over.before === item.id && <div aria-hidden className="h-0.5 rounded-full bg-accent-primary" />}
             <article data-card-id={item.id} data-testid={`card-${item.displayId}`} data-dragging={drag?.id === item.id ? "" : undefined}
               className={`select-none rounded-lg border border-subtle bg-surface-1 p-3 ${canDrag ? "cursor-grab" : ""} ${drag?.id === item.id ? "opacity-40" : ""}`}
-              onPointerDown={(event) => start(event, item)} onDragStart={(event) => event.preventDefault()}
+              onPointerDown={(event) => start(event, item, column.key)} onDragStart={(event) => event.preventDefault()}
               onClickCapture={(event) => { if (justDragged.current) { event.preventDefault(); event.stopPropagation(); } }}
               onContextMenu={(event) => { if (drag || touching.current) event.preventDefault(); }}>
-              {renderCard(item)}
+              {renderCard(item, reorderHandle(item, column.key))}
             </article>
           </React.Fragment>)}
           {drag?.over?.column === column.key && drag.over.before === null && <div aria-hidden className="h-0.5 rounded-full bg-accent-primary" />}

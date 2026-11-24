@@ -148,6 +148,7 @@ try {
   check(await page.getByRole("button", { name: translate("workspace.switch") }).isVisible(), "workspace switcher is missing from the top-left");
   check((await page.getByRole("button", { name: translate("workspace.switch") }).innerText()).includes("E2E team"), "workspace switcher does not identify the current workspace");
   const desktopSwitcher = page.getByRole("button", { name: translate("workspace.switch") });
+  check(await desktopSwitcher.getAttribute("aria-label") === `${translate("workspace.switch")}: E2E team`, "workspace switcher accessible name omits the current workspace");
   await page.getByRole("link", { name: translate("shell.skipToMain") }).focus();
   await page.keyboard.press("Tab");
   check(await sidebarToggle.evaluate((element) => element === document.activeElement), "desktop sidebar toggle is not in the Tab order after skip link");
@@ -155,6 +156,7 @@ try {
   check(await desktopSwitcher.evaluate((element) => element === document.activeElement), "workspace switcher is not in the desktop Tab order");
   await page.keyboard.press("Enter");
   await page.getByRole("menuitemradio", { name: "E2E team" }).waitFor();
+  await page.screenshot({ path: `${shots}/workspace-switcher-1440.png` });
   await page.keyboard.press("Escape");
   await page.getByRole("link", { name: translate("topbar.notifications") }).waitFor();
   const searchBox = await page.getByRole("searchbox", { name: translate("search.label") }).boundingBox();
@@ -280,6 +282,8 @@ try {
   // Verify the create dialog and focus recovery at phone width before unrelated search checks.
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: translate("workspace.switch") }).click();
+  await page.getByRole("menuitemradio", { name: "E2E team" }).waitFor();
+  await page.screenshot({ path: `${shots}/workspace-switcher-390.png` });
   await page.getByRole("menuitem", { name: translate("workspace.new") }).click();
   const phoneCreateDialog = page.getByRole("dialog", { name: translate("workspace.new") });
   await phoneCreateDialog.waitFor();
@@ -370,6 +374,7 @@ try {
   check(await page.getByRole("link", { name: translate("app.title"), exact: true }).count() === 0, "brand link remains in the phone shell");
   check(await page.getByRole("button", { name: translate("workspace.switch") }).isVisible(), "workspace switcher is missing at 390px");
   check((await page.getByRole("button", { name: translate("workspace.switch") }).innerText()).includes("E2E team"), "phone workspace switcher does not identify the current workspace");
+  check(await page.getByRole("button", { name: translate("workspace.switch") }).getAttribute("aria-label") === `${translate("workspace.switch")}: E2E team`, "phone workspace switcher accessible name omits the current workspace");
   await page.getByRole("button", { name: translate("shell.openMenu") }).focus();
   await page.keyboard.press("Tab");
   check(await page.getByRole("button", { name: translate("workspace.switch") }).evaluate((element) => element === document.activeElement), "workspace switcher is not next in the phone Tab order");

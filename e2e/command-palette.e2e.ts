@@ -71,10 +71,12 @@ try {
   await page.keyboard.press("Escape");
   await palette().waitFor({ state: "detached" });
   check(await paletteButton.evaluate((element) => element === document.activeElement), "focus did not return to the palette button after Escape");
-  // Escape still closes after Tab moves focus out of the search field.
+  // Tab and Shift+Tab stay within the modal palette, and Escape still closes it.
   await openWithKeys();
   await page.keyboard.press("Tab");
-  check(await input().evaluate((element) => element !== document.activeElement), "Tab did not move focus out of the search field");
+  check(await input().evaluate((element) => element === document.activeElement), "Tab moved focus outside the modal palette");
+  await page.keyboard.press("Shift+Tab");
+  check(await input().evaluate((element) => element === document.activeElement), "Shift+Tab moved focus outside the modal palette");
   await page.keyboard.press("Escape");
   await palette().waitFor({ state: "detached" });
   console.log("palette ok: Ctrl+K opens, Escape closes and returns focus (also after Tab)");

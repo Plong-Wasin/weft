@@ -3,7 +3,7 @@ import React from "react";
 import { Link, useNavigate } from "react-router";
 import { BookmarkPlus, ChevronRight, Globe, Layers, Lock, MoreHorizontal, Plus, Search, X } from "lucide-react";
 import { formatDate, translate, type MessageKey } from "@weft/shared";
-import { action } from "./api";
+import { action, actionResult } from "./api";
 import { paths } from "./routes";
 import { Popover, menuItemClass } from "./shell/popover";
 import { Avatar } from "./avatar";
@@ -120,13 +120,19 @@ function ViewMenu({ view, scope, onEdit, onDelete }: { view: SavedView; scope: S
 export function ViewsPage({ workspaceSlug, project, selfId }: Scope) {
   const scope = { workspaceSlug, project, selfId };
   const [views, setViews] = React.useState<SavedView[] | null>(null);
+  const [loadFailed, setLoadFailed] = React.useState(false);
   const [people, setPeople] = React.useState<Member[]>([]);
   const [search, setSearch] = React.useState("");
   const [creating, setCreating] = React.useState(false);
   const [editing, setEditing] = React.useState<SavedView | null>(null);
   const [deleting, setDeleting] = React.useState<SavedView | null>(null);
   const canWrite = project.role !== "Guest" && !project.archived;
-  const load = React.useCallback(async () => setViews(await action<SavedView[]>("list_views", { projectId: project.id }) ?? []), [project.id]);
+  const load = React.useCallback(async () => {
+    const result = await actionResult<SavedView[] | null>("list_views", { projectId: project.id });
+    if ("error" in result) { setViews(null); setLoadFailed(true); return; }
+    setLoadFailed(false);
+    setViews(result.data ?? []);
+  }, [project.id]);
   React.useEffect(() => { void load(); void action<Member[]>("list_project_members", { projectId: project.id }).then((rows) => setPeople(rows ?? [])); }, [load, project.id]);
   const needle = search.trim().toLowerCase();
   const shown = (views ?? []).filter((view) => !needle || view.name.toLowerCase().includes(needle));
@@ -142,6 +148,10 @@ export function ViewsPage({ workspaceSlug, project, selfId }: Scope) {
         <input type="search" value={search} placeholder={t("views.search")} className="w-full pl-7 text-13 sm:w-48" onChange={(event) => setSearch(event.target.value)} /></label>
       {canWrite && <button type="button" className={`${primary} flex items-center gap-1.5`} onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{t("views.add")}</button>}
     </header>
+    {loadFailed && <div role="alert" className="flex flex-wrap items-center gap-2 px-3 py-6 text-14 text-secondary">
+      <span>{t("views.loadFailed")}</span>
+      <button type="button" className={ghost} onClick={() => { void load(); }}>{t("views.retry")}</button>
+    </div>}
     {views !== null && shown.length === 0 && <p role="status" className="px-3 py-6 text-14 text-secondary">{t(views.length === 0 ? "views.empty" : "views.noMatch")}</p>}
     <ul aria-label={t("views.title")} className="m-0 list-none p-0">{shown.map((view) => <li key={view.id} data-testid={`view-row-${view.name}`} className="flex items-center gap-3 border-b border-subtle px-3 py-3 hover:bg-layer-transparent-hover">
       <Layers aria-hidden size={16} className="shrink-0 text-secondary" />

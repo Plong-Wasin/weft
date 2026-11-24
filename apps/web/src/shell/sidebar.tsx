@@ -153,6 +153,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
   const { projectKey } = useParams();
   const { selfId } = useWorkspace();
   const [projectQuery, setProjectQuery] = React.useState("");
+  const [reorderAnnouncement, setReorderAnnouncement] = React.useState("");
   // Analytics is for workspace Admins and Members; a Guest gets no entry (the Actions refuse a Guest anyway).
   const { data: members } = useQuery({ ...workspaceMembersQuery(workspace.id), enabled: section === "work" || section === "settings" });
   const canSeeAnalytics = (members ?? []).some((member) => member.userId === selfId && member.role !== "Guest");
@@ -165,6 +166,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
   const drag = React.useRef<{ id: string; starred: boolean } | null>(null);
   // A keyboard move keeps focus on the moved project: the list re-sorts, so focus is set once the new order is in the cache.
   const focusAfterMove = React.useRef<string | null>(null);
+  const latestOrderMove = React.useRef(0);
   React.useEffect(() => {
     const id = focusAfterMove.current;
     if (!id) return;
@@ -175,16 +177,33 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
     move: (projectId, delta) => {
       const order = moveWithinGroup(projectList, prefs, projectId, delta);
       if (!order) return;
+      const project = projectList.find((item) => item.id === projectId);
+      if (project) {
+        const isStarred = Boolean(preferenceOf(prefs, projectId)?.starred);
+        const group = projectList.filter((item) => Boolean(preferenceOf(prefs, item.id)?.starred) === isStarred);
+        const groupIds = new Set(group.map((item) => item.id));
+        const groupOrder = order.filter((id) => groupIds.has(id));
+        const successMessage = translate("sidebar.projectMoved")
+          .replace("{project}", project.name)
+          .replace("{position}", String(groupOrder.indexOf(projectId) + 1))
+          .replace("{total}", String(group.length))
+          .replace("{group}", translate(isStarred ? "sidebar.starred" : "projects.title"));
+        const moveId = ++latestOrderMove.current;
+        setReorderAnnouncement("");
+        void setOrder(order).then((result) => {
+          if (moveId !== latestOrderMove.current) return;
+          setReorderAnnouncement(result.saved ? successMessage : translate(!result.current ? "sidebar.projectMoveFailedPending" : result.restored ? "sidebar.projectMoveFailed" : "sidebar.projectMoveRestoreFailed"));
+        });
+      }
       focusAfterMove.current = projectId;
-      void setOrder(order);
     },
     drop: (fromId, toId) => {
       const order = dropWithinGroup(projectList, prefs, fromId, toId);
-      if (order) void setOrder(order);
+      if (order) { latestOrderMove.current += 1; void setOrder(order); }
     },
-    star: (projectId, starred) => void setPreference(projectId, { starred }),
+    star: (projectId, starred) => { latestOrderMove.current += 1; void setPreference(projectId, { starred }); },
     expand: (projectId, expanded) => void setPreference(projectId, { expanded }),
-    reset: async () => { await resetOrder(); },
+    reset: async () => { latestOrderMove.current += 1; await resetOrder(); },
   };
   // Project mode: one project's settings. While the list loads the sections show at once; once it is loaded, a key that is not in it gets the Workspace mode list.
   const inProjectSettings = section === "settings" && Boolean(projectKey) && (data === undefined || projectList.some((project) => project.key === projectKey));
@@ -197,6 +216,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
   return <nav aria-label={translate("shell.sidebar")} className="flex w-64 shrink-0 max-md:w-auto max-md:flex-1 max-md:border-r-0 flex-col gap-0.5 overflow-y-auto border-r border-subtle bg-surface-1 p-2">
     <InboxNavLink workspace={workspace} />
     {section === "work" && <>
+      <span role="status" aria-live="polite" aria-atomic="true" className="sr-only">{reorderAnnouncement}</span>
       <NavLink end to={paths.home(workspace.slug)} className={itemClass}>{translate("nav.home")}</NavLink>
       <NavLink to={paths.workspaceViews(workspace.slug)} className={itemClass}>{translate("views.title")}</NavLink>
       <NavLink to={paths.activeCycles(workspace.slug)} className={itemClass}>{translate("cycles.activeTitle")}</NavLink>

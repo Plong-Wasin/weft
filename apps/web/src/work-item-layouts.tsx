@@ -165,10 +165,11 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   }), [projectId, cycleId, moduleId, board, params.sort, params.dir, run]);
   const load = React.useCallback(async () => {
     const result = await fetchItems(params.q);
-    if ("error" in result) { setQueryError(params.q.trim() ? result.error : null); return; }
+    if ("error" in result) { setQueryError(params.q.trim() ? result.error : null); return false; }
     setQueryError(null);
     setItems(result.data);
     setLoaded(true);
+    return true;
   }, [fetchItems, params.q]);
   // A different project, cycle or module starts again as not loaded; this effect is declared before the load so its reset never lands after the new list.
   React.useEffect(() => { setLoaded(false); }, [projectId, cycleId, moduleId]);
@@ -330,16 +331,17 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     }).finally(saved);
   };
   /** A card dropped in a column: State columns move it through `move_work_item` (state and order); Priority and Assignee columns change that property. */
-  const dropCard = async (id: string, column: string, beforeId: string | null) => {
+  const dropCard = async (id: string, column: string, beforeId: string | null, sourceColumn: string) => {
     const item = items.find((row) => row.id === id);
-    if (!item || id === beforeId) return;
+    if (!item || id === beforeId) return false;
     let result: unknown;
     if (boardGroup === "state") result = await action("move_work_item", { workItemId: id, stateId: column, ...(beforeId ? { beforeId } : {}) });
-    else if (boardGroup === "priority") { if (item.priority === column) return; result = await action("update_work_item", { workItemId: id, priority: column }); }
-    else if (boardGroup === "assignee") { if ((item.assigneeIds[0] ?? "none") === column) return; result = await action("update_work_item", { workItemId: id, assigneeIds: column === "none" ? [] : [column] }); }
-    else return;
-    setNote(result === null ? t("workItems.failed") : null);
-    await load();
+    else if (boardGroup === "priority") { if (item.priority === column) return false; result = await action("update_work_item", { workItemId: id, priority: column }); }
+    else if (boardGroup === "assignee") { if (sourceColumn === column || (item.assigneeIds.length === 0 && column === "none") || (item.assigneeIds.length === 1 && item.assigneeIds[0] === column)) return false; result = await action("update_work_item", { workItemId: id, assigneeIds: column === "none" ? [] : [column] }); }
+    else return false;
+    const refreshed = await load();
+    setNote(result === null ? t("workItems.failed") : refreshed ? null : t("board.refreshFailed"));
+    return result !== null && refreshed;
   };
 
   const personName = (id: string) => people.find((person) => person.userId === id)?.name ?? id;
@@ -636,14 +638,14 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     {toolbarExtra?.(params)}
   </div>;
 
-  const renderBoard = (columns: Array<BoardColumn<Item>>) => <Board columns={columns} canDrag={canWrite && ["state", "priority", "assignee"].includes(boardGroup)} canAdd={canCreate && canWrite} collapsed={collapsedColumns} onDrop={(id, column, beforeId) => void dropCard(id, column, beforeId)}
+  const renderBoard = (columns: Array<BoardColumn<Item>>) => <Board columns={columns} canDrag={canWrite && ["state", "priority", "assignee"].includes(boardGroup)} reorderWithinColumn={boardGroup === "state" && !/\border\s+by\b/i.test(params.q)} announcePosition={boardGroup === "state" && !/\border\s+by\b/i.test(params.q)} canAdd={canCreate && canWrite} collapsed={collapsedColumns} onDrop={(id, column, beforeId, sourceColumn) => dropCard(id, column, beforeId, sourceColumn)}
     onToggle={(column) => setCollapsedColumns((list) => list.includes(column) ? list.filter((key) => key !== column) : [...list, column])}
     onAdd={(column) => { setQuick(column); setQuickTitle(""); }} quick={quick} quickForm={quickForm}
-    renderCard={(item) => <div className="grid gap-2">
+    renderCard={(item, reorderHandle) => <div className="grid gap-2">
       <div className="flex items-start justify-between gap-2">{pickBox(item)}<div className="grid min-w-0 flex-1 gap-1">
         {shows("id") && <span className="text-12 text-tertiary">{item.displayId}</span>}
         <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} draggable={false} data-testid="card-title" className="text-14 font-medium text-primary [overflow-wrap:anywhere]">{item.title}</Link></div>
-        {rowAction && <span data-no-drag>{rowAction(item)}</span>}</div>
+        {reorderHandle}{rowAction && <span data-no-drag>{rowAction(item)}</span>}</div>
       <div className="flex flex-wrap items-center gap-1.5">{propertiesOf(item, boardGroup === "state", true)}</div>
     </div>}
     ghost={(item) => <div className="flex items-baseline gap-2"><span className="text-12 text-tertiary">{item.displayId}</span><span className="text-14 font-medium text-primary">{item.title}</span></div>} />;

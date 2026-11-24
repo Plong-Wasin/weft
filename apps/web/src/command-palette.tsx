@@ -188,7 +188,10 @@ export function CommandPalette({ current, signOut }: { current: Current; signOut
   let previousGroup: Group | null = null;
   return <>
     <div className="fixed inset-0 z-50 flex justify-center bg-backdrop px-4 pt-[10vh] max-md:pt-4" onMouseDown={(event) => { if (event.target === event.currentTarget) closePalette(); }}>
-      <div role="dialog" aria-modal="true" aria-label={translate("palette.title")} className="flex max-h-[75vh] w-full max-w-xl flex-col overflow-hidden rounded-lg border border-subtle bg-surface-1 shadow-xl">
+      <div role="dialog" aria-modal="true" aria-label={translate("palette.title")} onKeyDownCapture={(event) => {
+        // The search field is the palette's only tab stop; keep keyboard focus inside this modal overlay.
+        if (event.key === "Tab") { event.preventDefault(); input.current?.focus(); }
+      }} className="flex max-h-[75vh] w-full max-w-xl flex-col overflow-hidden rounded-lg border border-subtle bg-surface-1 shadow-xl">
         <div className="flex items-center gap-2 border-b border-subtle px-3">
           <Search aria-hidden size={16} className="shrink-0 text-tertiary" />
           <input ref={input} type="text" role="combobox" aria-expanded="true" aria-controls={listId} aria-autocomplete="list"

@@ -452,10 +452,13 @@ export function createCommentActions(db: Database) {
             return out(row, names.get(context.userId) ?? "", authorAgent, authorCodeCapable, mentionsOut, people, replies.length, prepared.warnings, prepared.warningDetails);
           };
           // Markdown equal to the stored form is a no-op save: no version, editedAt, mentions, notifications or Activity.
-          if (written === (existing.bodyMarkdown ?? await writtenFormOf(existing.body))) {
-            return { ...(await respond(existing, (await mentionsOf(database, [existing.id])).get(existing.id)!)), wakeOutcomes: [] };
+          // Re-read under a row lock: `existing` was loaded before the transaction, and a concurrent save by the same author must not make this one look like a no-op.
+          const [locked] = await database.select().from(comments).where(and(eq(comments.id, existing.id), isNull(comments.deletedAt))).for("update");
+          if (!locked) throw new ActionError("Comment not found", 404);
+          if (written === (locked.bodyMarkdown ?? await writtenFormOf(locked.body))) {
+            return { ...(await respond(locked, (await mentionsOf(database, [locked.id])).get(locked.id)!)), wakeOutcomes: [] };
           }
-          await database.insert(commentVersions).values({ commentId: existing.id, body: existing.body, bodyMarkdown: existing.bodyMarkdown ?? await writtenFormOf(existing.body), bodyText: existing.bodyText, writtenAt: existing.editedAt ?? existing.createdAt, createdAt: sql`clock_timestamp()` });
+          await database.insert(commentVersions).values({ commentId: locked.id, body: locked.body, bodyMarkdown: locked.bodyMarkdown ?? await writtenFormOf(locked.body), bodyText: locked.bodyText, writtenAt: locked.editedAt ?? locked.createdAt, createdAt: sql`clock_timestamp()` });
           const [row] = await database.update(comments).set({ body: input.body, bodyMarkdown: written, bodyText: text, editedAt: new Date() }).where(eq(comments.id, existing.id)).returning();
           await setOutlinksFromDocument(database, "work-item", existing.workItemId!, commentPart(existing.id), input.body);
           const already = (await mentionsOf(database, [existing.id])).get(existing.id)!;

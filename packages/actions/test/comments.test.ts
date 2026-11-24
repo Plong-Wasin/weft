@@ -399,6 +399,14 @@ test.concurrent("saving an unchanged comment body adds no version and keeps edit
     const sameBody = await comments.updateComment.handler({ userId: member.id }, { commentId: created.id, body: doc("changed") });
     expect(sameBody.editedAt).toBe(changed.editedAt);
     expect(await comments.listCommentVersions.handler({ userId: member.id }, { commentId: created.id })).toHaveLength(1);
+    // The web editor sends a document for text first written as Markdown: still a no-op, and no edit is logged.
+    const fresh = await comments.createComment.handler({ userId: member.id }, { workItemId: item.id, bodyMarkdown: "plain" });
+    const { activities } = await import("@weft/db");
+    const logBefore = (await transaction.select().from(activities)).length;
+    const viaDocument = await comments.updateComment.handler({ userId: member.id }, { commentId: fresh.id, body: doc("plain") });
+    expect(viaDocument.editedAt).toBeNull();
+    expect(await comments.listCommentVersions.handler({ userId: member.id }, { commentId: fresh.id })).toEqual([]);
+    expect((await transaction.select().from(activities)).length).toBe(logBefore);
   });
 });
 

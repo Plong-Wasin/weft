@@ -593,6 +593,30 @@ try {
     await page.screenshot({ path: `${shots}/ticket13-wiki-list-${theme}-${width}.png`, fullPage: true });
   }
 
+  // The mobile Wiki tree lives in the sidebar drawer; verify its real touch targets and row spacing.
+  const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
+  const mobilePage = await mobile.newPage();
+  await mobilePage.goto(`${web}/${slug}/wiki`);
+  await mobilePage.getByRole("button", { name: translate("shell.openMenu") }).tap();
+  const mobileSidebar = mobilePage.getByRole("dialog", { name: translate("shell.sidebar") });
+  await mobileSidebar.waitFor();
+  await mobileSidebar.getByRole("button", { name: `${translate("wikiSidebar.toggle")}: Drag target` }).tap();
+  await mobileSidebar.getByRole("link", { name: "Drag source", exact: true }).waitFor();
+  const targets = await mobileSidebar.locator("[data-wiki-drag-handle]").evaluateAll((handles) => handles.map((handle) => {
+    const box = handle.getBoundingClientRect();
+    const row = handle.closest("[data-wiki-drop-id]")!;
+    const link = row.querySelector("a")!.getBoundingClientRect();
+    const toggle = row.querySelector("button[aria-expanded]")?.getBoundingClientRect();
+    return { width: box.width, height: box.height, linkRight: link.right, handleLeft: box.left, toggleRight: toggle?.right, toggleWidth: toggle?.width, toggleHeight: toggle?.height, linkLeft: link.left };
+  }));
+  check(targets.length > 0, "mobile Wiki tree must expose reorder handles");
+  check(targets.every((target) => target.width >= 44 && target.height >= 44), `mobile reorder targets must be at least 44px: ${JSON.stringify(targets)}`);
+  check(targets.every((target) => target.toggleWidth === undefined || (target.toggleWidth >= 44 && target.toggleHeight! >= 44)), `mobile expand targets must be at least 44px: ${JSON.stringify(targets)}`);
+  check(targets.every((target) => target.handleLeft - target.linkRight >= 4 && (target.toggleRight === undefined || target.linkLeft - target.toggleRight >= 4)), `mobile page labels, expand targets, and reorder targets must have at least 4px of separation: ${JSON.stringify(targets)}`);
+  await mobilePage.screenshot({ path: `${shots}/wiki-sidebar-mobile-390.png` });
+  console.log(`wiki-pages ok: 390px touch sidebar targets and spacing (${targets.length} reorder handles)`);
+  await mobile.close();
+
   check(renderLoops.length === 0, `React render loop in the browser: ${renderLoops[0]}`);
   console.log("e2e wiki-pages: ok");
   await browser.close();

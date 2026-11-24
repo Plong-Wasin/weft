@@ -157,12 +157,17 @@ try {
   });
   await page.goto(`${web}/${slug}/browse/${readOnlyItem.displayId}`);
   await sidebar.waitFor();
-  const readOnlyDue = sidebar.getByRole("group", { name: `${t("workItems.dueDate")}: ${shortOf(localDay(-2))}, ${t("datePicker.overdue")}` });
+  const readOnlyDueName = `${t("workItems.dueDate")}: ${shortOf(localDay(-2))}, ${t("datePicker.overdue")}`;
+  const readOnlyDue = sidebar.getByRole("button", { name: readOnlyDueName });
   await readOnlyDue.waitFor();
   const readOnlyOverdueMark = readOnlyDue.getByTitle(t("datePicker.overdue"), { exact: true });
   check(await readOnlyOverdueMark.count() === 1, "read-only overdue Due should retain its Overdue tooltip");
   await readOnlyOverdueMark.hover();
   check(await readOnlyOverdueMark.getAttribute("title") === t("datePicker.overdue"), "read-only Due hover should still explain that the date is overdue");
+  await readOnlyDue.focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("dialog", { name: readOnlyDueName }).getByText(readOnlyDueName, { exact: true }).waitFor();
+  await page.keyboard.press("Escape");
   console.log("date-picker: overdue Due field keeps its accessible context when read-only");
 
   console.log(`date-picker ok: ${open.displayId} ${done.displayId}`);

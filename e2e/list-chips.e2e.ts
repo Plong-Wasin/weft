@@ -64,6 +64,16 @@ try {
   await page.goto(listUrl);
   const row = page.getByTestId("row-MOB-1");
   await row.waitFor();
+  const layoutSwitch = page.getByRole("group", { name: translate("layout.switch") });
+  const boardSwitch = layoutSwitch.getByRole("button", { name: translate("layout.board") });
+  check(await layoutSwitch.getByRole("tab").count() === 0, "the layout switcher should not expose incomplete tab semantics");
+  check(await layoutSwitch.getByRole("button", { pressed: true }).getAttribute("aria-label") === translate("layout.list"), "the current layout should be announced as pressed");
+  await boardSwitch.focus();
+  await page.keyboard.press("Enter");
+  await page.getByTestId("board").waitFor();
+  check(await boardSwitch.getAttribute("aria-pressed") === "true", "keyboard activation should switch layouts and update the pressed state");
+  await page.goto(listUrl);
+  await page.getByTestId("row-MOB-1").waitFor();
   await page.mouse.move(0, 0);
   let hidden = await wrapper(row, priority);
   check(hidden.position === "absolute" && hidden.width <= 1, `an empty chip should be hidden on desktop (${JSON.stringify(hidden)})`);

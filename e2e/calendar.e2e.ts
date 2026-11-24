@@ -49,7 +49,7 @@ try {
   const dated = await call<Item>("create_work_item", { projectId: project!.id, title: "Scheduled", startDate: day(8), dueDate: day(10) });
   await call<Item>("create_work_item", { projectId: project!.id, title: "Unscheduled" });
   await page.getByRole("link", { name: /MOB · Mobile/ }).click();
-  await page.getByRole("tab", { name: translate("layout.calendar") }).click();
+  await page.getByRole("button", { name: translate("layout.calendar") }).click();
   const calendar = page.getByTestId("calendar-layout");
   await calendar.getByTestId(`calendar-card-${dated.displayId}`).waitFor();
   await calendar.getByRole("link", { name: "Unscheduled" }).waitFor();

@@ -66,6 +66,10 @@ try {
   await inboxNav.waitFor();
   await page.waitForFunction((label) => [...document.querySelectorAll(`a[href="/${location.pathname.split("/")[1]}/notifications"]`)].some((link) => link.textContent?.includes("Inbox") && link.getAttribute("aria-label")?.includes(label)), translate("inbox.unread").replace("{count}", "1"));
   await page.getByRole("link", { name: /MOB-1 Inbox destination/ }).waitFor();
+  const markReadButton = page.getByRole("button", { name: new RegExp(`${translate("inbox.markRead")}.*MOB-1 Inbox destination`) });
+  await markReadButton.waitFor();
+  const markReadLabelledBy = await markReadButton.getAttribute("aria-labelledby");
+  check(markReadLabelledBy?.split(" ").some((id) => id.startsWith("notification-description-")) ?? false, "notification read action is not programmatically associated with its row");
   await page.getByText(translate("inbox.secretOutputBlockedDetail")).waitFor();
   check(await page.getByText(translate("inbox.secretOutputBlockedDetail")).count() === 1, "Runtime secret alert did not render a generic retry message");
   await page.getByRole("link", { name: translate("topbar.notifications") }).waitFor();

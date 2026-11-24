@@ -12,7 +12,7 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, CHOKIDAR_USEPOLLING: "true", VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
 ];
 
 async function waitFor(url: string) {
@@ -61,32 +61,69 @@ try {
   await page.getByText(t("modules.empty")).waitFor();
 
   // Create (modal): name, status, lead, members, dates.
-  await page.getByRole("button", { name: t("modules.addNew") }).click();
+  const addNew = page.getByRole("button", { name: t("modules.addNew") });
+  await addNew.click();
   const modal = page.getByRole("dialog", { name: t("modules.addTitleModal") });
-  check(await modal.evaluate((element) => element.scrollHeight <= element.clientHeight), "Create Module dialog should fit without a scrollbar at 1080p");
-  await modal.getByLabel(t("modules.name")).fill("Auth");
-  await modal.getByRole("toolbar", { name: t("wiki.toolbar") }).getByRole("button", { name: t("editor.sourceMode") }).click();
-  await modal.getByRole("textbox", { name: t("editor.sourceText") }).fill("**Initial module purpose**");
-  await modal.getByRole("toolbar", { name: t("wiki.toolbar") }).getByRole("button", { name: t("editor.sourceMode") }).click();
-  const status = modal.getByRole("button", { name: new RegExp(`^${t("modules.status")}:`) });
+  check(await modal.evaluate((element) => element instanceof HTMLDialogElement && element.matches(":modal")), "Create Module should use a native modal dialog");
+  await page.keyboard.press("Tab");
+  const focusStayedInDialog = await modal.evaluate((element) => element.contains(document.activeElement));
+  check(focusStayedInDialog, "Keyboard focus should stay inside the Module dialog");
+  const statusTrigger = modal.getByRole("button", { name: new RegExp(`^${t("modules.status")}:`) });
+  for (const viewport of [{ width: 1440, height: 1080 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await statusTrigger.click();
+    const menu = page.getByRole("menu").last();
+    await menu.waitFor({ state: "visible" });
+    const geometry = await menu.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + Math.min(rect.height / 2, 16));
+      return {
+        insideDialog: Boolean(element.closest("dialog")?.contains(element)),
+        left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom,
+        width: window.innerWidth, height: window.innerHeight,
+        visible: getComputedStyle(element).visibility === "visible",
+        receivesPointer: hit === element || element.contains(hit),
+      };
+    });
+    check(geometry.insideDialog, "Module popover should remain inside the modal focus boundary");
+    check(geometry.left >= 0 && geometry.right <= geometry.width && geometry.top >= 0 && geometry.bottom <= geometry.height, `Module popover should fit the ${viewport.width}px viewport`);
+    check(geometry.visible && geometry.receivesPointer, "Module popover should not be clipped by the scrollable dialog");
+    await page.keyboard.press("Escape");
+    check(await page.getByRole("dialog", { name: t("modules.addTitleModal") }).count() === 1, "Escape should close the popover without closing the Module dialog");
+    check(await page.getByRole("menu").count() === 0, "Escape should dismiss the open Module popover");
+    check(await statusTrigger.evaluate((element) => document.activeElement === element), "Escape should return focus to the Module popover trigger");
+  }
+  await page.setViewportSize({ width: 1440, height: 1080 });
+  await page.keyboard.press("Escape");
+  await modal.waitFor({ state: "detached" });
+  check(await addNew.evaluate((element) => document.activeElement === element), "Closing the Module dialog should restore focus to its opener");
+  await addNew.click();
+  const reopenedModal = page.getByRole("dialog", { name: t("modules.addTitleModal") });
+  check(await reopenedModal.evaluate((element) => element.matches(":modal")), "Module dialog should reopen after Escape");
+  check(await reopenedModal.evaluate((element) => element.scrollHeight <= element.clientHeight), "Create Module dialog should fit without a scrollbar at 1080p");
+  await reopenedModal.getByLabel(t("modules.name")).fill("Auth");
+  await reopenedModal.getByRole("toolbar", { name: t("wiki.toolbar") }).getByRole("button", { name: t("editor.sourceMode") }).click();
+  await reopenedModal.getByRole("textbox", { name: t("editor.sourceText") }).fill("**Initial module purpose**");
+  await reopenedModal.getByRole("toolbar", { name: t("wiki.toolbar") }).getByRole("button", { name: t("editor.sourceMode") }).click();
+  const status = reopenedModal.getByRole("button", { name: new RegExp(`^${t("modules.status")}:`) });
   await status.click();
-  const dates = await modal.getByLabel(t("modules.start")).evaluate((element) => {
+  const dates = await reopenedModal.getByLabel(t("modules.start")).evaluate((element) => {
     const row = element.closest("div.flex");
     return row?.getBoundingClientRect().toJSON();
   });
   const statusMenu = await page.locator('[role="menu"]').last().boundingBox();
   check(Boolean(dates && statusMenu && (statusMenu.y + statusMenu.height <= dates.top || statusMenu.y >= dates.bottom)), "Status options should not cover the date row");
-  check(await modal.evaluate((element) => element.scrollHeight <= element.clientHeight), "Opening Status should not add a dialog scrollbar");
+  check(await reopenedModal.evaluate((element) => element.scrollHeight <= element.clientHeight), "Opening Status should not add a dialog scrollbar");
   await page.getByRole("menuitemradio", { name: t("modules.status.in-progress") }).click();
-  await modal.getByRole("button", { name: new RegExp(`^${t("modules.lead")}:`) }).click();
+  await reopenedModal.getByRole("button", { name: new RegExp(`^${t("modules.lead")}:`) }).click();
   await page.getByRole("menuitemradio", { name: "Modules Tester" }).click();
-  await modal.getByRole("button", { name: new RegExp(`^${t("modules.members")}:`) }).click();
+  await reopenedModal.getByRole("button", { name: new RegExp(`^${t("modules.members")}:`) }).click();
   await page.getByRole("menuitemcheckbox", { name: "Modules Tester" }).click();
   await page.keyboard.press("Escape");
-  await modal.getByLabel(t("modules.start")).fill("2026-01-01");
-  await modal.getByLabel(t("modules.end")).fill("2026-03-01");
-  await modal.getByRole("button", { name: t("modules.create"), exact: true }).click();
-  await modal.waitFor({ state: "detached" });
+  await reopenedModal.getByLabel(t("modules.start")).fill("2026-01-01");
+  await reopenedModal.getByLabel(t("modules.end")).fill("2026-03-01");
+  await reopenedModal.getByRole("button", { name: t("modules.create"), exact: true }).click();
+  await reopenedModal.waitFor({ state: "detached" });
   const row = page.getByTestId("module-row-Auth");
   await row.waitFor();
   check((await row.innerText()).includes(t("modules.status.in-progress")), "status badge missing in list");

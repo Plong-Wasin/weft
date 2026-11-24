@@ -564,14 +564,18 @@ export function createWorkItemActions(db: Database) {
       const description = await writtenDescription(input.description, input.descriptionMarkdown, { ...markdownOptions, existingStableReferences: await existingStableReferences(database, "work-item", item.id, "body", item.descriptionMarkdown) });
       await validateRichTextAssets(database, description.document, "work_item", item.id, context.userId);
       descriptionWarnings = description.warnings;
-      descriptionDocument = description.document;
       descriptionWarningDetails = description.warningDetails;
-      const [latestVersion] = await database.select({ createdAt: workItemDescriptionVersions.createdAt }).from(workItemDescriptionVersions)
-        .where(eq(workItemDescriptionVersions.workItemId, item.id)).orderBy(desc(workItemDescriptionVersions.createdAt), desc(workItemDescriptionVersions.id)).limit(1);
-      if (!latestVersion || Date.now() - latestVersion.createdAt.getTime() >= descriptionVersionIntervalMs) {
-        await snapshotDescription(database, item, context.userId);
+      // A document that writes the stored Markdown is not an edit (an editor may re-emit a different document on load): no version, change, outlinks write or stored-document change.
+      const storedMarkdown = item.descriptionMarkdown ?? await writtenFormOf(item.description);
+      if (description.markdown !== storedMarkdown) {
+        descriptionDocument = description.document;
+        const [latestVersion] = await database.select({ createdAt: workItemDescriptionVersions.createdAt }).from(workItemDescriptionVersions)
+          .where(eq(workItemDescriptionVersions.workItemId, item.id)).orderBy(desc(workItemDescriptionVersions.createdAt), desc(workItemDescriptionVersions.id)).limit(1);
+        if (!latestVersion || Date.now() - latestVersion.createdAt.getTime() >= descriptionVersionIntervalMs) {
+          await snapshotDescription(database, item, context.userId);
+        }
+        changes.push({ field: "description", column: { descriptionMarkdown: description.markdown, descriptionDoc: description.document, descriptionText: description.text }, oldValue: storedMarkdown, newValue: description.markdown });
       }
-      changes.push({ field: "description", column: { descriptionMarkdown: description.markdown, descriptionDoc: description.document, descriptionText: description.text }, oldValue: item.descriptionMarkdown ?? await writtenFormOf(item.description), newValue: description.markdown });
     }
     if (input.estimatePointId !== undefined && input.estimatePointId !== item.estimatePointId) {
       const newValue = input.estimatePointId ? await estimateValueOf(database, project.id, input.estimatePointId) : null;

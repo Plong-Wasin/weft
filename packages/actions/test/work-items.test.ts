@@ -384,6 +384,28 @@ test.concurrent("an edit burst after a restore adds no intermediate version", as
   });
 });
 
+test.concurrent("saving a description document that writes the same Markdown changes nothing", async () => {
+  await withRollback(db, async (transaction) => {
+    const { items, member, create } = await setup(transaction);
+    const item = await create();
+    const doc = (text: string, extra: object = {}) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text, ...extra }] }] });
+    const first = await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, description: doc("same") });
+    const before = await items.listWorkItemActivities.handler({ userId: member.id }, { workItemId: item.id });
+    // The same text with an empty marks list: a different document, the same written form (what an editor may emit on load).
+    const saved = await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, description: doc("same", { marks: [] }) });
+    expect(saved.descriptionMarkdown).toBe("same");
+    // The old code kept a version of the unchanged text here.
+    expect(await items.listWorkItemDescriptionVersions.handler({ userId: member.id }, { workItemId: item.id })).toHaveLength(0);
+    expect(await items.listWorkItemActivities.handler({ userId: member.id }, { workItemId: item.id })).toHaveLength(before.length);
+    expect(saved.updatedAt).toBe(first.updatedAt);
+    // Alongside a real change the same document still adds no version and no description change.
+    const withTitle = await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, title: "Renamed", description: doc("same", { marks: [] }) });
+    expect(withTitle.title).toBe("Renamed");
+    expect(withTitle.descriptionMarkdown).toBe("same");
+    expect(await items.listWorkItemDescriptionVersions.handler({ userId: member.id }, { workItemId: item.id })).toHaveLength(0);
+  });
+});
+
 test.concurrent("the agent-id hint names only Agents of the project's own workspace, never another workspace's Agent", async () => {
   await withRollback(db, async (transaction) => {
     const { items, member, project, admin, workspace } = await setup(transaction);

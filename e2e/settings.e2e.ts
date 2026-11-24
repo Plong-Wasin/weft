@@ -366,6 +366,14 @@ try {
 
   // 390px: every settings page scrolls only inside itself; the drawer holds the settings sidebar.
   await page.setViewportSize({ width: 390, height: 844 });
+  // Workspace access is checked before member and invite controls render; show a loading status instead of a blank section.
+  await page.route("**/actions/list_members", async (route) => { await Bun.sleep(500); await route.continue(); });
+  await page.goto(`${web}/${slug}/settings/members`);
+  await page.getByRole("status").getByText(translate("account.loading")).waitFor();
+  await page.screenshot({ path: `${shots}/workspace-members-loading-390.png` });
+  await page.getByText("Settings Admin", { exact: true }).waitFor();
+  await page.unroute("**/actions/list_members");
+
   const phonePages: Array<[string, string]> = [
     ["", "workspace-general"], ["/members", "workspace-members"], ["/invites", "workspace-invites"],
     ["/projects/MOBX", "project-general"], ["/projects/MOBX/members", "project-members"], ["/projects/MOBX/labels", "project-labels"],

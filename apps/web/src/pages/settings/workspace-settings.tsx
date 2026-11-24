@@ -75,18 +75,18 @@ export function WorkspaceGeneral() {
 }
 
 export function WorkspaceMembers() {
-  const { workspace, members, isAdmin, load, selfId } = useWorkspaceMembers();
+  const { workspace, members, isAdmin, adminLoading, load, selfId } = useWorkspaceMembers();
   const [note, setNote] = React.useState<string | null>(null);
   const guard = async (result: unknown) => { setNote(result === null ? translate("members.failed") : null); await load(); };
   return <section>
     <SettingsHeader title={translate("members.title")} description={translate("settings.membersDesc")} />
-    <RowList>{members.map((member) => <Row key={member.userId}>
+    {adminLoading ? <p role="status" className="text-secondary">{translate("account.loading")}</p> : <RowList>{members.map((member) => <Row key={member.userId}>
       <Avatar name={member.name} id={member.userId} agent={member.isAgent} size="md" /><span className="grid min-w-[min(100%,14rem)] flex-1 gap-0.5"><span className="flex flex-wrap items-center gap-1.5 break-words font-medium">{member.name}{member.isAgent && <AgentLabel />}</span><span className="break-all text-13 text-secondary">{member.email}</span></span>
       {isAdmin && !member.isAgent ? <select aria-label={`${translate("settings.roleOf")} ${member.name}`} value={member.role} onChange={async (event) => guard(await action("change_member_role", { workspaceId: workspace.id, userId: member.userId, role: event.target.value }))}>
         {roles.map((role) => <option key={role} value={role}>{translate(`members.role.${role}`)}</option>)}
       </select> : <span className="text-secondary">{translate(`members.role.${member.role}`)}</span>}
       {isAdmin && !member.isAgent && <button type="button" className="secondary hover:!text-danger-text" aria-label={fillMessage(translate("members.removeNamed"), { name: member.name })} onClick={async () => { if (!window.confirm(translate("members.removeConfirm"))) return; await guard(await action("remove_member", { workspaceId: workspace.id, userId: member.userId })); }}>{translate("members.remove")}</button>}
-    </Row>)}</RowList>
+    </Row>)}</RowList>}
     <Note note={note} error />
     {isAdmin && <div className="mt-8"><MemberSecurityList workspaceId={workspace.id} selfId={selfId} onChanged={load} /></div>}
   </section>;
@@ -95,7 +95,7 @@ export function WorkspaceMembers() {
 /** The audit log is for Admins; others see why it is closed. */
 export function WorkspaceAudit() {
   const { workspace, members, isAdmin, adminLoading } = useWorkspaceMembers();
-  if (!isAdmin) return <section><SettingsHeader title={translate("account.auditTitle")} description={translate("account.auditDesc")} />{!adminLoading && <p role="status" className="text-secondary">{translate("account.auditAdminOnly")}</p>}</section>;
+  if (!isAdmin) return <section><SettingsHeader title={translate("account.auditTitle")} description={translate("account.auditDesc")} /><p role="status" className="text-secondary">{translate(adminLoading ? "account.loading" : "account.auditAdminOnly")}</p></section>;
   return <AuditLogPage workspaceId={workspace.id} members={members.filter((member) => !member.isAgent)} />;
 }
 
@@ -124,7 +124,7 @@ export function WorkspaceInvites() {
     if (group.length < 2) continue;
     group.forEach((invite, index) => inviteInstances.set(invite.id, fillMessage(translate("settings.inviteInstance"), { number: formatNumber(index + 1), total: formatNumber(group.length) })));
   }
-  if (!isAdmin) return <section><SettingsHeader title={translate("settings.invites")} description={translate("settings.invitesDesc")} />{!adminLoading && <p role="status" className="text-secondary">{translate("settings.adminOnly")}</p>}</section>;
+  if (!isAdmin) return <section><SettingsHeader title={translate("settings.invites")} description={translate("settings.invitesDesc")} /><p role="status" className="text-secondary">{translate(adminLoading ? "account.loading" : "settings.adminOnly")}</p></section>;
   return <section>
     <SettingsHeader title={translate("settings.invites")} description={translate("settings.invitesDesc")} />
     <SettingsBlock title={translate("invite.create")}>

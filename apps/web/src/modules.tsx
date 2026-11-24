@@ -58,16 +58,22 @@ function dateRange(module: Pick<Module, "startDate" | "endDate">) {
 }
 
 function Overlay({ label, onClose, children }: { label: string; onClose: () => void; children: React.ReactNode }) {
+  const dialog = React.useRef<HTMLDialogElement>(null);
+  const pressedOutside = React.useRef(false);
   React.useEffect(() => {
-    // Escape closes the dialog, unless it is closing an open dropdown first.
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && !document.querySelector('[data-module-modal] [role="menu"]')) onClose(); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
-  return <>
-    <div aria-hidden className="fixed inset-0 z-40 bg-backdrop" onClick={onClose} />
-    <div data-module-modal role="dialog" aria-modal="true" aria-label={label} className="fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-2rem)] w-[calc(100vw-1.5rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border border-subtle bg-surface-1 shadow-xl">{children}</div>
-  </>;
+    const element = dialog.current;
+    if (!element) return;
+    element.showModal();
+    element.querySelector<HTMLElement>("[autofocus]")?.focus();
+    return () => { if (element.open) element.close(); };
+  }, []);
+  const outside = (event: React.PointerEvent<HTMLDialogElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom;
+  };
+  const close = () => { if (dialog.current?.open) dialog.current.close(); };
+  return <dialog ref={dialog} aria-label={label} onClose={onClose} onPointerDown={(event) => { pressedOutside.current = outside(event); }} onPointerUp={(event) => { if (pressedOutside.current && outside(event)) close(); pressedOutside.current = false; }}
+    className="module-dialog fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100vw-1.5rem)] max-w-lg overflow-y-auto overscroll-contain rounded-lg border border-subtle bg-surface-1 p-0 shadow-xl backdrop:bg-backdrop">{children}</dialog>;
 }
 
 function ModuleFormModal({ action, projectId, workspaceId, module, onClose, onSaved }: { action: Call; projectId: string; workspaceId: string; module?: Module; onClose: () => void; onSaved: () => void }) {

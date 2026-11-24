@@ -62,8 +62,8 @@ try {
   const selectAll = page.getByRole("checkbox", { name: translate("bulk.selectAll") });
   check(await selectAll.evaluate((input, label) => input.closest("label")?.getAttribute("title") === label, translate("bulk.selectAll")), "select-all checkbox is missing its explanatory tooltip");
   for (const layout of ["list", "board", "spreadsheet", "calendar", "gantt"] as const) {
-    const tab = page.getByRole("tab", { name: translate(`layout.${layout}`) });
-    check(await tab.getAttribute("title") === translate(`layout.${layout}`), `${layout} layout icon is missing its tooltip`);
+    const switchButton = page.getByRole("button", { name: translate(`layout.${layout}`) });
+    check(await switchButton.getAttribute("title") === translate(`layout.${layout}`), `${layout} layout icon is missing its tooltip`);
   }
   // An empty project shows one empty state instead of the status groups, so its Add work item button creates the first item (in the modal, Backlog by default).
   await page.getByRole("status").filter({ hasText: translate("workItems.emptyHint") }).getByRole("button", { name: translate("workItems.addNew"), exact: true }).click();
@@ -177,13 +177,13 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: `${shots}/list-390-light.png` });
   for (const layout of ["list", "board", "spreadsheet", "calendar", "gantt"] as const) {
-    check(await page.getByRole("tab", { name: translate(`layout.${layout}`) }).getByText(translate(`layout.${layout}`)).isVisible(), `${layout} is icon-only on a phone`);
+    check(await page.getByRole("button", { name: translate(`layout.${layout}`) }).getByText(translate(`layout.${layout}`)).isVisible(), `${layout} is icon-only on a phone`);
   }
   check(await page.getByText(translate("bulk.selectShown"), { exact: true }).isVisible(), "select-all has no visible phone label");
   const titleBox = await page.getByRole("heading", { name: /MOB · Mobile/ }).boundingBox();
   const settingsBox = await page.getByRole("link", { name: translate("projects.settings") }).boundingBox();
   check(Boolean(titleBox && settingsBox) && Math.abs(titleBox!.y - settingsBox!.y) < 3, "project title and Settings wrap onto separate phone rows");
-  await page.getByRole("tab", { name: translate("layout.board") }).click();
+  await page.getByRole("button", { name: translate("layout.board") }).click();
   const phoneCard = page.getByTestId("card-MOB-2");
   await phoneCard.getByText(translate("workItems.noAssignee"), { exact: true }).waitFor();
   await phoneCard.getByText(translate("layout.noLabel"), { exact: true }).waitFor();
@@ -192,7 +192,7 @@ try {
   await phoneCard.getByText(translate("workItems.noDates"), { exact: true }).waitFor();
   await page.screenshot({ path: `${shots}/board-390-light.png` });
   await page.getByRole("button", { name: translate("layout.addToGroup").replace("{group}", translate("workItems.priority.none")) }).getByText(translate("layout.addShort")).waitFor();
-  await page.getByRole("tab", { name: translate("layout.gantt") }).click();
+  await page.getByRole("button", { name: translate("layout.gantt") }).click();
   await page.getByTestId("gantt-layout").waitFor();
   await page.getByText(translate("layout.gantt.scrollHint"), { exact: true }).waitFor();
   await page.getByTestId("gantt-bar-MOB-1").waitFor();

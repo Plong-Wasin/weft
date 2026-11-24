@@ -362,7 +362,7 @@ try {
   for (const [key, typesOn] of [["MOB", true], ["PLN", false]] as const) {
     const name = typesOn ? "on" : "off";
     await page.goto(`${web}${paths.workItems(slug, key)}?layout=board`);
-    await page.getByRole("tab", { name: t("layout.board"), selected: true }).waitFor();
+    await page.getByRole("button", { name: t("layout.board"), pressed: true }).waitFor();
     await page.getByRole("button", { name: t("layout.display"), exact: true }).click();
     const groupOptions = await page.locator(`select option[value="type"]`).count();
     await page.keyboard.press("Escape");
@@ -370,7 +370,7 @@ try {
     await page.screenshot({ path: `${shots}/board-types-${name}-1440.png` });
 
     await page.goto(`${web}${paths.workItems(slug, key)}?layout=spreadsheet`);
-    await page.getByRole("tab", { name: t("layout.spreadsheet"), selected: true }).waitFor();
+    await page.getByRole("button", { name: t("layout.spreadsheet"), pressed: true }).waitFor();
     check(await page.getByRole("columnheader", { name: t("types.type"), exact: true }).count() === 0, `${key}: spreadsheet has no type column with types ${name}`);
     await page.screenshot({ path: `${shots}/spreadsheet-types-${name}-1440.png` });
 

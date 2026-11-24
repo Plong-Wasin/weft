@@ -25,6 +25,7 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch, minPa
   const [password, setPassword] = React.useState("");
   const [confirmPassword, setConfirmPassword] = React.useState("");
   const [showPassword, setShowPassword] = React.useState(false);
+  const [pending, setPending] = React.useState(false);
   const [authSettings, setAuthSettings] = React.useState<{ microsoftSignInEnabled: boolean; passwordSignInEnabled: boolean } | null>(null);
   const mismatch = mode === "sign-up" && confirmPassword !== "" && confirmPassword !== password;
 
@@ -55,46 +56,51 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch, minPa
 
   async function authenticate(event: React.FormEvent) {
     event.preventDefault(); setError(null); setPasswordIssue(null);
-    if (mismatch) return; // the inline message under the confirm field already says why
-    if (oauthSignIn) {
-      const result = mode === "sign-in"
-        ? await authClient.signIn.email({ email, password })
-        : await authClient.signUp.email({ name, email, password, fetchOptions: { headers: inviteToken ? { "x-weft-invite": inviteToken } : undefined } });
-      if (result.error) {
-        const limit = limitMessage(result.error.status, result.error as { code?: unknown; retryAfterSeconds?: unknown });
-        if (limit) { setError(limit); return; }
-        const code = (result.error as { code?: string }).code ?? "";
-        const localized = translateDynamic(`auth.passwordError.${code}`);
-        if (mode === "sign-up" && localized) setPasswordIssue(localized);
-        else setError(translate(mode === "sign-in" ? "auth.signInFailed" : "auth.signUpFailed"));
+    if (pending || mismatch) return; // the inline message under the confirm field already says why
+    setPending(true);
+    try {
+      if (oauthSignIn) {
+        const result = mode === "sign-in"
+          ? await authClient.signIn.email({ email, password })
+          : await authClient.signUp.email({ name, email, password, fetchOptions: { headers: inviteToken ? { "x-weft-invite": inviteToken } : undefined } });
+        if (result.error) {
+          const limit = limitMessage(result.error.status, result.error as { code?: unknown; retryAfterSeconds?: unknown });
+          if (limit) { setError(limit); return; }
+          const code = (result.error as { code?: string }).code ?? "";
+          const localized = translateDynamic(`auth.passwordError.${code}`);
+          if (mode === "sign-up" && localized) setPasswordIssue(localized);
+          else setError(translate(mode === "sign-in" ? "auth.signInFailed" : "auth.signUpFailed"));
+          return;
+        }
+        const redirect = result.data as unknown as { redirect?: boolean; url?: string };
+        if (redirect.redirect && redirect.url) { window.location.assign(redirect.url); return; }
+        await onSignedIn();
         return;
       }
-      const redirect = result.data as unknown as { redirect?: boolean; url?: string };
-      if (redirect.redirect && redirect.url) { window.location.assign(redirect.url); return; }
+      const endpoint = mode === "sign-up" ? "sign-up/email" : "sign-in/email";
+      let response: Response;
+      try {
+        response = await fetch(`${api}/api/auth/${endpoint}`, {
+          method: "POST", credentials: "include", headers: { "content-type": "application/json", ...(mode === "sign-up" && inviteToken ? { "x-weft-invite": inviteToken } : {}) },
+          body: JSON.stringify(mode === "sign-up" ? { name, email, password } : { email, password }),
+        });
+      } catch { setError(translate("auth.networkFailed")); return; }
+      if (!response.ok) {
+        let code = "";
+        let body: { code?: string; message?: string; retryAfterSeconds?: number } | null = null;
+        try { body = await response.json() as { code?: string; message?: string; retryAfterSeconds?: number }; code = body.code ?? body.message ?? ""; } catch { /* use the generic message */ }
+        const limit = limitMessage(response.status, body, response.headers.get("retry-after"));
+        if (limit) { setError(limit); return; }
+        const key = `auth.passwordError.${code}`;
+        const localized = translateDynamic(key);
+        if (mode === "sign-up" && localized) setPasswordIssue(localized);
+        else setError(translate(response.status >= 500 ? "auth.networkFailed" : mode === "sign-in" ? "auth.signInFailed" : "auth.signUpFailed"));
+        return;
+      }
       await onSignedIn();
-      return;
+    } finally {
+      setPending(false);
     }
-    const endpoint = mode === "sign-up" ? "sign-up/email" : "sign-in/email";
-    let response: Response;
-    try {
-      response = await fetch(`${api}/api/auth/${endpoint}`, {
-        method: "POST", credentials: "include", headers: { "content-type": "application/json", ...(mode === "sign-up" && inviteToken ? { "x-weft-invite": inviteToken } : {}) },
-        body: JSON.stringify(mode === "sign-up" ? { name, email, password } : { email, password }),
-      });
-    } catch { setError(translate("auth.networkFailed")); return; }
-    if (!response.ok) {
-      let code = "";
-      let body: { code?: string; message?: string; retryAfterSeconds?: number } | null = null;
-      try { body = await response.json() as { code?: string; message?: string; retryAfterSeconds?: number }; code = body.code ?? body.message ?? ""; } catch { /* use the generic message */ }
-      const limit = limitMessage(response.status, body, response.headers.get("retry-after"));
-      if (limit) { setError(limit); return; }
-      const key = `auth.passwordError.${code}`;
-      const localized = translateDynamic(key);
-      if (mode === "sign-up" && localized) setPasswordIssue(localized);
-      else setError(translate(response.status >= 500 ? "auth.networkFailed" : mode === "sign-in" ? "auth.signInFailed" : "auth.signUpFailed"));
-      return;
-    }
-    await onSignedIn();
   }
 
   if (mode === "forgot") return <ForgotPasswordForm api={api} emailEnabled={emailEnabled} languageSwitch={languageSwitch} onBack={() => setMode("sign-in")} />;
@@ -110,7 +116,7 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch, minPa
       <button type="button" className="h-10 w-full rounded-md border border-strong bg-transparent px-3 text-14 font-medium text-primary hover:bg-layer-transparent-hover" onClick={() => void signInWithMicrosoft()}>{translate("auth.microsoftButton")}</button>
       <p className="m-0 text-12 text-tertiary">{translate("auth.microsoftHelp")}</p>
     </div>}
-    {authSettings.passwordSignInEnabled && <form onSubmit={authenticate} className={`${authSettings.microsoftSignInEnabled ? "mt-5 border-t border-subtle pt-5" : "mt-8"} grid gap-4`}>
+    {authSettings.passwordSignInEnabled && <form onSubmit={authenticate} aria-busy={pending} className={`${authSettings.microsoftSignInEnabled ? "mt-5 border-t border-subtle pt-5" : "mt-8"} grid gap-4`}>
       {mode === "sign-up" && <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.name")}<input className={fieldClass} required autoComplete="name" placeholder={translate("auth.namePlaceholder")} value={name} onChange={(event) => setName(event.target.value)} /></label>}
       <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.email")}<input className={fieldClass} required type="email" autoComplete="email" placeholder={translate("auth.emailPlaceholder")} value={email} onChange={(event) => setEmail(event.target.value)} /></label>
       <PasswordField label={translate("auth.password")} value={password} onChange={setPassword} visible={showPassword} onToggle={() => setShowPassword(!showPassword)} autoComplete={mode === "sign-up" ? "new-password" : "current-password"} minLength={passwordFieldMinLength(mode, minPasswordLength)} hint={mode === "sign-up" ? translate("auth.passwordHint").replace("{min}", String(minPasswordLength)) : undefined} />
@@ -118,7 +124,7 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch, minPa
       {mode === "sign-up" && <PasswordField label={translate("auth.confirmPassword")} value={confirmPassword} onChange={setConfirmPassword} visible={showPassword} onToggle={() => setShowPassword(!showPassword)} autoComplete="new-password" invalid={mismatch} describedBy="password-mismatch" />}
       {mismatch && <p id="password-mismatch" role="status" className="-mt-2 text-13 text-danger-text">{translate("auth.passwordMismatch")}</p>}
       {mode === "sign-in" && <button type="button" className="-mt-2 justify-self-end text-13 font-medium text-accent-text hover:underline" onClick={() => { setError(null); setMode("forgot"); }}>{translate("auth.forgotPassword")}</button>}
-      <button className={primaryButton}>{translate(mode === "sign-up" ? "auth.signUp" : "auth.signIn")}</button>
+      <button disabled={pending} className={primaryButton}>{translate(mode === "sign-up" ? "auth.signUp" : "auth.signIn")}</button>
     </form>}
     {error && <p role="alert" className="mt-4 text-13 text-danger-text">{error}</p>}
     {/* The other mode is a full-width secondary button under the form (not small text), so a first-run admin who lands on Sign in finds "Create account". */}
@@ -153,10 +159,13 @@ function PasswordField({ label, value, onChange, visible, onToggle, autoComplete
 function ForgotPasswordForm({ api, emailEnabled, languageSwitch, onBack }: { api: string; emailEnabled: boolean; languageSwitch: React.ReactNode; onBack: () => void }) {
   const [email, setEmail] = React.useState("");
   const [sent, setSent] = React.useState(false);
+  const [pending, setPending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault(); setError(null);
+    if (pending) return;
+    setPending(true);
     try {
       const response = await fetch(`${api}/api/auth/request-password-reset`, {
         method: "POST", headers: { "content-type": "application/json" },
@@ -169,6 +178,7 @@ function ForgotPasswordForm({ api, emailEnabled, languageSwitch, onBack }: { api
       }
       setSent(true);
     } catch { setError(translate("auth.networkFailed")); }
+    finally { setPending(false); }
   }
 
   return <AuthShell footer={<>{languageSwitch}<ThemeSwitch /></>}>
@@ -179,9 +189,9 @@ function ForgotPasswordForm({ api, emailEnabled, languageSwitch, onBack }: { api
         ? <p role="status" className="mt-4 text-14 text-secondary">{translate("auth.forgotSent")}</p>
         : <>
           <p className="mt-4 text-14 text-secondary">{translate("auth.forgotHelp")}</p>
-          <form onSubmit={submit} className="mt-6 grid gap-4">
+          <form onSubmit={submit} aria-busy={pending} className="mt-6 grid gap-4">
             <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.email")}<input className={fieldClass} required type="email" autoComplete="email" placeholder={translate("auth.emailPlaceholder")} value={email} onChange={(event) => setEmail(event.target.value)} /></label>
-            <button className={primaryButton}>{translate("auth.forgotSubmit")}</button>
+            <button disabled={pending} className={primaryButton}>{translate("auth.forgotSubmit")}</button>
           </form>
           {error && <p role="alert" className="mt-4 text-13 text-danger-text">{error}</p>}
         </>}

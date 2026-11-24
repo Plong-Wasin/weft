@@ -2074,6 +2074,7 @@ export const en = {
   "settings.expires": "expires",
   "settings.revoke": "Revoke",
   "settings.revokeInviteNamed": "Revoke {role} invite created by {creator} on {date}",
+  "settings.inviteInstance": "Invite {number} of {total}",
   "settings.revoked": "Invite revoked",
   "settings.inviteLink": "Invite link",
   "settings.adminOnly": "Only a workspace Admin can manage invites.",

@@ -3,8 +3,8 @@
 import { chromium, type Page } from "playwright";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { like } from "drizzle-orm";
-import { createDatabase, users, workspaces } from "../packages/db/src";
+import { and, eq, like } from "drizzle-orm";
+import { createDatabase, users, workspaceInvites, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
 
@@ -100,11 +100,24 @@ try {
   await page.getByLabel(translate("invite.role")).selectOption("Guest");
   await page.getByRole("button", { name: translate("invite.create") }).click();
   await page.getByRole("button", { name: /^Revoke / }).nth(1).waitFor();
-  check(await page.getByRole("button", { name: /Revoke Guest invite created by Settings Admin on/ }).count() === 1, "invite revoke action has no identifying accessible name");
+  await page.getByRole("button", { name: translate("invite.create") }).click();
+  const { client: inviteDbClient, db: inviteDb } = createDatabase();
+  try {
+    await inviteDb.update(workspaceInvites).set({ createdAt: new Date("2026-01-01T00:00:00.000Z") })
+      .where(and(eq(workspaceInvites.workspaceId, workspaceId), eq(workspaceInvites.role, "Guest")));
+  } finally { await inviteDbClient.end(); }
+  await page.reload();
+  const guestRevokeButtons = page.getByRole("button", { name: /^Revoke Guest invite created by Settings Admin on/ });
+  await guestRevokeButtons.nth(1).waitFor();
+  const guestRevokeNames = await guestRevokeButtons.evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label") ?? ""));
+  check(guestRevokeNames.length === 2 && new Set(guestRevokeNames).size === 2, "duplicate invite revoke actions are not distinguishable");
+  check(guestRevokeNames.every((name) => /, Invite [12] of 2$/.test(name)), "duplicate invite accessible names do not identify each invite ordinal");
+  check(guestRevokeNames[0]?.replace(/, Invite [12] of 2$/, "") === guestRevokeNames[1]?.replace(/, Invite [12] of 2$/, ""), "duplicate invite setup did not produce matching base names");
   await page.screenshot({ path: `${shots}/workspace-invites-1440.png` });
-  await page.getByRole("button", { name: /^Revoke / }).nth(1).click();
+  await guestRevokeButtons.nth(1).click();
   await page.getByRole("status").getByText(translate("settings.revoked")).waitFor();
-  check(await page.getByRole("button", { name: /^Revoke / }).count() === 1, "revoke did not remove the invite");
+  check(await page.getByRole("button", { name: /^Revoke Guest invite created by Settings Admin on/ }).count() === 1, "revoking one duplicate did not leave exactly one invite");
+  check(await page.getByRole("button", { name: /^Revoke / }).count() === 2, "revoke did not remove only the selected invite");
   const invitee = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
   const inviteePage = await invitee.newPage();
   await inviteePage.goto(link);

@@ -1,7 +1,7 @@
 import React from "react";
 import { copyText } from "../../toast";
 import { Outlet, useNavigate } from "react-router";
-import { formatDate, translate } from "@weft/shared";
+import { formatDate, formatNumber, translate } from "@weft/shared";
 import { useQuery } from "@tanstack/react-query";
 import { action } from "../../api";
 import { aiStatusKey, requestAiStatus } from "../../ai-status";
@@ -111,6 +111,19 @@ export function WorkspaceInvites() {
   const load = React.useCallback(async () => setInvites(await action<OpenInvite[]>("list_open_invites", { workspaceId: workspace.id }) ?? []), [workspace.id]);
   React.useEffect(() => { if (isAdmin) void load(); }, [isAdmin, load]);
   const say = (message: string, error = false) => { setNote(message); setFailed(error); };
+  const inviteGroups = new Map<string, OpenInvite[]>();
+  for (const invite of invites) {
+    const creator = members.find((member) => member.userId === invite.createdBy)?.name ?? "—";
+    const identity = JSON.stringify([translate(`members.role.${invite.role}`), creator, formatDate(invite.createdAt)]);
+    const group = inviteGroups.get(identity) ?? [];
+    group.push(invite);
+    inviteGroups.set(identity, group);
+  }
+  const inviteInstances = new Map<string, string>();
+  for (const group of inviteGroups.values()) {
+    if (group.length < 2) continue;
+    group.forEach((invite, index) => inviteInstances.set(invite.id, fillMessage(translate("settings.inviteInstance"), { number: formatNumber(index + 1), total: formatNumber(group.length) })));
+  }
   if (!isAdmin) return <section><SettingsHeader title={translate("settings.invites")} description={translate("settings.invitesDesc")} />{!adminLoading && <p role="status" className="text-secondary">{translate("settings.adminOnly")}</p>}</section>;
   return <section>
     <SettingsHeader title={translate("settings.invites")} description={translate("settings.invitesDesc")} />
@@ -130,14 +143,14 @@ export function WorkspaceInvites() {
     </SettingsBlock>
     <SettingsBlock title={translate("settings.openInvites")}>
       {invites.length === 0 ? <p className="text-secondary">{translate("settings.invitesNone")}</p> : <RowList>{invites.map((invite) => <Row key={invite.id}>
-        <span className="grid min-w-0 flex-1"><span className="font-medium">{translate(`members.role.${invite.role}`)}</span>
+        <span className="grid min-w-0 flex-1"><span className="flex flex-wrap items-center gap-2 font-medium">{translate(`members.role.${invite.role}`)}{inviteInstances.has(invite.id) && <span className="text-12 font-normal text-secondary">{inviteInstances.get(invite.id)}</span>}</span>
           <span className="text-13 text-secondary">{translate("settings.invitedBy")} {members.find((member) => member.userId === invite.createdBy)?.name ?? "—"} · {translate("settings.expires")} {formatDate(invite.expiresAt)}</span></span>
         <button type="button" className="secondary hover:!text-danger-text" onClick={async () => {
           const result = await action("revoke_invite", { workspaceId: workspace.id, inviteId: invite.id });
           // Refresh first so the "revoked" note never shows while the revoked invite is still listed.
           await load();
           say(result === null ? translate("members.failed") : translate("settings.revoked"), result === null);
-        }} aria-label={fillMessage(translate("settings.revokeInviteNamed"), { role: translate(`members.role.${invite.role}`), creator: members.find((member) => member.userId === invite.createdBy)?.name ?? "—", date: formatDate(invite.createdAt) })}>{translate("settings.revoke")}</button>
+        }} aria-label={`${fillMessage(translate("settings.revokeInviteNamed"), { role: translate(`members.role.${invite.role}`), creator: members.find((member) => member.userId === invite.createdBy)?.name ?? "—", date: formatDate(invite.createdAt) })}${inviteInstances.has(invite.id) ? `, ${inviteInstances.get(invite.id)}` : ""}`}>{translate("settings.revoke")}</button>
       </Row>)}</RowList>}
     </SettingsBlock>
     <Note note={note} error={failed} />

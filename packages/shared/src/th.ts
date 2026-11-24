@@ -2076,6 +2076,7 @@ export const th: Record<keyof typeof en, string> = {
   "settings.expires": "หมดอายุ",
   "settings.revoke": "เพิกถอน",
   "settings.revokeInviteNamed": "เพิกถอนคำเชิญบทบาท {role} ที่สร้างโดย {creator} เมื่อ {date}",
+  "settings.inviteInstance": "คำเชิญ {number} จาก {total}",
   "settings.revoked": "เพิกถอนคำเชิญแล้ว",
   "settings.inviteLink": "ลิงก์คำเชิญ",
   "settings.adminOnly": "เฉพาะผู้ดูแลเวิร์กสเปซเท่านั้นที่จัดการคำเชิญได้",

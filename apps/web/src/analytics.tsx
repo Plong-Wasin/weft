@@ -62,7 +62,7 @@ function ProjectFilter({ projects, selected, onChange }: { projects: Project[]; 
 }
 
 /** Horizontal bars, one per X value; with a Group-by each bar is split into coloured segments with a shared legend. Plain HTML, so it shrinks to 390px. */
-function Chart({ insights }: { insights: Insights }) {
+export function Chart({ insights }: { insights: Insights }) {
   const max = Math.max(1, ...insights.buckets.map((bucket) => bucket.count));
   const groupKeys: Array<Bucket> = [];
   for (const bucket of insights.buckets) for (const group of bucket.groups) if (!groupKeys.some((known) => known.key === group.key)) groupKeys.push(group);
@@ -80,6 +80,7 @@ function Chart({ insights }: { insights: Insights }) {
             : <span style={{ width: `${(bucket.count / max) * 100}%`, background: colorOf(0) }} />}
         </span>
         <span className="tabular-nums text-primary">{formatNumber(bucket.count)}</span>
+        {insights.groupBy && <span className="sr-only">{t("analytics.groupBy")}: {bucket.groups.map((group) => `${bucketLabel(insights.groupBy!, group)}: ${formatNumber(group.count)}`).join(", ")}</span>}
       </li>)}
     </ul>
   </figure>;

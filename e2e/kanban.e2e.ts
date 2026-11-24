@@ -149,6 +149,21 @@ try {
   await page.getByRole("button", { name: `${translate("sortable.reorder")}: MOB-1` }).press("ArrowLeft");
   await page.locator('[data-testid="column-Backlog"] [data-testid="card-MOB-1"]').waitFor();
 
+  // A moved item can leave the active filter; focus and confirmation must remain available.
+  const deltaCardId = await page.getByTestId("card-MOB-4").getAttribute("data-card-id");
+  await page.route(`${api}/actions/list_work_items`, async (route) => {
+    const response = await route.fetch();
+    const items = await response.json() as Array<{ id: string }>;
+    await route.fulfill({ response, json: items.filter((item) => item.id !== deltaCardId) });
+  });
+  await page.getByRole("button", { name: `${translate("sortable.reorder")}: MOB-4` }).press("ArrowRight");
+  await page.getByTestId("card-MOB-4").waitFor({ state: "detached" });
+  await page.getByRole("status").getByText(translate("board.movedTo").replace("{name}", "MOB-4").replace("{column}", "Done")).waitFor({ timeout: 5000 });
+  check(await page.getByTestId("board").evaluate((element) => element === document.activeElement), "filtered move lost focus instead of returning it to the board");
+  await page.unroute(`${api}/actions/list_work_items`);
+  await page.reload();
+  await page.getByTestId("card-MOB-4").waitFor();
+
   // A column collapses to a narrow strip and expands again.
   await page.getByRole("button", { name: `${translate("layout.toggleGroup")}: Todo` }).click();
   check(await page.locator('[data-testid="column-Todo"][data-collapsed]').count() === 1, "Todo did not collapse");

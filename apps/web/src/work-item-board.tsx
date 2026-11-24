@@ -208,7 +208,10 @@ export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag
         }
         const deadline = performance.now() + 2_000;
         let settled = false;
+        let leftResults = false;
         while (performance.now() < deadline) {
+          leftResults = !latest.current.columns.some((column) => column.items.some((card) => card.id === id));
+          if (leftResults) { settled = true; break; }
           const actual = latest.current.columns.find((column) => column.key === destination.key);
           settled = !!actual && actual.items.some((card) => card.id === id) && (!state.announcePosition || actual.items.map((card) => card.id).join("\0") === expected.map((card) => card.id).join("\0"));
           if (settled) break;
@@ -221,11 +224,11 @@ export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag
           announcement = null;
           break;
         }
-        if (focusAfterMove.current?.id === id) {
+        if (leftResults || focusAfterMove.current?.id === id) {
           focusAfterMove.current = null;
           scroller.current?.focus({ preventScroll: true });
         }
-        announcement = state.announcePosition && settled
+        announcement = state.announcePosition && !leftResults
           ? t("board.moved").replace("{name}", item.displayId).replace("{column}", destination.name).replace("{position}", String(position))
           : t("board.movedTo").replace("{name}", item.displayId).replace("{column}", destination.name);
       }

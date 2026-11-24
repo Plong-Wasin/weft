@@ -248,6 +248,17 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
   }
 
   async function snapshot(database: Database, page: PageRow, userId: string) {
+    // Compared in the database against every version of the page: a restore, or a restore of the same version twice, must not add a copy of a version already kept.
+    const sameContent = page.content === null || page.content === undefined
+      ? isNull(wikiPageVersions.content)
+      : sql`${wikiPageVersions.content} = ${JSON.stringify(page.content)}::jsonb`;
+    const [same] = await database.select({ id: wikiPageVersions.id }).from(wikiPageVersions)
+      .where(and(eq(wikiPageVersions.pageId, page.id), eq(wikiPageVersions.title, page.title), sameContent)).limit(1);
+    // The kept version takes the current time, so the autosave throttle counts this save as the latest one.
+    if (same) {
+      await database.update(wikiPageVersions).set({ createdAt: now() }).where(eq(wikiPageVersions.id, same.id));
+      return;
+    }
     await database.insert(wikiPageVersions).values({ pageId: page.id, title: page.title, content: page.content, contentMarkdown: page.contentMarkdown, contentText: page.contentText, ydocState: page.ydocState, createdBy: userId, createdAt: now() });
   }
 

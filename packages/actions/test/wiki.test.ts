@@ -728,7 +728,9 @@ test.concurrent("autosave versions on a cadence and restore brings back an old v
     const state = (await wiki.getWikiPage.handler({ userId: alice.id }, { pageId: page.id }));
     expect(wikiContentFromYState((await tx.select().from(wikiPages).where(eq(wikiPages.id, page.id)))[0]!.ydocState!)).toEqual(doc("v1"));
     expect(state.contentText).toBe("v1");
-    expect(await count()).toBe(3);
+    // The page was at "v3" before the restore and a version of "v3" already exists, so the undo point is that version, not a copy of it.
+    expect(await count()).toBe(2);
+    expect((await tx.select().from(wikiPageVersions).where(eq(wikiPageVersions.pageId, page.id))).some((version) => version.contentText === "v3")).toBe(true);
     expect((await failure(wiki.restoreWikiPageVersion.handler({ userId: alice.id }, { pageId: page.id, versionId: crypto.randomUUID() })))?.status).toBe(404);
   });
 });
@@ -978,6 +980,33 @@ test.concurrent("wiki search excludes pages in projects with Pages disabled", as
     await tx.update(projects).set({ pagesEnabled: false }).where(eq(projects.id, project.id));
     expect((await wiki.searchWikiPages.handler({ userId: alice.id }, { workspaceId: workspace.id, query: "Secret searchable phrase" })).map(({ id }) => id)).toEqual([visible.id]);
     expect(hidden.id).not.toBe(visible.id);
+  });
+});
+
+test.concurrent("restoring the same version twice adds no duplicate version", async () => {
+  await withRollback(db, async (tx) => {
+    const { alice, wiki, create, advance } = await setup(tx);
+    const page = await create(alice.id, "Plan", { content: doc("v1") });
+    await wiki.updateWikiPage.handler({ userId: alice.id }, { pageId: page.id, content: doc("v2") });
+    advance(versionIntervalMs);
+    await wiki.updateWikiPage.handler({ userId: alice.id }, { pageId: page.id, content: doc("v3") });
+    const versions = await wiki.listWikiPageVersions.handler({ userId: alice.id }, { pageId: page.id });
+    const first = versions[versions.length - 1]!;
+    advance(1000);
+    await wiki.restoreWikiPageVersion.handler({ userId: alice.id }, { pageId: page.id, versionId: first.id });
+    advance(1000);
+    await wiki.restoreWikiPageVersion.handler({ userId: alice.id }, { pageId: page.id, versionId: first.id });
+    const stored = await tx.select().from(wikiPageVersions).where(eq(wikiPageVersions.pageId, page.id));
+    const keys = stored.map((row) => `${row.title}\u0000${JSON.stringify(row.content)}`);
+    // Only v1 (create) and v3 are kept; neither restore added a copy.
+    expect(keys).toHaveLength(2);
+    expect(new Set(keys).size).toBe(2);
+    // The kept version the page now equals takes the time of the second restore, so the autosave throttle counts it.
+    expect(stored.find((row) => row.id === first.id)!.createdAt.getTime()).toBeGreaterThan(new Date(first.createdAt).getTime());
+    // A title-only change is a real change and still adds a version.
+    advance(versionIntervalMs);
+    await wiki.updateWikiPage.handler({ userId: alice.id }, { pageId: page.id, title: "Plan renamed" });
+    expect(await tx.select().from(wikiPageVersions).where(eq(wikiPageVersions.pageId, page.id))).toHaveLength(3);
   });
 });
 

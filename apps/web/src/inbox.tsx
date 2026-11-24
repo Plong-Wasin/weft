@@ -105,9 +105,9 @@ export function InboxPanel({ workspace }: { workspace: Workspace }) {
         <div id={descriptionId} className="min-w-0">
         {item.kind === "recurrence_paused" ? `${translate(inboxMessage[item.kind])}: ${item.detail ?? ""}` : <>{translate(item.kind === "wake_skipped" ? `inbox.wakeSkipped.${item.detail ?? "no_agent_access"}` as never : item.kind === "run_skipped" && item.detail ? `inbox.runSkipped.${item.detail}` as never : inboxMessage[item.kind]).replace("{actor}", item.actorName)}{" "}
         {item.workItemId || item.wikiPageId || item.runId ? <Link to={item.readAt ? notificationTarget(workspace.slug, item) : notificationTargetWithInboxId(workspace.slug, item, item.id)}>{item.wikiPageId ? item.pageTitle : item.runId ? translate("inbox.openScheduledRun") : `${item.displayId} ${item.workItemTitle}`}</Link> : <span>{item.kind === "secret_output_blocked" ? translate("inbox.secretOutputBlockedDetail") : item.detail}</span>}{item.kind === "auto_rule" && item.detail && <>{": "}{autoRuleReasonText(item.detail, translate)}</>}</>}{" "}
-        <small>{formatDate(item.createdAt)}</small>{" "}
+        <small className="block text-secondary">{formatDate(item.createdAt)}</small>
         </div>
-        <button type="button" aria-labelledby={`${actionLabelId} ${descriptionId}`} className="secondary justify-self-start sm:justify-self-end" disabled={markRead.isPending || markUnread.isPending} onClick={() => item.readAt ? markUnread.mutate(item.id) : markRead.mutate(item.id)}><span id={actionLabelId}>{actionLabel}</span></button>
+        <button type="button" aria-labelledby={`${actionLabelId} ${descriptionId}`} className="secondary min-h-11 justify-self-start sm:min-h-9 sm:justify-self-end" disabled={markRead.isPending || markUnread.isPending} onClick={() => item.readAt ? markUnread.mutate(item.id) : markRead.mutate(item.id)}><span id={actionLabelId}>{actionLabel}</span></button>
       </li>;
       })}
     </ul>

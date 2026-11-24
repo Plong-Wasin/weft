@@ -214,6 +214,13 @@ export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag
           if (settled) break;
           await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
         }
+        if (!settled) {
+          keyboardQueue.current = [];
+          focusAfterMove.current = null;
+          scroller.current?.querySelector<HTMLButtonElement>(`[data-reorder="${CSS.escape(id)}"]`)?.focus({ preventScroll: true });
+          announcement = null;
+          break;
+        }
         if (focusAfterMove.current?.id === id) {
           focusAfterMove.current = null;
           scroller.current?.focus({ preventScroll: true });

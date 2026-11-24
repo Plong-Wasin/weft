@@ -130,6 +130,24 @@ try {
   check((await page.locator('[data-testid="board"] [role="status"]').textContent()) === "", "failed keyboard move left a misleading success announcement");
   await page.unroute(`${api}/actions/move_work_item`);
 
+  // A successful move whose following list refresh fails must not be announced as confirmed or replay queued arrows against stale columns.
+  let refreshFailureMoves = 0;
+  await page.route(`${api}/actions/move_work_item`, async (route) => { refreshFailureMoves += 1; await route.continue(); });
+  await page.route(`${api}/actions/list_work_items`, (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "temporary refresh failure" }) }));
+  await page.getByRole("button", { name: `${translate("sortable.reorder")}: MOB-1` }).focus();
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowRight");
+  await page.waitForTimeout(2200);
+  check(refreshFailureMoves === 1, `stale board replayed a queued move ${refreshFailureMoves} times`);
+  check((await page.locator('[data-testid="board"] [role="status"]').textContent()) === "", "unconfirmed keyboard move was announced as successful");
+  check(await page.evaluate(() => document.activeElement?.getAttribute("data-reorder")) === await page.getByTestId("card-MOB-1").getAttribute("data-card-id"), "timed-out refresh lost focus from the reorder handle");
+  await page.unroute(`${api}/actions/list_work_items`);
+  await page.unroute(`${api}/actions/move_work_item`);
+  await page.reload();
+  await page.locator('[data-testid="column-Todo"] [data-testid="card-MOB-1"]').waitFor();
+  await page.getByRole("button", { name: `${translate("sortable.reorder")}: MOB-1` }).press("ArrowLeft");
+  await page.locator('[data-testid="column-Backlog"] [data-testid="card-MOB-1"]').waitFor();
+
   // A column collapses to a narrow strip and expands again.
   await page.getByRole("button", { name: `${translate("layout.toggleGroup")}: Todo` }).click();
   check(await page.locator('[data-testid="column-Todo"][data-collapsed]').count() === 1, "Todo did not collapse");

@@ -125,7 +125,7 @@ try {
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: translate("views.menu") }).click();
   await page.getByRole("menuitem", { name: translate("views.delete") }).click();
-  await page.getByRole("alertdialog").getByRole("button", { name: translate("views.deleteAction") }).click();
+  await page.getByRole("dialog").getByRole("button", { name: translate("views.deleteAction") }).click();
   await page.waitForURL(`**/workspace-views/all-issues`);
   check((await call<{ views: unknown[] }>("list_workspace_views", { workspaceId })).views.length === 0, "delete did not remove the view");
   check((await call<unknown[]>("list_work_items", { projectId: project!.id })).length === 1, "deleting a view changed work items");

@@ -301,6 +301,9 @@
 .asset-image-viewer img { display: block; max-width: 92vw; max-height: 82vh; object-fit: contain; margin: 3rem auto 0; transition: transform .15s ease; }
 .asset-preview-dialog { width: min(96vw, 72rem); max-width: none; max-height: 94dvh; border: 1px solid var(--border-subtle); border-radius: .75rem; padding: 0; background: var(--bg-surface-1); color: var(--txt-primary); overflow: auto; }
 .asset-preview-dialog::backdrop { background: rgb(0 0 0 / .72); }
+
+dialog:modal { overscroll-behavior: contain; }
+dialog::backdrop { overflow: hidden; overscroll-behavior: contain; }
 .asset-preview-content { display: grid; min-height: 12rem; max-height: calc(94dvh - 4.5rem); place-items: center; overflow: auto; }
 .asset-preview-media, .asset-preview-video { display: block; width: 100%; max-width: 100%; max-height: calc(94dvh - 7rem); object-fit: contain; }
 .asset-preview-pdf { display: block; width: 100%; height: min(78dvh, 58rem); border: 0; background: var(--bg-surface-2); }

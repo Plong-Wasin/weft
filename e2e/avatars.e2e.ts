@@ -51,6 +51,10 @@ try {
   const reviewer = await agents.createAgent.handler({ userId: me.user.id }, { workspaceId, name: "Reviewer Bot", model: "default" });
   await agents.setAgentProjectAccess.handler({ userId: me.user.id }, { agentId: reviewer.id, allProjects: true, projectIds: [] });
   const item = await page.request.post(`${api}/actions/create_work_item`, { data: { projectId: project.id, title: "Avatar check" } }).then((response) => response.json() as Promise<{ id: string }>);
+  for (const priority of ["low", "medium", "high"]) {
+    const response = await page.request.post(`${api}/actions/update_work_item`, { data: { workItemId: item.id, priority } });
+    check(response.ok(), `could not create activity disclosure fixture: ${await response.text()}`);
+  }
   await page.request.post(`${api}/actions/update_work_item`, { data: { workItemId: item.id, assigneeIds: [reviewer.userId] } });
   const comments = createCommentActions(db);
   const agentComment = await comments.createComment.handler({ userId: reviewer.userId, source: "agent" }, { workItemId: item.id, bodyMarkdown: "Reviewed. **Two** findings:\n\n| Area | Result |\n|---|---|\n| Tests | pass |\n| Lint | warn |" });
@@ -62,6 +66,7 @@ try {
     for (const viewport of viewports) for (const theme of ["light", "dark"] as const) {
       await page.setViewportSize(viewport);
       await setTheme(theme);
+      if (name === "detail") await activityDisclosure.evaluate((element) => element.scrollIntoView({ block: "center" }));
       await page.waitForTimeout(250);
       const path = `${evidence}/${name}-${viewport.width}-${theme}.png`;
       await page.screenshot({ path, fullPage: true });
@@ -86,6 +91,18 @@ try {
   const createdActivity = page.locator("div, li", { hasText: /created the work item/ }).last();
   await createdActivity.waitFor();
   check(await createdActivity.locator("span.rounded-full").count() >= 1, "timeline: actor has no letter Avatar");
+  const activityDisclosure = page.locator('button[aria-controls^="activity-group-"]').first();
+  await activityDisclosure.waitFor();
+  await activityDisclosure.focus();
+  await page.keyboard.press("Enter");
+  check(await activityDisclosure.getAttribute("aria-expanded") === "true", "timeline: Enter does not expand a grouped activity");
+  const expandedActivity = page.locator(`#${await activityDisclosure.getAttribute("aria-controls")}`);
+  await expandedActivity.waitFor();
+  check(await expandedActivity.locator("li").count() >= 2, "timeline: expanded group does not show its individual updates");
+  await page.keyboard.press("Space");
+  check(await activityDisclosure.getAttribute("aria-expanded") === "false", "timeline: Space does not collapse a grouped activity");
+  await activityDisclosure.click();
+  check(await activityDisclosure.getAttribute("aria-expanded") === "true", "timeline: pointer does not expand a grouped activity");
   await shoot("detail");
 
   // 2. Mention popup at 390 px with the caret at the bottom of the screen: it must flip above and stay inside the viewport.

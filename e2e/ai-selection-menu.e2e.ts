@@ -115,6 +115,15 @@ try {
   await page.goto(`${web}/account/preferences`);
   await preferenceCheckbox().waitFor();
   check(await preferenceCheckbox().isChecked(), "the AI selection menu switch is not on by default");
+  await page.setViewportSize({ width: 390, height: 844 });
+  const preferenceGeometry = await preferenceCheckbox().evaluate((input) => ({
+    labelHeight: input.labels?.[0]?.getBoundingClientRect().height ?? 0,
+  }));
+  const preferencesHeading = await page.getByRole("heading", { name: translate("accountPrefs.title"), exact: true }).boundingBox();
+  check(preferenceGeometry.labelHeight >= 44, "the account preference checkbox has a touch target under 44 px");
+  check((preferencesHeading?.x ?? 0) >= 16, "the account preferences page has no mobile side gutter");
+  check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "account preferences scrolls sideways at 390 px");
+  await page.setViewportSize({ width: 1440, height: 900 });
   console.log("ai-selection-menu ok: on by default");
 
   await page.goto(`${web}/${slug}/wiki/${wikiPage.id}`);

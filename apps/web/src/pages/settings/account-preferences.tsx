@@ -28,7 +28,7 @@ function AiPreferencesForm() {
     if (saved) queryClient.setQueryData(aiPreferencesKey, saved);
   }
 
-  return <main className="mx-auto w-full max-w-[900px]">
+  return <main className="mx-auto w-full max-w-[900px] px-[var(--padding-page-x)] py-[var(--padding-page-y)]">
     <SettingsHeader title={translate("accountPrefs.title")} description={translate("accountPrefs.description")} />
     {data === null && <div className="flex flex-wrap items-center gap-2">
       <Note note={translate("accountPrefs.loadFailed")} error />
@@ -36,12 +36,12 @@ function AiPreferencesForm() {
     </div>}
     {data === undefined && <p role="status" className="text-13 text-secondary">{translate("account.loading")}</p>}
     {data && <SettingsBlock>
-      <div className="flex items-start gap-2">
-        <input id="ai-selection-menu" type="checkbox" className="mt-1" checked={data.showSelectionMenu} aria-describedby="ai-selection-menu-hint" onChange={(event) => void save(event.target.checked)} />
-        <div className="grid gap-1">
-          <label htmlFor="ai-selection-menu" className="text-14 text-primary">{translate("accountPrefs.aiMenu")}</label>
-          <p id="ai-selection-menu-hint" className="m-0 text-13 text-secondary">{translate("accountPrefs.aiMenuHint")}</p>
-        </div>
+      <div className="grid gap-1">
+        <label htmlFor="ai-selection-menu" className="flex min-h-11 items-center gap-2 text-14 text-primary">
+          <input id="ai-selection-menu" type="checkbox" checked={data.showSelectionMenu} aria-describedby="ai-selection-menu-hint" onChange={(event) => void save(event.target.checked)} />
+          <span>{translate("accountPrefs.aiMenu")}</span>
+        </label>
+        <p id="ai-selection-menu-hint" className="m-0 text-13 text-secondary">{translate("accountPrefs.aiMenuHint")}</p>
       </div>
     </SettingsBlock>}
     {note && <Note note={note} error={noteError} />}

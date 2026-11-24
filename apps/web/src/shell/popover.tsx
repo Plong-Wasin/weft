@@ -38,8 +38,8 @@ export function moveMenuFocus(event: React.KeyboardEvent, panel: HTMLElement | n
 }
 
 /** A button that opens a floating panel. Closes on outside click, Escape, or when `close` is called by the panel. */
-export function Popover({ label, trigger, align = "left", className = "", panelClassName = "", panelRole = "menu", onOpen, children }: {
-  label: string; trigger: React.ReactNode; align?: "left" | "right"; className?: string; panelClassName?: string; panelRole?: "menu" | "dialog";
+export function Popover({ label, panelLabel = label, trigger, align = "left", className = "", panelClassName = "", panelRole = "menu", onOpen, children }: {
+  label: string; panelLabel?: string; trigger: React.ReactNode; align?: "left" | "right"; className?: string; panelClassName?: string; panelRole?: "menu" | "dialog";
   onOpen?: () => void;
   children: (close: () => void) => React.ReactNode;
 }) {
@@ -102,7 +102,7 @@ export function Popover({ label, trigger, align = "left", className = "", panelC
   }, [open]);
   const portalRoot = root.current?.closest("dialog") ?? (typeof document !== "undefined" ? document.body : null);
   const floatingPanel = open && portalRoot ? createPortal(
-    <div ref={panel} data-popover-panel role={panelRole} aria-label={label} className={`fixed z-50 min-w-56 rounded-lg border border-subtle bg-surface-1 p-1 shadow-lg ${panelClassName}`}
+    <div ref={panel} data-popover-panel role={panelRole} aria-label={panelLabel} className={`fixed z-50 min-w-56 rounded-lg border border-subtle bg-surface-1 p-1 shadow-lg ${panelClassName}`}
       onClick={(event) => event.stopPropagation()}
       onKeyDown={(event) => { if (panelRole === "menu") moveMenuFocus(event, panel.current); }}
       style={{ left: position?.left ?? 0, top: position?.top ?? 0, maxWidth: "calc(100vw - 1rem)", maxHeight: position?.maxHeight ?? "calc(100vh - 1rem)", overflowX: "hidden", overflowY: "auto", visibility: position ? "visible" : "hidden" }}>

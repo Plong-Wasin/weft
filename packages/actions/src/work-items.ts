@@ -175,7 +175,11 @@ async function snapshotDescription(database: Database, item: ItemRow, userId: st
   // Compared in the database so an edit does not read every stored version; only legacy rows without Markdown are converted here.
   const [same] = await database.select({ id: workItemDescriptionVersions.id }).from(workItemDescriptionVersions)
     .where(and(eq(workItemDescriptionVersions.workItemId, item.id), eq(workItemDescriptionVersions.contentMarkdown, contentMarkdown))).limit(1);
-  if (same) return;
+  if (same) {
+    // The text is already kept; refresh its time so the burst throttle sees a snapshot taken now and the next edit of this burst adds no intermediate version.
+    await database.update(workItemDescriptionVersions).set({ createdAt: new Date() }).where(eq(workItemDescriptionVersions.id, same.id));
+    return;
+  }
   const legacy = await database.select({ content: workItemDescriptionVersions.content }).from(workItemDescriptionVersions)
     .where(and(eq(workItemDescriptionVersions.workItemId, item.id), isNull(workItemDescriptionVersions.contentMarkdown)));
   for (const version of legacy) {

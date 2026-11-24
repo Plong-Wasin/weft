@@ -95,7 +95,14 @@ try {
   const recents = sidebar.getByRole("navigation", { name: translate("ai.recents") });
   for (const title of ["Sprint summary", "Release notes", "Rename candidate", "Old proposal"]) await recents.getByRole("link", { name: title }).waitFor();
   await page.getByText(translate("ai.disclaimer")).waitFor();
-  await page.getByRole("textbox", { name: translate("ai.message") }).waitFor();
+  const composer = page.getByRole("textbox", { name: translate("ai.message") });
+  await composer.waitFor();
+  // Safari's IME confirmation Enter can arrive with isComposing=false and keyCode=229.
+  await composer.fill("ยังพิมพ์ข้อความอยู่");
+  await composer.dispatchEvent("keydown", { key: "Enter", code: "Enter", keyCode: 229, which: 229, bubbles: true });
+  check(await composer.inputValue() === "ยังพิมพ์ข้อความอยู่", "IME confirmation Enter submitted the chat");
+  check(await page.locator('[data-role="user"]').count() === 0, "IME confirmation Enter added a user message");
+  await composer.fill("");
   await page.screenshot({ path: `${shots}/ai-new-1440.png` });
   await sidebar.getByRole("button", { name: translate("ai.search") }).click();
   await sidebar.getByRole("searchbox", { name: translate("ai.search") }).fill("release");

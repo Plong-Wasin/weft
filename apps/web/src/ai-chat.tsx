@@ -364,7 +364,12 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
         <textarea ref={composerRef} id={`composer-${chatId}`} value={input} placeholder={translate("ai.placeholder")} rows={2} onChange={(event) => setInput(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Escape" && skillPickerOpen) { event.preventDefault(); setDismissedSkillInput(input); return; }
-            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              // Safari can deliver the IME confirmation key after compositionend, when isComposing is already false.
+              if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+              event.currentTarget.form?.requestSubmit();
+            }
           }}
           className="block w-full resize-none border-0 bg-transparent p-0 text-16 text-primary outline-none placeholder:text-placeholder" />
         <div className="mt-2 flex items-center justify-between gap-2">

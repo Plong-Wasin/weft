@@ -76,14 +76,14 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
     window.addEventListener("focus", refreshMembers);
     return () => window.removeEventListener("focus", refreshMembers);
   }, [project.id]);
-  // Typed title or description is unsaved input: a backdrop click or Escape must not discard it. Cancel and the close button still close.
+  // Typed title or description is unsaved input: a stray backdrop click must not discard it. Escape, Cancel and the close button still close.
   const unsaved = title.trim() !== "" || description.trim() !== "";
   React.useEffect(() => {
     // Escape closes the modal, unless it is closing an open dropdown first.
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && !unsaved && !document.querySelector('[data-create-modal] [role="menu"], [data-create-modal] [role="dialog"]')) onClose(); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && !document.querySelector('[data-create-modal] [role="menu"], [data-create-modal] [role="dialog"]')) onClose(); };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose, unsaved]);
+  }, [onClose]);
   React.useEffect(() => {
     // Keep Tab inside the dialog, and return focus to the opener on close, as the Dialog helper does.
     const opener = document.activeElement as HTMLElement | null;

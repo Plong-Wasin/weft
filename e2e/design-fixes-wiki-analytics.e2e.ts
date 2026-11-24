@@ -54,7 +54,8 @@ try {
   await Promise.all([page.waitForResponse((response) => response.url().endsWith("/actions/create_workspace")), page.getByRole("button", { name: translate("workspace.create") }).click()]);
   const me = await (await page.request.get(`${api}/api/me`)).json() as { workspaces: Array<{ id: string; slug: string }> };
   const workspaceId = me.workspaces.find((item) => item.slug === slug)!.id;
-  await call("create_project", { workspaceId, name: "Field operations archive", key: "FOA", visibility: "public" });
+  const project = await call<{ id: string }>("create_project", { workspaceId, name: "Field operations archive", key: "FOA", visibility: "public" });
+  await call("create_work_item", { projectId: project.id, title: "Analytics graph fixture" });
   const pageId = (await call<{ id: string }>("create_wiki_page", { workspaceId, title: "Quarterly operating review for the regional distribution network" })).id;
   const openThread = (await call<{ id: string }>("create_wiki_page_comment", { pageId, body: commentBody("Open thread text"), anchor })).id;
   const resolvedThread = (await call<{ id: string }>("create_wiki_page_comment", { pageId, body: commentBody("Resolved thread text"), anchor })).id;
@@ -157,8 +158,17 @@ try {
   console.log("analytics ok: project name not cut off, no sideways scroll");
 
   await page.goto(`${web}/${slug}/analytics/work-items`);
-  await page.getByText("Created vs Resolved").first().waitFor().catch(() => undefined);
+  await page.getByRole("heading", { name: translate("analytics.createdVsResolved"), exact: true }).waitFor();
+  check(await page.locator("figure [role='img']").count() >= 3, "populated Analytics charts do not expose their rendered data");
   check(await noSideScroll(), "Analytics work items scrolls the page sideways on phone width");
+  for (const theme of ["light", "dark"] as const) {
+    await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.screenshot({ path: screenshotPath(`work-items-desktop-${theme}`), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    check(await noSideScroll(), `Analytics work items scrolls sideways on phone width in ${theme} theme`);
+    await page.screenshot({ path: screenshotPath(`work-items-phone-${theme}`), fullPage: true });
+  }
   console.log("analytics ok: work items no sideways scroll");
 
   console.log("design fixes wiki analytics: all checks passed");

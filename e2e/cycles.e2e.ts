@@ -182,10 +182,46 @@ try {
   await page.getByTestId("cycle-burndown").getByRole("status").filter({ hasText: translate("cycles.history.noCoverage") }).waitFor();
   // The item entered this Cycle twice and left it once in the move round-trip above.
   await page.getByText(/Scope added \/ removed:.*\+2 \/ −1/).waitFor();
-  await page.screenshot({ path: `${shots}/cycle-detail-1440.png` });
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: `${shots}/cycle-detail-390.png` });
+  const today = day(0);
+  const yesterday = day(-1);
+  const twoDaysAgo = day(-2);
+  await page.context().route("**/actions/get_cycle_burndown", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+    cycleId: "rendered-burndown-fixture", unit: "items", startDate: twoDaysAgo, endDate: today, total: 3, initialScope: 3,
+    finalOutcome: null, outcomeDate: null, initialPoints: null, unestimated: null, coverageStart: `${twoDaysAgo}T00:00:00.000Z`, dateChanges: [], scopeChanges: [],
+    days: [
+      { date: twoDaysAgo, open: 3, ideal: 3, unknown: false },
+      { date: yesterday, open: 2, ideal: 2, unknown: false },
+      { date: today, open: 1, ideal: 1, unknown: false },
+    ],
+  }) }));
+  await page.reload();
+  await page.getByTestId("cycle-burndown").locator("svg").waitFor();
+  for (const theme of ["light", "dark"] as const) {
+    await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+    const colors = await page.getByTestId("cycle-burndown").locator("svg").evaluate((svg) => {
+      const labels = [...svg.querySelectorAll("text")];
+      const actualLine = svg.querySelector("polyline:not([stroke-dasharray])");
+      const tokenColor = (property: string) => {
+        const probe = document.createElement("span");
+        probe.style.color = `var(${property})`;
+        document.body.append(probe);
+        const color = getComputedStyle(probe).color;
+        probe.remove();
+        return color;
+      };
+      return { labels: labels.map((label) => getComputedStyle(label).fill), expectedLabel: tokenColor("--txt-secondary"), actualLine: actualLine ? getComputedStyle(actualLine).stroke : null, expectedLine: tokenColor("--bg-accent-primary") };
+    });
+    check(colors.labels.length > 0 && colors.labels.every((color) => color === colors.expectedLabel), `${theme} Cycle burndown labels do not use the readable secondary text token: ${JSON.stringify(colors)}`);
+    check(colors.actualLine === colors.expectedLine, `${theme} Cycle burndown actual line does not use the accent token: ${JSON.stringify(colors)}`);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.screenshot({ path: `${shots}/cycle-detail-1440-${theme}.png`, fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByTestId("cycle-burndown").screenshot({ path: `${shots}/cycle-detail-390-${theme}.png` });
+  }
   await page.setViewportSize({ width: 1440, height: 900 });
+  await page.context().unroute("**/actions/get_cycle_burndown");
+  await page.reload();
+  await page.getByTestId("cycle-burndown").getByRole("status").filter({ hasText: translate("cycles.history.noCoverage") }).waitFor();
 
   // Edit: move Sprint 1 into the past so it is Completed, then transfer its unfinished work to Sprint 2.
   await page.getByRole("button", { name: `${translate("cycles.menu")}: Sprint 1` }).click();

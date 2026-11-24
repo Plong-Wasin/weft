@@ -287,6 +287,15 @@ try {
   await page.locator('[data-testid="column-Kanban Tester"] [data-testid="card-MOB-1"]').waitFor();
   const colleagueCard = page.getByTestId(`column-Kanban Colleague`).getByTestId("card-MOB-1");
   const colleagueHandle = colleagueCard.getByRole("button", { name: `${translate("sortable.reorder")}: MOB-1` });
+  // Moving from the second assignee to the first must still reduce the assignment to that destination.
+  await colleagueHandle.press("ArrowLeft");
+  await colleagueCard.waitFor({ state: "detached", timeout: 5000 });
+  await page.locator('[data-testid="column-Kanban Tester"] [data-testid="card-MOB-1"]').waitFor();
+  const restoreDb = createDatabase();
+  await restoreDb.db.insert(workItemAssignees).values({ workItemId: firstItem!.id, userId: colleagueId });
+  await restoreDb.client.end();
+  await page.reload();
+  await colleagueHandle.waitFor();
   await colleagueHandle.press("ArrowRight");
   await page.locator(`[data-testid="column-${noAssignee}"] [data-testid="card-MOB-1"]`).waitFor();
   check(await page.locator(`[data-testid="column-Kanban Tester"] [data-testid="card-MOB-1"]`).count() === 0, "moving a multi-assignee card from its second assignee did not clear its previous assignments");

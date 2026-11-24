@@ -337,7 +337,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     let result: unknown;
     if (boardGroup === "state") result = await action("move_work_item", { workItemId: id, stateId: column, ...(beforeId ? { beforeId } : {}) });
     else if (boardGroup === "priority") { if (item.priority === column) return false; result = await action("update_work_item", { workItemId: id, priority: column }); }
-    else if (boardGroup === "assignee") { if ((item.assigneeIds[0] ?? "none") === column) return false; result = await action("update_work_item", { workItemId: id, assigneeIds: column === "none" ? [] : [column] }); }
+    else if (boardGroup === "assignee") { if ((item.assigneeIds.length === 0 && column === "none") || (item.assigneeIds.length === 1 && item.assigneeIds[0] === column)) return false; result = await action("update_work_item", { workItemId: id, assigneeIds: column === "none" ? [] : [column] }); }
     else return false;
     const refreshed = await load();
     setNote(result === null ? t("workItems.failed") : refreshed ? null : t("board.refreshFailed"));

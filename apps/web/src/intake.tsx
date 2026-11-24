@@ -3,7 +3,7 @@ import { ChevronDown, ChevronUp, Clock, Copy, CopyCheck, Inbox, MoreHorizontal, 
 import { formatDate, translate, type MessageKey } from "@weft/shared";
 import { useLocation, useSearchParams } from "react-router";
 import { EmptyState } from "./empty-state";
-import { Popover, PopoverPortalContext, menuItemClass } from "./shell/popover";
+import { Popover, menuItemClass } from "./shell/popover";
 import { MultiSelect, PriorityIcon } from "./property-dropdowns";
 import { Avatar } from "./avatar";
 import { useWorkspace } from "./layouts/workspace-layout";
@@ -66,12 +66,8 @@ function StatusBadge({ item }: { item: IntakeItem }) {
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   const dialogRef = React.useRef<HTMLDialogElement>(null);
-  const [portalContainer, setPortalContainer] = React.useState<HTMLDialogElement | null>(null);
+  const pressedOutside = React.useRef(false);
   const titleId = React.useId();
-  const setDialogRef = React.useCallback((dialog: HTMLDialogElement | null) => {
-    dialogRef.current = dialog;
-    setPortalContainer(dialog);
-  }, []);
   React.useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return;
@@ -82,7 +78,14 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
       opener?.focus();
     };
   }, []);
-  return <dialog ref={setDialogRef} aria-labelledby={titleId} onCancel={(event) => { event.preventDefault(); onClose(); }} onClick={(event) => { if (event.target === event.currentTarget) onClose(); }} onKeyDown={(event) => {
+  const outside = (event: React.PointerEvent<HTMLDialogElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom;
+  };
+  return <dialog ref={dialogRef} aria-labelledby={titleId} onCancel={(event) => { event.preventDefault(); onClose(); }} onPointerDown={(event) => { pressedOutside.current = outside(event); }} onPointerUp={(event) => {
+    if (pressedOutside.current && outside(event)) onClose();
+    pressedOutside.current = false;
+  }} onKeyDown={(event) => {
     if (event.key !== "Tab") return;
     const dialog = dialogRef.current;
     if (!dialog) return;
@@ -97,7 +100,7 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
         <h2 id={titleId} className="m-0 flex-1 text-18 font-semibold text-primary">{title}</h2>
         <button type="button" className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={t("intake.cancel")} onClick={onClose}><X aria-hidden size={16} /></button>
       </div>
-      <PopoverPortalContext.Provider value={portalContainer}>{children}</PopoverPortalContext.Provider>
+      {children}
   </dialog>;
 }
 

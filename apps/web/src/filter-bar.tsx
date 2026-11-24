@@ -10,7 +10,7 @@ import { AiOnly } from "./ai-flag";
 import type { Option } from "./property-dropdowns";
 
 const t = (key: string) => translate(key as MessageKey);
-const ghost = "flex items-center gap-1.5 rounded-md border border-subtle bg-surface-1 px-2.5 py-1 text-13 font-medium text-primary hover:bg-layer-transparent-hover";
+const ghost = "flex items-center gap-1.5 rounded-md border border-subtle bg-surface-1 px-2.5 py-1 text-13 font-medium text-primary hover:bg-layer-transparent-hover max-sm:min-h-9";
 const chipClass = "flex items-center gap-1.5 rounded-md border border-subtle bg-layer-1 py-0.5 pl-2 pr-1 text-12 text-primary";
 
 export type FilterSection = { key: NamedFilter; options: Option[] };

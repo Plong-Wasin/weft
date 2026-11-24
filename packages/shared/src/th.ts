@@ -1283,6 +1283,8 @@ export const th: Record<keyof typeof en, string> = {
   "intake.snoozedTill": "เลื่อนไว้จนถึง {date}",
   "intake.duplicateOf": "ซ้ำกับ {id}",
   "intake.failed": "ไม่สามารถตัดสินรายการนี้ได้",
+  "intake.loadFailed": "โหลดไม่สำเร็จ ลองอีกครั้ง",
+  "intake.retry": "ลองอีกครั้ง",
   "intake.tab.open": "เปิดอยู่",
   "intake.tab.closed": "ปิดแล้ว",
   "intake.add": "ส่งเข้า Intake",

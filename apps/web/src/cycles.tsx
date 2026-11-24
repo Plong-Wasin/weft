@@ -264,12 +264,12 @@ export function BurndownChart({ action, name, body, projectId, refreshKey, testI
     {data.reason ? <p className="m-0 text-13 text-secondary" role="status">{t(`cycles.burndownReason.${data.reason}`)}</p> : !values.some((value) => value !== null) ? <p className="m-0 text-13 text-secondary" role="status">{data.days.some((day) => day.unknown) ? t("cycles.history.noCoverage") : t("cycles.burndownEmpty")}</p> : <>
       <svg viewBox={`0 0 ${w} ${h}`} role="img" aria-label={t(mode === "points" ? "cycles.burndownLabelPoints" : "cycles.burndownLabel")} className="h-auto w-full max-w-full">
         <line x1={pad.l} y1={y(0)} x2={w - pad.r} y2={y(0)} stroke="var(--border-subtle)" />
-        <text x={pad.l - 4} y={y(max) + 4} textAnchor="end" fontSize="10" fill="var(--text-secondary)">{data.total === null ? t("cycles.history.unknown") : count(data.total)}</text>
-        <text x={pad.l - 4} y={y(0) + 4} textAnchor="end" fontSize="10" fill="var(--text-secondary)">0</text>
+        <text x={pad.l - 4} y={y(max) + 4} textAnchor="end" fontSize="10" fill="var(--txt-secondary)">{data.total === null ? t("cycles.history.unknown") : count(data.total)}</text>
+        <text x={pad.l - 4} y={y(0) + 4} textAnchor="end" fontSize="10" fill="var(--txt-secondary)">0</text>
         {lineSegments(data.days.map((day) => mode === "points" ? (day.idealPoints ?? day.ideal) : day.ideal)).map((points, index) => <polyline key={`ideal-${index}`} fill="none" stroke="var(--border-strong)" strokeDasharray="4 3" strokeWidth="1.5" points={points} />)}
-        {lineSegments(values).map((points, index) => <polyline key={`actual-${index}`} fill="none" stroke="var(--bg-accent-strong)" strokeWidth="2" points={points} />)}
-        {first && <text x={pad.l} y={h - 4} fontSize="10" fill="var(--text-secondary)">{formatDay(first)}</text>}
-        {end && end !== first && <text x={w - pad.r} y={h - 4} textAnchor="end" fontSize="10" fill="var(--text-secondary)">{formatDay(end)}</text>}
+        {lineSegments(values).map((points, index) => <polyline key={`actual-${index}`} fill="none" stroke="var(--bg-accent-primary)" strokeWidth="2" points={points} />)}
+        {first && <text x={pad.l} y={h - 4} fontSize="10" fill="var(--txt-secondary)">{formatDay(first)}</text>}
+        {end && end !== first && <text x={w - pad.r} y={h - 4} textAnchor="end" fontSize="10" fill="var(--txt-secondary)">{formatDay(end)}</text>}
       </svg>
       <div className="flex gap-3 text-12 text-secondary"><span>— {t("cycles.burndownRemaining")}</span><span>- - {t("cycles.burndownIdeal")}</span></div>
     </>}

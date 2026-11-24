@@ -23,11 +23,11 @@ function PageTree({ workspace, pages, parentId, activeId, open, toggle, depth, d
     const children = pages.filter((child) => child.parentId === page.id);
     const expanded = open.has(page.id);
     return <li key={page.id} className="min-w-0">
-      <div data-wiki-drop-id={`page:${page.id}`} className={`relative flex min-w-0 items-center ${over === `page:${page.id}` && overKind === "nest" ? "rounded-md bg-accent-primary/15 ring-1 ring-accent-primary" : ""} ${dragging === page.id ? "opacity-50" : ""}`} style={{ paddingLeft: `${depth * 0.75}rem` }}>
+      <div data-wiki-drop-id={`page:${page.id}`} className={`relative flex min-w-0 items-center gap-1 ${over === `page:${page.id}` && overKind === "nest" ? "rounded-md bg-accent-primary/15 ring-1 ring-accent-primary" : ""} ${dragging === page.id ? "opacity-50" : ""}`} style={{ paddingLeft: `${depth * 0.75}rem` }}>
         {over === `page:${page.id}` && overKind === "before" && <span aria-hidden data-wiki-drop-line="before" className="pointer-events-none absolute inset-x-0 -top-px h-0.5 rounded bg-accent-primary" />}
         {over === `page:${page.id}` && overKind === "after" && <span aria-hidden data-wiki-drop-line="after" className="pointer-events-none absolute inset-x-0 -bottom-px h-0.5 rounded bg-accent-primary" />}
         {children.length > 0
-          ? <button type="button" aria-expanded={expanded} aria-label={`${translate("wikiSidebar.toggle")}: ${page.title}`} onClick={() => toggle(page.id)} className="grid size-5 shrink-0 place-items-center rounded !bg-transparent !p-0 text-tertiary hover:!bg-layer-transparent-hover"><ChevronRight aria-hidden size={12} className={`transition-transform ${expanded ? "rotate-90" : ""}`} /></button>
+          ? <button type="button" aria-expanded={expanded} aria-label={`${translate("wikiSidebar.toggle")}: ${page.title}`} onClick={() => toggle(page.id)} className="grid size-5 max-md:size-11 shrink-0 place-items-center rounded !bg-transparent !p-0 text-tertiary hover:!bg-layer-transparent-hover"><ChevronRight aria-hidden size={12} className={`transition-transform ${expanded ? "rotate-90" : ""}`} /></button>
           : <span className="size-5 shrink-0" />}
         <NavLink to={paths.wikiPage(workspace.slug, page.id)} className={({ isActive }) => `${row(isActive)} min-w-0 flex-1`}><FileText aria-hidden size={13} className="shrink-0" /><span className="truncate">{page.title}</span></NavLink>
         {over === `page:${page.id}` && <span className="px-1 text-11 font-medium text-accent-primary">{translate(overKind === "before" ? "wikiSidebar.dropBefore" : overKind === "after" ? "wikiSidebar.dropAfter" : "wikiSidebar.dropNest")}</span>}
@@ -40,7 +40,7 @@ function PageTree({ workspace, pages, parentId, activeId, open, toggle, depth, d
           if (!neighbour) return;
           event.preventDefault();
           moveBeside(page, neighbour, event.key === "ArrowUp" ? "before" : "after");
-        }} className="grid size-5 shrink-0 touch-none place-items-center rounded !bg-transparent !p-0 text-tertiary hover:!bg-layer-transparent-hover hover:text-primary cursor-grab"><GripVertical aria-hidden size={12} /></button>}
+        }} className="grid size-5 max-md:size-11 shrink-0 touch-none place-items-center rounded !bg-transparent !p-0 text-tertiary hover:!bg-layer-transparent-hover hover:text-primary cursor-grab"><GripVertical aria-hidden size={12} /></button>}
       </div>
       {expanded && children.length > 0 && <PageTree workspace={workspace} pages={pages} parentId={page.id} activeId={activeId} open={open} toggle={toggle} depth={depth + 1} dragging={dragging} over={over} dragStart={dragStart} overKind={overKind} moveBeside={moveBeside} />}
     </li>;

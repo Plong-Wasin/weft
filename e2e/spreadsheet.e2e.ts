@@ -13,6 +13,7 @@ const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
   Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
 ];
+const localDay = (offset: number) => { const date = new Date(); date.setDate(date.getDate() + offset); return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-"); };
 
 async function waitFor(url: string) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -62,7 +63,7 @@ try {
   const longCycle = await call<{ id: string }>("create_cycle", { projectId: project!.id, name: longCycleName, startDate: new Date(Date.now() - 86_400_000).toISOString().slice(0, 10), endDate: new Date(Date.now() + 6 * 86_400_000).toISOString().slice(0, 10) });
   for (const title of ["Alpha", "Bravo"]) await call("create_work_item", { projectId: project!.id, title });
   const longTitle = "Coordinate the authentication migration with teams in every supported region";
-  const longItem = await call<{ id: string; displayId: string }>("create_work_item", { projectId: project!.id, title: longTitle });
+  const longItem = await call<{ id: string; displayId: string }>("create_work_item", { projectId: project!.id, title: longTitle, dueDate: localDay(-2) });
   await call("update_work_item", { workItemId: longItem.id, stateId: longState.id, labelIds: [longLabel.id] });
   await call("add_module_items", { moduleId: longModule.id, workItemIds: [longItem.id] });
   await call("add_cycle_items", { cycleId: longCycle.id, workItemIds: [longItem.id] });
@@ -94,6 +95,10 @@ try {
   const longModuleButton = longRow.getByRole("button", { name: `${translate("workItems.modules")}: ${longModuleName}` });
   const longStateButton = longRow.getByRole("button", { name: `${translate("workItems.state")}: ${longStateName}` });
   const longCycleButton = longRow.getByRole("button", { name: `${translate("workItems.cycle")}: ${longCycleName}` });
+  const overdueDate = longRow.getByTitle(translate("datePicker.overdue"), { exact: true });
+  check(await overdueDate.count() === 1, "overdue DatesMenu should keep the Overdue hover tooltip");
+  await overdueDate.hover();
+  check(await overdueDate.getAttribute("title") === translate("datePicker.overdue"), "hovering DatesMenu's overdue date should still say Overdue");
   for (const [button, name] of [[longLabelButton, longLabelName], [longModuleButton, longModuleName]] as const) {
     const value = button.locator(`span[title="${name}"]`);
     check(await value.getAttribute("title") === name, `truncated ${name} should retain its full text on hover`);
@@ -218,6 +223,7 @@ try {
   });
   await touchPage.goto(sheetUrl.toString());
   const guestLongRow = touchPage.getByTestId(`row-${longItem.displayId}`);
+  await guestLongRow.getByRole("group", { name: `${translate("workItems.priority")}: ${translate("workItems.priority.none")}` }).waitFor();
   for (const [label, name] of [["state", longStateName], ["cycle", longCycleName], ["labels", longLabelName], ["modules", longModuleName]] as const) {
     const fullLabel = `${translate(`workItems.${label}`)}: ${name}`;
     const trigger = guestLongRow.getByRole("button", { name: fullLabel });

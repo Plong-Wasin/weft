@@ -82,7 +82,10 @@ try {
   // 1. Overdue Due date is red; a completed Work item with a past Due is not overdue.
   await page.goto(`${web}/${slug}/browse/DTE-1`);
   await sidebar.waitFor();
-  check(await sidebar.getByTitle(t("datePicker.overdue"), { exact: true }).count() === 1, `open item with a past Due should show the overdue mark once: ${JSON.stringify(await stored("DTE-1"))} chip=${await dueChip.evaluate((el) => el.outerHTML)} localDay=${localDay(-2)}`);
+  const overdueMark = sidebar.getByTitle(t("datePicker.overdue"), { exact: true });
+  check(await overdueMark.count() === 1, `open item with a past Due should show the overdue mark once: ${JSON.stringify(await stored("DTE-1"))} chip=${await dueChip.evaluate((el) => el.outerHTML)} localDay=${localDay(-2)}`);
+  await overdueMark.hover();
+  check(await overdueMark.getAttribute("title") === t("datePicker.overdue"), "hovering the overdue Due mark should keep its Overdue tooltip");
   check(await sidebar.getByRole("button", { name: new RegExp(`, ${t("datePicker.overdue")}$`) }).count() === 1, "the overdue Due chip has no accessible name that says Overdue");
   check((await dueChip.textContent())?.includes(shortOf(localDay(-2))) === true, `Due chip should read the short date ${shortOf(localDay(-2))}`);
   await page.goto(`${web}/${slug}/browse/DTE-2`);
@@ -144,6 +147,23 @@ try {
   await page.keyboard.press("Escape");
   await dialog.waitFor({ state: "detached" });
   console.log("date-picker: keyboard moves and picks, Escape closes");
+
+  // A read-only Work item keeps the Due field context and overdue name without relying on a button role.
+  const readOnlyItem = await call<Item>("create_work_item", { projectId, title: "Read-only overdue", dueDate: localDay(-2) });
+  await page.route("**/actions/list_projects", async (route) => {
+    const response = await route.fetch();
+    const projects = await response.json() as Array<Record<string, unknown>>;
+    await route.fulfill({ response, json: projects.map((candidate) => candidate.id === projectId ? { ...candidate, role: "Guest" } : candidate) });
+  });
+  await page.goto(`${web}/${slug}/browse/${readOnlyItem.displayId}`);
+  await sidebar.waitFor();
+  const readOnlyDue = sidebar.getByRole("group", { name: `${t("workItems.dueDate")}: ${shortOf(localDay(-2))}, ${t("datePicker.overdue")}` });
+  await readOnlyDue.waitFor();
+  const readOnlyOverdueMark = readOnlyDue.getByTitle(t("datePicker.overdue"), { exact: true });
+  check(await readOnlyOverdueMark.count() === 1, "read-only overdue Due should retain its Overdue tooltip");
+  await readOnlyOverdueMark.hover();
+  check(await readOnlyOverdueMark.getAttribute("title") === t("datePicker.overdue"), "read-only Due hover should still explain that the date is overdue");
+  console.log("date-picker: overdue Due field keeps its accessible context when read-only");
 
   console.log(`date-picker ok: ${open.displayId} ${done.displayId}`);
 } catch (error) {

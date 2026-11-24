@@ -1216,6 +1216,7 @@ export const th: Record<keyof typeof en, string> = {
   "analytics.projectList": "โปรเจกต์",
   "analytics.noProjects": "คุณยังไม่ได้เป็นสมาชิกของโปรเจกต์ใด",
   "analytics.total": "งานทั้งหมด",
+  "analytics.totalShort": "รวม",
   "analytics.open": "ยังไม่เสร็จ",
   "analytics.completed": "เสร็จสิ้น",
   "analytics.overdue": "เลยกำหนด",

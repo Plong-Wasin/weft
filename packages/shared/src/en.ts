@@ -1213,6 +1213,7 @@ export const en = {
     "analytics.projectList": "Projects",
     "analytics.noProjects": "You are not a member of any project yet.",
     "analytics.total": "Total work items",
+    "analytics.totalShort": "Total",
     "analytics.open": "Open",
     "analytics.completed": "Completed",
     "analytics.overdue": "Overdue",

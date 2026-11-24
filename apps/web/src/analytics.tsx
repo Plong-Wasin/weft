@@ -137,15 +137,27 @@ export function AnalyticsOverviewPage({ workspaceId, workspaceSlug, run }: { wor
       <SummaryCards summary={state.summary} />
       {state.projects.length === 0 ? <p className="m-0 text-secondary">{t("analytics.noProjects")}</p> : <div className="grid min-w-0 gap-3">
         <h2 className="m-0 text-16 font-semibold">{t("analytics.projectList")}</h2>
-        <ul className="m-0 grid list-none gap-1 p-0">
-          <li aria-hidden className="grid grid-cols-[minmax(0,1fr)_4rem_4rem_5rem] gap-3 text-12 text-secondary max-md:grid-cols-[minmax(0,1fr)_3rem_3rem_3.5rem]"><span>{t("analytics.projects")}</span><span className="text-right">{t("analytics.total")}</span><span className="text-right">{t("analytics.open")}</span><span className="text-right">{t("analytics.completed")}</span></li>
-          {state.projects.map((project) => <li key={project.id} className="grid grid-cols-[minmax(0,1fr)_4rem_4rem_5rem] items-center gap-3 border-t border-subtle pt-1 text-14 max-md:grid-cols-[minmax(0,1fr)_3rem_3rem_3.5rem]">
-            <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1"><span className="shrink-0 rounded-md bg-layer-1 px-1.5 text-12 text-secondary">{project.key}</span><span className="min-w-0 break-words" title={project.name}>{project.name}</span></span>
-            <span className="text-right tabular-nums" aria-label={`${t("analytics.total")}: ${project.total}`}>{formatNumber(project.total)}</span>
-            <span className="text-right tabular-nums" aria-label={`${t("analytics.open")}: ${project.open}`}>{formatNumber(project.open)}</span>
-            <span className="text-right tabular-nums" aria-label={`${t("analytics.completed")}: ${project.completed}`}>{formatNumber(project.completed)}</span>
-          </li>)}
-        </ul>
+        <table className="w-full table-fixed border-collapse text-14">
+          <caption className="sr-only">{t("analytics.projectList")}</caption>
+          <thead>
+            <tr className="text-12 text-secondary">
+              <th scope="col" className="w-auto py-1 text-left font-normal">{t("analytics.projects")}</th>
+              <th scope="col" className="w-[3.5rem] whitespace-nowrap py-1 text-right font-normal sm:w-[4rem]"><span className="sr-only">{t("analytics.total")}</span><span aria-hidden="true" className="max-md:hidden">{t("analytics.total")}</span><span aria-hidden="true" className="md:hidden">{t("analytics.totalShort")}</span></th>
+              <th scope="col" className="w-[3.5rem] whitespace-nowrap py-1 text-right font-normal sm:w-[4rem]">{t("analytics.open")}</th>
+              <th scope="col" className="w-[4.5rem] whitespace-nowrap py-1 text-right font-normal sm:w-[5rem]">{t("analytics.completed")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {state.projects.map((project) => <tr key={project.id} className="border-t border-subtle text-14">
+              <th scope="row" className="py-1 pr-2 text-left font-normal">
+                <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1"><span className="shrink-0 rounded-md bg-layer-1 px-1.5 text-12 text-secondary">{project.key}</span><span className="min-w-0 break-words" title={project.name}>{project.name}</span></span>
+              </th>
+              <td className="py-1 text-right tabular-nums">{formatNumber(project.total)}</td>
+              <td className="py-1 text-right tabular-nums">{formatNumber(project.open)}</td>
+              <td className="py-1 text-right tabular-nums">{formatNumber(project.completed)}</td>
+            </tr>)}
+          </tbody>
+        </table>
       </div>}
     </>}
   </section>;

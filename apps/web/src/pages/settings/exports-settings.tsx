@@ -18,15 +18,22 @@ export function WorkspaceExports() {
   const [picked, setPicked] = React.useState<string[]>([]);
   const [format, setFormat] = React.useState<"csv" | "json">("csv");
   const [items, setItems] = React.useState<ExportItem[] | null>(null);
+  const [listFailed, setListFailed] = React.useState(false);
   const [note, setNote] = React.useState<string | null>(null);
   const [error, setError] = React.useState(false);
   const [denied, setDenied] = React.useState(false);
   const say = (text: string, failed = false) => { setNote(text); setError(failed); };
   const load = React.useCallback(async () => {
-    const rows = await action<ExportItem[]>("list_exports", { workspaceId: workspace.id });
-    // A Guest is refused; Exports are for Admins and Members.
-    setDenied(rows === null);
-    setItems(rows ?? []);
+    const result = await actionResult<ExportItem[]>("list_exports", { workspaceId: workspace.id });
+    if ("error" in result) {
+      // A Guest is refused; a transient failure should stay recoverable instead of looking like a permission denial.
+      setDenied(result.error === "403" || result.error === "Forbidden");
+      setListFailed(result.error !== "403" && result.error !== "Forbidden");
+      return;
+    }
+    setDenied(false);
+    setListFailed(false);
+    setItems(result.data);
   }, [workspace.id]);
   React.useEffect(() => {
     void load();
@@ -88,7 +95,7 @@ export function WorkspaceExports() {
       <Note note={note} error={error} />
     </SettingsBlock>
     <SettingsBlock title={translate("exports.previous")}>
-      {items === null ? null : items.length === 0 ? <p className="text-secondary">{translate("exports.none")}</p> : <RowList>{items.map((item) => <Row key={item.id}>
+      {listFailed ? <div className="flex flex-wrap items-center gap-3" role="alert"><p className="m-0 text-13 text-danger-text">{translate("exports.listFailed")}</p><button type="button" className="secondary" onClick={() => void load()}>{translate("exports.retry")}</button></div> : items === null ? <p role="status" className="text-secondary">{translate("exports.loading")}</p> : items.length === 0 ? <p className="text-secondary">{translate("exports.none")}</p> : <RowList>{items.map((item) => <Row key={item.id}>
         <div className="grid min-w-0 flex-1 gap-1">
           <span className="font-medium">{item.projects.map((project) => `${project.key} · ${project.name}`).join(", ")} · {item.format.toUpperCase()}</span>
           <span className="text-13 text-secondary">{translate("exports.requestedAt")}: {formatDate(item.createdAt)}</span>

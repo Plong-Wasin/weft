@@ -411,18 +411,24 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
           summary={assignees.length === 0 ? compact ? <span className="hidden text-11 max-sm:inline">{t("workItems.noAssignee")}</span> : <span className="text-secondary">{t("workItems.noAssignee")}</span> : <span className="flex items-center -space-x-1">{assignees.slice(0, 3).map((id) => <Avatar key={id} name={personName(id)} id={id} agent={isAgentId(id)} />)}{assignees.length > 3 && <span className="pl-2 text-12">+{formatNumber(assignees.length - 3)}</span>}</span>}
           options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: accessReasonText(person) }))}
           onToggle={(id, on) => void change(item, { assigneeIds: on ? [...assignees, id] : assignees.filter((other) => other !== id) })} />;
-      case "labels": return <MultiSelect label={t("workItems.labels")} readOnly={readOnly} selected={item.labelIds} icon={<Tag aria-hidden size={14} className="text-secondary" />}
-          summary={item.labelIds.length === 0 ? compact ? <span className="hidden text-11 max-sm:inline">{t("layout.noLabel")}</span> : <span className="text-secondary">{t("layout.noLabel")}</span> : <span>{item.labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ")}</span>}
+      case "labels": {
+        const labelNames = item.labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ");
+        return <MultiSelect label={t("workItems.labels")} readOnly={readOnly} selected={item.labelIds} icon={<Tag aria-hidden size={14} className="text-secondary" />}
+          summary={item.labelIds.length === 0 ? compact ? <span className="hidden text-11 max-sm:inline">{t("layout.noLabel")}</span> : <span className="text-secondary">{t("layout.noLabel")}</span> : <span className="block max-w-28 truncate" title={labelNames}>{labelNames}</span>}
           options={labels.map((label) => ({ id: label.id, name: label.name, icon: <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: label.color }} /> }))}
           onToggle={(id, on) => void change(item, { labelIds: on ? [...item.labelIds, id] : item.labelIds.filter((other) => other !== id) })} />;
+      }
       case "estimate": return <EstimateSelect estimate={estimate} pointId={item.estimatePointId ?? null} readOnly={readOnly} iconOnlyWhenEmpty={compact} onSelect={(estimatePointId) => void change(item, { estimatePointId })} />;
       case "dates": return <DatesMenu iconOnlyWhenEmpty={compact} startDate={item.startDate} dueDate={item.dueDate} stateGroup={states.find((state) => state.id === item.stateId)?.group} readOnly={readOnly} onChange={(dates) => void change(item, dates)} />;
       case "cycle": return <SingleSelect iconOnly={compact && !cycleOf[item.id]} label={t("workItems.cycle")} readOnly={readOnly} value={cycleOf[item.id] ?? ""} icon={<RefreshCw aria-hidden size={14} className="text-secondary" />}
           summary={cycleOptions.find((cycle) => cycle.id === cycleOf[item.id])?.name ?? t("workItems.noCycle")}
           options={[{ id: "", name: t("workItems.noCycle") }, ...cycleOptions.filter((cycle) => cycle.status !== "completed" || cycle.id === cycleOf[item.id]).map((cycle) => ({ id: cycle.id, name: cycle.name }))]} onSelect={(id) => void setCycle(item, id)} />;
-      case "modules": return <MultiSelect label={t("workItems.modules")} readOnly={readOnly} selected={mine} icon={<Package aria-hidden size={14} className="text-secondary" />}
-          summary={mine.length === 0 ? compact ? <span className="hidden text-11 max-sm:inline">{t("workItems.noModules")}</span> : <span className="text-secondary">{t("workItems.noModules")}</span> : <span>{mine.map((id) => moduleOptions.find((module) => module.id === id)?.name).filter(Boolean).join(", ")}</span>}
+      case "modules": {
+        const moduleNames = mine.map((id) => moduleOptions.find((module) => module.id === id)?.name).filter(Boolean).join(", ");
+        return <MultiSelect label={t("workItems.modules")} readOnly={readOnly} selected={mine} icon={<Package aria-hidden size={14} className="text-secondary" />}
+          summary={mine.length === 0 ? compact ? <span className="hidden text-11 max-sm:inline">{t("workItems.noModules")}</span> : <span className="text-secondary">{t("workItems.noModules")}</span> : <span className="block max-w-28 truncate" title={moduleNames}>{moduleNames}</span>}
           options={moduleOptions.map((module) => ({ id: module.id, name: module.name }))} onToggle={(id, on) => void setModule(item, id, on)} />;
+      }
       default: return null;
     }
   };
@@ -496,22 +502,31 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const allPicked = orderedIds.length > 0 && orderedIds.every((id) => selected.includes(id));
   const columns = params.props.filter((property) => property !== "id" && listShows(property));
   const cell = "border-b border-subtle px-3 py-2 text-left align-middle whitespace-nowrap";
+  const sheetColumnMinWidth: Partial<Record<DisplayProperty, string>> = {
+    state: "min-w-28", priority: "min-w-28", assignee: "min-w-28", labels: "min-w-32", dates: "min-w-32", cycle: "min-w-28", modules: "min-w-32", estimate: "min-w-24",
+  };
   const sheetView = <div className="overflow-hidden rounded-lg border border-subtle">
     {filtered && items.length === 0 && <p className="border-b border-subtle bg-surface-1 px-5 py-3 text-14 text-secondary">{t("layout.noMatch")}</p>}
-    <div className="overflow-x-auto" data-testid="sheet-scroll">
-      <table className="w-full border-separate border-spacing-0 bg-surface-1 text-13">
+    <div role="region" aria-label={t("layout.spreadsheet")} tabIndex={0} className="overflow-x-auto focus-visible:outline-2 focus-visible:outline-accent-primary" data-testid="sheet-scroll"
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
+        event.preventDefault();
+        event.currentTarget.scrollLeft += (event.key === "ArrowRight" ? 1 : -1) * Math.max(80, event.currentTarget.clientWidth * 0.8);
+      }}>
+      <table className="w-max min-w-full table-auto border-separate border-spacing-0 bg-surface-1 text-13">
+        <caption className="sr-only">{t("layout.spreadsheet")}</caption>
         <thead><tr className="bg-layer-1 text-12 font-medium text-tertiary">
-          <th scope="col" className={`${cell} sticky left-0 z-10 min-w-64 bg-layer-1`}>{t("layout.sheet.workItem")}</th>
-          {columns.map((property) => <th key={property} scope="col" className={cell}>{t(`layout.property.${property}`)}</th>)}
-          {rowAction && <th scope="col" className={cell}><span className="sr-only">{t("layout.sheet.actions")}</span></th>}
+          <th scope="col" className={`${cell} sticky left-0 z-10 w-80 min-w-64 bg-layer-1`}>{t("layout.sheet.workItem")}</th>
+          {columns.map((property) => <th key={property} scope="col" className={`${cell} ${sheetColumnMinWidth[property] ?? ""}`}>{t(`layout.property.${property}`)}</th>)}
+          {rowAction && <th scope="col" className={`${cell} min-w-24`}><span className="sr-only">{t("layout.sheet.actions")}</span></th>}
         </tr></thead>
         <tbody>{items.map((item) => <tr key={item.id} data-testid={`row-${item.displayId}`} className="group hover:bg-layer-transparent-hover">
-          <th scope="row" className={`${cell} sticky left-0 z-10 min-w-64 bg-surface-1 font-normal group-hover:bg-layer-1`}>
-            <span className="flex items-center gap-3">{pickBox(item)}{shows("id") && <span className="shrink-0 text-12 text-tertiary">{item.displayId}</span>}
-              <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="max-w-72 truncate text-14 font-medium text-primary">{item.title}</Link></span>
+          <th scope="row" className={`${cell} sticky left-0 z-10 w-80 min-w-64 bg-surface-1 font-normal group-hover:bg-layer-1`}>
+            <span className="flex min-w-0 items-center gap-3">{pickBox(item)}{shows("id") && <span className="shrink-0 text-12 text-tertiary">{item.displayId}</span>}
+              <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="block min-w-0 max-w-48 whitespace-normal text-14 font-medium text-primary [overflow-wrap:anywhere]">{item.title}</Link></span>
           </th>
-          {columns.map((property) => <td key={property} className={cell}>{cellOf(item, property)}</td>)}
-          {rowAction && <td className={cell}>{rowAction(item)}</td>}
+          {columns.map((property) => <td key={property} className={`${cell} ${sheetColumnMinWidth[property] ?? ""}`}>{cellOf(item, property)}</td>)}
+          {rowAction && <td className={`${cell} min-w-24`}>{rowAction(item)}</td>}
         </tr>)}</tbody>
       </table>
     </div>

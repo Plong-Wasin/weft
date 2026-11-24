@@ -52,7 +52,15 @@ try {
   await call("create_label", { projectId: project!.id, name: "Bug" });
   await call("create_cycle", { projectId: project!.id, name: "Sprint 1", startDate: new Date(Date.now() - 86_400_000).toISOString().slice(0, 10), endDate: new Date(Date.now() + 6 * 86_400_000).toISOString().slice(0, 10) });
   await call("create_module", { projectId: project!.id, name: "Auth" });
+  const longLabelName = "Authentication architecture review and rollout planning";
+  const longModuleName = "Identity and access management migration workstream";
+  const longLabel = await call<{ id: string }>("create_label", { projectId: project!.id, name: longLabelName });
+  const longModule = await call<{ id: string }>("create_module", { projectId: project!.id, name: longModuleName });
   for (const title of ["Alpha", "Bravo"]) await call("create_work_item", { projectId: project!.id, title });
+  const longTitle = "Coordinate the authentication migration with teams in every supported region";
+  const longItem = await call<{ id: string; displayId: string }>("create_work_item", { projectId: project!.id, title: longTitle });
+  await call("update_work_item", { workItemId: longItem.id, labelIds: [longLabel.id] });
+  await call("add_module_items", { moduleId: longModule.id, workItemIds: [longItem.id] });
 
   await page.getByRole("link", { name: /MOB · Mobile/ }).click();
   await page.getByRole("link", { name: "Alpha" }).waitFor();
@@ -61,10 +69,27 @@ try {
   // Switch to the spreadsheet: one row per work item, one column per property.
   await page.getByRole("button", { name: translate("layout.spreadsheet") }).click();
   check(page.url().includes("layout=spreadsheet"), "layout missing from URL");
-  await page.getByRole("table").waitFor();
+  await page.getByRole("table", { name: translate("layout.spreadsheet") }).waitFor();
   const headers = await page.getByRole("columnheader").allInnerTexts();
   for (const key of ["state", "priority", "assignee", "labels", "dates", "cycle", "modules"]) check(headers.includes(translate(`layout.property.${key}` as never)), `column ${key} missing: ${headers}`);
-  check(await page.getByRole("row").count() === 3, "expected header + 2 rows");
+  check(await page.getByRole("row").count() === 4, "expected header + 3 rows");
+  const scroll = page.getByTestId("sheet-scroll");
+  const workItemColumn = await page.getByRole("columnheader", { name: translate("layout.sheet.workItem") }).boundingBox();
+  const modulesColumn = await page.getByRole("columnheader", { name: translate("layout.property.modules") }).boundingBox();
+  check(!!workItemColumn && workItemColumn.width >= 300 && workItemColumn.width <= 340, `Work item column should stay within its readable width bounds: ${workItemColumn?.width}`);
+  check(!!modulesColumn && modulesColumn.width >= 128, `Modules column is narrower than its content: ${modulesColumn?.width}`);
+  const longRow = page.getByTestId(`row-${longItem.displayId}`);
+  const longTitleLink = longRow.getByRole("link", { name: longTitle, exact: true });
+  await longTitleLink.waitFor();
+  const longTitleBox = await longTitleLink.boundingBox();
+  check(!!longTitleBox && longTitleBox.width <= 200 && longTitleBox.height > 30, `long Work item title should wrap within the bounded column: ${JSON.stringify(longTitleBox)}`);
+  const longLabelButton = longRow.getByRole("button", { name: `${translate("workItems.labels")}: ${longLabelName}` });
+  const longModuleButton = longRow.getByRole("button", { name: `${translate("workItems.modules")}: ${longModuleName}` });
+  for (const [button, name] of [[longLabelButton, longLabelName], [longModuleButton, longModuleName]] as const) {
+    const value = button.locator(`span[title="${name}"]`);
+    check(await value.getAttribute("title") === name, `truncated ${name} should retain its full text on hover`);
+    check(await value.evaluate((element) => element.scrollWidth > element.clientWidth), `${name} should be visibly bounded instead of widening its table column`);
+  }
   await page.screenshot({ path: `${shots}/sheet-1440-light.png` });
 
   // Inline edits go through the Actions: state and priority persist after reload.
@@ -104,9 +129,13 @@ try {
 
   // Narrow viewport: the table scrolls sideways and the first column stays put.
   await page.setViewportSize({ width: 390, height: 844 });
-  const scroll = page.getByTestId("sheet-scroll");
+  check(await scroll.getAttribute("role") === "region" && await scroll.getAttribute("tabindex") === "0", "spreadsheet scroll region should be named and keyboard focusable");
   check(await scroll.evaluate((el) => el.scrollWidth > el.clientWidth), "no horizontal scroll at 390px");
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "page itself scrolls sideways at 390px");
+  await scroll.focus();
+  const beforeKeyboardScroll = await scroll.evaluate((el) => el.scrollLeft);
+  await page.keyboard.press("ArrowRight");
+  check(await scroll.evaluate((el, before) => el.scrollLeft > before, beforeKeyboardScroll), "keyboard focus on the spreadsheet did not scroll its columns");
   const before = await page.getByRole("rowheader").first().boundingBox();
   await scroll.evaluate((el) => { el.scrollLeft = 300; });
   const sticky = await page.getByRole("rowheader").first().boundingBox();
@@ -116,6 +145,12 @@ try {
   // The list layout still renders at the plain project URL.
   await page.goto(projectUrl);
   await page.getByRole("region", { name: "In Progress" }).getByRole("link", { name: "Alpha" }).waitFor();
+  const listLongRow = page.getByTestId(`row-${longItem.displayId}`);
+  for (const [property, name] of [["labels", longLabelName], ["modules", longModuleName]] as const) {
+    const button = listLongRow.getByRole("button", { name: `${translate(`workItems.${property}`)}: ${name}` });
+    const value = button.locator(`span[title="${name}"]`);
+    check(await value.evaluate((element) => element.clientWidth <= 112 && element.scrollWidth > element.clientWidth), `long ${property} should stay bounded in a list row`);
+  }
   console.log("spreadsheet e2e passed");
   await browser.close();
 } catch (error) {

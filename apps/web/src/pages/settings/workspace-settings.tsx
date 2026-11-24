@@ -13,6 +13,8 @@ import { dangerButton, DangerZone, Note, Row, RowList, SettingsBlock, SettingsHe
 import { adminState } from "../../admin-state";
 import { AuditLogPage, MemberSecurityList } from "./member-security";
 
+const fillMessage = (message: string, values: Record<string, string>) => Object.entries(values).reduce((result, [key, value]) => result.split(`{${key}}`).join(value), message);
+
 /** Settings area: the contextual sidebar holds the section links, this layout holds the routed section page. */
 export function SettingsLayout() {
   return <div className="mx-auto w-full max-w-[900px]"><Outlet /></div>;
@@ -83,7 +85,7 @@ export function WorkspaceMembers() {
       {isAdmin && !member.isAgent ? <select aria-label={`${translate("settings.roleOf")} ${member.name}`} value={member.role} onChange={async (event) => guard(await action("change_member_role", { workspaceId: workspace.id, userId: member.userId, role: event.target.value }))}>
         {roles.map((role) => <option key={role} value={role}>{translate(`members.role.${role}`)}</option>)}
       </select> : <span className="text-secondary">{translate(`members.role.${member.role}`)}</span>}
-      {isAdmin && !member.isAgent && <button type="button" className="secondary hover:!text-danger-text" onClick={async () => { if (!window.confirm(translate("members.removeConfirm"))) return; await guard(await action("remove_member", { workspaceId: workspace.id, userId: member.userId })); }}>{translate("members.remove")}</button>}
+      {isAdmin && !member.isAgent && <button type="button" className="secondary hover:!text-danger-text" aria-label={fillMessage(translate("members.removeNamed"), { name: member.name })} onClick={async () => { if (!window.confirm(translate("members.removeConfirm"))) return; await guard(await action("remove_member", { workspaceId: workspace.id, userId: member.userId })); }}>{translate("members.remove")}</button>}
     </Row>)}</RowList>
     <Note note={note} error />
     {isAdmin && <div className="mt-8"><MemberSecurityList workspaceId={workspace.id} selfId={selfId} onChanged={load} /></div>}
@@ -135,7 +137,7 @@ export function WorkspaceInvites() {
           // Refresh first so the "revoked" note never shows while the revoked invite is still listed.
           await load();
           say(result === null ? translate("members.failed") : translate("settings.revoked"), result === null);
-        }}>{translate("settings.revoke")}</button>
+        }} aria-label={fillMessage(translate("settings.revokeInviteNamed"), { role: translate(`members.role.${invite.role}`), creator: members.find((member) => member.userId === invite.createdBy)?.name ?? "—", date: formatDate(invite.createdAt) })}>{translate("settings.revoke")}</button>
       </Row>)}</RowList>}
     </SettingsBlock>
     <Note note={note} error={failed} />

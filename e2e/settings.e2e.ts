@@ -99,11 +99,12 @@ try {
   check(link.startsWith(`${web}/invite/`), `invite link is ${link}`);
   await page.getByLabel(translate("invite.role")).selectOption("Guest");
   await page.getByRole("button", { name: translate("invite.create") }).click();
-  await page.getByRole("button", { name: translate("settings.revoke") }).nth(1).waitFor();
+  await page.getByRole("button", { name: /^Revoke / }).nth(1).waitFor();
+  check(await page.getByRole("button", { name: /Revoke Guest invite created by Settings Admin on/ }).count() === 1, "invite revoke action has no identifying accessible name");
   await page.screenshot({ path: `${shots}/workspace-invites-1440.png` });
-  await page.getByRole("button", { name: translate("settings.revoke") }).nth(1).click();
+  await page.getByRole("button", { name: /^Revoke / }).nth(1).click();
   await page.getByRole("status").getByText(translate("settings.revoked")).waitFor();
-  check(await page.getByRole("button", { name: translate("settings.revoke") }).count() === 1, "revoke did not remove the invite");
+  check(await page.getByRole("button", { name: /^Revoke / }).count() === 1, "revoke did not remove the invite");
   const invitee = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
   const inviteePage = await invitee.newPage();
   await inviteePage.goto(link);
@@ -123,6 +124,7 @@ try {
   await roleSelect.selectOption("Guest");
   for (let attempt = 0; attempt < 20 && (await members()).find((member) => member.name === "Invited Person")?.role !== "Guest"; attempt += 1) await Bun.sleep(150);
   check((await members()).find((member) => member.name === "Invited Person")?.role === "Guest", "role change did not apply");
+  check(await page.getByRole("button", { name: "Remove Invited Person", exact: true }).count() === 1, "member remove action has no identifying accessible name");
   await page.screenshot({ path: `${shots}/workspace-members-1440.png` });
   const invited = (await members()).find((member) => member.name === "Invited Person")!;
   console.log("settings ok: workspace members role change");

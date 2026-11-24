@@ -112,6 +112,9 @@ try {
   await page.screenshot({ path: `${shots}/cycles-1440.png` });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: `${shots}/cycles-390.png` });
+  const ringFont = await page.getByRole("img", { name: /^Progress \d+%$/ }).first().evaluate((element) => parseFloat(getComputedStyle(element).fontSize));
+  check(ringFont >= 11, `progress ring text is ${ringFont}px at 390px`);
+  check(await page.getByRole("link", { name: "Sprint 1" }).getAttribute("title") === "Sprint 1", "truncated Cycle name has no full-text title");
   await page.setViewportSize({ width: 1440, height: 900 });
 
   // Detail: add a work item, see progress and the state breakdown.
@@ -154,6 +157,9 @@ try {
   const search = page.getByRole("dialog", { name: translate("cycles.addTitle") }).getByLabel(translate("cycles.searchCandidates"));
   await search.fill("Alpha");
   await page.getByText(translate("cycles.currentCycle").replace("{name}", "Sprint 1"), { exact: true }).waitFor();
+  await page.setViewportSize({ width: 390, height: 844 });
+  check(await page.getByRole("dialog", { name: translate("cycles.addTitle") }).evaluate((element) => element.scrollWidth <= element.clientWidth), "add-items dialog scrolls sideways at 390px");
+  await page.setViewportSize({ width: 1440, height: 900 });
   const candidate = page.getByLabel(`${translate("cycles.selectCandidate")} MOB-1`);
   check(!(await candidate.isEnabled()), "an item in another Cycle must not be selectable without the move choice");
   await page.getByLabel(translate("cycles.allowMove")).check();

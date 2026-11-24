@@ -110,8 +110,8 @@ function CycleModal({ action, projectId, workspaceId, cycle, onClose, onSaved }:
 /** Progress shown as a ring with the percentage inside, the way Plane marks a Cycle. */
 function Ring({ cycle }: { cycle: Cycle }) {
   const value = percent(cycle);
-  return <span role="img" aria-label={`${t("cycles.progress")} ${value}%`} className="grid size-8 shrink-0 place-items-center rounded-full text-[9px] font-semibold text-secondary"
-    style={{ background: `conic-gradient(var(--bg-success-primary) ${value * 3.6}deg, var(--bg-layer-1-selected) 0)` }}><span className="grid size-6 place-items-center rounded-full bg-surface-1">{value}%</span></span>;
+  return <span role="img" aria-label={`${t("cycles.progress")} ${value}%`} className="grid size-10 shrink-0 place-items-center rounded-full text-11 font-semibold text-secondary"
+    style={{ background: `conic-gradient(var(--bg-success-primary) ${value * 3.6}deg, var(--bg-layer-1-selected) 0)` }}><span className="grid size-8 place-items-center rounded-full bg-surface-1">{value}%</span></span>;
 }
 
 const bar = (cycle: Cycle) => <progress className="h-1.5 w-28" value={cycle.progress.completed} max={Math.max(cycle.progress.total, 1)} aria-label={t("cycles.progress")} data-testid="cycle-progress"
@@ -150,7 +150,7 @@ function useCycleCommands(action: Call, reload: () => void, setNote: (note: stri
 function CycleRow({ cycle, href, children }: { cycle: Cycle; href: string; children?: React.ReactNode }) {
   return <li className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-subtle px-4 py-3" data-testid="cycle-row">
     <Ring cycle={cycle} />
-    <Link to={href} className="min-w-32 flex-1 truncate text-14 font-medium text-primary">{cycle.name}</Link>
+    <Link to={href} title={cycle.name} className="min-w-32 flex-1 truncate text-14 font-medium text-primary">{cycle.name}</Link>
     {statusPill(cycle.status)}
     <span className="flex items-center gap-1.5 text-12 text-secondary"><CalendarDays aria-hidden size={14} />{range(cycle)}</span>
     <span className="text-12 text-secondary">{t("cycles.itemCount").replace("{count}", count(cycle.itemCount))}</span>
@@ -331,7 +331,7 @@ export function CycleDetailPage({ workspaceId, workspaceSlug, projectKey, projec
   return <section className="grid gap-3">
     <header className="flex flex-wrap items-center gap-3">
       <Link to={paths.cycles(workspaceSlug, projectKey)} className="text-13">{t("cycles.back")}</Link>
-      <h2 className="m-0 min-w-32 flex-1 truncate text-16 font-semibold">{cycle.name}</h2>
+      <h2 title={cycle.name} className="m-0 min-w-32 flex-1 truncate text-16 font-semibold">{cycle.name}</h2>
       {canWrite && !ended && !cycle.archived && <button type="button" className={primaryButton} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("cycles.addItems")}</button>}
       <CycleMenu cycle={cycle} canWrite={canWrite} canAdmin={canAdmin} onEdit={() => setEditing(true)} onArchive={() => void (cycle.archived ? commands.restore(cycle) : commands.archive(cycle))} onDelete={() => void commands.destroy(cycle).then((gone) => { if (gone) navigate(paths.cycles(workspaceSlug, projectKey)); })} />
     </header>
@@ -371,7 +371,7 @@ export function CycleDetailPage({ workspaceId, workspaceSlug, projectKey, projec
       <ul className="m-0 grid max-h-72 list-none gap-1 overflow-auto p-0">{candidates.map((item) => {
         const currentCycle = cycleOf[item.id];
         const disabled = !!currentCycle && (!moveCandidates || currentCycle.archived);
-        return <li key={item.id} className="flex items-center gap-2 text-13"><input type="checkbox" aria-label={`${t("cycles.selectCandidate")} ${item.displayId}`} disabled={disabled} checked={selectedCandidates.includes(item.id)} onChange={(event) => setSelectedCandidates((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))} /><span className="min-w-0 flex-1 truncate">{item.displayId} · {item.title}</span><span className="shrink-0 text-secondary">{currentCycle ? t("cycles.currentCycle").replace("{name}", currentCycle.name) : t("cycles.noCurrentCycle")}</span></li>;
+        return <li key={item.id} className="flex items-center gap-2 text-13"><input type="checkbox" aria-label={`${t("cycles.selectCandidate")} ${item.displayId}`} disabled={disabled} checked={selectedCandidates.includes(item.id)} onChange={(event) => setSelectedCandidates((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))} /><span className="min-w-0 flex-1 truncate">{item.displayId} · {item.title}</span><span title={currentCycle?.name} className="min-w-0 max-w-[40%] truncate text-secondary">{currentCycle ?t("cycles.currentCycle").replace("{name}", currentCycle.name) : t("cycles.noCurrentCycle")}</span></li>;
       })}</ul>
       <div className="flex justify-end"><button disabled={selectedCandidates.length === 0} onClick={async () => {
         const expectedCycleIds = Object.fromEntries(selectedCandidates.map((id) => [id, cycleOf[id]?.id ?? null]));

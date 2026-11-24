@@ -44,20 +44,32 @@ function useOverlap(action: Call, projectId: string, startDate: string, endDate:
 
 /** A centred dialog over a backdrop; Escape and a click on the backdrop close it. */
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
-  React.useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const dialog = React.useRef<HTMLDialogElement>(null);
+  const titleId = React.useId();
+  React.useLayoutEffect(() => {
+    const element = dialog.current;
+    if (!element) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    element.showModal();
+    return () => {
+      if (element.open) element.close();
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
+  }, []);
   return <>
-    <div aria-hidden className="fixed inset-0 z-40 bg-backdrop" onClick={onClose} />
-    <div role="dialog" aria-modal="true" aria-label={title} className="fixed left-1/2 top-[10vh] z-50 max-h-[80vh] w-[calc(100vw-1.5rem)] max-w-lg -translate-x-1/2 overflow-auto rounded-lg border border-subtle bg-surface-1 p-5 shadow-lg">
+    <dialog ref={dialog} aria-labelledby={titleId} onCancel={(event) => { event.preventDefault(); onClose(); }} onClick={(event) => {
+      const element = dialog.current;
+      if (!element || event.target !== element) return;
+      const bounds = element.getBoundingClientRect();
+      const onBackdrop = event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom;
+      if (onBackdrop) onClose();
+    }} className="fixed left-1/2 top-[10vh] z-50 m-0 max-h-[80vh] w-[calc(100vw-1.5rem)] max-w-lg -translate-x-1/2 overflow-auto rounded-lg border border-subtle bg-surface-1 p-5 text-primary shadow-lg backdrop:bg-backdrop">
       <div className="mb-3 flex items-center gap-2">
-        <h2 className="m-0 flex-1 text-18 font-semibold text-primary">{title}</h2>
+        <h2 id={titleId} className="m-0 flex-1 text-18 font-semibold text-primary">{title}</h2>
         <button type="button" className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={t("cycles.close")} onClick={onClose}><X aria-hidden size={16} /></button>
       </div>
       {children}
-    </div>
+    </dialog>
   </>;
 }
 

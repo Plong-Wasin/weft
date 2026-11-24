@@ -124,6 +124,31 @@ try {
   });
   await page.route("**/actions/list_assets", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(assetListed ? uploadedAssets : []) }));
   await page.route("**/actions/list_work_item_activities", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(uploadedAssets.map((asset) => ({ id: asset.id, field: "attachment_added", oldValue: null, newValue: { filename: asset.filename }, actorName: "Intake Tester", createdAt: asset.createdAt }))) }));
+  await add.click();
+  const intakeDialog = page.getByRole("dialog", { name: translate("intake.modalTitle") });
+  const titleField = intakeDialog.getByLabel(translate("intake.titleField"));
+  await titleField.waitFor();
+  await page.waitForFunction(() => document.querySelector("dialog")?.matches(":modal"));
+  await intakeDialog.click({ position: { x: 4, y: 4 } });
+  check(await intakeDialog.count() === 1, "clicking blank dialog padding closed the Intake dialog");
+  await intakeDialog.getByRole("button", { name: translate("intake.submit"), exact: true }).focus();
+  await page.keyboard.press("Tab");
+  const focusState = await intakeDialog.evaluate((element) => ({ modal: element.matches(":modal"), contained: element.contains(document.activeElement), active: document.activeElement?.outerHTML.slice(0, 120) }));
+  check(focusState.modal && focusState.contained, `keyboard focus escaped the modal Intake dialog: ${JSON.stringify(focusState)}`);
+  await intakeDialog.getByRole("button", { name: new RegExp(`^${translate("workItems.labels")}:`) }).click();
+  await intakeDialog.getByRole("menuitemcheckbox").first().waitFor();
+  await page.keyboard.press("Escape");
+  check(await intakeDialog.getByRole("menuitemcheckbox").count() === 0, "Escape did not close the open labels popover");
+  check(await intakeDialog.evaluate((element) => element.matches(":modal")), "Escape closed the Intake dialog while its labels popover was open");
+  await page.keyboard.press("Escape");
+  await intakeDialog.waitFor({ state: "detached" });
+  check(await add.evaluate((element) => document.activeElement === element), "closing the Intake dialog did not restore focus to its trigger");
+  await add.click();
+  const backdropDialog = page.getByRole("dialog", { name: translate("intake.modalTitle") });
+  await backdropDialog.getByLabel(translate("intake.titleField")).waitFor();
+  await page.mouse.click(0, 0);
+  await backdropDialog.waitFor({ state: "detached" });
+  check(await add.evaluate((element) => document.activeElement === element), "backdrop click did not restore focus to the Intake trigger");
   await submit("Dark mode please", "Users want a dark theme", true, [
     { name: "evidence.txt", mimeType: "text/plain", buffer: Buffer.from("evidence") },
     { name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("saved") },
@@ -238,7 +263,7 @@ try {
   const acceptDialog = page.getByRole("dialog", { name: translate("intake.acceptIntoState") });
   const targetState = acceptDialog.getByLabel(translate("workItems.state"));
   await page.waitForFunction(() => {
-    const select = document.querySelector<HTMLSelectElement>('[role="dialog"] select[aria-label="State"]');
+    const select = document.querySelector<HTMLSelectElement>('dialog select[aria-label="State"]');
     return select?.options.length && [...select.options].some((option) => option.textContent === "Backlog") && [...select.options].some((option) => option.textContent === "Done") && [...select.options].some((option) => option.textContent === "Cancelled");
   });
   const backlogId = await targetState.locator("option", { hasText: "Backlog" }).getAttribute("value");

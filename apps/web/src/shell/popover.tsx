@@ -100,13 +100,14 @@ export function Popover({ label, trigger, align = "left", className = "", panelC
     if (open) { wasOpen.current = true; return; }
     if (wasOpen.current) { wasOpen.current = false; if (document.activeElement === document.body) root.current?.querySelector("button")?.focus(); }
   }, [open]);
-  const floatingPanel = open && typeof document !== "undefined" ? createPortal(
+  const portalRoot = root.current?.closest("dialog") ?? (typeof document !== "undefined" ? document.body : null);
+  const floatingPanel = open && portalRoot ? createPortal(
     <div ref={panel} data-popover-panel role={panelRole} aria-label={label} className={`fixed z-50 min-w-56 rounded-lg border border-subtle bg-surface-1 p-1 shadow-lg ${panelClassName}`}
       onClick={(event) => event.stopPropagation()}
       onKeyDown={(event) => { if (panelRole === "menu") moveMenuFocus(event, panel.current); }}
       style={{ left: position?.left ?? 0, top: position?.top ?? 0, maxWidth: "calc(100vw - 1rem)", maxHeight: position?.maxHeight ?? "calc(100vh - 1rem)", overflowX: "hidden", overflowY: "auto", visibility: position ? "visible" : "hidden" }}>
       {children(() => setOpen(false))}
-    </div>, document.body) : null;
+    </div>, portalRoot) : null;
   return <div ref={root} className="relative">
     <button type="button" aria-label={label} title={label} aria-haspopup={panelRole} aria-expanded={open} onClick={() => { if (!open) onOpen?.(); setOpen(!open); }}
       className={`flex items-center gap-1.5 rounded-md bg-transparent p-1.5 text-secondary hover:bg-layer-transparent-hover hover:text-primary ${className}`}>{trigger}</button>

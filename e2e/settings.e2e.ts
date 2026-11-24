@@ -3,8 +3,8 @@
 import { chromium, type Page } from "playwright";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { like } from "drizzle-orm";
-import { createDatabase, users, workspaces } from "../packages/db/src";
+import { and, eq, like } from "drizzle-orm";
+import { createDatabase, users, workspaceInvites, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
 
@@ -74,7 +74,7 @@ try {
     for (let attempt = 0; attempt < 30 && await toggle.isChecked() !== on; attempt += 1) await Bun.sleep(100);
     check(await toggle.isChecked() === on, `${feature} toggle did not settle`);
   };
-  const members = () => call<Array<{ userId: string; name: string; role: string }>>("list_members", { workspaceId });
+  const members = () => call<Array<{ userId: string; name: string; email: string; role: string }>>("list_members", { workspaceId });
 
   // The Settings rail entry opens the settings sidebar: workspace sections plus every project with its sections.
   await page.getByRole("navigation", { name: translate("shell.rail") }).getByRole("link", { name: translate("nav.settings") }).click();
@@ -99,11 +99,25 @@ try {
   check(link.startsWith(`${web}/invite/`), `invite link is ${link}`);
   await page.getByLabel(translate("invite.role")).selectOption("Guest");
   await page.getByRole("button", { name: translate("invite.create") }).click();
-  await page.getByRole("button", { name: translate("settings.revoke") }).nth(1).waitFor();
+  await page.getByRole("button", { name: /^Revoke / }).nth(1).waitFor();
+  await page.getByRole("button", { name: translate("invite.create") }).click();
+  const { client: inviteDbClient, db: inviteDb } = createDatabase();
+  try {
+    await inviteDb.update(workspaceInvites).set({ createdAt: new Date("2026-01-01T00:00:00.000Z") })
+      .where(and(eq(workspaceInvites.workspaceId, workspaceId), eq(workspaceInvites.role, "Guest")));
+  } finally { await inviteDbClient.end(); }
+  await page.reload();
+  const guestRevokeButtons = page.getByRole("button", { name: /^Revoke Guest invite created by Settings Admin on/ });
+  await guestRevokeButtons.nth(1).waitFor();
+  const guestRevokeNames = await guestRevokeButtons.evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label") ?? ""));
+  check(guestRevokeNames.length === 2 && new Set(guestRevokeNames).size === 2, "duplicate invite revoke actions are not distinguishable");
+  check(guestRevokeNames.every((name) => /, Invite [12] of 2$/.test(name)), "duplicate invite accessible names do not identify each invite ordinal");
+  check(guestRevokeNames[0]?.replace(/, Invite [12] of 2$/, "") === guestRevokeNames[1]?.replace(/, Invite [12] of 2$/, ""), "duplicate invite setup did not produce matching base names");
   await page.screenshot({ path: `${shots}/workspace-invites-1440.png` });
-  await page.getByRole("button", { name: translate("settings.revoke") }).nth(1).click();
+  await guestRevokeButtons.nth(1).click();
   await page.getByRole("status").getByText(translate("settings.revoked")).waitFor();
-  check(await page.getByRole("button", { name: translate("settings.revoke") }).count() === 1, "revoke did not remove the invite");
+  check(await page.getByRole("button", { name: /^Revoke Guest invite created by Settings Admin on/ }).count() === 1, "revoking one duplicate did not leave exactly one invite");
+  check(await page.getByRole("button", { name: /^Revoke / }).count() === 2, "revoke did not remove only the selected invite");
   const invitee = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
   const inviteePage = await invitee.newPage();
   await inviteePage.goto(link);
@@ -123,6 +137,7 @@ try {
   await roleSelect.selectOption("Guest");
   for (let attempt = 0; attempt < 20 && (await members()).find((member) => member.name === "Invited Person")?.role !== "Guest"; attempt += 1) await Bun.sleep(150);
   check((await members()).find((member) => member.name === "Invited Person")?.role === "Guest", "role change did not apply");
+  check(await page.getByRole("button", { name: "Remove Invited Person", exact: true }).count() === 1, "member remove action has no identifying accessible name");
   await page.screenshot({ path: `${shots}/workspace-members-1440.png` });
   const invited = (await members()).find((member) => member.name === "Invited Person")!;
   console.log("settings ok: workspace members role change");
@@ -242,7 +257,9 @@ try {
 
   // Members: add, change role, remove.
   await page.getByRole("navigation", { name: `${translate("settings.label")} MOBX` }).getByRole("link", { name: translate("members.title"), exact: true }).click();
-  await page.getByLabel(translate("projects.addMember"), { exact: true }).selectOption(invited.userId);
+  const addMemberSelect = page.getByLabel(translate("projects.addMember"), { exact: true });
+  check((await addMemberSelect.locator(`option[value="${invited.userId}"]`).textContent())?.includes(`${invited.name} · ${invited.email}`), "project member choices do not show email addresses to distinguish people with the same name");
+  await addMemberSelect.selectOption(invited.userId);
   await page.getByRole("button", { name: translate("projects.addMember"), exact: true }).click();
   const projectRole = page.getByLabel(`${translate("settings.roleOf")} Invited Person`);
   const guestSaved = page.waitForResponse((response) => response.url().endsWith("/actions/change_project_member_role"));

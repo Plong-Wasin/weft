@@ -96,6 +96,21 @@ try {
     check((await preferenceCheckbox().isChecked()) === on, `preference did not switch ${on ? "on" : "off"}`);
   }
 
+  // A failed preference load offers an in-page retry, then the default switch loads successfully.
+  let failPreferenceLoad = true;
+  await page.route("**/actions/get_my_ai_preferences", async (route) => {
+    if (failPreferenceLoad) {
+      failPreferenceLoad = false;
+      await route.fulfill({ status: 500, body: "temporary failure" });
+    } else await route.continue();
+  });
+  await page.goto(`${web}/account/preferences`);
+  await page.getByRole("alert").filter({ hasText: translate("accountPrefs.loadFailed") }).waitFor();
+  await page.getByRole("button", { name: translate("account.retry"), exact: true }).click();
+  await preferenceCheckbox().waitFor();
+  await page.unroute("**/actions/get_my_ai_preferences");
+  console.log("ai-selection-menu ok: failed preference load can be retried in place");
+
   // The switch is on by default and the menu shows when text is selected in the Wiki.
   await page.goto(`${web}/account/preferences`);
   await preferenceCheckbox().waitFor();

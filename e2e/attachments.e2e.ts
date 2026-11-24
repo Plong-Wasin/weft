@@ -65,6 +65,25 @@ async function loadedImages(page: Page, scope: string) {
   return page.locator(`${scope} img[data-testid="inline-image"]`).evaluateAll((images) => images.filter((image) => (image as HTMLImageElement).naturalWidth > 0).length);
 }
 
+async function checkAttachmentActionTargets(page: Page, row: ReturnType<Page["locator"]>, viewportWidth: number, viewport: string) {
+  const layout = await row.evaluate((element) => {
+    const rect = (target: Element) => {
+      const box = target.getBoundingClientRect();
+      return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width, height: box.height };
+    };
+    const actions = element.querySelector("span.ml-auto")!;
+    const filename = element.querySelector("span.min-w-0")!;
+    return {
+      row: rect(element), filename: rect(filename), actions: rect(actions),
+      buttons: [...actions.querySelectorAll("button")].map(rect),
+    };
+  });
+  check(layout.row.left >= 0 && layout.row.right <= viewportWidth, `attachment row overflows the ${viewport} viewport`);
+  check(layout.buttons.length > 0 && layout.buttons.every((button) => button.width >= 44 && button.height >= 44), `attachment action targets are smaller than 44px at ${viewport}: ${JSON.stringify(layout.buttons)}`);
+  check(layout.filename.right <= layout.actions.left, `attachment filename overlaps action controls at ${viewport}`);
+  check(layout.buttons.every((button, index) => layout.buttons.slice(index + 1).every((other) => button.right <= other.left || other.right <= button.left || button.bottom <= other.top || other.bottom <= button.top)), `attachment action targets overlap at ${viewport}`);
+}
+
 async function dropImage(page: Page, editorSelector: string, expected: number) {
   const dataTransfer = await page.evaluateHandle((base64) => {
     const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
@@ -171,6 +190,14 @@ try {
   const screenshotDir = "/home/plong/workspace/weft/.local/continuous-improvements/attachment-preview";
   await mkdir(screenshotDir, { recursive: true });
   const photoRow = attachments.locator("li").filter({ hasText: "photo.png" });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await checkAttachmentActionTargets(page, photoRow, 1440, "desktop");
+  await page.screenshot({ path: `${screenshotDir}/attachment-actions-desktop-1440.png`, fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await checkAttachmentActionTargets(page, photoRow, 390, "mobile");
+  await photoRow.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: `${screenshotDir}/attachment-actions-mobile-390.png` });
+  await page.setViewportSize({ width: 1440, height: 900 });
   await photoRow.getByRole("button", { name: `${translate("assets.preview")} photo.png` }).click();
   const photoDialog = page.locator("dialog.asset-preview-dialog");
   await photoDialog.waitFor();

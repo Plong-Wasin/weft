@@ -234,6 +234,7 @@ try {
   await page.reload();
   const expandedSecondProjectToggle = sidebar.getByRole("button", { name: `${translate("sidebar.toggleProject")}: Second project` });
   await expandedSecondProjectToggle.waitFor();
+  await page.waitForFunction((projectId) => document.querySelector<HTMLButtonElement>(`[data-project-toggle="${projectId}"]`)?.getAttribute("aria-expanded") === "true", project.id);
   check(await expandedSecondProjectToggle.getAttribute("aria-expanded") === "true", "expanded project menu did not survive reload");
   await clickAndSave(sidebar.getByRole("button", { name: `${translate("sidebar.toggleProject")}: Second project` }));
   await page.reload();
@@ -275,6 +276,21 @@ try {
   await page.getByRole("menuitemradio", { name: "E2E team" }).click();
   await page.waitForURL(`${web}/${slug}`);
   console.log("shell ok: workspace switcher");
+
+  // Verify the create dialog and focus recovery at phone width before unrelated search checks.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: translate("workspace.switch") }).click();
+  await page.getByRole("menuitem", { name: translate("workspace.new") }).click();
+  const phoneCreateDialog = page.getByRole("dialog", { name: translate("workspace.new") });
+  await phoneCreateDialog.waitFor();
+  check(await page.getByLabel(translate("workspace.name")).evaluate((element) => element === document.activeElement), "phone workspace name input is not focused when the create form opens");
+  await phoneCreateDialog.getByRole("button", { name: translate("workspace.close") }).click();
+  const phoneNewWorkspaceItem = page.getByRole("menuitem", { name: translate("workspace.new") });
+  await phoneNewWorkspaceItem.waitFor();
+  check(await phoneNewWorkspaceItem.evaluate((element) => element === document.activeElement), "phone workspace switcher does not restore focus to New workspace after cancel");
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  console.log("shell ok: workspace creation dialog on desktop and phone");
 
   // Search opens the work item and wiki results.
   const searchInput = page.getByRole("searchbox", { name: translate("search.label") });

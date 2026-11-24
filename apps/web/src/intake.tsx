@@ -65,21 +65,43 @@ function StatusBadge({ item }: { item: IntakeItem }) {
 }
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  const dialogRef = React.useRef<HTMLDialogElement>(null);
+  const pressedOutside = React.useRef(false);
+  const titleId = React.useId();
   React.useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
-  return <>
-    <div aria-hidden className="fixed inset-0 z-40 bg-backdrop" onClick={onClose} />
-    <div role="dialog" aria-modal="true" aria-label={title} className="fixed left-1/2 top-[10vh] z-50 max-h-[80vh] w-[calc(100vw-1.5rem)] max-w-lg -translate-x-1/2 overflow-auto rounded-lg border border-subtle bg-surface-1 p-5 shadow-xl">
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dialog.showModal();
+    return () => {
+      if (dialog.open) dialog.close();
+      opener?.focus();
+    };
+  }, []);
+  const outside = (event: React.PointerEvent<HTMLDialogElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom;
+  };
+  return <dialog ref={dialogRef} aria-labelledby={titleId} onCancel={(event) => { event.preventDefault(); onClose(); }} onPointerDown={(event) => { pressedOutside.current = outside(event); }} onPointerUp={(event) => {
+    if (pressedOutside.current && outside(event)) onClose();
+    pressedOutside.current = false;
+  }} onKeyDown={(event) => {
+    if (event.key !== "Tab") return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const focusable = [...dialog.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), [contenteditable="true"]')].filter((element) => element.getClientRects().length > 0);
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (!first || !last) { event.preventDefault(); dialog.focus(); }
+    else if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
+  }} className="fixed left-0 right-0 top-[10vh] z-50 mx-auto max-h-[80vh] w-[calc(100vw-1.5rem)] max-w-lg overflow-auto rounded-lg border border-subtle bg-surface-1 p-5 text-primary shadow-xl backdrop:bg-backdrop">
       <div className="mb-4 flex items-center gap-2">
-        <h2 className="m-0 flex-1 text-18 font-semibold text-primary">{title}</h2>
+        <h2 id={titleId} className="m-0 flex-1 text-18 font-semibold text-primary">{title}</h2>
         <button type="button" className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={t("intake.cancel")} onClick={onClose}><X aria-hidden size={16} /></button>
       </div>
       {children}
-    </div>
-  </>;
+  </dialog>;
 }
 
 /** The submission form: any project member, Guests included, can send a work item into Intake. */

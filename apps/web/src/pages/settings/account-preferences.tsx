@@ -16,7 +16,7 @@ export function AccountPreferencesPage() {
 function AiPreferencesForm() {
   const queryClient = useQueryClient();
   // undefined while loading; null when the request failed.
-  const { data } = useAiPreferences();
+  const { data, refetch, isFetching } = useAiPreferences();
   const [note, setNote] = React.useState<string | null>(null);
   const [noteError, setNoteError] = React.useState(false);
 
@@ -29,7 +29,11 @@ function AiPreferencesForm() {
 
   return <main className="mx-auto w-full max-w-[900px]">
     <SettingsHeader title={translate("accountPrefs.title")} description={translate("accountPrefs.description")} />
-    {data === null && <Note note={translate("accountPrefs.loadFailed")} error />}
+    {data === null && <div className="flex flex-wrap items-center gap-2">
+      <Note note={translate("accountPrefs.loadFailed")} error />
+      <button type="button" className="secondary" disabled={isFetching} onClick={() => void refetch()}>{translate("account.retry")}</button>
+    </div>}
+    {data === undefined && <p role="status" className="text-13 text-secondary">{translate("account.loading")}</p>}
     {data && <SettingsBlock>
       <div className="flex items-start gap-2">
         <input id="ai-selection-menu" type="checkbox" className="mt-1" checked={data.showSelectionMenu} aria-describedby="ai-selection-menu-hint" onChange={(event) => void save(event.target.checked)} />

@@ -62,7 +62,10 @@ try {
   await mkdir(shots, { recursive: true });
   page.on("dialog", (dialog) => void dialog.accept());
   const addCycle = async (name: string, start: string, end: string) => {
-    await page.getByRole("button", { name: translate("cycles.new"), exact: true }).click();
+    const trigger = page.getByRole("button", { name: translate("cycles.new"), exact: true });
+    await trigger.click();
+    const dialog = page.getByRole("dialog", { name: translate("cycles.newTitle") });
+    check(await dialog.evaluate((element) => element.contains(document.activeElement)), "Cycle dialog did not receive focus when opened");
     await page.getByLabel(translate("cycles.name")).fill(name);
     await page.getByLabel(translate("cycles.start")).fill(start);
     await page.getByLabel(translate("cycles.end")).fill(end);
@@ -77,7 +80,14 @@ try {
   await page.getByText(translate("cycles.empty")).waitFor();
 
   // Create (modal), with an Upcoming Cycle whose dates overlap Sprint 1: a warning shows and saving is still allowed.
-  await (await addCycle("Sprint 1", day(-1), day(6))).click();
+  const create1 = await addCycle("Sprint 1", day(-1), day(6));
+  const cycleDialog = page.getByRole("dialog", { name: translate("cycles.newTitle") });
+  await page.getByLabel(translate("cycles.name")).focus();
+  await page.keyboard.press("Shift+Tab");
+  check(await cycleDialog.evaluate((element) => element.contains(document.activeElement)), "keyboard focus escaped the Cycle dialog");
+  await create1.click();
+  await page.getByRole("dialog", { name: translate("cycles.newTitle") }).waitFor({ state: "detached" });
+  check(await page.getByRole("button", { name: translate("cycles.new"), exact: true }).evaluate((element) => element === document.activeElement), "focus did not return to the Cycle dialog trigger");
   await page.getByRole("link", { name: "Sprint 1" }).waitFor();
   const create2 = await addCycle("Sprint 2", day(3), day(10));
   await page.getByTestId("cycle-overlap").waitFor();

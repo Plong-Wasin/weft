@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Check, type LucideIcon } from "lucide-react";
 
 type Rect = Pick<DOMRect, "left" | "right" | "top" | "bottom">;
+export const PopoverPortalContext = React.createContext<HTMLElement | null>(null);
 
 export function getPopoverPosition(anchor: Rect, panel: Pick<DOMRect, "width" | "height">, viewport: { width: number; height: number }, align: "left" | "right") {
   const margin = 16;
@@ -43,6 +44,7 @@ export function Popover({ label, trigger, align = "left", className = "", panelC
   onOpen?: () => void;
   children: (close: () => void) => React.ReactNode;
 }) {
+  const portalContainer = React.useContext(PopoverPortalContext);
   const [open, setOpen] = React.useState(false);
   const root = React.useRef<HTMLDivElement>(null);
   const panel = React.useRef<HTMLDivElement>(null);
@@ -106,7 +108,7 @@ export function Popover({ label, trigger, align = "left", className = "", panelC
       onKeyDown={(event) => { if (panelRole === "menu") moveMenuFocus(event, panel.current); }}
       style={{ left: position?.left ?? 0, top: position?.top ?? 0, maxWidth: "calc(100vw - 1rem)", maxHeight: position?.maxHeight ?? "calc(100vh - 1rem)", overflowX: "hidden", overflowY: "auto", visibility: position ? "visible" : "hidden" }}>
       {children(() => setOpen(false))}
-    </div>, document.body) : null;
+    </div>, portalContainer ?? document.body) : null;
   return <div ref={root} className="relative">
     <button type="button" aria-label={label} title={label} aria-haspopup={panelRole} aria-expanded={open} onClick={() => { if (!open) onOpen?.(); setOpen(!open); }}
       className={`flex items-center gap-1.5 rounded-md bg-transparent p-1.5 text-secondary hover:bg-layer-transparent-hover hover:text-primary ${className}`}>{trigger}</button>

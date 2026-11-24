@@ -66,6 +66,11 @@ const runOutput = Type.Object({
   costReported: Type.Boolean(),
 });
 
+const agentRunOutput = Type.Intersect([runOutput, Type.Object({
+  /** Work item labels are included only for Runs the caller can already read. */
+  workItem: Type.Union([Type.Object({ displayId: Type.String(), title: Type.String() }), Type.Null()]),
+})]);
+
 /** The daemon's own words about a failed start are shown only to a workspace Admin and the owner of the Run's Runtime; everyone else gets the failureReason code to translate. */
 const detailReasons = ["sandbox_unavailable", "spawn_failed"];
 
@@ -822,7 +827,7 @@ export function createRunActions(db: Database) {
       },
     },
     listAgentRuns: {
-      name: "list_agent_runs", kind: "read" as const, input: Type.Object({ agentId: Type.String({ format: "uuid" }) }), output: Type.Array(runOutput),
+      name: "list_agent_runs", kind: "read" as const, input: Type.Object({ agentId: Type.String({ format: "uuid" }) }), output: Type.Array(agentRunOutput),
       handler: async (context: Context, input: { agentId: string }) => {
         const [agent] = await db.select().from(agents).where(eq(agents.id, input.agentId));
         if (!agent) throw new ActionError("Agent not found", 404);
@@ -835,7 +840,14 @@ export function createRunActions(db: Database) {
           const readableProjectIds = new Set(readableProjects.map((project) => project.id));
           rows = rows.filter((row) => readableProjectIds.has(row.projectId));
         }
-        return presentRuns(db, rows, await failureDetailAllowed(db, context.userId, workspaceRole, rows));
+        const visibleRows = rows.flatMap((row) => row.workItemId ? [{ id: row.workItemId, projectId: row.projectId }] : []);
+        const visibleItems = [...new Set(visibleRows.map((row) => row.id))];
+        const labels = visibleItems.length ? await db.select({ id: workItems.id, displayId: sql<string>`${projects.key} || '-' || ${workItems.sequence}`, title: workItems.title })
+          .from(workItems).innerJoin(projects, eq(projects.id, workItems.projectId))
+          .where(and(inArray(workItems.id, visibleItems), eq(projects.workspaceId, agent.workspaceId), or(...visibleRows.map((row) => and(eq(workItems.id, row.id), eq(workItems.projectId, row.projectId)))))) : [];
+        const workItemsById = new Map(labels.map((item) => [item.id, { displayId: item.displayId, title: item.title }]));
+        const presented = await presentRuns(db, rows, await failureDetailAllowed(db, context.userId, workspaceRole, rows));
+        return presented.map((run) => ({ ...run, workItem: run.workItemId ? workItemsById.get(run.workItemId) ?? null : null }));
       },
     },
     getRunTranscript: {

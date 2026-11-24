@@ -7,6 +7,7 @@ import { Avatar } from "../../avatar";
 import { capitalize, profileSummary, runtimeParts } from "../../agent-labels";
 import { useWorkspace } from "../../layouts/workspace-layout";
 import { paths } from "../../routes";
+import { runFailureText } from "../../run-failure";
 import type { Member, Project } from "../../types";
 import { dangerOutline, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 
@@ -459,12 +460,75 @@ function TriggerSection({ agent, projects, projectsLoaded }: { agent: AgentRecor
 }
 
 function AgentRuns({ agent }: { agent: AgentRecord }) {
-  const [rows, setRows] = React.useState<Array<{ id: string; workItemId: string | null; status: string; createdAt: string }>>([]);
-  const [transcript, setTranscript] = React.useState<Record<string, unknown>>({});
-  const reload = React.useCallback(async () => setRows(await action<typeof rows>("list_agent_runs", { agentId: agent.id }) ?? []), [agent.id]);
+  type TranscriptStep = { seq: number; kind: "thought" | "answer" | "question" | "error" | "person" | "tool_call"; text?: string; author?: string; toolName?: string; input?: unknown; result?: unknown; failed?: boolean };
+  type Transcript = {
+    steps: TranscriptStep[];
+    runtimeProfile: { name: string; sandbox: string; enforceSandbox: boolean } | null;
+    failureMessage: string | null;
+    failureReason: string | null;
+    confirmations: Array<{ id: string; action: string; input: unknown; status: string; expiresAt: string }>;
+  };
+  type RunRow = { id: string; workItemId: string | null; workItem: { displayId: string; title: string } | null; status: string; createdAt: string };
+  const [rows, setRows] = React.useState<RunRow[] | null>(null);
+  const [loadFailed, setLoadFailed] = React.useState(false);
+  const [transcript, setTranscript] = React.useState<Record<string, Transcript>>({});
+  const [transcriptLoading, setTranscriptLoading] = React.useState<Record<string, boolean>>({});
+  const [transcriptFailed, setTranscriptFailed] = React.useState<Record<string, boolean>>({});
+  const reload = React.useCallback(async () => {
+    setLoadFailed(false);
+    const loaded = await action<RunRow[]>("list_agent_runs", { agentId: agent.id });
+    if (loaded === null) { setLoadFailed(true); return; }
+    setRows(loaded);
+  }, [agent.id]);
   React.useEffect(() => { void reload(); }, [reload]);
-  return <fieldset className="grid gap-2 border-0 p-0"><legend className="text-13 font-medium text-secondary">{translate("runs.title")}</legend>
-    {rows.length === 0 && <span className="text-13 text-secondary">{translate("agents.runsEmpty")}</span>}
-    {rows.map((run) => <details key={run.id} onToggle={async (event) => { if ((event.currentTarget as HTMLDetailsElement).open && !transcript[run.id]) { const result = await action("get_run_transcript", { runId: run.id }); setTranscript((old) => ({ ...old, [run.id]: result })); } }}><summary className="cursor-pointer text-13">{run.workItemId ? run.workItemId : translate("runs.scheduled")} · {run.status} · {formatDate(run.createdAt)}</summary><pre className="max-h-48 overflow-auto whitespace-pre-wrap text-12">{JSON.stringify(transcript[run.id] ?? {}, null, 2)}</pre></details>)}
+  const loadTranscript = async (runId: string) => {
+    setTranscriptLoading((old) => ({ ...old, [runId]: true }));
+    setTranscriptFailed((old) => ({ ...old, [runId]: false }));
+    const loaded = await action<Transcript>("get_run_transcript", { runId });
+    if (loaded) setTranscript((old) => ({ ...old, [runId]: loaded }));
+    else setTranscriptFailed((old) => ({ ...old, [runId]: true }));
+    setTranscriptLoading((old) => ({ ...old, [runId]: false }));
+  };
+  const statusTone = (status: string) => status === "completed" ? "text-success-text" : ["failed", "stale"].includes(status) ? "text-danger-text" : ["running", "dispatched", "waiting_confirmation", "awaiting_input"].includes(status) ? "text-accent-text" : "text-secondary";
+  const confirmationStatus = (status: string) => ({ pending: "agents.logConfirmationPending", confirmed: "agents.logConfirmationConfirmed", rejected: "agents.logConfirmationRejected", expired: "agents.logConfirmationExpired" } as const)[status as "pending" | "confirmed" | "rejected" | "expired"];
+  const pretty = (value: unknown) => typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  return <fieldset data-testid="agent-log" aria-busy={rows === null && !loadFailed} className="grid gap-2 border-0 p-0">
+    <legend className="text-13 font-medium text-secondary">{translate("agents.logTitle")}</legend>
+    {rows === null && !loadFailed && <p role="status" className="m-0 text-13 text-secondary">{translate("agents.logLoading")}</p>}
+    {loadFailed && <p role="alert" className="m-0 text-13 text-danger-text">{translate("agents.logFailed")} <button type="button" className="secondary" onClick={() => void reload()}>{translate("agents.logRetry")}</button></p>}
+    {rows?.length === 0 && <p role="status" className="m-0 text-13 text-secondary">{translate("agents.runsEmpty")}</p>}
+    {rows?.map((run) => <details key={run.id} data-agent-log-run className="min-w-0 rounded-md border border-subtle bg-surface-1 px-3 py-2" onToggle={(event) => { if ((event.currentTarget as HTMLDetailsElement).open && !transcript[run.id] && !transcriptLoading[run.id]) void loadTranscript(run.id); }}>
+      <summary className="flex min-w-0 cursor-pointer flex-wrap items-center gap-x-2 gap-y-1 text-13">
+        <span className="min-w-0 flex-1 break-words font-medium">{run.workItem ? <>{run.workItem.displayId} · {run.workItem.title}</> : run.workItemId ? translate("agents.logWorkItemUnavailable") : translate("runs.scheduled")}</span>
+        <span className={`whitespace-nowrap font-medium ${statusTone(run.status)}`}>{translate(`runs.status.${run.status}` as "runs.status.queued")}</span>
+        <time className="text-12 text-tertiary" dateTime={run.createdAt}>{formatDate(run.createdAt)}</time>
+      </summary>
+      <div className="mt-2 border-t border-subtle pt-2 text-13">
+        {transcriptLoading[run.id] && <p role="status" className="m-0 text-secondary">{translate("agents.logTranscriptLoading")}</p>}
+        {transcriptFailed[run.id] && <p role="alert" className="m-0 text-danger-text">{translate("agents.logTranscriptFailed")} <button type="button" className="secondary" onClick={() => void loadTranscript(run.id)}>{translate("agents.logRetry")}</button></p>}
+        {transcript[run.id]?.runtimeProfile && <p className="m-0 text-12 text-secondary"><strong>{translate("agents.logRuntimeProfile")}:</strong> {transcript[run.id]!.runtimeProfile!.name} · {translate(transcript[run.id]!.runtimeProfile!.sandbox === "full" ? "runtimes.fullAccessWarning" : "runtimes.sandboxEnabled")} · {translate(transcript[run.id]!.runtimeProfile!.enforceSandbox ? "agents.logSandboxEnforced" : "agents.logSandboxNotEnforced")}</p>}
+        {transcript[run.id]?.failureReason && <div role="alert" className="text-danger-text"><strong>{translate("agents.logFailure")}:</strong> {runFailureText(transcript[run.id]!.failureReason) ?? translate("runs.failed")}{transcript[run.id]!.failureMessage && <p className="m-0 text-secondary">{translate("runs.failureDetail").replace("{detail}", () => transcript[run.id]!.failureMessage!)}</p>}</div>}
+        {transcript[run.id]?.steps.length === 0 && <p className="m-0 text-secondary">{translate("runs.noSteps")}</p>}
+        <ol className="m-0 grid list-none gap-2 p-0">
+          {transcript[run.id]?.steps.map((step) => step.kind === "tool_call" ? <li key={step.seq} className="grid min-w-0 gap-1">
+            <span className="font-medium">{translate("runs.tool")}: {step.toolName}{step.failed ? ` · ${translate("runs.toolFailed")}` : ""}</span>
+            <details className="text-12 text-tertiary"><summary className="cursor-pointer">{translate("agents.logToolDetails")}</summary>
+              {step.input === null && step.result === null ? <p className="m-0">{translate("runs.hidden")}</p> : <>
+                {step.input !== undefined && step.input !== null && <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-surface-2 p-2">{pretty(step.input)}</pre>}
+              {step.result !== undefined && step.result !== null && <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-surface-2 p-2">{pretty(step.result)}</pre>}
+              </>}
+            </details>
+          </li> : <li key={step.seq} className="min-w-0 break-words">{step.kind === "person" ? <><span className="font-medium">{translate("runs.personMessage").replace("{name}", () => step.author ?? "")}: </span>{step.text}</> : <><span className="font-medium">{translate(`runs.${step.kind}` as "runs.answer")}: </span>{step.text}</>}</li>)}
+        </ol>
+        {(transcript[run.id]?.confirmations.length ?? 0) > 0 && <section className="mt-2 grid gap-1 border-t border-subtle pt-2" aria-label={translate("agents.logConfirmations")}>
+          <h4 className="m-0 text-12 font-medium">{translate("agents.logConfirmations")}</h4>
+          {transcript[run.id]!.confirmations.map((confirmation) => <details key={confirmation.id} className="text-12 text-secondary">
+            <summary className="cursor-pointer">{confirmation.action} · {confirmationStatus(confirmation.status) ? translate(confirmationStatus(confirmation.status)!) : confirmation.status} · {translate("agents.logExpiresAt")} <time dateTime={confirmation.expiresAt}>{formatDate(confirmation.expiresAt)}</time></summary>
+            <p className="m-0">{translate("agents.logConfirmationDetails")}</p>
+            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-surface-2 p-2">{pretty(confirmation.input)}</pre>
+          </details>)}
+        </section>}
+      </div>
+    </details>)}
   </fieldset>;
 }

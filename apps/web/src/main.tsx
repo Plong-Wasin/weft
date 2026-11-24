@@ -1,13 +1,14 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Link, Navigate, Route, Routes, useParams } from "react-router";
+import { BrowserRouter, Navigate, Route, Routes, useParams } from "react-router";
 import { translate } from "@weft/shared";
 import { registerSW } from "virtual:pwa-register";
 import { createQueryClient } from "./query-client";
 import { initLocale } from "./locale";
 import { initTheme } from "./theme";
 import { paths } from "./routes";
+import { NotFound } from "./not-found";
 import { useAiState } from "./ai-flag";
 import { HomeRedirect, RootLayout } from "./layouts/root-layout";
 import { WorkspaceLayout } from "./layouts/workspace-layout";
@@ -62,7 +63,7 @@ const queryClient = createQueryClient();
 /** Shown inside a workspace for a URL no route matches, instead of a blank page. */
 function WorkspaceNotFound() {
   const { workspaceSlug = "" } = useParams();
-  return <section className="grid gap-3 p-6"><p role="alert">{translate("app.notFound")}</p><Link to={paths.projects(workspaceSlug)}>{translate("projects.back")}</Link></section>;
+  return <NotFound to={paths.projects(workspaceSlug)} label={translate("projects.back")} />;
 }
 
 /** AI routes exist only while AI is on: with AI off they are unknown routes, and nothing shows until the config has answered. */

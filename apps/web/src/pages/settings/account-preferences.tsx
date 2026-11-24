@@ -4,12 +4,13 @@ import { translate } from "@weft/shared";
 import { action } from "../../api";
 import { aiPreferencesKey, useAiPreferences, type AiPreferences } from "../../ai-preferences";
 import { useAiState } from "../../ai-flag";
+import { NotFound } from "../../not-found";
 import { Note, SettingsBlock, SettingsHeader } from "./settings-ui";
 
 /** The signed-in person's own preferences that follow the account. Only AI preferences for now, shown only while AI is on. */
 export function AccountPreferencesPage() {
   const state = useAiState();
-  if (state !== "on") return state === "unknown" ? null : <section className="grid gap-3 p-6"><p role="alert">{translate("app.notFound")}</p></section>;
+  if (state !== "on") return state === "unknown" ? null : <NotFound />;
   return <AiPreferencesForm />;
 }
 

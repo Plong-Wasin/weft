@@ -130,6 +130,7 @@ export const en = {
     "projects.back": "Back to projects",
     "projects.notFound": "Project not found.",
     "app.notFound": "Page not found.",
+    "app.notFoundHint": "The link may be wrong, or the page may have been moved or removed.",
     "projects.members": "Project members",
     "projects.addMember": "Add member",
     "projects.selectMember": "Choose a workspace member",

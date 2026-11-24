@@ -132,6 +132,7 @@ export const th: Record<keyof typeof en, string> = {
   "projects.back": "กลับไปที่โปรเจกต์",
   "projects.notFound": "ไม่พบโปรเจกต์",
   "app.notFound": "ไม่พบหน้านี้",
+  "app.notFoundHint": "ลิงก์อาจไม่ถูกต้อง หรือหน้านี้อาจถูกย้ายหรือลบไปแล้ว",
   "projects.members": "สมาชิกโปรเจกต์",
   "projects.addMember": "เพิ่มสมาชิก",
   "projects.selectMember": "เลือกสมาชิกของเวิร์กสเปซ",

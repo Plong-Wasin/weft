@@ -34,6 +34,7 @@ import { CodeBlockControls } from "./code-block-controls";
 import { EditorSourceMode, editorLimitWarnings } from "./editor-source-mode";
 import { ReferencePicker } from "./reference-picker";
 import { collectionLabel } from "./type-descriptions";
+import { NotFound } from "./not-found";
 
 const heartbeatMs = 20_000;
 const autosaveMs = 1_500;
@@ -835,7 +836,7 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
   }
 
   if (page === undefined) return null;
-  if (page === null) return <section><p role="alert">{translate("wiki.notFound")}</p><Link to={back}>{translate(projectKey ? "projectNav.pages" : "wiki.title")}</Link></section>;
+  if (page === null) return <NotFound to={back} label={translate(projectKey ? "projectNav.pages" : "wiki.title")} />;
   return <section aria-label={translate("wiki.title")} className="grid gap-4">
     <nav aria-label={translate("wiki.breadcrumb")} className="flex items-center gap-1 text-13 text-secondary">
       <Link to={back} className="hover:underline">{translate(projectKey ? "projectNav.pages" : "wiki.title")}</Link><ChevronRight aria-hidden size={12} /><span className="text-primary">{page.title}</span>

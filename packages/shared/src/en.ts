@@ -2002,6 +2002,7 @@ export const en = {
   "sidebar.unstar": "Unstar project",
   "sidebar.dragHandle": "Drag to reorder",
   "sidebar.reorderHint": "Drag, or press the Up and Down arrow keys, to reorder",
+  "sidebar.projectMoved": "{project} moved to position {position} of {total} in the {group} group.",
   "sidebar.projectSwitcher": "Project",
   "sidebar.backToWorkspace": "Back to Workspace settings",
   "sidebar.projectOptions": "Project options",

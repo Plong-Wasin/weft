@@ -127,6 +127,7 @@ try {
   await page.keyboard.press("ArrowUp");
   await expectOrder(page, ["Alpha", "Beta"], "ArrowUp did not move Alpha", false);
   check(await sidebar().getByRole("button", { name: `${translate("sidebar.toggleProject")}: Alpha` }).evaluate((element) => element === document.activeElement), "focus left Alpha after the arrow key move");
+  check(await sidebar().getByRole("status").textContent() === translate("sidebar.projectMoved").replace("{project}", "Alpha").replace("{position}", "1").replace("{total}", "2").replace("{group}", translate("projects.title")), "keyboard reorder was not announced with the new project position");
 
   // Drag: Beta onto Alpha takes Alpha's place (HTML5 drag events, as a browser sends them).
   await page.evaluate(() => {

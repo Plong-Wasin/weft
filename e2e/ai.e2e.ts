@@ -97,11 +97,31 @@ try {
   await page.getByText(translate("ai.disclaimer")).waitFor();
   const composer = page.getByRole("textbox", { name: translate("ai.message") });
   await composer.waitFor();
+  await composer.fill("กำลังเลือกคำ");
+  const composingEvent = await composer.evaluate((element) => {
+    const event = new KeyboardEvent("keydown", { key: "Enter", code: "Enter", isComposing: true, bubbles: true, cancelable: true });
+    element.dispatchEvent(event);
+    return { defaultPrevented: event.defaultPrevented, value: (element as HTMLTextAreaElement).value };
+  });
+  check(!composingEvent.defaultPrevented, "composing Enter was prevented");
+  check(composingEvent.value === "กำลังเลือกคำ", "composing Enter changed the draft");
+  check(await page.locator('[data-role="user"]').count() === 0, "composing Enter added a user message");
   // Safari's IME confirmation Enter can arrive with isComposing=false and keyCode=229.
   await composer.fill("ยังพิมพ์ข้อความอยู่");
   await composer.dispatchEvent("keydown", { key: "Enter", code: "Enter", keyCode: 229, which: 229, bubbles: true });
   check(await composer.inputValue() === "ยังพิมพ์ข้อความอยู่", "IME confirmation Enter submitted the chat");
   check(await page.locator('[data-role="user"]').count() === 0, "IME confirmation Enter added a user message");
+  await composer.fill("submit with Enter");
+  const normalEnter = await composer.evaluate((element) => {
+    let submitted = false;
+    element.form!.addEventListener("submit", (event) => { submitted = true; event.preventDefault(); event.stopImmediatePropagation(); }, { capture: true, once: true });
+    const key = new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true });
+    element.dispatchEvent(key);
+    return { submitted, defaultPrevented: key.defaultPrevented };
+  });
+  check(normalEnter.submitted, "normal Enter did not submit the composer form");
+  check(normalEnter.defaultPrevented, "normal submit Enter was not prevented");
+  check(await composer.inputValue() === "submit with Enter", "normal Enter changed the draft before submission");
   await composer.fill("");
   await page.screenshot({ path: `${shots}/ai-new-1440.png` });
   await sidebar.getByRole("button", { name: translate("ai.search") }).click();

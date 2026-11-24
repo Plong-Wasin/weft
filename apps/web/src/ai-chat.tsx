@@ -365,9 +365,9 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
           onKeyDown={(event) => {
             if (event.key === "Escape" && skillPickerOpen) { event.preventDefault(); setDismissedSkillInput(input); return; }
             if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
               // Safari can deliver the IME confirmation key after compositionend, when isComposing is already false.
               if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+              event.preventDefault();
               event.currentTarget.form?.requestSubmit();
             }
           }}

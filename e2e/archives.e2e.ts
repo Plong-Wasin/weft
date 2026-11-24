@@ -83,6 +83,16 @@ try {
   await call("archive_cycle", { cycleId: cycle.id }); await call("archive_module", { moduleId: mod.id });
   await page.reload();
   const tab = (name: string) => page.getByRole("tab", { name });
+  const workItemsTab = tab(t("archives.workItems"));
+  await workItemsTab.focus();
+  await page.keyboard.press("ArrowRight");
+  check(await tab(t("archives.cycles")).evaluate((element) => element === document.activeElement), "ArrowRight did not move focus to the next Archives tab");
+  check(await tab(t("archives.cycles")).getAttribute("aria-selected") === "true", "ArrowRight did not select the focused Archives tab");
+  check(await page.getByRole("tab").evaluateAll((elements) => elements.filter((element) => (element as HTMLElement).tabIndex === 0).length === 1), "more than one Archives tab is in the page tab order");
+  await page.keyboard.press("End");
+  check(await tab(t("archives.modules")).evaluate((element) => element === document.activeElement), "End did not move focus to the last Archives tab");
+  await page.keyboard.press("Home");
+  check(await workItemsTab.evaluate((element) => element === document.activeElement), "Home did not move focus to the first Archives tab");
   await tab(t("archives.cycles")).click();
   await page.getByText("Old sprint").waitFor();
   await page.getByRole("button", { name: t("archives.restore") }).click();

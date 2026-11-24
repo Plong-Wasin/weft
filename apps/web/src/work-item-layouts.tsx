@@ -331,13 +331,13 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     }).finally(saved);
   };
   /** A card dropped in a column: State columns move it through `move_work_item` (state and order); Priority and Assignee columns change that property. */
-  const dropCard = async (id: string, column: string, beforeId: string | null) => {
+  const dropCard = async (id: string, column: string, beforeId: string | null, sourceColumn: string) => {
     const item = items.find((row) => row.id === id);
     if (!item || id === beforeId) return false;
     let result: unknown;
     if (boardGroup === "state") result = await action("move_work_item", { workItemId: id, stateId: column, ...(beforeId ? { beforeId } : {}) });
     else if (boardGroup === "priority") { if (item.priority === column) return false; result = await action("update_work_item", { workItemId: id, priority: column }); }
-    else if (boardGroup === "assignee") { if ((item.assigneeIds.length === 0 && column === "none") || (item.assigneeIds.length === 1 && item.assigneeIds[0] === column)) return false; result = await action("update_work_item", { workItemId: id, assigneeIds: column === "none" ? [] : [column] }); }
+    else if (boardGroup === "assignee") { if (sourceColumn === column || (item.assigneeIds.length === 0 && column === "none") || (item.assigneeIds.length === 1 && item.assigneeIds[0] === column)) return false; result = await action("update_work_item", { workItemId: id, assigneeIds: column === "none" ? [] : [column] }); }
     else return false;
     const refreshed = await load();
     setNote(result === null ? t("workItems.failed") : refreshed ? null : t("board.refreshFailed"));
@@ -638,7 +638,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     {toolbarExtra?.(params)}
   </div>;
 
-  const renderBoard = (columns: Array<BoardColumn<Item>>) => <Board columns={columns} canDrag={canWrite && ["state", "priority", "assignee"].includes(boardGroup)} reorderWithinColumn={boardGroup === "state"} announcePosition={boardGroup === "state"} canAdd={canCreate && canWrite} collapsed={collapsedColumns} onDrop={(id, column, beforeId) => dropCard(id, column, beforeId)}
+  const renderBoard = (columns: Array<BoardColumn<Item>>) => <Board columns={columns} canDrag={canWrite && ["state", "priority", "assignee"].includes(boardGroup)} reorderWithinColumn={boardGroup === "state" && !/\border\s+by\b/i.test(params.q)} announcePosition={boardGroup === "state" && !/\border\s+by\b/i.test(params.q)} canAdd={canCreate && canWrite} collapsed={collapsedColumns} onDrop={(id, column, beforeId, sourceColumn) => dropCard(id, column, beforeId, sourceColumn)}
     onToggle={(column) => setCollapsedColumns((list) => list.includes(column) ? list.filter((key) => key !== column) : [...list, column])}
     onAdd={(column) => { setQuick(column); setQuickTitle(""); }} quick={quick} quickForm={quickForm}
     renderCard={(item, reorderHandle) => <div className="grid gap-2">

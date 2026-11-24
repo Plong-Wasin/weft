@@ -29,7 +29,7 @@ export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag
   canDrag: boolean;
   reorderWithinColumn: boolean;
   announcePosition: boolean;
-  onDrop: (id: string, column: string, beforeId: string | null) => void | boolean | Promise<void | boolean>;
+  onDrop: (id: string, column: string, beforeId: string | null, sourceColumn: string) => void | boolean | Promise<void | boolean>;
   collapsed: string[];
   onToggle: (column: string) => void;
   canAdd: boolean;
@@ -88,7 +88,7 @@ export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag
     return { column, before: null };
   };
 
-  const start = (event: React.PointerEvent<HTMLElement>, item: T) => {
+  const start = (event: React.PointerEvent<HTMLElement>, item: T, sourceColumn: string) => {
     if (!canDrag || (event.pointerType === "mouse" && event.button !== 0)) return;
     if ((event.target as HTMLElement).closest("input, select, textarea, [role=menu], [role=dialog], [data-no-drag]")) return;
     const card = event.currentTarget;
@@ -133,7 +133,7 @@ export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag
       setDrag(null);
       justDragged.current = true;
       setTimeout(() => { justDragged.current = false; }, 0);
-      if (commit && finished?.over) void onDrop(item.id, finished.over.column, finished.over.before);
+      if (commit && finished?.over) void onDrop(item.id, finished.over.column, finished.over.before, sourceColumn);
     };
     const up = () => stop(true);
     const cancel = () => stop(false);
@@ -221,7 +221,7 @@ export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag
         expected.splice(insertion < 0 ? expected.length : insertion, 0, item);
         if (destination.key !== source.key && intent?.id === id) focusAfterMove.current = { id, column: destination.key, intent };
         let result: void | boolean;
-        try { result = await state.onDrop(id, destination.key, before); }
+        try { result = await state.onDrop(id, destination.key, before, source.key); }
         catch {
           focusAfterMove.current = null;
           focusIntent.current = null;
@@ -329,7 +329,7 @@ export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag
             {drag?.over?.column === column.key && drag.over.before === item.id && <div aria-hidden className="h-0.5 rounded-full bg-accent-primary" />}
             <article data-card-id={item.id} data-testid={`card-${item.displayId}`} data-dragging={drag?.id === item.id ? "" : undefined}
               className={`select-none rounded-lg border border-subtle bg-surface-1 p-3 ${canDrag ? "cursor-grab" : ""} ${drag?.id === item.id ? "opacity-40" : ""}`}
-              onPointerDown={(event) => start(event, item)} onDragStart={(event) => event.preventDefault()}
+              onPointerDown={(event) => start(event, item, column.key)} onDragStart={(event) => event.preventDefault()}
               onClickCapture={(event) => { if (justDragged.current) { event.preventDefault(); event.stopPropagation(); } }}
               onContextMenu={(event) => { if (drag || touching.current) event.preventDefault(); }}>
               {renderCard(item, reorderHandle(item, column.key))}

@@ -287,6 +287,12 @@ try {
   await page.locator('[data-testid="column-Kanban Tester"] [data-testid="card-MOB-1"]').waitFor();
   const colleagueCard = page.getByTestId(`column-Kanban Colleague`).getByTestId("card-MOB-1");
   const colleagueHandle = colleagueCard.getByRole("button", { name: `${translate("sortable.reorder")}: MOB-1` });
+  // Dropping within the same assignee column must preserve every assignee.
+  await colleagueCard.dragTo(page.getByTestId("column-Kanban Colleague"));
+  await page.waitForTimeout(500);
+  await page.reload();
+  await colleagueCard.waitFor();
+  await page.locator('[data-testid="column-Kanban Tester"] [data-testid="card-MOB-1"]').waitFor();
   // Moving from the second assignee to the first must still reduce the assignment to that destination.
   await colleagueHandle.press("ArrowLeft");
   await colleagueCard.waitFor({ state: "detached", timeout: 5000 });
@@ -300,6 +306,17 @@ try {
   await page.locator(`[data-testid="column-${noAssignee}"] [data-testid="card-MOB-1"]`).waitFor();
   check(await page.locator(`[data-testid="column-Kanban Tester"] [data-testid="card-MOB-1"]`).count() === 0, "moving a multi-assignee card from its second assignee did not clear its previous assignments");
   check(await page.locator(`[data-testid="column-Kanban Colleague"] [data-testid="card-MOB-1"]`).count() === 0, "keyboard move used the first matching assignee column instead of the originating column");
+  // Query-defined ordering cannot be changed by a keyboard move of the manual order.
+  await page.goto(page.url().replace(/[?].*/, "?layout=board&q=ORDER%20BY%20title"));
+  const sortedHandle = page.getByRole("button", { name: `${translate("sortable.reorder")}: MOB-2` });
+  await sortedHandle.waitFor();
+  check(!((await sortedHandle.getAttribute("aria-keyshortcuts")) ?? "").includes("ArrowUp"), "query-sorted board advertises unavailable manual reordering");
+  let sortedMoves = 0;
+  await page.route(`${api}/actions/move_work_item`, async (route) => { sortedMoves += 1; await route.continue(); });
+  await sortedHandle.press("ArrowUp");
+  await page.waitForTimeout(200);
+  check(sortedMoves === 0, "query-sorted board changed hidden manual order");
+  await page.unroute(`${api}/actions/move_work_item`);
   await page.goto(page.url().replace(/[?].*/, "?layout=board"));
   await page.getByTestId("card-MOB-2").waitFor();
   await page.screenshot({ path: `${shots}/board-state-1440.png` });

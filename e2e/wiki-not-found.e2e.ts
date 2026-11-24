@@ -55,6 +55,8 @@ try {
   const fits = await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
   if (!fits) throw new Error("Wiki missing-page screen scrolls horizontally on phone width");
   console.log(`Wiki missing-page mobile render: ${mobilePath}`);
+  await recoveryLink.click();
+  await page.waitForURL(`${web}/${slug}/wiki`);
   await browser.close();
 } catch (error) {
   failed = true;

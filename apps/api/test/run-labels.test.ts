@@ -9,7 +9,7 @@ import { createApp } from "../src/app";
 const { client, db } = createDatabase();
 afterAll(async () => client.end());
 
-type Run = { id: string; agentId: string | null; workItemId: string | null; status: string; rerunOfId: string | null; agentName: string | null; runtimeLabel: string | null };
+type Run = { id: string; agentId: string | null; workItemId: string | null; status: string; rerunOfId: string | null; agentName: string | null; runtimeLabel: string | null; workItem?: { displayId: string; title: string } | null };
 
 async function setup(transaction: Database) {
   const app = createApp(undefined, transaction);
@@ -56,6 +56,22 @@ test.concurrent("an assignment records the Agent name and the Runtime label on a
     const onServer = runsOfItem.find((run) => run.agentId === desk.id)!;
     expect(onRuntime).toMatchObject({ agentName: "Coder Bot", runtimeLabel: "label-host · claude" });
     expect(onServer).toMatchObject({ agentName: "Desk Bot", runtimeLabel: null });
+    expect((await s.agentRuns(coder.id)).find((run) => run.workItemId === item.id)).toMatchObject({ workItem: { displayId: expect.stringMatching(/^RL[A-Z0-9]+-1$/), title: "Labelled" } });
+  });
+});
+
+test.concurrent("Agent Run labels are not returned to a caller who cannot read the Agent log", async () => {
+  await withRollback(db, async (transaction) => {
+    const s = await setup(transaction);
+    const coder = await s.makeAgent("Visible Bot");
+    const item = await s.newItem("Private title");
+    await s.assign(item.id, coder.userId);
+
+    const guestResponse = await s.post("/api/auth/sign-up/email", { name: "Guest", email: `${crypto.randomUUID()}@example.test`, password: "a-secure-password" });
+    const guestCookie = guestResponse.headers.get("set-cookie")!.split(";")[0]!;
+    const invite = await (await s.post("/actions/create_invite", { workspaceId: s.workspace.id, role: "Guest" }, s.cookie)).json() as { token: string };
+    await s.post("/actions/accept_invite", { token: invite.token }, guestCookie);
+    expect((await s.post("/actions/list_agent_runs", { agentId: coder.id }, guestCookie)).status).toBe(403);
   });
 });
 

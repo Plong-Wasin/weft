@@ -282,6 +282,39 @@ try {
   await page.locator("[data-highlighted]").waitFor();
   console.log("agents: the Run link serves the Run view");
 
+  // The Agent settings log remains separate from the work item transcript, with readable labels and rendered steps.
+  await page.goto(`${web}/${slug}/settings/agents`);
+  const agentLog = page.locator('[data-agent="Helper Bot"]').getByTestId("agent-log");
+  await agentLog.getByText("MOB-1 · Renamed by Helper Bot", { exact: true }).waitFor();
+  const loggedRun = agentLog.locator("[data-agent-log-run]").first();
+  if ((await loggedRun.locator("summary").innerText()).includes(first.id)) throw new Error("Agent log summary exposed the work item UUID");
+  await loggedRun.locator("summary").click();
+  await loggedRun.getByText("I renamed it as asked.").waitFor();
+  await loggedRun.getByText(translate("runs.status.completed"), { exact: true }).waitFor();
+  await agentLog.scrollIntoViewIfNeeded();
+  if (Bun.env.AGENT_LOG_SCREENSHOT) {
+    await mkdir(Bun.env.AGENT_LOG_SCREENSHOT.replace(/\/[^/]+$/, ""), { recursive: true });
+    await Bun.write(Bun.env.AGENT_LOG_SCREENSHOT, await page.screenshot());
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await agentLog.scrollIntoViewIfNeeded();
+  const logOverflow = await agentLog.evaluate((element) => ({ scrollWidth: element.scrollWidth, clientWidth: element.clientWidth }));
+  if (logOverflow.scrollWidth > logOverflow.clientWidth) throw new Error(`Agent log overflows at 390px: ${JSON.stringify(logOverflow)}`);
+  if (Bun.env.AGENT_LOG_SCREENSHOT) await Bun.write(Bun.env.AGENT_LOG_SCREENSHOT.replace(/\.png$/, "-390.png"), await page.screenshot());
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const emptyLog = page.locator('[data-agent="Code Helper"]').getByTestId("agent-log");
+  await emptyLog.getByRole("status").filter({ hasText: translate("agents.runsEmpty") }).waitFor();
+
+  // A failed list load is announced and can recover on retry.
+  await page.route("**/actions/list_agent_runs", (route) => route.abort());
+  await page.reload();
+  const failedLog = page.locator('[data-agent="Helper Bot"]').getByTestId("agent-log");
+  await failedLog.getByRole("alert").waitFor();
+  await page.unroute("**/actions/list_agent_runs");
+  await failedLog.getByRole("button", { name: translate("agents.logRetry") }).click();
+  await failedLog.getByText("MOB-1 · Renamed by Helper Bot", { exact: true }).waitFor();
+  console.log("agents: populated, empty, failed and retry states render in the Agent log at desktop and mobile widths");
+
   // A second Run is cancelled while waiting, then rerun.
   await call("update_work_item", { workItemId: second.id, assigneeIds: [(await call<Array<{ userId: string; name: string }>>("list_members", { workspaceId })).find((member) => member.name === "Helper Bot")!.userId] });
   await page.goto(`${web}/${slug}/browse/MOB-2`);

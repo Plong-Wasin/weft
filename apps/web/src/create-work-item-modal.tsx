@@ -174,7 +174,7 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
             <input type="date" value={dueDate} min={startDate || undefined} className="w-auto" onChange={(event) => setDueDate(event.target.value)} /></label>
         </div>
         {note && <p role="alert" className="m-0 text-danger-text">{note}</p>}
-        <div className="sticky bottom-0 z-10 flex justify-end gap-2 border-t border-subtle bg-surface-1 pb-5 pt-4">
+        <div className="sticky bottom-0 z-10 flex justify-end gap-2 border-t border-subtle bg-surface-1 -mb-5 pb-5 pt-4">
           <button type="button" className="secondary" onClick={onClose}>{t("workItems.modal.cancel")}</button>
           <button type="submit" disabled={busy}>{t("workItems.modal.submit")}</button>
         </div>

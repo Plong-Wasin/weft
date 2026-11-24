@@ -444,10 +444,10 @@ export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, 
   const load = React.useCallback(async () => {
     if (!enabled) { setItems(null); return; }
     const lists = await Promise.all(tabOutcomes[tab].map((outcome) => action<IntakeItem[]>("list_intake_items", { projectId, outcome })));
-    // A failed list is not an empty Intake: keep the items unknown so the retry prompt shows instead of "Nothing waiting".
+    // A failed list is not an empty Intake: show the retry prompt, and keep any items loaded before so a failed reload does not blank a healthy list.
     const failed = lists.some((list) => list === null);
     setLoadFailed(failed);
-    setItems(failed ? null : lists.flatMap((list) => list ?? []).sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+    if (!failed) setItems(lists.flatMap((list) => list ?? []).sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
   }, [action, projectId, enabled, tab]);
   React.useEffect(() => { setItems(null); void load(); }, [load]);
   const select = React.useCallback((id: string | null, nextTab: Tab = tab) => {

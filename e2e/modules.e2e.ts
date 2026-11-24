@@ -130,6 +130,11 @@ try {
   check((await row.innerText()).includes("0"), "progress missing");
   const createdModule = (await call<Array<{ id: string; name: string; descriptionMarkdown: string }>>("list_modules", { projectId: project!.id })).find(({ name }) => name === "Auth")!;
   check(createdModule.descriptionMarkdown.includes("**Initial module purpose**"), "Module description formatting was not written as Markdown");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: `${shots}/modules-390.png` });
+  const mobileOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+  check(!mobileOverflow, "Modules list should not scroll horizontally at 390px");
+  await page.setViewportSize({ width: 1440, height: 1080 });
   await page.screenshot({ path: `${shots}/modules-list-1440.png` });
 
   // Grid display.
@@ -240,10 +245,6 @@ try {
   await page.getByText(t("modules.empty")).waitFor();
   console.log("modules: archive, unarchive, delete");
 
-  // Mobile width: the list stays usable.
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto(`${base}/modules`);
-  await page.screenshot({ path: `${shots}/modules-390.png` });
   console.log("e2e modules: ok");
   await browser.close();
 } catch (error) {

@@ -41,6 +41,7 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
   const [parentId, setParentId] = React.useState("");
   const [note, setNote] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const dialog = React.useRef<HTMLDivElement>(null);
   const { types, properties, ready: typesReady } = useWorkItemTypes(project);
   const typesOn = project.features.types === true;
   const [typeId, setTypeId] = React.useState("");
@@ -75,12 +76,31 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
     window.addEventListener("focus", refreshMembers);
     return () => window.removeEventListener("focus", refreshMembers);
   }, [project.id]);
+  // Typed title or description is unsaved input: a backdrop click or Escape must not discard it. Cancel and the close button still close.
+  const unsaved = title.trim() !== "" || description.trim() !== "";
   React.useEffect(() => {
     // Escape closes the modal, unless it is closing an open dropdown first.
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && !document.querySelector('[data-create-modal] [role="menu"], [data-create-modal] [role="dialog"]')) onClose(); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && !unsaved && !document.querySelector('[data-create-modal] [role="menu"], [data-create-modal] [role="dialog"]')) onClose(); };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, unsaved]);
+  React.useEffect(() => {
+    // Keep Tab inside the dialog, and return focus to the opener on close, as the Dialog helper does.
+    const opener = document.activeElement as HTMLElement | null;
+    const focusable = () => [...(dialog.current?.querySelectorAll<HTMLElement>("input, select, textarea, button, a[href], [tabindex]:not([tabindex='-1'])") ?? [])].filter((element) => !element.hasAttribute("disabled"));
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Tab" || !dialog.current) return;
+      if ((document.activeElement as HTMLElement | null)?.closest("[data-popover-panel]")) return;
+      const items = focusable();
+      const first = items[0]; const last = items[items.length - 1];
+      if (!first || !last) { event.preventDefault(); return; }
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || !dialog.current.contains(active))) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && (active === last || !dialog.current.contains(active))) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("keydown", onKey); if (opener?.isConnected) opener.focus(); };
+  }, []);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -110,8 +130,8 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
   const stateOf = states.find((state) => state.id === stateId);
   const chipRow = "flex flex-wrap items-center gap-2";
   return <>
-    <div aria-hidden className="fixed inset-0 z-40 bg-backdrop" onClick={onClose} />
-    <div data-create-modal role="dialog" aria-modal="true" aria-label={t("workItems.modal.title")} className="fixed left-1/2 top-[6vh] z-50 max-h-[88vh] w-[calc(100vw-1.5rem)] max-w-2xl -translate-x-1/2 overflow-auto rounded-lg border border-subtle bg-surface-1 shadow-xl">
+    <div aria-hidden className="fixed inset-0 z-40 bg-backdrop" onClick={() => { if (!unsaved) onClose(); }} />
+    <div ref={dialog} data-create-modal role="dialog" aria-modal="true" aria-label={t("workItems.modal.title")} className="fixed left-1/2 top-[6vh] z-50 max-h-[88vh] w-[calc(100vw-1.5rem)] max-w-2xl -translate-x-1/2 overflow-auto rounded-lg border border-subtle bg-surface-1 shadow-xl">
       <form className="my-0 grid gap-4 p-5" onSubmit={submit}>
         <div className="flex items-center gap-2">
           <h2 className="m-0 flex-1 text-18 font-semibold text-primary">{t("workItems.modal.title")}</h2>
@@ -154,7 +174,7 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
             <input type="date" value={dueDate} min={startDate || undefined} className="w-auto" onChange={(event) => setDueDate(event.target.value)} /></label>
         </div>
         {note && <p role="alert" className="m-0 text-danger-text">{note}</p>}
-        <div className="flex justify-end gap-2 border-t border-subtle pt-4">
+        <div className="sticky bottom-0 z-10 flex justify-end gap-2 border-t border-subtle bg-surface-1 pb-5 pt-4">
           <button type="button" className="secondary" onClick={onClose}>{t("workItems.modal.cancel")}</button>
           <button type="submit" disabled={busy}>{t("workItems.modal.submit")}</button>
         </div>

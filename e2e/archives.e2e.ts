@@ -56,7 +56,11 @@ try {
   const done = states.find((state) => state.group === "completed")!.id;
   const make = (title: string) => call<{ id: string; displayId: string }>("create_work_item", { projectId: project!.id, title, stateId: done });
   const first = await make("Old job"); const second = await make("Newer job"); const open = await call<{ id: string }>("create_work_item", { projectId: project!.id, title: "Still open" });
+  const longTitle = "unbrokenarchiveworkitemtitle".repeat(7);
+  const longTitleItem = await make(longTitle);
   await call("archive_work_item", { workItemId: first.id });
+  await Bun.sleep(20);
+  await call("archive_work_item", { workItemId: longTitleItem.id });
   await Bun.sleep(20);
   await call("archive_work_item", { workItemId: second.id });
 
@@ -78,20 +82,27 @@ try {
     check(overflow <= 0, `Archives page scrolls horizontally by ${overflow}px at ${width}px`);
     if (width === 390) {
       check(target!.height >= 44 && target!.width >= 44, `Restore target is only ${Math.round(target!.width)}x${Math.round(target!.height)}px at ${width}px`);
-      const titleFits = await rows.first().getByRole("link").evaluate((element) => element.scrollWidth <= element.clientWidth);
-      check(titleFits, `Archived work item title is clipped at ${width}px`);
+      const longTitleLink = page.getByRole("link", { name: longTitle, exact: true });
+      const titleLayout = await longTitleLink.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return { fits: element.scrollWidth <= element.clientWidth, wraps: element.clientHeight > parseFloat(style.lineHeight), right: element.getBoundingClientRect().right };
+      });
+      check(titleLayout.fits && titleLayout.wraps, `Unbroken archived work item title does not wrap within its row at ${width}px`);
+      check(titleLayout.right <= width, `Unbroken archived work item title extends past the ${width}px viewport`);
     }
     await page.screenshot({ path: `${screenshotDir}/archives-${width}.png`, fullPage: true });
     console.log(`archives render ${width}px: Restore ${Math.round(target!.width)}x${Math.round(target!.height)}px; page overflow ${overflow}px`);
   }
   await page.setViewportSize({ width: 1440, height: 900 });
-  check(await rows.count() === 2, "the Archives page does not list exactly the archived items");
+  check(await rows.count() === 3, "the Archives page does not list exactly the archived items");
   check((await rows.first().innerText()).includes("Newer job"), "newest archive is not first");
   check(await page.getByText("Still open").count() === 0, "an item that is not archived is listed");
   await rows.first().getByRole("button", { name: t("archives.restore") }).click();
-  await page.waitForFunction(() => document.querySelectorAll("[data-testid^=archived-row-]").length === 1);
+  await page.waitForFunction(() => document.querySelectorAll("[data-testid^=archived-row-]").length === 2);
   const back = await call<{ archivedAt: string | null }>("get_work_item", { workspaceId: me.workspaces[0]!.id, displayId: second.displayId });
   check(back.archivedAt === null, "Restore did not clear the archive time");
+  await rows.first().getByRole("button", { name: t("archives.restore") }).click();
+  await page.waitForFunction(() => document.querySelectorAll("[data-testid^=archived-row-]").length === 1);
   await rows.first().getByRole("button", { name: t("archives.restore") }).click();
   await page.getByText(t("archives.empty")).waitFor();
 
@@ -115,6 +126,39 @@ try {
   check(await workItemsTab.evaluate((element) => element === document.activeElement), "Home did not move focus to the first Archives tab");
   await tab(t("archives.cycles")).click();
   await page.getByText("Old sprint").waitFor();
+  await page.setViewportSize({ width: 390, height: 844 });
+  const cycleRow = page.locator(`[data-testid="archived-row-${cycle.id}"]`);
+  const cycleDate = await cycleRow.locator("span").boundingBox();
+  const cycleRestore = await cycleRow.getByRole("button", { name: t("archives.restore") }).boundingBox();
+  check(cycleDate !== null && cycleRestore !== null, "dated Cycle row is missing its date or Restore control");
+  check(Math.abs((cycleDate!.y + cycleDate!.height / 2) - (cycleRestore!.y + cycleRestore!.height / 2)) < 2 && cycleRestore!.x > cycleDate!.x, "dated Cycle Restore is not aligned beside the date on the same mobile row");
+  check(await page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth), "dated Cycle row scrolls the page horizontally at 390px");
+  await page.screenshot({ path: `${screenshotDir}/archives-cycle-dated-390.png`, fullPage: true });
+
+  // Render the resolved Guest project role while retaining the fixture's Admin API session.
+  await call("archive_work_item", { workItemId: longTitleItem.id });
+  const readOnly = await context.newPage();
+  await readOnly.setViewportSize({ width: 390, height: 844 });
+  await readOnly.route(`${api}/actions/get_project`, async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...await response.json() as Record<string, unknown>, role: "Guest" } });
+  });
+  await readOnly.goto(`${web}/${slug}/projects/MOB/archives`);
+  const readOnlyRows = readOnly.locator("[data-testid^=archived-row-]");
+  await readOnlyRows.first().waitFor();
+  check(await readOnlyRows.count() === 1 && await readOnlyRows.getByRole("button").count() === 0, "Guest sees a Restore control on an archived work item");
+  await readOnly.getByRole("tab", { name: t("archives.cycles") }).click();
+  const readOnlyCycleRow = readOnly.locator(`[data-testid="archived-row-${cycle.id}"]`);
+  await readOnlyCycleRow.waitFor();
+  check(await readOnlyCycleRow.getByRole("button").count() === 0, "Guest sees a Restore control on an archived Cycle");
+  await readOnly.getByRole("tab", { name: t("archives.modules") }).click();
+  const readOnlyModuleRow = readOnly.locator(`[data-testid="archived-row-${mod.id}"]`);
+  await readOnlyModuleRow.waitFor();
+  check(await readOnlyModuleRow.getByRole("button").count() === 0, "Guest sees a Restore control on an archived Module");
+  await readOnly.screenshot({ path: `${screenshotDir}/archives-read-only-390.png`, fullPage: true });
+  await readOnly.close();
+  await page.setViewportSize({ width: 1440, height: 900 });
+
   await page.getByRole("button", { name: t("archives.restore") }).click();
   await page.getByText(t("archives.emptyCycles")).waitFor();
   check((await call<Array<{ id: string }>>("list_cycles", { projectId: project!.id })).some((row) => row.id === cycle.id), "restored Cycle is not back in the Cycles list");

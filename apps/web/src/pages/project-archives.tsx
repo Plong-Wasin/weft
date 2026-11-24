@@ -74,7 +74,7 @@ export function ProjectArchivesRoute() {
     {active !== "workItems" && <div role="tabpanel" aria-labelledby={`archives-tab-${active}`} tabIndex={0}>
       {structures?.length === 0 && <p className="m-0 text-secondary">{t(active === "cycles" ? "archives.emptyCycles" : "archives.emptyModules")}</p>}
       <ul className="m-0 list-none p-0">{(structures ?? []).map((row) => <li key={row.id} data-testid={`archived-row-${row.id}`} className="flex flex-wrap items-center gap-3 border-b border-subtle px-2 py-3 max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-x-3 max-sm:gap-y-2">
-        <Link to={active === "cycles" ? paths.cycle(workspace.slug, project.key, row.id) : paths.module(workspace.slug, project.key, row.id)} className="min-w-0 flex-1 truncate text-14 font-medium text-primary">{row.name}</Link>
+        <Link to={active === "cycles" ? paths.cycle(workspace.slug, project.key, row.id) : paths.module(workspace.slug, project.key, row.id)} className="min-w-0 flex-1 truncate text-14 font-medium text-primary max-sm:col-span-2">{row.name}</Link>
         {row.startDate && row.endDate && <span className="text-12 text-secondary">{formatDate(row.startDate)} – {formatDate(row.endDate)}</span>}
         {canRestoreStructure && <button type="button" className="secondary max-sm:min-h-11 shrink-0" aria-label={t("archives.restoreItem").replace("{name}", row.name)} onClick={() => void restoreStructure(row)}>{t("archives.restore")}</button>}
     </li>)}</ul>
@@ -83,7 +83,7 @@ export function ProjectArchivesRoute() {
     {items?.length === 0 && <p className="m-0 text-secondary">{t("archives.empty")}</p>}
     <ul className="m-0 list-none p-0">{(items ?? []).map((item) => <li key={item.id} data-testid={`archived-row-${item.displayId}`} className="flex flex-wrap items-center gap-3 border-b border-subtle px-2 py-3 max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-x-3 max-sm:gap-y-2">
       <span className="text-12 text-secondary max-sm:col-span-2">{item.displayId}</span>
-      <Link to={paths.workItem(workspace.slug, item.displayId)} className="min-w-0 flex-1 truncate text-14 font-medium text-primary max-sm:col-span-2 max-sm:overflow-visible max-sm:whitespace-normal">{item.title}</Link>
+      <Link to={paths.workItem(workspace.slug, item.displayId)} className="min-w-0 flex-1 truncate text-14 font-medium text-primary max-sm:col-span-2 max-sm:overflow-visible max-sm:whitespace-normal max-sm:[overflow-wrap:anywhere]">{item.title}</Link>
       <span className="text-12 text-secondary">{t("archives.archivedAt").replace("{date}", formatDate(item.archivedAt))}</span>
       {canWrite && <button type="button" className="secondary max-sm:min-h-11 shrink-0" aria-label={t("archives.restoreItem").replace("{name}", item.displayId)} onClick={() => void restore(item)}>{t("archives.restore")}</button>}
     </li>)}</ul>

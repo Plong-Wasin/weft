@@ -62,7 +62,10 @@ try {
   await mkdir(shots, { recursive: true });
   page.on("dialog", (dialog) => void dialog.accept());
   const addCycle = async (name: string, start: string, end: string) => {
-    await page.getByRole("button", { name: translate("cycles.new"), exact: true }).click();
+    const trigger = page.getByRole("button", { name: translate("cycles.new"), exact: true });
+    await trigger.click();
+    const dialog = page.getByRole("dialog", { name: translate("cycles.newTitle") });
+    check(await dialog.evaluate((element) => element.contains(document.activeElement)), "Cycle dialog did not receive focus when opened");
     await page.getByLabel(translate("cycles.name")).fill(name);
     await page.getByLabel(translate("cycles.start")).fill(start);
     await page.getByLabel(translate("cycles.end")).fill(end);
@@ -77,7 +80,22 @@ try {
   await page.getByText(translate("cycles.empty")).waitFor();
 
   // Create (modal), with an Upcoming Cycle whose dates overlap Sprint 1: a warning shows and saving is still allowed.
-  await (await addCycle("Sprint 1", day(-1), day(6))).click();
+  const create1 = await addCycle("Sprint 1", day(-1), day(6));
+  const cycleDialog = page.getByRole("dialog", { name: translate("cycles.newTitle") });
+  const cycleDialogBounds = await cycleDialog.boundingBox();
+  if (!cycleDialogBounds) throw new Error("Cycle dialog has no rendered bounds");
+  await page.mouse.click(cycleDialogBounds.x + 6, cycleDialogBounds.y + 6);
+  check(await cycleDialog.isVisible(), "clicking blank Cycle dialog padding dismissed it");
+  await page.getByLabel(translate("cycles.name")).focus();
+  await page.keyboard.press("Shift+Tab");
+  check(await cycleDialog.evaluate((element) => element.contains(document.activeElement)), "keyboard focus escaped the Cycle dialog");
+  await create1.click();
+  await page.getByRole("dialog", { name: translate("cycles.newTitle") }).waitFor({ state: "detached" });
+  check(await page.getByRole("button", { name: translate("cycles.new"), exact: true }).evaluate((element) => element === document.activeElement), "focus did not return to the Cycle dialog trigger");
+  await page.getByRole("button", { name: translate("cycles.new"), exact: true }).click();
+  await page.mouse.click(8, 8);
+  await page.getByRole("dialog", { name: translate("cycles.newTitle") }).waitFor({ state: "detached" });
+  check(await page.getByRole("button", { name: translate("cycles.new"), exact: true }).evaluate((element) => element === document.activeElement), "backdrop dismissal did not return focus to the Cycle dialog trigger");
   await page.getByRole("link", { name: "Sprint 1" }).waitFor();
   const create2 = await addCycle("Sprint 2", day(3), day(10));
   await page.getByTestId("cycle-overlap").waitFor();
@@ -154,7 +172,8 @@ try {
   const progress = await page.getByTestId("cycle-progress").first().getAttribute("title");
   if (progress !== translate("cycles.progressOf").replace("{done}", "0").replace("{total}", "1")) throw new Error(`unexpected progress: ${progress}`);
   await page.getByTestId("cycle-breakdown").waitFor();
-  await page.getByTestId("cycle-burndown").getByRole("status").filter({ hasText: "Initial scope: unknown" }).waitFor();
+  // Creation starts history coverage after yesterday's Cycle start, so this range has no EOD observation yet.
+  await page.getByTestId("cycle-burndown").getByRole("status").filter({ hasText: translate("cycles.history.noCoverage") }).waitFor();
   // The item entered this Cycle twice and left it once in the move round-trip above.
   await page.getByText(/Scope added \/ removed:.*\+2 \/ −1/).waitFor();
   await page.screenshot({ path: `${shots}/cycle-detail-1440.png` });

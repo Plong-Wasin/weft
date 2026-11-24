@@ -189,9 +189,10 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
           .replace("{total}", String(group.length))
           .replace("{group}", translate(isStarred ? "sidebar.starred" : "projects.title"));
         const moveId = ++latestOrderMove.current;
+        setReorderAnnouncement("");
         void setOrder(order).then((result) => {
-          if (!result.current || moveId !== latestOrderMove.current) return;
-          setReorderAnnouncement(result.saved ? successMessage : translate(result.restored ? "sidebar.projectMoveFailed" : "sidebar.projectMoveRestoreFailed"));
+          if (moveId !== latestOrderMove.current) return;
+          setReorderAnnouncement(result.saved ? successMessage : translate(!result.current ? "sidebar.projectMoveFailedPending" : result.restored ? "sidebar.projectMoveFailed" : "sidebar.projectMoveRestoreFailed"));
         });
       }
       focusAfterMove.current = projectId;

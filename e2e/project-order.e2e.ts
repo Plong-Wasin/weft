@@ -139,12 +139,11 @@ try {
     if (orderRequests === 1) { firstOrderRequest(); await Bun.sleep(500); }
     await route.continue();
   });
-  const lastAnnouncementBeforeKeyboardMove = await sidebar().getByRole("status").textContent();
   await sidebar().getByRole("button", { name: `${translate("sidebar.toggleProject")}: Alpha` }).focus();
   await page.keyboard.press("ArrowUp");
   await firstOrderRequestSeen;
   await expectOrder(page, ["Alpha", "Beta"], "ArrowUp did not move Alpha optimistically", false);
-  check(await sidebar().getByRole("status").textContent() === lastAnnouncementBeforeKeyboardMove, "optimistic order was announced as saved before the request resolved");
+  check(await sidebar().getByRole("status").textContent() === "", "optimistic order was announced as saved before the request resolved");
   await page.keyboard.press("ArrowDown");
   await expectOrder(page, ["Beta", "Alpha"], "rapid ArrowDown did not retain the later optimistic order", false);
   check(orderRequests === 1, "rapid keyboard reorder sent a second request before the first completed");
@@ -175,6 +174,25 @@ try {
   await expectOrder(page, ["Alpha", "Beta"], "failed keyboard move did not restore the saved order", false);
   check(failedOrderRequests === 1, "failed keyboard move did not send one set_project_order request");
   await page.unroute("**/actions/set_project_order");
+
+  // An unrelated expansion must not hide the outcome of a failed keyboard reorder.
+  let orderStarted!: () => void;
+  const pendingOrder = new Promise<void>((resolve) => { orderStarted = resolve; });
+  await page.route("**/actions/set_project_order", async (route) => {
+    orderStarted();
+    await Bun.sleep(500);
+    await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "simulated save failure" }) });
+  });
+  await sidebar().getByRole("button", { name: `${translate("sidebar.toggleProject")}: Alpha` }).focus();
+  await page.keyboard.press("ArrowDown");
+  await pendingOrder;
+  await sidebar().getByRole("button", { name: `${translate("sidebar.toggleProject")}: Beta` }).click();
+  await expectStatus(page, "Couldn't save the project order. Reload if the order looks wrong.", "an expansion suppressed the failed reorder announcement");
+  await page.unroute("**/actions/set_project_order");
+  await page.reload();
+  await sidebar().getByRole("button", { name: `${translate("sidebar.toggleProject")}: Beta` }).waitFor();
+
+  await Promise.all([page.waitForResponse((response) => response.url().endsWith("/actions/set_project_preference")), sidebar().getByRole("button", { name: `${translate("sidebar.toggleProject")}: Beta` }).click()]);
 
   // Expanded menus are stored on the server: open Beta, reload, and it stays open.
   await Promise.all([

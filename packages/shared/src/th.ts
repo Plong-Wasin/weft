@@ -2012,6 +2012,7 @@ export const th: Record<keyof typeof en, string> = {
   "sidebar.dragHandle": "ลากเพื่อเรียงลำดับ",
   "sidebar.reorderHint": "ลากหรือกดปุ่มลูกศรขึ้นและลงเพื่อเรียงลำดับ",
   "sidebar.projectMoved": "ย้าย {project} ไปยังลำดับที่ {position} จาก {total} ในกลุ่ม{group}แล้ว",
+  "sidebar.projectMoveFailedPending": "บันทึกลำดับโครงการไม่ได้ หากลำดับไม่ถูกต้อง โปรดโหลดหน้าใหม่",
   "sidebar.projectMoveFailed": "บันทึกลำดับโครงการไม่ได้ และเรียกคืนลำดับที่บันทึกไว้แล้ว",
   "sidebar.projectMoveRestoreFailed": "บันทึกลำดับโครงการไม่ได้ และโหลดลำดับที่บันทึกไว้ไม่ได้",
   "sidebar.projectSwitcher": "โปรเจกต์",

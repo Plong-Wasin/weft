@@ -54,13 +54,18 @@ try {
   await call("create_module", { projectId: project!.id, name: "Auth" });
   const longLabelName = "Authentication architecture review and rollout planning";
   const longModuleName = "Identity and access management migration workstream";
+  const longStateName = "Awaiting final platform-wide reliability verification";
+  const longCycleName = "Authentication migration validation across all supported deployment regions";
   const longLabel = await call<{ id: string }>("create_label", { projectId: project!.id, name: longLabelName });
   const longModule = await call<{ id: string }>("create_module", { projectId: project!.id, name: longModuleName });
+  const longState = await call<{ id: string }>("create_state", { projectId: project!.id, name: longStateName, group: "started" });
+  const longCycle = await call<{ id: string }>("create_cycle", { projectId: project!.id, name: longCycleName, startDate: new Date(Date.now() - 86_400_000).toISOString().slice(0, 10), endDate: new Date(Date.now() + 6 * 86_400_000).toISOString().slice(0, 10) });
   for (const title of ["Alpha", "Bravo"]) await call("create_work_item", { projectId: project!.id, title });
   const longTitle = "Coordinate the authentication migration with teams in every supported region";
   const longItem = await call<{ id: string; displayId: string }>("create_work_item", { projectId: project!.id, title: longTitle });
-  await call("update_work_item", { workItemId: longItem.id, labelIds: [longLabel.id] });
+  await call("update_work_item", { workItemId: longItem.id, stateId: longState.id, labelIds: [longLabel.id] });
   await call("add_module_items", { moduleId: longModule.id, workItemIds: [longItem.id] });
+  await call("add_cycle_items", { cycleId: longCycle.id, workItemIds: [longItem.id] });
 
   await page.getByRole("link", { name: /MOB · Mobile/ }).click();
   await page.getByRole("link", { name: "Alpha" }).waitFor();
@@ -75,9 +80,11 @@ try {
   check(await page.getByRole("row").count() === 4, "expected header + 3 rows");
   const scroll = page.getByTestId("sheet-scroll");
   const workItemColumn = await page.getByRole("columnheader", { name: translate("layout.sheet.workItem") }).boundingBox();
-  const modulesColumn = await page.getByRole("columnheader", { name: translate("layout.property.modules") }).boundingBox();
   check(!!workItemColumn && workItemColumn.width >= 300 && workItemColumn.width <= 340, `Work item column should stay within its readable width bounds: ${workItemColumn?.width}`);
-  check(!!modulesColumn && modulesColumn.width >= 128, `Modules column is narrower than its content: ${modulesColumn?.width}`);
+  for (const [property, minimum] of [["state", 112], ["priority", 112], ["assignee", 112], ["labels", 128], ["dates", 128], ["cycle", 112], ["modules", 128]] as const) {
+    const width = await page.getByRole("columnheader", { name: translate(`layout.property.${property}`) }).evaluate((element) => element.getBoundingClientRect().width);
+    check(width >= minimum && width <= 200, `${property} column should stay within ${minimum}–200px bounds, found ${width}`);
+  }
   const longRow = page.getByTestId(`row-${longItem.displayId}`);
   const longTitleLink = longRow.getByRole("link", { name: longTitle, exact: true });
   await longTitleLink.waitFor();
@@ -85,11 +92,26 @@ try {
   check(!!longTitleBox && longTitleBox.width <= 200 && longTitleBox.height > 30, `long Work item title should wrap within the bounded column: ${JSON.stringify(longTitleBox)}`);
   const longLabelButton = longRow.getByRole("button", { name: `${translate("workItems.labels")}: ${longLabelName}` });
   const longModuleButton = longRow.getByRole("button", { name: `${translate("workItems.modules")}: ${longModuleName}` });
+  const longStateButton = longRow.getByRole("button", { name: `${translate("workItems.state")}: ${longStateName}` });
+  const longCycleButton = longRow.getByRole("button", { name: `${translate("workItems.cycle")}: ${longCycleName}` });
   for (const [button, name] of [[longLabelButton, longLabelName], [longModuleButton, longModuleName]] as const) {
     const value = button.locator(`span[title="${name}"]`);
     check(await value.getAttribute("title") === name, `truncated ${name} should retain its full text on hover`);
     check(await value.evaluate((element) => element.scrollWidth > element.clientWidth), `${name} should be visibly bounded instead of widening its table column`);
   }
+  for (const [button, role, name] of [
+    [longStateButton, "menuitemradio", longStateName], [longCycleButton, "menuitemradio", longCycleName],
+    [longLabelButton, "menuitemcheckbox", longLabelName], [longModuleButton, "menuitemcheckbox", longModuleName],
+  ] as const) {
+    await button.focus();
+    await page.keyboard.press("Enter");
+    const option = page.getByRole(role, { name, exact: true });
+    await option.waitFor();
+    const optionBox = await option.boundingBox();
+    check(!!optionBox && optionBox.height > 28, `${name} option should wrap visibly in the picker for keyboard users`);
+    await page.keyboard.press("Escape");
+  }
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await page.screenshot({ path: `${shots}/sheet-1440-light.png` });
 
   // Inline edits go through the Actions: state and priority persist after reload.
@@ -132,6 +154,9 @@ try {
   check(await scroll.getAttribute("role") === "region" && await scroll.getAttribute("tabindex") === "0", "spreadsheet scroll region should be named and keyboard focusable");
   check(await scroll.evaluate((el) => el.scrollWidth > el.clientWidth), "no horizontal scroll at 390px");
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "page itself scrolls sideways at 390px");
+  const phoneWorkItemColumn = await page.getByRole("rowheader").first().boundingBox();
+  check(!!phoneWorkItemColumn && phoneWorkItemColumn.width >= 190 && phoneWorkItemColumn.width <= 220, `phone Work item column should leave room for other cells: ${phoneWorkItemColumn?.width}`);
+  await page.screenshot({ path: `${shots}/sheet-390-left-light.png` });
   await scroll.focus();
   const beforeKeyboardScroll = await scroll.evaluate((el) => el.scrollLeft);
   await page.keyboard.press("ArrowRight");
@@ -151,6 +176,67 @@ try {
     const value = button.locator(`span[title="${name}"]`);
     check(await value.evaluate((element) => element.clientWidth <= 112 && element.scrollWidth > element.clientWidth), `long ${property} should stay bounded in a list row`);
   }
+
+  const touchContext = await browser.newContext({ storageState: await context.storageState(), hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
+  const touchPage = await touchContext.newPage();
+  const sheetUrl = new URL(projectUrl); sheetUrl.searchParams.set("layout", "spreadsheet");
+  await touchPage.goto(sheetUrl.toString());
+  const touchRow = touchPage.getByTestId(`row-${longItem.displayId}`);
+  const touchWorkItemColumn = await touchRow.getByRole("rowheader").boundingBox();
+  check(!!touchWorkItemColumn && touchWorkItemColumn.width <= 220, `touch Work item column leaves too little room for properties: ${touchWorkItemColumn?.width}`);
+  const touchScroll = touchPage.getByTestId("sheet-scroll");
+  for (const [label, role, name] of [
+    [translate("workItems.state"), "menuitemradio", longStateName], [translate("workItems.cycle"), "menuitemradio", longCycleName],
+    [translate("workItems.labels"), "menuitemcheckbox", longLabelName], [translate("workItems.modules"), "menuitemcheckbox", longModuleName],
+  ] as const) {
+    const trigger = touchRow.getByRole("button", { name: `${label}: ${name}` });
+    await trigger.scrollIntoViewIfNeeded();
+    let triggerBox = await trigger.boundingBox();
+    const workItemBox = await touchRow.getByRole("rowheader").boundingBox();
+    check(!!triggerBox && !!workItemBox, `${label} control or sticky Work item column is missing on touch`);
+    const offsetToClearSticky = Math.max(0, workItemBox.x + workItemBox.width + 8 - triggerBox.x);
+    if (offsetToClearSticky > 0) {
+      await touchScroll.evaluate((element, offset) => { element.scrollLeft = Math.max(0, element.scrollLeft - offset); }, offsetToClearSticky);
+      triggerBox = await trigger.boundingBox();
+    }
+    const scrollBox = await touchScroll.boundingBox();
+    const workItemAfterScroll = await touchRow.getByRole("rowheader").boundingBox();
+    const center = triggerBox!.x + triggerBox!.width / 2;
+    check(!!scrollBox && !!workItemAfterScroll && center >= workItemAfterScroll.x + workItemAfterScroll.width && center <= scrollBox.x + scrollBox.width, `${label} control is covered by the sticky Work item column on touch`);
+    await trigger.tap();
+    const option = touchPage.getByRole(role, { name, exact: true });
+    await option.waitFor();
+    const optionBox = await option.boundingBox();
+    check(!!optionBox && optionBox.height > 28, `${name} option should wrap visibly in the picker on touch`);
+    await touchPage.keyboard.press("Escape");
+  }
+  // A mocked Guest role exercises read-only property chips without granting the test user any additional permissions.
+  await touchPage.route("**/actions/get_project", async (route) => {
+    const response = await route.fetch();
+    const projectData = await response.json() as Record<string, unknown>;
+    await route.fulfill({ response, json: { ...projectData, role: "Guest" } });
+  });
+  await touchPage.goto(sheetUrl.toString());
+  const guestLongRow = touchPage.getByTestId(`row-${longItem.displayId}`);
+  for (const [label, name] of [["state", longStateName], ["cycle", longCycleName], ["labels", longLabelName], ["modules", longModuleName]] as const) {
+    const fullLabel = `${translate(`workItems.${label}`)}: ${name}`;
+    const trigger = guestLongRow.getByRole("button", { name: fullLabel });
+    await trigger.scrollIntoViewIfNeeded();
+    const triggerBox = await trigger.boundingBox();
+    const workItemBox = await guestLongRow.getByRole("rowheader").boundingBox();
+    check(!!triggerBox && !!workItemBox, `read-only ${label} reveal trigger is missing`);
+    const offsetToClearSticky = Math.max(0, workItemBox.x + workItemBox.width + 8 - triggerBox.x);
+    if (offsetToClearSticky > 0) await touchScroll.evaluate((element, offset) => { element.scrollLeft = Math.max(0, element.scrollLeft - offset); }, offsetToClearSticky);
+    await trigger.tap();
+    await touchPage.getByRole("dialog", { name: fullLabel }).getByText(fullLabel, { exact: true }).waitFor();
+    await touchPage.keyboard.press("Escape");
+  }
+  const guestKeyboardState = guestLongRow.getByRole("button", { name: `${translate("workItems.state")}: ${longStateName}` });
+  await guestKeyboardState.focus();
+  await touchPage.keyboard.press("Enter");
+  await touchPage.getByRole("dialog", { name: `${translate("workItems.state")}: ${longStateName}` }).getByText(`${translate("workItems.state")}: ${longStateName}`, { exact: true }).waitFor();
+  await touchPage.keyboard.press("Escape");
+  await touchContext.close();
   console.log("spreadsheet e2e passed");
   await browser.close();
 } catch (error) {

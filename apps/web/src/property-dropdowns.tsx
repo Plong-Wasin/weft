@@ -41,7 +41,30 @@ function Trigger({ label, children }: { label: string; children: React.ReactNode
 
 /** A property value as a chip; without write access it is plain text instead of a dropdown. */
 function Static({ label, children }: { label: string; children: React.ReactNode }) {
-  return <span aria-label={label} className={`flex items-center gap-1.5 rounded-md ${chip}`}>{children}</span>;
+  const value = React.useRef<HTMLSpanElement>(null);
+  const [truncated, setTruncated] = React.useState(false);
+  const measure = React.useCallback(() => {
+    const root = value.current;
+    if (!root) return;
+    const next = Array.from(root.querySelectorAll<HTMLElement>("[title]"))
+      .some((element) => element.clientWidth > 0 && element.scrollWidth > element.clientWidth + 1);
+    setTruncated((current) => current === next ? current : next);
+  }, []);
+  React.useLayoutEffect(measure, [children, measure]);
+  React.useEffect(() => {
+    const root = value.current;
+    if (!root || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, [measure]);
+
+  const content = <span ref={value} className="flex min-w-0 items-center gap-1.5">{children}</span>;
+  const className = `flex items-center gap-1.5 rounded-md ${chip}`;
+  if (!truncated) return <span className={className}>{content}</span>;
+  return <Popover label={label} className={className} panelRole="dialog" panelClassName="w-72 max-w-[calc(100vw-2rem)] p-3" trigger={content}>
+    {() => <p tabIndex={0} className="m-0 whitespace-normal break-words text-13 text-primary">{label}</p>}
+  </Popover>;
 }
 
 /** The search field (above SEARCH_THRESHOLD options) and the option list of a picker; arrows move the highlight, Enter picks it. */
@@ -79,12 +102,12 @@ function PickerBody({ options, onPick, searchAlways, children }: { options: Opti
 /** Inline dropdown that picks one option (state, priority, cycle). */
 export function SingleSelect({ label, summary, options, value, onSelect, readOnly, icon, iconOnly }: { label: string; summary: string; options: Option[]; value: string; onSelect: (id: string) => void; readOnly?: boolean; icon?: React.ReactNode; iconOnly?: boolean }) {
   const name = `${label}: ${summary}`;
-  if (readOnly) return <Static label={name}>{icon}{!iconOnly && <span>{summary}</span>}</Static>;
+  if (readOnly) return <Static label={name}>{icon}{!iconOnly && <span className="max-w-32 truncate" title={summary}>{summary}</span>}</Static>;
   return <Popover label={name} className={chip} panelClassName="max-h-72 w-52 overflow-auto" trigger={<Trigger label={label}>{icon}<span className={iconOnly ? "hidden text-11 max-sm:inline" : "max-w-32 truncate"}>{summary}</span></Trigger>}>
     {(close) => <PickerBody options={options} onPick={(option) => { close(); if (option.id !== value) onSelect(option.id); }}>
       {(visible, activeId, optionId) => visible.map((option) => <button key={option.id} id={optionId(option)} type="button" role="menuitemradio" aria-checked={option.id === value} data-active={option.id === activeId || undefined} className={`${optionClass} data-[active=true]:bg-layer-transparent-hover`}
         onClick={() => { close(); if (option.id !== value) onSelect(option.id); }}>
-        {option.icon}<span className="flex-1 truncate">{option.name}</span>{option.id === value && <Check aria-hidden size={14} className="text-secondary" />}
+        {option.icon}<span className="min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]">{option.name}</span>{option.id === value && <Check aria-hidden size={14} className="text-secondary" />}
       </button>)}
     </PickerBody>}
   </Popover>;
@@ -112,7 +135,7 @@ export function MultiSelect({ label, summary, options, selected, onToggle, readO
       const on = selected.includes(option.id);
       const unavailable = option.isAgent && option.hasAccess === false;
       return <button key={option.id} id={optionId(option)} type="button" role="menuitemcheckbox" aria-checked={on} aria-disabled={unavailable || undefined} data-active={option.id === activeId || undefined} title={unavailable ? option.accessReason ?? undefined : undefined} className={`${optionClass} data-[active=true]:bg-layer-transparent-hover ${option.codeCapable ? "flex-wrap gap-1 text-11" : ""} ${unavailable ? "flex-wrap cursor-not-allowed" : ""}`} onClick={() => { if (!unavailable) onToggle(option.id, !on); }}>
-        {option.icon}<span className={`${option.codeCapable ? "min-w-0 flex-1" : "flex-1 truncate"} ${unavailable ? "text-tertiary" : ""}`}>{option.name}{option.isAgent && <> <AgentLabel /></>}</span>{option.codeCapable && <span className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded bg-layer-1 px-2 py-1 text-12 text-secondary basis-[calc(100%_-_1.25rem)] ml-5`} title={t("agents.codeCapable")}><Code2 aria-hidden size={13} className="text-warning-primary" />{t("agents.canEditCode")}</span>}{on && <Check aria-hidden size={14} className="text-secondary" />}
+        {option.icon}<span className={`min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere] ${unavailable ? "text-tertiary" : ""}`}>{option.name}{option.isAgent && <> <AgentLabel /></>}</span>{option.codeCapable && <span className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded bg-layer-1 px-2 py-1 text-12 text-secondary basis-[calc(100%_-_1.25rem)] ml-5`} title={t("agents.codeCapable")}><Code2 aria-hidden size={13} className="text-warning-primary" />{t("agents.canEditCode")}</span>}{on && <Check aria-hidden size={14} className="text-secondary" />}
         {unavailable && <span className="w-full basis-full min-w-0 whitespace-normal pl-5 text-12 text-secondary">{option.accessReason}</span>}
       </button>;
       })}</React.Fragment>;
@@ -135,7 +158,7 @@ export function DateChip({ label, field, range, onChange, readOnly, stateGroup, 
   const late = field === "due" && isOverdue(value, todayKey(), stateGroup);
   // The overdue word is part of the accessible name: the trigger's aria-label replaces its visible text for screen readers.
   const name = late ? `${label}: ${text}, ${t("datePicker.overdue")}` : `${label}: ${text}`;
-  const body = <>{icon}<span className={late ? "text-danger-text" : undefined} title={late ? t("datePicker.overdue") : undefined}>{text}</span>{late && <span className="sr-only">{t("datePicker.overdue")}</span>}</>;
+  const body = <>{icon}<span className={`min-w-0 max-w-32 truncate ${late ? "text-danger-text" : ""}`} title={text}>{text}</span>{late && <span className="sr-only">{t("datePicker.overdue")}</span>}</>;
   if (readOnly) return <Static label={name}>{body}</Static>;
   return <DatePopover label={name} range={range} field={field} onChange={onChange} trigger={<Trigger label={label}>{body}</Trigger>} />;
 }
@@ -146,7 +169,7 @@ export function DatesMenu({ startDate, dueDate, onChange, readOnly, iconOnlyWhen
   const iconOnly = iconOnlyWhenEmpty && !startDate && !dueDate;
   const late = isOverdue(dueDate, todayKey(), stateGroup);
   const name = `${t("layout.property.dates")}: ${text}${late ? `, ${t("datePicker.overdue")}` : ""}`;
-  const body = <><CalendarDays aria-hidden size={14} className="text-secondary" /><span className={`${iconOnly ? "hidden text-11 max-sm:inline" : ""} ${late ? "text-danger-text" : ""}`} title={late ? t("datePicker.overdue") : undefined}>{text}</span>{late && <span className="sr-only">{t("datePicker.overdue")}</span>}</>;
+  const body = <><CalendarDays aria-hidden size={14} className="text-secondary" /><span className={`min-w-0 max-w-32 truncate ${iconOnly ? "hidden text-11 max-sm:inline" : ""} ${late ? "text-danger-text" : ""}`} title={text}>{text}</span>{late && <span className="sr-only">{t("datePicker.overdue")}</span>}</>;
   if (readOnly) return <Static label={name}>{body}</Static>;
   return <DatePopover label={name} trigger={<Trigger label={t("layout.property.dates")}>{body}</Trigger>} range={{ startDate, dueDate }} field={startDate || !dueDate ? "start" : "due"} onChange={onChange} clearable={clearable} />;
 }

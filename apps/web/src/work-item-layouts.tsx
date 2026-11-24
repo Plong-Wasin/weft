@@ -516,12 +516,12 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       <table className="w-max min-w-full table-auto border-separate border-spacing-0 bg-surface-1 text-13">
         <caption className="sr-only">{t("layout.spreadsheet")}</caption>
         <thead><tr className="bg-layer-1 text-12 font-medium text-tertiary">
-          <th scope="col" className={`${cell} sticky left-0 z-10 w-80 min-w-64 bg-layer-1`}>{t("layout.sheet.workItem")}</th>
+          <th scope="col" className={`${cell} sticky left-0 z-10 w-80 min-w-64 max-sm:w-52 max-sm:min-w-52 bg-layer-1`}>{t("layout.sheet.workItem")}</th>
           {columns.map((property) => <th key={property} scope="col" className={`${cell} ${sheetColumnMinWidth[property] ?? ""}`}>{t(`layout.property.${property}`)}</th>)}
           {rowAction && <th scope="col" className={`${cell} min-w-24`}><span className="sr-only">{t("layout.sheet.actions")}</span></th>}
         </tr></thead>
         <tbody>{items.map((item) => <tr key={item.id} data-testid={`row-${item.displayId}`} className="group hover:bg-layer-transparent-hover">
-          <th scope="row" className={`${cell} sticky left-0 z-10 w-80 min-w-64 bg-surface-1 font-normal group-hover:bg-layer-1`}>
+          <th scope="row" className={`${cell} sticky left-0 z-10 w-80 min-w-64 max-sm:w-52 max-sm:min-w-52 bg-surface-1 font-normal group-hover:bg-layer-1`}>
             <span className="flex min-w-0 items-center gap-3">{pickBox(item)}{shows("id") && <span className="shrink-0 text-12 text-tertiary">{item.displayId}</span>}
               <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="block min-w-0 max-w-48 whitespace-normal text-14 font-medium text-primary [overflow-wrap:anywhere]">{item.title}</Link></span>
           </th>

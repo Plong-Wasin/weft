@@ -2,6 +2,7 @@
 // Run with `bun run e2e` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
 import { chromium, type Page } from "playwright";
 import { like } from "drizzle-orm";
+import { mkdir } from "node:fs/promises";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
@@ -65,6 +66,25 @@ try {
   await page.waitForURL(`**/projects/MOB/archives`);
   const rows = page.locator("[data-testid^=archived-row-]");
   await rows.first().waitFor();
+  const screenshotDir = reviewShots("07-archives");
+  await mkdir(screenshotDir, { recursive: true });
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    await page.waitForTimeout(100);
+    const restore = rows.first().getByRole("button", { name: t("archives.restore") });
+    const target = await restore.boundingBox();
+    check(target !== null, `Restore control is not visible at ${width}px`);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    check(overflow <= 0, `Archives page scrolls horizontally by ${overflow}px at ${width}px`);
+    if (width === 390) {
+      check(target!.height >= 44 && target!.width >= 44, `Restore target is only ${Math.round(target!.width)}x${Math.round(target!.height)}px at ${width}px`);
+      const titleFits = await rows.first().getByRole("link").evaluate((element) => element.scrollWidth <= element.clientWidth);
+      check(titleFits, `Archived work item title is clipped at ${width}px`);
+    }
+    await page.screenshot({ path: `${screenshotDir}/archives-${width}.png`, fullPage: true });
+    console.log(`archives render ${width}px: Restore ${Math.round(target!.width)}x${Math.round(target!.height)}px; page overflow ${overflow}px`);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
   check(await rows.count() === 2, "the Archives page does not list exactly the archived items");
   check((await rows.first().innerText()).includes("Newer job"), "newest archive is not first");
   check(await page.getByText("Still open").count() === 0, "an item that is not archived is listed");

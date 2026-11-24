@@ -83,6 +83,7 @@ try {
   const agent = await createAgentActions(db).createAgent.handler({ userId: me.user.id }, { workspaceId, name: "Helper Bot", instructions: "Answer the newest request.", model: "default" });
   await createAgentActions(db).setAgentProjectAccess.handler({ userId: me.user.id }, { agentId: agent.id, allProjects: true, projectIds: [] });
   const item = await call<{ id: string }>("create_work_item", { projectId: project.id, title: "Login page" });
+  const longLogToken = "x".repeat(160);
   const mention = (text: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "mention", attrs: { id: agent.userId, label: "Helper Bot" } }, { type: "text", text: ` ${text}` }] }] });
 
   // Assigning the Agent starts its Run; the Run waits in the model until this flow releases it.
@@ -90,7 +91,7 @@ try {
   if (assigned.wakeOutcomes[0]?.status !== "started") throw new Error("the assignment did not start the Run");
   // The first step is under way (the Run is running): the person mentions the busy Agent again, so the comment joins the active Run (a Steer) during that step.
   await Promise.race([started, Bun.sleep(30_000).then(() => { throw new Error("the Run's first step did not start"); })]);
-  const steered = await call<{ wakeOutcomes: Array<{ status: string }> }>("create_comment", { workItemId: item.id, body: mention("Also check the Safari redirect.") });
+  const steered = await call<{ wakeOutcomes: Array<{ status: string }> }>("create_comment", { workItemId: item.id, body: mention(`Also check the Safari redirect. ${longLogToken}`) });
   if (steered.wakeOutcomes[0]?.status !== "steered") throw new Error("the mention during the active Run did not steer it");
   console.log("steer: the mention joins the active Run; the Wake outcome says steered");
 
@@ -107,9 +108,17 @@ try {
   await message.waitFor({ timeout: 30_000 });
   if (await page.getByTestId("runs-panel").getByText(translate("runs.status.follow_up"), { exact: true }).count() > 0) throw new Error("a Follow-up Run exists for a steered mention");
   if (await page.getByTestId("runs-panel").getByText(translate("runs.status.completed"), { exact: true }).count() !== 1) throw new Error("the steered comment made a second Run");
+  await panel.scrollIntoViewIfNeeded();
   await Bun.write(`${shots}/steer-run-desktop-1440.png`, await page.screenshot({ fullPage: true }));
   await page.setViewportSize({ width: 390, height: 844 });
   await message.waitFor();
+  await panel.scrollIntoViewIfNeeded();
+  const phoneFits = await page.evaluate(() => {
+    const transcript = document.querySelector('[data-testid="run-transcript-content"]');
+    const card = transcript?.closest("li[data-run-status]");
+    return Boolean(transcript && card && document.documentElement.scrollWidth <= window.innerWidth && card.getBoundingClientRect().right <= window.innerWidth);
+  });
+  if (!phoneFits) throw new Error("long transcript content overflows the phone viewport");
   await Bun.write(`${shots}/steer-run-phone-390.png`, await page.screenshot({ fullPage: true }));
   await page.setViewportSize({ width: 1440, height: 900 });
   console.log("steer: the Run page shows the steered comment as a message from the person, and no Follow-up Run exists");

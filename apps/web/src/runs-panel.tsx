@@ -106,7 +106,7 @@ function RunCard({ run, workspaceId, highlighted, canControl, action, tick, onCh
       {run.failureMessage && <p className="m-0 text-secondary">{translate("runs.failureDetail").replace("{detail}", () => run.failureMessage!)}</p>}
     </div>}
     {failed && <p role="alert" className="text-13 text-danger-text">{translate("runs.failed")}</p>}
-    {showTranscript && <div aria-label={translate("runs.transcript")}>
+    {showTranscript && <div aria-label={translate("runs.transcript")} data-testid="run-transcript-content" className="[overflow-wrap:anywhere]">
       {transcript?.runtimeProfile && <div className="rounded-md bg-surface-2 px-3 py-2 text-12" data-testid="run-runtime-profile"><strong>{translate("runs.runtimeProfileHeader")}: {transcript.runtimeProfile.name}</strong> · {translate(transcript.runtimeProfile.sandbox === "full" ? "runtimes.fullAccessWarning" : "runtimes.sandboxEnabled")}</div>}
       {transcript && transcript.steps.length === 0 && <p className="text-13 text-secondary">{translate("runs.noSteps")}</p>}
       <ol className="m-0 grid list-none gap-1.5 p-0 text-13">{transcript?.steps.map((step) => <StepView key={step.seq} step={step} />)}</ol>

@@ -387,6 +387,29 @@ test.concurrent("Agent Markdown mentions still cannot name someone outside a pri
   });
 });
 
+test.concurrent("saving an unchanged comment body adds no version and keeps editedAt", async () => {
+  await withRollback(db, async (transaction) => {
+    const { comments, member, item } = await setup(transaction);
+    const created = await comments.createComment.handler({ userId: member.id }, { workItemId: item.id, bodyMarkdown: "**same** text" });
+    const sameMarkdown = await comments.updateComment.handler({ userId: member.id }, { commentId: created.id, bodyMarkdown: "**same** text" });
+    expect(sameMarkdown.editedAt).toBeNull();
+    expect(await comments.listCommentVersions.handler({ userId: member.id }, { commentId: created.id })).toEqual([]);
+    const changed = await comments.updateComment.handler({ userId: member.id }, { commentId: created.id, body: doc("changed") });
+    expect(changed.editedAt).not.toBeNull();
+    const sameBody = await comments.updateComment.handler({ userId: member.id }, { commentId: created.id, body: doc("changed") });
+    expect(sameBody.editedAt).toBe(changed.editedAt);
+    expect(await comments.listCommentVersions.handler({ userId: member.id }, { commentId: created.id })).toHaveLength(1);
+    // The web editor sends a document for text first written as Markdown: still a no-op, and no edit is logged.
+    const fresh = await comments.createComment.handler({ userId: member.id }, { workItemId: item.id, bodyMarkdown: "plain" });
+    const { activities } = await import("@weft/db");
+    const logBefore = (await transaction.select().from(activities)).length;
+    const viaDocument = await comments.updateComment.handler({ userId: member.id }, { commentId: fresh.id, body: doc("plain") });
+    expect(viaDocument.editedAt).toBeNull();
+    expect(await comments.listCommentVersions.handler({ userId: member.id }, { commentId: fresh.id })).toEqual([]);
+    expect((await transaction.select().from(activities)).length).toBe(logBefore);
+  });
+});
+
 test.concurrent("only the author edits or deletes; deletion is soft and hides the comment", async () => {
   await withRollback(db, async (transaction) => {
     const { comments, member, other, admin, item } = await setup(transaction);

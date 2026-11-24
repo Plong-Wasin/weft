@@ -27,6 +27,7 @@ async function waitFor(url: string) {
 
 let failed = false;
 let failurePage: Page | undefined;
+let releaseDelayedOrder: (() => void) | null = null;
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
@@ -240,6 +241,61 @@ try {
   await page.screenshot({ path: `${shots}/tablet-settings-768.png` });
   console.log("project order ok: phone settings page");
 
+  // A pending reorder, then Reset and Star from a second hook instance, must persist in user-action order.
+  await page.getByRole("navigation", { name: translate("shell.rail") }).getByRole("link", { name: translate("rail.work") }).click();
+  const preferenceWrites: string[] = [];
+  let delayedOrderStarted!: () => void;
+  const delayedOrderStartedPromise = new Promise<void>((resolve) => { delayedOrderStarted = resolve; });
+  await page.route("**/actions/set_project_order", async (route) => {
+    await new Promise<void>((resolve) => {
+      releaseDelayedOrder = resolve;
+      delayedOrderStarted();
+    });
+    preferenceWrites.push("order");
+    await route.continue();
+  });
+  await page.route("**/actions/reset_project_order", async (route) => {
+    preferenceWrites.push("reset");
+    await route.continue();
+  });
+  await page.route("**/actions/set_project_preference", async (route) => {
+    preferenceWrites.push("star");
+    await route.continue();
+  });
+  const orderResponse = page.waitForResponse((response) => response.url().endsWith("/actions/set_project_order") && response.ok());
+  await sidebar().getByRole("button", { name: `${translate("sidebar.toggleProject")}: Alpha` }).focus();
+  await page.keyboard.press("ArrowUp");
+  await delayedOrderStartedPromise;
+  await expectOrder(page, ["Alpha", "Beta"], "pending project order was not applied optimistically", false);
+  await page.getByRole("navigation", { name: translate("shell.rail") }).getByRole("link", { name: translate("nav.settings") }).click();
+  await sidebar().getByRole("link", { name: translate("settings.projectOrder"), exact: true }).click();
+  await page.getByRole("heading", { name: translate("settings.projectOrder"), exact: true }).waitFor();
+  const resetResponse = page.waitForResponse((response) => response.url().endsWith("/actions/reset_project_order") && response.ok());
+  await page.getByRole("button", { name: translate("sidebar.resetOrder"), exact: true }).click();
+  await page.getByRole("button", { name: translate("sidebar.resetOrder"), exact: true }).waitFor({ state: "detached" });
+  const starResponse = page.waitForResponse((response) => response.url().endsWith("/actions/set_project_preference") && response.ok());
+  await page.getByRole("button", { name: `${translate("sidebar.star")}: Beta` }).click();
+  await page.getByRole("button", { name: `${translate("sidebar.unstar")}: Beta` }).waitFor();
+  const writesBeforeRelease = [...preferenceWrites];
+  releaseDelayedOrder?.();
+  releaseDelayedOrder = null;
+  await Promise.all([orderResponse, resetResponse, starResponse]);
+  const preferences = await call<Array<{ projectId: string; starred: boolean; position: number | null }>>("list_project_preferences", { workspaceId });
+  const projectRows = await call<Array<{ id: string; key: string }>>("list_projects", { workspaceId, archived: false });
+  const betaId = projectRows.find((project) => project.key === "BET")?.id;
+  const issues = [
+    ...(writesBeforeRelease.length === 0 ? [] : [`writes reached server during held order: ${writesBeforeRelease.join(", ")}`]),
+    ...(JSON.stringify(preferenceWrites) === JSON.stringify(["order", "reset", "star"]) ? [] : [`server write order: ${preferenceWrites.join(", ")}`]),
+    ...(preferences.every((preference) => preference.position === null) ? [] : ["server positions were not reset after the pending order completed"]),
+    ...(preferences.some((preference) => preference.projectId === betaId && preference.starred) ? [] : ["star from the second hook instance did not persist"]),
+    ...((await page.getByRole("button", { name: translate("sidebar.resetOrder"), exact: true }).count()) === 0 ? [] : ["stale order response restored the reset control in the cache"]),
+    ...((await page.getByRole("button", { name: `${translate("sidebar.unstar")}: Beta` }).getAttribute("aria-pressed")) === "true" ? [] : ["star from the second hook instance is missing in the cache"]),
+  ];
+  check(issues.length === 0, `pending order followed by reset and star was inconsistent: ${issues.join("; ")}`);
+  await page.unroute("**/actions/set_project_order");
+  await page.unroute("**/actions/reset_project_order");
+  await page.unroute("**/actions/set_project_preference");
+
   console.log("e2e project-order: ok");
   await browser.close();
 } catch (error) {
@@ -247,6 +303,7 @@ try {
   console.error(error);
   await failurePage?.screenshot({ path: `${shots}/failure.png` }).catch(() => {});
 } finally {
+  releaseDelayedOrder?.();
   for (const server of servers) server.kill();
   const { client, db } = createDatabase();
   await db.delete(workspaces).where(like(workspaces.slug, "e2e-%"));

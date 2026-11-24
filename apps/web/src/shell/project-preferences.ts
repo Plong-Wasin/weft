@@ -1,5 +1,5 @@
 import React from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { action } from "../api";
 import type { Project } from "../types";
 
@@ -7,6 +7,32 @@ import type { Project } from "../types";
 export type ProjectPreference = { projectId: string; starred: boolean; position: number | null; expanded: boolean };
 
 export const projectPreferencesKey = (workspaceId: string) => ["project-preferences", workspaceId] as const;
+
+type PreferenceWriteQueue = { tail: Promise<void>; revision: number; needsReload: boolean };
+const preferenceWriteQueues = new WeakMap<QueryClient, Map<string, PreferenceWriteQueue>>();
+
+/** All preference writers for one workspace and QueryClient share order and revision state across hook instances. */
+function preferenceWriteQueue(client: QueryClient, workspaceId: string): PreferenceWriteQueue {
+  let workspaces = preferenceWriteQueues.get(client);
+  if (!workspaces) { workspaces = new Map(); preferenceWriteQueues.set(client, workspaces); }
+  let queue = workspaces.get(workspaceId);
+  if (!queue) { queue = { tail: Promise.resolve(), revision: 0, needsReload: false }; workspaces.set(workspaceId, queue); }
+  return queue;
+}
+
+function enqueuePreferenceWrite<T>(queue: PreferenceWriteQueue, write: () => Promise<T>): Promise<T> {
+  const result = queue.tail.then(write);
+  queue.tail = result.then(() => undefined, () => undefined);
+  return result;
+}
+
+async function restorePreferenceCache(client: QueryClient, key: ReturnType<typeof projectPreferencesKey>, workspaceId: string, queue: PreferenceWriteQueue, revision: number) {
+  const restored = await action<ProjectPreference[]>("list_project_preferences", { workspaceId });
+  if (restored === null || revision !== queue.revision) return false;
+  client.setQueryData<ProjectPreference[]>(key, restored);
+  queue.needsReload = false;
+  return true;
+}
 
 export function preferenceOf(prefs: ProjectPreference[], projectId: string): ProjectPreference | undefined {
   return prefs.find((pref) => pref.projectId === projectId);
@@ -92,8 +118,8 @@ export function orderAsPreferences(prefs: ProjectPreference[], order: string[]):
 }
 
 /**
- * The person's sidebar state for a workspace, and the writes that change it. Each write updates the cache first so the sidebar
- * moves at once, then the server's answer replaces it; a failed write reloads the saved state.
+ * The person's sidebar state for a workspace. Writes update the cache immediately and serialize per workspace; only current
+ * responses update it again, while failures reload the saved state.
  */
 export function useProjectPreferences(workspaceId: string, enabled = true) {
   const client = useQueryClient();
@@ -104,43 +130,63 @@ export function useProjectPreferences(workspaceId: string, enabled = true) {
     enabled: enabled && workspaceId !== "",
   });
   const prefs = query.data ?? [];
-  const reload = React.useCallback(async () => { await client.invalidateQueries({ queryKey: key }); }, [client, key]);
   const current = React.useCallback(() => client.getQueryData<ProjectPreference[]>(key) ?? [], [client, key]);
-  const orderWrites = React.useRef<Promise<void>>(Promise.resolve());
-  const orderRevision = React.useRef(0);
+  const writeQueue = preferenceWriteQueue(client, workspaceId);
 
   const setPreference = React.useCallback(async (projectId: string, patch: { starred?: boolean; expanded?: boolean }) => {
+    const revision = ++writeQueue.revision;
     const before = current();
     const existing = preferenceOf(before, projectId) ?? { projectId, starred: false, position: null, expanded: false };
     client.setQueryData<ProjectPreference[]>(key, [...before.filter((pref) => pref.projectId !== projectId), { ...existing, ...patch }]);
-    const saved = await action<ProjectPreference>("set_project_preference", { projectId, ...patch });
-    if (!saved) await reload();
-  }, [client, key, current, reload]);
+    return enqueuePreferenceWrite(writeQueue, async () => {
+      const saved = await action<ProjectPreference>("set_project_preference", { projectId, ...patch });
+      if (saved) {
+        if (revision === writeQueue.revision) {
+          if (writeQueue.needsReload) await restorePreferenceCache(client, key, workspaceId, writeQueue, revision);
+          else client.setQueryData<ProjectPreference[]>(key, [...current().filter((pref) => pref.projectId !== projectId), saved]);
+        }
+      } else {
+        writeQueue.needsReload = true;
+        if (revision === writeQueue.revision) await restorePreferenceCache(client, key, workspaceId, writeQueue, revision);
+      }
+    });
+  }, [client, key, current, workspaceId, writeQueue]);
 
   const setOrder = React.useCallback(async (order: string[]) => {
-    const revision = ++orderRevision.current;
+    const revision = ++writeQueue.revision;
     client.setQueryData<ProjectPreference[]>(key, orderAsPreferences(current(), order));
-    const write = orderWrites.current.then(async () => {
+    return enqueuePreferenceWrite(writeQueue, async () => {
       const saved = await action<ProjectPreference[]>("set_project_order", { workspaceId, projectIds: order });
       if (saved) {
-        if (revision === orderRevision.current) client.setQueryData<ProjectPreference[]>(key, saved);
-        return { saved: true, restored: false };
+        if (revision === writeQueue.revision) {
+          client.setQueryData<ProjectPreference[]>(key, saved);
+          writeQueue.needsReload = false;
+        }
+        return { saved: true, restored: false, current: revision === writeQueue.revision };
       }
-      if (revision !== orderRevision.current) return { saved: false, restored: false };
-      const restored = await action<ProjectPreference[]>("list_project_preferences", { workspaceId });
-      if (revision === orderRevision.current && restored !== null) client.setQueryData<ProjectPreference[]>(key, restored);
-      return { saved: false, restored: revision === orderRevision.current && restored !== null };
+      writeQueue.needsReload = true;
+      if (revision !== writeQueue.revision) return { saved: false, restored: false, current: false };
+      const restored = await restorePreferenceCache(client, key, workspaceId, writeQueue, revision);
+      return { saved: false, restored, current: revision === writeQueue.revision };
     });
-    orderWrites.current = write.then(() => undefined, () => undefined);
-    return write;
-  }, [client, key, current, workspaceId]);
+  }, [client, key, current, workspaceId, writeQueue]);
 
   const resetOrder = React.useCallback(async () => {
+    const revision = ++writeQueue.revision;
     client.setQueryData<ProjectPreference[]>(key, current().map((pref) => ({ ...pref, position: null })));
-    const saved = await action<ProjectPreference[]>("reset_project_order", { workspaceId });
-    if (saved) client.setQueryData<ProjectPreference[]>(key, saved);
-    else await reload();
-  }, [client, key, current, reload, workspaceId]);
+    return enqueuePreferenceWrite(writeQueue, async () => {
+      const saved = await action<ProjectPreference[]>("reset_project_order", { workspaceId });
+      if (saved) {
+        if (revision === writeQueue.revision) {
+          client.setQueryData<ProjectPreference[]>(key, saved);
+          writeQueue.needsReload = false;
+        }
+      } else {
+        writeQueue.needsReload = true;
+        if (revision === writeQueue.revision) await restorePreferenceCache(client, key, workspaceId, writeQueue, revision);
+      }
+    });
+  }, [client, key, current, workspaceId, writeQueue]);
 
   return { prefs, loaded: query.data !== undefined, setPreference, setOrder, resetOrder };
 }

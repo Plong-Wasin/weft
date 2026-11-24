@@ -190,7 +190,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
           .replace("{group}", translate(isStarred ? "sidebar.starred" : "projects.title"));
         const moveId = ++latestOrderMove.current;
         void setOrder(order).then((result) => {
-          if (moveId !== latestOrderMove.current) return;
+          if (!result.current || moveId !== latestOrderMove.current) return;
           setReorderAnnouncement(result.saved ? successMessage : translate(result.restored ? "sidebar.projectMoveFailed" : "sidebar.projectMoveRestoreFailed"));
         });
       }

@@ -333,6 +333,57 @@ test.concurrent("description versions snapshot editing bursts and restore can be
   });
 });
 
+test.concurrent("description versions never hold the same text twice", async () => {
+  await withRollback(db, async (transaction) => {
+    const { items, member, create } = await setup(transaction);
+    const item = await create();
+    const doc = (text: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
+    const { workItemDescriptionVersions } = await import("@weft/db");
+    const ageAllVersions = () => transaction.update(workItemDescriptionVersions).set({ createdAt: new Date(Date.now() - descriptionVersionIntervalMs - 1000) });
+    const listVersions = () => items.listWorkItemDescriptionVersions.handler({ userId: member.id }, { workItemId: item.id });
+    const expectNoRepeatedText = async () => {
+      const markdowns = (await listVersions()).map((version) => version.contentMarkdown);
+      expect(new Set(markdowns).size).toBe(markdowns.length);
+    };
+    await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, description: doc("first") });
+    await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, description: doc("second") });
+    await ageAllVersions();
+    await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, description: doc("third") });
+    const [firstVersion] = (await listVersions()).filter((version) => version.contentMarkdown === "first");
+    expect(firstVersion).toBeDefined();
+    // Restoring "first" snapshots "third", then the text "first" lives in two places.
+    await items.restoreWorkItemDescriptionVersion.handler({ userId: member.id }, { workItemId: item.id, versionId: firstVersion!.id });
+    await ageAllVersions();
+    // Editing after the interval must not snapshot "first" again, it already exists.
+    await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, description: doc("fourth") });
+    await expectNoRepeatedText();
+    // Restoring the same version twice in a row must not duplicate its text either.
+    await items.restoreWorkItemDescriptionVersion.handler({ userId: member.id }, { workItemId: item.id, versionId: firstVersion!.id });
+    await items.restoreWorkItemDescriptionVersion.handler({ userId: member.id }, { workItemId: item.id, versionId: firstVersion!.id });
+    await expectNoRepeatedText();
+  });
+});
+
+test.concurrent("an edit burst after a restore adds no intermediate version", async () => {
+  await withRollback(db, async (transaction) => {
+    const { items, member, create } = await setup(transaction);
+    const item = await create();
+    const doc = (text: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
+    const { workItemDescriptionVersions } = await import("@weft/db");
+    const listVersions = () => items.listWorkItemDescriptionVersions.handler({ userId: member.id }, { workItemId: item.id });
+    await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, description: doc("first") });
+    await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, description: doc("second") });
+    const [firstVersion] = await listVersions();
+    await items.restoreWorkItemDescriptionVersion.handler({ userId: member.id }, { workItemId: item.id, versionId: firstVersion!.id });
+    await transaction.update(workItemDescriptionVersions).set({ createdAt: new Date(Date.now() - descriptionVersionIntervalMs - 1000) });
+    await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, description: doc("f1") });
+    await items.updateWorkItem.handler({ userId: member.id }, { workItemId: item.id, description: doc("f2") });
+    const texts = (await listVersions()).map((version) => version.contentMarkdown);
+    expect(texts).not.toContain("f1");
+    expect(new Set(texts).size).toBe(texts.length);
+  });
+});
+
 test.concurrent("the agent-id hint names only Agents of the project's own workspace, never another workspace's Agent", async () => {
   await withRollback(db, async (transaction) => {
     const { items, member, project, admin, workspace } = await setup(transaction);

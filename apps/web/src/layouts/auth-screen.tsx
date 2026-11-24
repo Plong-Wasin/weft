@@ -26,6 +26,7 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch, minPa
   const [confirmPassword, setConfirmPassword] = React.useState("");
   const [showPassword, setShowPassword] = React.useState(false);
   const [pending, setPending] = React.useState(false);
+  const pendingRef = React.useRef(false);
   const [authSettings, setAuthSettings] = React.useState<{ microsoftSignInEnabled: boolean; passwordSignInEnabled: boolean } | null>(null);
   const mismatch = mode === "sign-up" && confirmPassword !== "" && confirmPassword !== password;
 
@@ -56,7 +57,8 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch, minPa
 
   async function authenticate(event: React.FormEvent) {
     event.preventDefault(); setError(null); setPasswordIssue(null);
-    if (pending || mismatch) return; // the inline message under the confirm field already says why
+    if (pendingRef.current || mismatch) return; // the ref closes the same-render double-submit window
+    pendingRef.current = true;
     setPending(true);
     try {
       if (oauthSignIn) {
@@ -99,6 +101,7 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch, minPa
       }
       await onSignedIn();
     } finally {
+      pendingRef.current = false;
       setPending(false);
     }
   }
@@ -123,14 +126,14 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch, minPa
       {passwordIssue && <p role="alert" className="-mt-3 text-13 text-danger-text">{passwordIssue}</p>}
       {mode === "sign-up" && <PasswordField label={translate("auth.confirmPassword")} value={confirmPassword} onChange={setConfirmPassword} visible={showPassword} onToggle={() => setShowPassword(!showPassword)} autoComplete="new-password" invalid={mismatch} describedBy="password-mismatch" />}
       {mismatch && <p id="password-mismatch" role="status" className="-mt-2 text-13 text-danger-text">{translate("auth.passwordMismatch")}</p>}
-      {mode === "sign-in" && <button type="button" className="-mt-2 justify-self-end text-13 font-medium text-accent-text hover:underline" onClick={() => { setError(null); setMode("forgot"); }}>{translate("auth.forgotPassword")}</button>}
+      {mode === "sign-in" && <button type="button" disabled={pending} className="-mt-2 justify-self-end text-13 font-medium text-accent-text hover:underline" onClick={() => { if (pendingRef.current) return; setError(null); setMode("forgot"); }}>{translate("auth.forgotPassword")}</button>}
       <button disabled={pending} className={primaryButton}>{translate(mode === "sign-up" ? "auth.signUp" : "auth.signIn")}</button>
     </form>}
     {error && <p role="alert" className="mt-4 text-13 text-danger-text">{error}</p>}
     {/* The other mode is a full-width secondary button under the form (not small text), so a first-run admin who lands on Sign in finds "Create account". */}
     {authSettings.passwordSignInEnabled && <div className="mt-6 grid gap-2 border-t border-subtle pt-6 text-center">
       <p className="m-0 text-13 text-secondary">{translate(mode === "sign-up" ? "auth.haveAccountShort" : "auth.needAccountShort")}</p>
-      <button type="button" className="h-10 w-full rounded-md border border-strong bg-transparent px-3 text-14 font-medium text-primary hover:bg-layer-transparent-hover" onClick={() => { setError(null); setConfirmPassword(""); setShowPassword(false); setMode(mode === "sign-up" ? "sign-in" : "sign-up"); }}>
+      <button type="button" disabled={pending} className="h-10 w-full rounded-md border border-strong bg-transparent px-3 text-14 font-medium text-primary hover:bg-layer-transparent-hover" onClick={() => { if (pendingRef.current) return; setError(null); setConfirmPassword(""); setShowPassword(false); setMode(mode === "sign-up" ? "sign-in" : "sign-up"); }}>
         {translate(mode === "sign-up" ? "auth.signIn" : "auth.signUp")}
       </button>
     </div>}
@@ -160,11 +163,13 @@ function ForgotPasswordForm({ api, emailEnabled, languageSwitch, onBack }: { api
   const [email, setEmail] = React.useState("");
   const [sent, setSent] = React.useState(false);
   const [pending, setPending] = React.useState(false);
+  const pendingRef = React.useRef(false);
   const [error, setError] = React.useState<string | null>(null);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault(); setError(null);
-    if (pending) return;
+    if (pendingRef.current) return;
+    pendingRef.current = true;
     setPending(true);
     try {
       const response = await fetch(`${api}/api/auth/request-password-reset`, {
@@ -178,7 +183,7 @@ function ForgotPasswordForm({ api, emailEnabled, languageSwitch, onBack }: { api
       }
       setSent(true);
     } catch { setError(translate("auth.networkFailed")); }
-    finally { setPending(false); }
+    finally { pendingRef.current = false; setPending(false); }
   }
 
   return <AuthShell footer={<>{languageSwitch}<ThemeSwitch /></>}>
@@ -196,7 +201,7 @@ function ForgotPasswordForm({ api, emailEnabled, languageSwitch, onBack }: { api
           {error && <p role="alert" className="mt-4 text-13 text-danger-text">{error}</p>}
         </>}
     <div className="mt-6 grid gap-2 border-t border-subtle pt-6 text-center">
-      <button type="button" className="h-10 w-full rounded-md border border-strong bg-transparent px-3 text-14 font-medium text-primary hover:bg-layer-transparent-hover" onClick={onBack}>{translate("auth.backToSignIn")}</button>
+      <button type="button" disabled={pending} className="h-10 w-full rounded-md border border-strong bg-transparent px-3 text-14 font-medium text-primary hover:bg-layer-transparent-hover" onClick={() => { if (!pendingRef.current) onBack(); }}>{translate("auth.backToSignIn")}</button>
     </div>
   </AuthShell>;
 }

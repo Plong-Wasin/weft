@@ -97,12 +97,19 @@ export function InboxPanel({ workspace }: { workspace: Workspace }) {
     </div>
     {data && shown.length === 0 && <p>{translate("inbox.empty")}</p>}
     <ul style={{ listStyle: "none", paddingLeft: 0 }}>
-      {shown.map((item) => <li key={item.id} className={`mb-2 grid min-w-0 gap-2 rounded-md border border-subtle p-3 sm:grid-cols-[minmax(0,1fr)_auto] ${item.readAt ? "" : "bg-layer-1"}`}>
+      {shown.map((item) => {
+        const descriptionId = `notification-description-${item.id}`;
+        const actionLabelId = `notification-action-${item.id}`;
+        const actionLabel = translate(item.readAt ? "inbox.markUnread" : "inbox.markRead");
+        return <li key={item.id} className={`mb-2 grid min-w-0 gap-2 rounded-md border border-subtle p-3 sm:grid-cols-[minmax(0,1fr)_auto] ${item.readAt ? "" : "bg-layer-1"}`}>
+        <div id={descriptionId} className="min-w-0">
         {item.kind === "recurrence_paused" ? `${translate(inboxMessage[item.kind])}: ${item.detail ?? ""}` : <>{translate(item.kind === "wake_skipped" ? `inbox.wakeSkipped.${item.detail ?? "no_agent_access"}` as never : item.kind === "run_skipped" && item.detail ? `inbox.runSkipped.${item.detail}` as never : inboxMessage[item.kind]).replace("{actor}", item.actorName)}{" "}
         {item.workItemId || item.wikiPageId || item.runId ? <Link to={item.readAt ? notificationTarget(workspace.slug, item) : notificationTargetWithInboxId(workspace.slug, item, item.id)}>{item.wikiPageId ? item.pageTitle : item.runId ? translate("inbox.openScheduledRun") : `${item.displayId} ${item.workItemTitle}`}</Link> : <span>{item.kind === "secret_output_blocked" ? translate("inbox.secretOutputBlockedDetail") : item.detail}</span>}{item.kind === "auto_rule" && item.detail && <>{": "}{autoRuleReasonText(item.detail, translate)}</>}</>}{" "}
         <small>{formatDate(item.createdAt)}</small>{" "}
-        <button type="button" className="secondary justify-self-start sm:justify-self-end" disabled={markRead.isPending || markUnread.isPending} onClick={() => item.readAt ? markUnread.mutate(item.id) : markRead.mutate(item.id)}>{translate(item.readAt ? "inbox.markUnread" : "inbox.markRead")}</button>
-      </li>)}
+        </div>
+        <button type="button" aria-labelledby={`${actionLabelId} ${descriptionId}`} className="secondary justify-self-start sm:justify-self-end" disabled={markRead.isPending || markUnread.isPending} onClick={() => item.readAt ? markUnread.mutate(item.id) : markRead.mutate(item.id)}><span id={actionLabelId}>{actionLabel}</span></button>
+      </li>;
+      })}
     </ul>
   </section>;
 }

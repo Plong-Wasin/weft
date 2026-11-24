@@ -387,6 +387,21 @@ test.concurrent("Agent Markdown mentions still cannot name someone outside a pri
   });
 });
 
+test.concurrent("saving an unchanged comment body adds no version and keeps editedAt", async () => {
+  await withRollback(db, async (transaction) => {
+    const { comments, member, item } = await setup(transaction);
+    const created = await comments.createComment.handler({ userId: member.id }, { workItemId: item.id, bodyMarkdown: "**same** text" });
+    const sameMarkdown = await comments.updateComment.handler({ userId: member.id }, { commentId: created.id, bodyMarkdown: "**same** text" });
+    expect(sameMarkdown.editedAt).toBeNull();
+    expect(await comments.listCommentVersions.handler({ userId: member.id }, { commentId: created.id })).toEqual([]);
+    const changed = await comments.updateComment.handler({ userId: member.id }, { commentId: created.id, body: doc("changed") });
+    expect(changed.editedAt).not.toBeNull();
+    const sameBody = await comments.updateComment.handler({ userId: member.id }, { commentId: created.id, body: doc("changed") });
+    expect(sameBody.editedAt).toBe(changed.editedAt);
+    expect(await comments.listCommentVersions.handler({ userId: member.id }, { commentId: created.id })).toHaveLength(1);
+  });
+});
+
 test.concurrent("only the author edits or deletes; deletion is soft and hides the comment", async () => {
   await withRollback(db, async (transaction) => {
     const { comments, member, other, admin, item } = await setup(transaction);

@@ -442,6 +442,19 @@ export function createCommentActions(db: Database) {
         return db.transaction(async (transaction) => {
           const database = tx(transaction);
           const { intake } = await lockCommentAccess(database, context, item);
+          // Builds the edit response from the stored comment row and its mentions.
+          const respond = async (row: typeof existing, mentionsOut: string[]) => {
+            const replies = await database.select().from(comments).where(and(eq(comments.parentId, existing.id), isNull(comments.deletedAt)));
+            const names = await authorNames([context.userId, ...new Set(replies.map((reply) => reply.authorId))]);
+            const people = [...new Set(replies.map((reply) => reply.authorId))].map((userId) => ({ userId, name: names.get(userId) ?? "" })).sort((a, b) => a.name.localeCompare(b.name) || a.userId.localeCompare(b.userId));
+            const authorAgent = (await agentUserIds(database, [context.userId])).has(context.userId);
+            const authorCodeCapable = authorAgent && (await database.select({ userId: agents.userId }).from(agents).where(and(eq(agents.userId, context.userId), sql`${agents.runtimeId} is not null`))).length > 0;
+            return out(row, names.get(context.userId) ?? "", authorAgent, authorCodeCapable, mentionsOut, people, replies.length, prepared.warnings, prepared.warningDetails);
+          };
+          // Markdown equal to the stored form is a no-op save: no version, editedAt, mentions, notifications or Activity.
+          if (written === (existing.bodyMarkdown ?? await writtenFormOf(existing.body))) {
+            return { ...(await respond(existing, (await mentionsOf(database, [existing.id])).get(existing.id)!)), wakeOutcomes: [] };
+          }
           await database.insert(commentVersions).values({ commentId: existing.id, body: existing.body, bodyMarkdown: existing.bodyMarkdown ?? await writtenFormOf(existing.body), bodyText: existing.bodyText, writtenAt: existing.editedAt ?? existing.createdAt, createdAt: sql`clock_timestamp()` });
           const [row] = await database.update(comments).set({ body: input.body, bodyMarkdown: written, bodyText: text, editedAt: new Date() }).where(eq(comments.id, existing.id)).returning();
           await setOutlinksFromDocument(database, "work-item", existing.workItemId!, commentPart(existing.id), input.body);
@@ -451,12 +464,7 @@ export function createCommentActions(db: Database) {
           await enqueueNotification(database, { kind: "mention", workItemId: existing.workItemId!, commentId: existing.id, actorId: context.userId, recipientIds: newMentions });
           const wakeOutcomes = intake ? [] : await queueRunsForAssignees(database, { originatorId: context.userId, waker: wakerOf(context.source), wakingRunId: context.agent?.runId ?? null, project, workItemId: existing.workItemId!, assigneeUserIds: newMentions, commentId: existing.id });
           await logActivity(database, context, { workspaceId: project.workspaceId, projectId: project.id, workItemId: existing.workItemId! }, "comment_edited", { commentId: existing.id });
-          const replies = await database.select().from(comments).where(and(eq(comments.parentId, existing.id), isNull(comments.deletedAt)));
-          const names = await authorNames([context.userId, ...new Set(replies.map((reply) => reply.authorId))]);
-          const people = [...new Set(replies.map((reply) => reply.authorId))].map((userId) => ({ userId, name: names.get(userId) ?? "" })).sort((a, b) => a.name.localeCompare(b.name) || a.userId.localeCompare(b.userId));
-          const authorAgent = (await agentUserIds(database, [context.userId])).has(context.userId);
-          const authorCodeCapable = authorAgent && (await database.select({ userId: agents.userId }).from(agents).where(and(eq(agents.userId, context.userId), sql`${agents.runtimeId} is not null`))).length > 0;
-          return { ...out(row!, names.get(context.userId) ?? "", authorAgent, authorCodeCapable, mentionIds, people, replies.length, prepared.warnings, prepared.warningDetails), wakeOutcomes };
+          return { ...(await respond(row!, mentionIds)), wakeOutcomes };
         });
       },
     },

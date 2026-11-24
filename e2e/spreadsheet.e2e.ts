@@ -59,7 +59,7 @@ try {
   const projectUrl = page.url();
 
   // Switch to the spreadsheet: one row per work item, one column per property.
-  await page.getByRole("tab", { name: translate("layout.spreadsheet") }).click();
+  await page.getByRole("button", { name: translate("layout.spreadsheet") }).click();
   check(page.url().includes("layout=spreadsheet"), "layout missing from URL");
   await page.getByRole("table").waitFor();
   const headers = await page.getByRole("columnheader").allInnerTexts();

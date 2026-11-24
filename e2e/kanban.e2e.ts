@@ -63,7 +63,7 @@ try {
     await page.getByRole("link", { name: new RegExp(title) }).waitFor();
   }
 
-  await page.getByRole("tab", { name: translate("layout.board") }).click();
+  await page.getByRole("button", { name: translate("layout.board") }).click();
   if (!page.url().includes("layout=board")) throw new Error("layout is not in the URL");
   const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   await page.getByRole("button", { name: translate("layout.display") }).click();
@@ -75,17 +75,17 @@ try {
   check(await page.getByTestId("board").evaluate((el) => getComputedStyle(el).overflowX) === "auto", "the board must still scroll sideways when its columns overflow");
   check(JSON.stringify(await titlesIn(page, "Backlog")) === JSON.stringify(["Alpha", "Bravo", "Charlie"]), "expected three cards in Backlog");
 
-  await page.getByRole("tab", { name: translate("layout.list") }).click();
+  await page.getByRole("button", { name: translate("layout.list") }).click();
   await page.getByRole("button", { name: translate("layout.display") }).click();
   check(await page.getByLabel(translate("layout.subGroup")).count() === 1, "list Sub-group control is missing");
   await page.getByLabel(translate("layout.subGroup")).selectOption("priority");
   await page.getByRole("button", { name: translate("layout.display") }).click();
   await page.locator(`section[aria-label="${translate("workItems.priority.none")}"]`).first().waitFor();
-  await page.getByRole("tab", { name: translate("layout.spreadsheet") }).click();
+  await page.getByRole("button", { name: translate("layout.spreadsheet") }).click();
   await page.getByRole("button", { name: translate("layout.display") }).click();
   check(await page.getByLabel(translate("layout.subGroup")).count() === 0, "spreadsheet shows the Sub-group control");
   await page.getByRole("button", { name: translate("layout.display") }).click();
-  await page.getByRole("tab", { name: translate("layout.board") }).click();
+  await page.getByRole("button", { name: translate("layout.board") }).click();
   await page.getByTestId("board-swimlanes").waitFor();
 
   // Drag Charlie to the Todo column, then reorder inside Backlog (Bravo above Alpha).
@@ -155,7 +155,7 @@ try {
   await page.setViewportSize({ width: 1440, height: 900 });
 
   // Filters and grouping are in the URL and survive a reload.
-  await page.getByRole("tab", { name: translate("layout.list") }).click();
+  await page.getByRole("button", { name: translate("layout.list") }).click();
   await page.getByRole("button", { name: translate("layout.display") }).click();
   await page.getByLabel(translate("layout.group")).selectOption("priority");
   await page.getByRole("button", { name: translate("layout.display") }).click();

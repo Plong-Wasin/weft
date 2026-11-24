@@ -212,12 +212,12 @@ try {
   check(await page.getByRole("button", { name: translate("shell.expandSidebar") }).getAttribute("aria-expanded") === "false", "sidebar state was lost in settings");
   await page.goto(`${web}/${slug}/projects/MOB/issues`);
   await page.getByRole("link", { name: /Alpha shell item/ }).waitFor();
-  await page.getByRole("tab", { name: translate("layout.board") }).click();
+  await page.getByRole("button", { name: translate("layout.board") }).click();
   await page.getByTestId("column-Backlog").waitFor();
   check(page.url().includes("layout=board"), "collapsed sidebar board selection was not applied");
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "collapsed sidebar causes a horizontal jump on a board");
   check((await page.locator("main").boundingBox())!.x === 64, "collapsed board does not use the content width after the app rail");
-  await page.getByRole("tab", { name: translate("layout.list") }).click();
+  await page.getByRole("button", { name: translate("layout.list") }).click();
   await page.getByTestId("column-Backlog").waitFor({ state: "detached" });
   await page.getByRole("link", { name: /Alpha shell item/ }).waitFor();
   await page.getByRole("button", { name: translate("shell.expandSidebar") }).click();

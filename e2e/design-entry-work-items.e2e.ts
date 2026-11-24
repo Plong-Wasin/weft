@@ -90,7 +90,7 @@ try {
       check(clipped.length === 0, `${route.name} at ${viewport.width}px clips controls: ${clipped.join(", ")}`);
 
       if (route.name === "work-items-list") {
-        const rows = await rowsIn(target, `parent of [role="tablist"][aria-label="${switchLabel}"]`);
+        const rows = await rowsIn(target, `parent of [role="group"][aria-label="${switchLabel}"]`);
         const limit = viewport.width < 768 ? 2 : 1;
         check(rows.length <= limit, `work-items-list at ${viewport.width}px: toolbar takes ${rows.length} rows [${rows.join(", ")}] (limit ${limit})`);
         check(await target.getByRole("button", { name: translate("views.saveAs") }).isVisible(), `work-items-list at ${viewport.width}px hides Save as view`);

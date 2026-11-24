@@ -106,6 +106,30 @@ try {
   await page.waitForFunction(() => document.querySelector('[data-testid="column-Backlog"] [data-testid="card-MOB-4"]'));
   check((await titlesIn(page, "Backlog")).includes("Delta"), "quick add did not land in Backlog");
 
+  // Rapid arrow input is applied in order, and a card remounted in another column keeps its handle focused.
+  let rapidMoves = 0;
+  await page.route(`${api}/actions/move_work_item`, async (route) => { rapidMoves += 1; await Bun.sleep(300); await route.continue(); });
+  const deltaReorder = page.getByRole("button", { name: `${translate("sortable.reorder")}: MOB-4` });
+  await deltaReorder.focus();
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowRight");
+  await page.waitForFunction(() => document.querySelector('[data-testid="column-In Progress"] [data-testid="card-MOB-4"]'), undefined, { timeout: 5000 });
+  await page.unroute(`${api}/actions/move_work_item`);
+  check(rapidMoves === 2, `expected both rapid moves to run, got ${rapidMoves}`);
+  const deltaId = await page.getByTestId("card-MOB-4").getAttribute("data-card-id");
+  check(await page.evaluate(() => document.activeElement?.getAttribute("data-reorder")) === deltaId, "cross-column keyboard move did not restore focus to its handle");
+
+  // A failed Action must not leave a previous success announcement or move the card.
+  await page.route(`${api}/actions/move_work_item`, (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "temporary failure" }) }));
+  const failedMoveResponse = page.waitForResponse((response) => response.url().endsWith("/actions/move_work_item") && response.status() === 500);
+  await page.getByRole("button", { name: `${translate("sortable.reorder")}: MOB-4` }).press("ArrowRight");
+  await failedMoveResponse;
+  await page.waitForTimeout(150);
+  check(await page.locator('[data-testid="column-In Progress"] [data-testid="card-MOB-4"]').count() === 1, "failed keyboard move changed the card's column");
+  check(await page.evaluate(() => document.activeElement?.getAttribute("data-reorder")) === deltaId, "failed move did not retain focus on the card handle");
+  check((await page.locator('[data-testid="board"] [role="status"]').textContent()) === "", "failed keyboard move left a misleading success announcement");
+  await page.unroute(`${api}/actions/move_work_item`);
+
   // A column collapses to a narrow strip and expands again.
   await page.getByRole("button", { name: `${translate("layout.toggleGroup")}: Todo` }).click();
   check(await page.locator('[data-testid="column-Todo"][data-collapsed]').count() === 1, "Todo did not collapse");
@@ -123,7 +147,52 @@ try {
   await page.reload();
   await page.getByTestId("card-MOB-1").waitFor();
   check((await titlesIn(page, high)).join() === "Alpha", "priority drag did not persist");
+  // Priority uses server ordering: moving Delta behind every existing High card exposes a false computed index.
+  const bravoReorder = page.getByRole("button", { name: `${translate("sortable.reorder")}: MOB-2` });
+  await bravoReorder.focus();
+  for (const priority of ["low", "medium", "high"]) {
+    await page.keyboard.press("ArrowLeft");
+    const name = translate(`workItems.priority.${priority}` as "workItems.priority.low");
+    await page.locator(`[data-testid="column-${name}"] [data-testid="card-MOB-2"]`).waitFor();
+  }
+  check((await titlesIn(page, high)).join() === "Bravo,Alpha", "priority keyboard move did not land in High in manual order");
+  await page.getByRole("button", { name: `${translate("sortable.reorder")}: MOB-3` }).focus();
+  for (let step = 0; step < 3; step += 1) await page.keyboard.press("ArrowLeft");
+  await page.locator(`[data-testid="column-${high}"] [data-testid="card-MOB-3"]`).waitFor();
+  check((await titlesIn(page, high)).includes("Charlie"), "priority keyboard move did not land in High");
+  const nonePriority = translate("workItems.priority.none");
+  const prioritySourceIndex = (await titlesIn(page, nonePriority)).indexOf("Delta");
+  const priorityInsertionPosition = Math.min(prioritySourceIndex, (await titlesIn(page, high)).length) + 1;
+  await page.getByRole("button", { name: `${translate("sortable.reorder")}: MOB-4` }).focus();
+  for (let step = 0; step < 3; step += 1) await page.keyboard.press("ArrowLeft");
+  await page.locator(`[data-testid="column-${high}"] [data-testid="card-MOB-4"]`).waitFor();
+  const highTitles = await titlesIn(page, high);
+  check(highTitles.indexOf("Delta") + 1 !== priorityInsertionPosition, `fixture did not expose server ordering: ${JSON.stringify(highTitles)}`);
+  const priorityAnnouncement = await page.locator('[data-testid="board"] [role="status"]').textContent();
+  check(priorityAnnouncement?.includes("MOB-4 moved to High") && !priorityAnnouncement.includes("position"), "priority announcement claimed an unsupported position");
   await page.screenshot({ path: `${shots}/board-priority-1440.png` });
+
+  // Assignee grouping also orders cards by the board's existing manual sort, independently of the drop index.
+  for (const id of ["MOB-1", "MOB-2"]) {
+    await page.getByTestId(`card-${id}`).getByRole("button", { name: new RegExp(translate("workItems.assignees")) }).click();
+    await page.getByRole("menuitemcheckbox", { name: "Kanban Tester" }).click();
+    await page.keyboard.press("Escape");
+  }
+  await page.goto(page.url().replace(/[?].*/, "?layout=board&group=assignee"));
+  await page.getByTestId("card-MOB-4").waitFor();
+  const personColumn = "Kanban Tester";
+  const noAssignee = translate("layout.unassigned");
+  const assigneeSourceIndex = (await titlesIn(page, noAssignee)).indexOf("Delta");
+  const assigneeInsertionPosition = Math.min(assigneeSourceIndex, (await titlesIn(page, personColumn)).length) + 1;
+  await page.getByRole("button", { name: `${translate("sortable.reorder")}: MOB-4` }).focus();
+  await page.keyboard.press("ArrowLeft");
+  await page.locator(`[data-testid="column-${personColumn}"] [data-testid="card-MOB-4"]`).waitFor();
+  const assignedTitles = await titlesIn(page, personColumn);
+  check(assignedTitles.indexOf("Delta") + 1 !== assigneeInsertionPosition, `fixture did not expose assignee ordering: ${JSON.stringify(assignedTitles)}`);
+  check((await page.locator('[data-testid="board"] [role="status"]').textContent())?.includes(`MOB-4 moved to ${personColumn}`), "assignee move announcement omitted its destination");
+  check(!(await page.locator('[data-testid="board"] [role="status"]').textContent())?.includes("position"), "assignee announcement claimed an unsupported position");
+  const focusedAssigneeHandle = await page.evaluate(() => document.activeElement?.getAttribute("data-reorder"));
+  check(focusedAssigneeHandle === await page.getByTestId("card-MOB-4").getAttribute("data-card-id"), `assignee cross-column move did not restore focus: active=${focusedAssigneeHandle ?? "none"}`);
   await page.goto(page.url().replace(/[?].*/, "?layout=board"));
   await page.getByTestId("card-MOB-2").waitFor();
   await page.screenshot({ path: `${shots}/board-state-1440.png` });

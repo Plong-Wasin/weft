@@ -1,8 +1,8 @@
 // Browser end-to-end flow: sign up, create work items, drag a card on the kanban board, check it persists.
 // Run with `bun run e2e` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
 import { chromium, type Page } from "playwright";
-import { like } from "drizzle-orm";
-import { createDatabase, users, workspaces } from "../packages/db/src";
+import { and, eq, like } from "drizzle-orm";
+import { createDatabase, projectMembers, projects, users, workItemAssignees, workItems, workspaceMembers, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
 
@@ -119,6 +119,50 @@ try {
   const deltaId = await page.getByTestId("card-MOB-4").getAttribute("data-card-id");
   check(await page.evaluate(() => document.activeElement?.getAttribute("data-reorder")) === deltaId, "cross-column keyboard move did not restore focus to its handle");
 
+  // An async successful move must not take focus back after the user moves it elsewhere.
+  let releaseMove!: () => void;
+  const moveGate = new Promise<void>((resolve) => { releaseMove = resolve; });
+  await page.route(`${api}/actions/move_work_item`, async (route) => { await moveGate; await route.continue(); });
+  const focusAway = page.getByRole("button", { name: translate("layout.display") });
+  await page.getByRole("button", { name: `${translate("sortable.reorder")}: MOB-4` }).focus();
+  const delayedMove = page.waitForRequest((request) => request.url().endsWith("/actions/move_work_item"));
+  await page.keyboard.press("ArrowLeft");
+  await delayedMove;
+  await focusAway.focus();
+  releaseMove();
+  await page.locator('[data-testid="column-Todo"] [data-testid="card-MOB-4"]').waitFor();
+  await Bun.sleep(50);
+  check(await focusAway.evaluate((element) => element === document.activeElement), "successful async move stole focus after the user moved it to another control");
+  await page.unroute(`${api}/actions/move_work_item`);
+  await page.getByRole("button", { name: `${translate("sortable.reorder")}: MOB-4` }).press("ArrowRight");
+  await page.locator('[data-testid="column-In Progress"] [data-testid="card-MOB-4"]').waitFor();
+
+  // A successful Action followed by a stale board snapshot reaches the queue timeout; focus must stay elsewhere then too.
+  const resetDb = createDatabase();
+  const [deltaBeforeTimeout] = await resetDb.db.select({ stateId: workItems.stateId }).from(workItems).where(eq(workItems.id, deltaId!));
+  await resetDb.client.end();
+  await page.route(`${api}/actions/move_work_item`, async (route) => {
+    const response = await route.fetch();
+    const rollback = createDatabase();
+    await rollback.db.update(workItems).set({ stateId: deltaBeforeTimeout!.stateId }).where(eq(workItems.id, deltaId!));
+    await rollback.client.end();
+    await route.fulfill({ response });
+  });
+  await page.route(`${api}/actions/list_work_items`, async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({ response });
+  });
+  const staleRefresh = page.waitForResponse((response) => response.url().endsWith("/actions/list_work_items"));
+  await page.getByRole("button", { name: `${translate("sortable.reorder")}: MOB-4` }).press("ArrowLeft");
+  await staleRefresh;
+  await focusAway.focus();
+  await page.waitForTimeout(2200);
+  check(await focusAway.evaluate((element) => element === document.activeElement), "keyboard move timeout stole focus after the user moved it elsewhere");
+  await page.unroute(`${api}/actions/move_work_item`);
+  await page.unroute(`${api}/actions/list_work_items`);
+  await page.reload();
+  await page.locator('[data-testid="column-In Progress"] [data-testid="card-MOB-4"]').waitFor();
+
   // A failed Action must not leave a previous success announcement or move the card.
   await page.route(`${api}/actions/move_work_item`, (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "temporary failure" }) }));
   const failedMoveResponse = page.waitForResponse((response) => response.url().endsWith("/actions/move_work_item") && response.status() === 500);
@@ -227,6 +271,26 @@ try {
   check(!(await page.locator('[data-testid="board"] [role="status"]').textContent())?.includes("position"), "assignee announcement claimed an unsupported position");
   const focusedAssigneeHandle = await page.evaluate(() => document.activeElement?.getAttribute("data-reorder"));
   check(focusedAssigneeHandle === await page.getByTestId("card-MOB-4").getAttribute("data-card-id"), `assignee cross-column move did not restore focus: active=${focusedAssigneeHandle ?? "none"}`);
+
+  // A work item with two Assignees appears in both columns; moving from the second column follows the pointer drop semantics.
+  const colleagueId = `zz-kanban-colleague-${slug}`;
+  const setupDb = createDatabase();
+  const [workspace] = await setupDb.db.select({ id: workspaces.id }).from(workspaces).where(eq(workspaces.slug, slug));
+  const [project] = await setupDb.db.select({ id: projects.id }).from(projects).where(and(eq(projects.workspaceId, workspace!.id), eq(projects.key, "MOB")));
+  const [firstItem] = await setupDb.db.select({ id: workItems.id }).from(workItems).where(and(eq(workItems.projectId, project!.id), eq(workItems.sequence, 1)));
+  await setupDb.db.insert(users).values({ id: colleagueId, name: "Kanban Colleague", email: `e2e-${slug}@example.test` });
+  await setupDb.db.insert(workspaceMembers).values({ workspaceId: workspace!.id, userId: colleagueId, role: "Member" });
+  await setupDb.db.insert(projectMembers).values({ workspaceId: workspace!.id, projectId: project!.id, userId: colleagueId, role: "Member" });
+  await setupDb.db.insert(workItemAssignees).values({ workItemId: firstItem!.id, userId: colleagueId });
+  await setupDb.client.end();
+  await page.reload();
+  await page.locator('[data-testid="column-Kanban Tester"] [data-testid="card-MOB-1"]').waitFor();
+  const colleagueCard = page.getByTestId(`column-Kanban Colleague`).getByTestId("card-MOB-1");
+  const colleagueHandle = colleagueCard.getByRole("button", { name: `${translate("sortable.reorder")}: MOB-1` });
+  await colleagueHandle.press("ArrowRight");
+  await page.locator(`[data-testid="column-${noAssignee}"] [data-testid="card-MOB-1"]`).waitFor();
+  check(await page.locator(`[data-testid="column-Kanban Tester"] [data-testid="card-MOB-1"]`).count() === 0, "moving a multi-assignee card from its second assignee did not clear its previous assignments");
+  check(await page.locator(`[data-testid="column-Kanban Colleague"] [data-testid="card-MOB-1"]`).count() === 0, "keyboard move used the first matching assignee column instead of the originating column");
   await page.goto(page.url().replace(/[?].*/, "?layout=board"));
   await page.getByTestId("card-MOB-2").waitFor();
   await page.screenshot({ path: `${shots}/board-state-1440.png` });

@@ -68,7 +68,8 @@ test.concurrent("AI page updates remain proposals until confirmed and save the p
     expect((await s.store.confirm(s.alice.id, card.id)).status).toBe("confirmed");
     expect((await wiki.getWikiPage.handler({ userId: s.alice.id }, { pageId: page.id })).contentText).toBe("after");
     const versions = await wiki.listWikiPageVersions.handler({ userId: s.alice.id }, { pageId: page.id });
-    expect(versions).toHaveLength(2);
+    // "before" was already kept when the page was created, so the AI edit keeps that version as the undo point instead of adding a copy.
+    expect(versions).toHaveLength(1);
     const { wikiPageVersions } = await import("@weft/db");
     const saved = await tx.select().from(wikiPageVersions).where(eq(wikiPageVersions.pageId, page.id));
     const prior = saved.find((version) => version.contentText === "before");

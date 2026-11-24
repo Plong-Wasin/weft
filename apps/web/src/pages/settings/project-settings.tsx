@@ -106,7 +106,7 @@ export function ProjectMembers() {
       <div className="flex flex-wrap items-center gap-3">
         <select className="min-w-56" aria-label={translate("projects.addMember")} value={addUser} onChange={(event) => setAddUser(event.target.value)}>
           <option value="">{translate("projects.selectMember")}</option>
-          {candidates.filter((candidate) => !candidate.isAgent && !members.some((member) => member.userId === candidate.userId)).map((candidate) => <option key={candidate.userId} value={candidate.userId}>{candidate.name}</option>)}
+          {candidates.filter((candidate) => !candidate.isAgent && !members.some((member) => member.userId === candidate.userId)).map((candidate) => <option key={candidate.userId} value={candidate.userId}>{candidate.name} · {candidate.email}</option>)}
         </select>
         <select aria-label={translate("projects.newMemberRole")} value={addRole} onChange={(event) => setAddRole(event.target.value as typeof addRole)}>
           {roles.map((role) => <option key={role} value={role}>{translate(`projects.role.${role}`)}</option>)}

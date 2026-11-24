@@ -1868,6 +1868,8 @@ export const th: Record<keyof typeof en, string> = {
   "views.add": "เพิ่มมุมมอง",
   "views.search": "ค้นหามุมมอง",
   "views.empty": "ยังไม่มีมุมมอง บันทึกตัวกรองและการแสดงผลของรายการงานเป็นมุมมองเพื่อกลับมาเปิดที่นี่",
+  "views.loadFailed": "โหลดมุมมองไม่สำเร็จ",
+  "views.retry": "ลองอีกครั้ง",
   "views.noMatch": "ไม่พบมุมมองที่ตรงกับคำค้น",
   "views.access": "การเข้าถึง",
   "views.access.public": "สาธารณะ",

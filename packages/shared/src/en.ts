@@ -1866,6 +1866,8 @@ export const en = {
   "views.add": "Add view",
   "views.search": "Search views",
   "views.empty": "No views yet. Save the filters and display settings of a work item list as a view to find them again here.",
+  "views.loadFailed": "Could not load views.",
+  "views.retry": "Try again",
   "views.noMatch": "No views match your search.",
   "views.access": "Access",
   "views.access.public": "Public",

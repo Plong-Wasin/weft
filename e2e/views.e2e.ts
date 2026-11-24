@@ -55,7 +55,10 @@ try {
 
   // Empty Views page first.
   await page.getByRole("link", { name: /MOB · Mobile/ }).click();
+  await page.route(`${api}/actions/list_views`, (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Temporary failure" }) }), { times: 1 });
   await page.getByRole("navigation", { name: `${translate("projectNav.label")} MOB` }).getByRole("link", { name: translate("projectNav.views") }).click();
+  await page.getByRole("alert").filter({ hasText: translate("views.loadFailed") }).waitFor();
+  await page.getByRole("button", { name: translate("views.retry") }).click();
   await page.getByRole("status").filter({ hasText: translate("views.empty") }).waitFor();
 
   // Shape the work item list with the filter and display bars, then save it.
@@ -149,6 +152,10 @@ try {
   await page.goto(`${web}${viewPath.replace(saved!.id, crypto.randomUUID())}`);
   await page.getByRole("alert").filter({ hasText: translate("views.notFound") }).waitFor();
 
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${web}/${slug}/projects/MOB/views`);
+  await page.getByTestId("view-row-Hot items").waitFor();
+  await page.screenshot({ path: `${shots}/views-1440.png` });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${web}/${slug}/projects/MOB/views`);
   await page.getByTestId("view-row-Hot items").waitFor();

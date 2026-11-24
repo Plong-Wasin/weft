@@ -308,6 +308,7 @@
 .asset-preview-pdf { display: block; width: 100%; height: min(78dvh, 58rem); border: 0; background: var(--bg-surface-2); }
 .asset-preview-pdf-mobile { display: none; width: 100%; max-width: 28rem; margin: auto; color: var(--txt-primary); }
 .asset-preview-pdf-mobile p { margin: 0 0 1rem; }
+.attachment-action-button { box-sizing: border-box; flex: 0 0 44px; width: 44px; height: 44px; }
 @media (max-width: 639px) {
   .asset-preview-pdf { display: none; }
   .asset-preview-pdf-mobile { display: block; }

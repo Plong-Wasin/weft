@@ -74,7 +74,7 @@ try {
     for (let attempt = 0; attempt < 30 && await toggle.isChecked() !== on; attempt += 1) await Bun.sleep(100);
     check(await toggle.isChecked() === on, `${feature} toggle did not settle`);
   };
-  const members = () => call<Array<{ userId: string; name: string; role: string }>>("list_members", { workspaceId });
+  const members = () => call<Array<{ userId: string; name: string; email: string; role: string }>>("list_members", { workspaceId });
 
   // The Settings rail entry opens the settings sidebar: workspace sections plus every project with its sections.
   await page.getByRole("navigation", { name: translate("shell.rail") }).getByRole("link", { name: translate("nav.settings") }).click();
@@ -242,7 +242,9 @@ try {
 
   // Members: add, change role, remove.
   await page.getByRole("navigation", { name: `${translate("settings.label")} MOBX` }).getByRole("link", { name: translate("members.title"), exact: true }).click();
-  await page.getByLabel(translate("projects.addMember"), { exact: true }).selectOption(invited.userId);
+  const addMemberSelect = page.getByLabel(translate("projects.addMember"), { exact: true });
+  check((await addMemberSelect.locator(`option[value="${invited.userId}"]`).textContent())?.includes(`${invited.name} · ${invited.email}`), "project member choices do not show email addresses to distinguish people with the same name");
+  await addMemberSelect.selectOption(invited.userId);
   await page.getByRole("button", { name: translate("projects.addMember"), exact: true }).click();
   const projectRole = page.getByLabel(`${translate("settings.roleOf")} Invited Person`);
   const guestSaved = page.waitForResponse((response) => response.url().endsWith("/actions/change_project_member_role"));

@@ -996,12 +996,17 @@ test.concurrent("restoring the same version twice adds no duplicate version", as
     await wiki.restoreWikiPageVersion.handler({ userId: alice.id }, { pageId: page.id, versionId: first.id });
     advance(1000);
     await wiki.restoreWikiPageVersion.handler({ userId: alice.id }, { pageId: page.id, versionId: first.id });
-    const rows = await wiki.listWikiPageVersions.handler({ userId: alice.id }, { pageId: page.id });
-    const { wikiPageVersions: versionTable } = await import("@weft/db");
-    const stored = await tx.select().from(versionTable).where(eq(versionTable.pageId, page.id));
+    const stored = await tx.select().from(wikiPageVersions).where(eq(wikiPageVersions.pageId, page.id));
     const keys = stored.map((row) => `${row.title}\u0000${JSON.stringify(row.content)}`);
-    expect(new Set(keys).size).toBe(keys.length);
-    expect(rows.length).toBe(keys.length);
+    // Only v1 (create) and v3 are kept; neither restore added a copy.
+    expect(keys).toHaveLength(2);
+    expect(new Set(keys).size).toBe(2);
+    // The kept version the page now equals takes the time of the second restore, so the autosave throttle counts it.
+    expect(stored.find((row) => row.id === first.id)!.createdAt.getTime()).toBeGreaterThan(new Date(first.createdAt).getTime());
+    // A title-only change is a real change and still adds a version.
+    advance(versionIntervalMs);
+    await wiki.updateWikiPage.handler({ userId: alice.id }, { pageId: page.id, title: "Plan renamed" });
+    expect(await tx.select().from(wikiPageVersions).where(eq(wikiPageVersions.pageId, page.id))).toHaveLength(3);
   });
 });
 

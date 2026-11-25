@@ -452,7 +452,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const propertiesOf = (item: Item, hideState = false, compact = false) => <>
     {(["state", "priority", "estimate", "assignee", "labels", "dates", "cycle", "modules"] as const).filter((property) => listShows(property) && !(hideState && property === "state")).map((property) => <React.Fragment key={property}>{cellOf(item, property, compact)}</React.Fragment>)}
   </>;
-  /** Empty values stay inside their property controls; only empty controls on a hover-capable phone are hidden to preserve its compact layout. */
+  /** An empty value stays a reachable control showing a muted dash. The icon is dropped for an empty cell only in the one-line table; phones and the narrow fallback keep icon and dash so each cell stays identifiable without the header. */
   const isEmptyProperty = (item: Item, property: DisplayProperty) => property === "priority" ? item.priority === "none" : property === "estimate" ? !item.estimatePointId
     : property === "assignee" ? item.assigneeIds.length === 0 : property === "labels" ? item.labelIds.length === 0 : property === "dates" ? !item.startDate && !item.dueDate
     : property === "cycle" ? !cycleOf[item.id] : property === "modules" ? (modulesOf[item.id] ?? []).length === 0 : false;
@@ -462,10 +462,10 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
    */
   const slotRem: Record<string, number> = { state: 6.5, priority: 5.75, estimate: 4, labels: 5.5, cycle: 6, modules: 5, dates: 7.5, assignee: 5 };
   const shownProperties = (["state", "priority", "estimate", "labels", "cycle", "modules", "dates", "assignee"] as const).filter((property) => listShows(property));
-  const columnTracks = ["1rem", "5rem", "minmax(7rem,1fr)", ...shownProperties.map((property) => `${slotRem[property]}rem`), ...(rowAction ? ["max-content"] : [])];
+  const columnTracks = ["1rem", "5rem", "minmax(7rem,1fr)", ...shownProperties.map((property) => `${slotRem[property]}rem`), ...(rowAction ? ["7rem"] : [])];
   const gridColumns = columnTracks.join(" ");
   const gapPx = 8;
-  const rowTracksPx = 16 + 80 + 112 + shownProperties.reduce((sum, property) => sum + slotRem[property] * 16, 0) + (rowAction ? 120 : 0);
+  const rowTracksPx = 16 + 80 + 112 + shownProperties.reduce((sum, property) => sum + slotRem[property] * 16, 0) + (rowAction ? 112 : 0);
   const rowGapsPx = Math.max(0, columnTracks.length - 1) * gapPx;
   const oneLine = listWidth >= 40 + rowTracksPx + rowGapsPx;
   const columnStyle = { "--cols": gridColumns } as React.CSSProperties;
@@ -480,7 +480,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     const checkbox = pickBox(item, true);
     const rowActionCell = rowAction?.(item);
     return <li key={item.id} data-testid={`row-${item.displayId}`} className="group/row border-b border-subtle px-1 py-0.5">
-      <div style={columnStyle} className={`mx-1 flex flex-wrap items-center gap-x-2 gap-y-2 rounded-lg px-3 py-0 ${selected.includes(item.id) ? "bg-layer-1" : "bg-transparent"} hover:bg-layer-transparent-hover sm:grid ${oneLine ? "sm:grid-cols-[var(--cols)]" : "sm:grid-cols-[1rem_5rem_minmax(7rem,1fr)]"}`}>
+      <div style={columnStyle} className={`mx-1 flex flex-wrap items-center gap-x-2 gap-y-2 rounded-lg px-3 py-0 ${selected.includes(item.id) ? "bg-layer-2" : "bg-transparent hover:bg-layer-transparent-hover"} sm:grid ${oneLine ? "sm:grid-cols-[var(--cols)]" : "sm:grid-cols-[1rem_5rem_minmax(7rem,1fr)]"}`}>
         <span className="flex size-4 shrink-0 items-center justify-center">{checkbox ? React.cloneElement(checkbox, { className: `${checkbox.props.className ?? ""} rounded-sm` }) : <span aria-hidden />}</span>
         {shows("id") ? <span title={item.displayId} className="min-w-0 truncate whitespace-nowrap text-12 tabular-nums text-tertiary">{item.displayId}</span> : <span aria-hidden />}
         <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="min-w-0 flex-1 truncate text-14 font-medium text-primary">{item.title}</Link>

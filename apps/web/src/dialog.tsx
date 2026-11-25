@@ -27,7 +27,7 @@ export function Dialog({ title, onClose, children }: { title: string; onClose: (
     return () => { document.removeEventListener("keydown", onKey); if (opener?.isConnected) opener.focus(); };
   }, []);
   return <div role="presentation" className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onMouseDown={(event) => { downOnBackdrop.current = event.target === event.currentTarget; }} onMouseUp={(event) => { if (downOnBackdrop.current && event.target === event.currentTarget) onClose(); downOnBackdrop.current = false; }}>
-    <section ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={id} className="grid w-full max-w-md gap-4 rounded-lg bg-surface-1 p-5 shadow-xl">
+    <section ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={id} className="card-surface grid w-full max-w-md gap-4 rounded-2xl p-5 shadow-xl">
       <h2 id={id} className="m-0 text-16 font-semibold text-primary">{title}</h2>
       {children}
     </section>

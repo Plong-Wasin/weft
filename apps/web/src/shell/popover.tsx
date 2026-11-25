@@ -142,7 +142,7 @@ export function Popover({ label, panelLabel = label, trigger, align = "left", cl
   }, [open]);
   const portalRoot = root.current?.closest("dialog") ?? (typeof document !== "undefined" ? document.body : null);
   const floatingPanel = open && portalRoot ? createPortal(
-    <div ref={panel} data-popover-panel role={panelRole} aria-label={panelLabel} className={`fixed z-50 min-w-56 rounded-lg border border-subtle bg-surface-1 p-1 shadow-lg ${panelClassName}`}
+    <div ref={panel} data-popover-panel role={panelRole} aria-label={panelLabel} className={`card-surface fixed z-50 min-w-56 rounded-lg p-1 shadow-lg ${panelClassName}`}
       onClick={(event) => event.stopPropagation()}
       onKeyDown={(event) => { if (panelRole === "menu") moveMenuFocus(event, panel.current); }}
       style={{ left: position?.left ?? 0, top: position?.top ?? 0, maxWidth: "calc(100vw - 1rem)", ...(position ? { maxHeight: position.maxHeight } : {}), overflowX: "hidden", overflowY: "auto", visibility: position ? "visible" : "hidden" }}>
@@ -155,7 +155,7 @@ export function Popover({ label, panelLabel = label, trigger, align = "left", cl
   </div>;
 }
 
-export const menuItemClass = "flex w-full items-center gap-2 rounded-md bg-transparent px-2.5 py-1.5 text-left text-14 text-primary hover:bg-layer-transparent-hover";
+export const menuItemClass = "inset-row-hover flex w-full items-center gap-2 bg-transparent px-2.5 py-1.5 text-left text-14 text-primary";
 
 /**
  * A menu row with a leading icon. A `menuitemcheckbox` row carries `aria-checked` and a check mark while it is on.

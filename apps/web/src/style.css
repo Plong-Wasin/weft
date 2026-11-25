@@ -116,7 +116,7 @@
     height: 1rem;
     place-content: center;
     margin: 0;
-    border: 1px solid var(--border-strong-1);
+    border: 1px solid var(--txt-tertiary);
     border-radius: .3rem;
     background: var(--bg-surface-1);
     color: var(--txt-on-color);
@@ -132,8 +132,10 @@
     border-width: 0 2px 2px 0;
     transform: rotate(45deg);
   }
+  :where(input[type="checkbox"]:indeterminate) { border-color: var(--bg-accent-primary); background: var(--bg-accent-primary); }
+  :where(input[type="checkbox"]:indeterminate)::before { content: ""; width: .5rem; height: 0; border-top: 2px solid currentColor; }
   :where(input[type="checkbox"]:disabled) { cursor: not-allowed; opacity: .55; }
-  /* Native selects keep their element but look like controls: our chevron (preflight removes the browser one), a stronger border, and clear hover, focus and disabled states. */
+  /* Native selects keep their element but look like controls: our chevron (preflight removes the browser one), a quiet border (the shared look, see DESIGN.md), and clear hover, focus and disabled states. */
   :where(select) {
     appearance: none;
     padding-right: 2rem;

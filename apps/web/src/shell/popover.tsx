@@ -155,7 +155,7 @@ export function Popover({ label, panelLabel = label, trigger, align = "left", cl
   </div>;
 }
 
-export const menuItemClass = "inset-row-hover flex w-full items-center gap-2 bg-transparent px-2.5 py-1.5 text-left text-14 text-primary";
+export const menuItemClass = "inset-row-hover flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-14 text-primary";
 
 /**
  * A menu row with a leading icon. A `menuitemcheckbox` row carries `aria-checked` and a check mark while it is on.

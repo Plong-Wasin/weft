@@ -1201,6 +1201,8 @@ export const en = {
     "cycles.cancel": "Cancel",
     "cycles.addItems": "Add work item",
     "cycles.details": "Cycle details",
+    "detailsPanel.show": "Show details",
+    "detailsPanel.hide": "Hide details",
     "cycles.burndown": "Burndown",
     "cycles.burndownLabel": "Burndown chart: work items still open each day against the ideal line",
     "cycles.burndownLabelPoints": "Burndown chart: Estimate points still open each day against the ideal line",

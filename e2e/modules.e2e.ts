@@ -200,8 +200,32 @@ try {
   await page.getByText("Unassigned", { exact: true }).waitFor();
   await page.getByLabel(t("modules.breakdown"), { exact: true }).selectOption("state");
 
+  // Module details panel: click, Mod+I, reload persistence, and full-width reflow without horizontal page scroll.
+  const moduleToggle = () => page.getByRole("button", { name: t("detailsPanel.hide") });
+  const moduleAside = () => page.getByRole("complementary", { name: t("modules.properties"), exact: true });
+  check(await moduleToggle().getAttribute("aria-expanded") === "true", "Module details toggle must expose its expanded state");
+  check(await moduleToggle().getAttribute("aria-controls") === "module-details-panel", "Module details toggle must control its panel");
+  await moduleToggle().click();
+  check(await page.getByRole("complementary", { name: t("modules.properties"), exact: true }).count() === 0, "a hidden Module details panel must leave the accessibility tree");
+  await page.keyboard.press("Control+i");
+  await moduleAside().waitFor();
+  await page.keyboard.press("Control+i");
+  await page.reload();
+  await page.getByRole("button", { name: t("detailsPanel.show") }).waitFor();
+  for (const width of [1440, 1100]) {
+    await page.setViewportSize({ width, height: 900 });
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), `hidden Module panel causes horizontal page scroll at ${width}px`);
+    check(await page.getByRole("complementary", { name: t("modules.properties"), exact: true }).count() === 0, `hidden Module panel is in the accessibility tree at ${width}px`);
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  check(await page.getByRole("button", { name: t("detailsPanel.show") }).isVisible() === false, "Module details toggle must be hidden below lg");
+  check(await page.getByRole("complementary", { name: t("modules.properties"), exact: true }).count() === 1, "Module details remain stacked on mobile");
+  check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), "Module page scrolls horizontally at 390px");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole("button", { name: t("detailsPanel.show") }).click();
+
   // Properties sidebar: status, dates, lead, members are editable inline.
-  const side = page.getByRole("complementary", { name: t("modules.properties") });
+  const side = moduleAside();
   await side.getByRole("button", { name: new RegExp(`^${t("modules.status")}:`) }).click();
   await page.getByRole("menuitemradio", { name: t("modules.status.completed") }).click();
   await side.getByRole("button", { name: `${t("modules.status")}: ${t("modules.status.completed")}` }).waitFor();

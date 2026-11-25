@@ -185,7 +185,7 @@ export function WorkspaceViewPage({ workspace, selfId, viewId }: { workspace: Wo
           <button type="button" role="menuitem" className={menuItemClass} onClick={() => { void copyText(link, t("views.linkCopied"), t("comments.copyFailed")); close(); }}>{t("views.copyLink")}</button>
           {view && canChange && <>
             <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setForm("edit"); }}>{t("views.edit")}</button>
-            <button type="button" role="menuitem" className={`${menuItemClass} text-danger-text`} onClick={() => { close(); setForm("delete"); }}>{t("views.delete")}</button>
+            <button type="button" role="menuitem" className={`${menuItemClass} text-destructive`} onClick={() => { close(); setForm("delete"); }}>{t("views.delete")}</button>
           </>}
         </>}
       </Popover>

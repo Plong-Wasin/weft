@@ -2,6 +2,8 @@
 // a Locked badge by the title instead of the large Lock button, and one page menu holding Lock or Unlock, Add subpage,
 // Archive or Restore, Markdown source and Delete (last, after a line, with its confirmation).
 import { chromium, type Browser } from "playwright";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { createDatabase } from "../packages/db/src";
 import { createProjectActions, createWikiActions } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
@@ -26,7 +28,7 @@ async function waitFor(url: string) {
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
   browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, locale: "en-US", hasTouch: true });
   const slug = `pagemenu-${crypto.randomUUID().slice(0, 8)}`;
   const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const call = async <T>(name: string, body: unknown) => {
@@ -70,10 +72,36 @@ try {
   check(await page.getByRole("navigation", { name: translate("wiki.breadcrumb", "en") }).count() === 1, "Wiki page does not show exactly one breadcrumb");
   await menuButton().click();
   await menu().waitFor();
+  const shots = join(process.cwd(), ".local/shots/shadcn-03/after");
+  mkdirSync(shots, { recursive: true });
+  const viewports = [
+    ["1440x900", 1440, 900], ["1024x768", 1024, 768], ["820x1180", 820, 1180],
+    ["768x1024", 768, 1024], ["844x390", 844, 390], ["667x375", 667, 375], ["390x844", 390, 844],
+  ] as const;
+  for (const [name, width, height] of viewports) {
+    await page.setViewportSize({ width, height });
+    await page.waitForFunction(({ width: viewportWidth, height: viewportHeight }) => {
+      const panel = document.querySelector<HTMLElement>("[role=menu]");
+      if (!panel) return false;
+      const bounds = panel.getBoundingClientRect();
+      return bounds.left >= 0 && bounds.top >= 0 && bounds.right <= viewportWidth && bounds.bottom <= viewportHeight;
+    }, { width, height }, { timeout: 1500 });
+    const panelBounds = await menu().boundingBox();
+    const bounds = await page.evaluate(() => ({ width: innerWidth, height: innerHeight, scrollWidth: document.documentElement.scrollWidth }));
+    check(panelBounds !== null && panelBounds.x >= 0 && panelBounds.y >= 0 && panelBounds.x + panelBounds.width <= width && panelBounds.y + panelBounds.height <= height, `menu overflows viewport ${name}: ${JSON.stringify(panelBounds)}`);
+    check(bounds.scrollWidth <= width, `page scrolls horizontally at ${name}`);
+    const touchTargets = await menu().locator("[role^=menuitem]").evaluateAll((items) => items.every((element) => { const box = element.getBoundingClientRect(); return box.width >= 44 && box.height >= 44; }));
+    check(touchTargets, `a menu item is smaller than 44px at ${name}`);
+    await page.screenshot({ path: join(shots, `light-${name}.png`) });
+    await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+    await page.screenshot({ path: join(shots, `dark-${name}.png`) });
+    await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
   const lastItem = menu().getByRole("menuitem").last();
   check(await lastItem.textContent() === translate("wiki.delete", "en"), "Delete is not the last menu item");
   check(await item("wiki.delete").evaluate((element) => element.previousElementSibling?.previousElementSibling?.getAttribute("role") === "separator"), "Delete is not in the Danger group after a line");
-  check(await item("wiki.delete").evaluate((element) => element.className.includes("text-danger-text")), "Delete is not styled as danger");
+  check(await item("wiki.delete").evaluate((element) => element.className.includes("text-destructive")), "Delete is not styled as danger");
   const colorOf = (key: Parameters<typeof translate>[0]) => item(key).evaluate((element) => getComputedStyle(element).color);
   check(await colorOf("wiki.delete") !== await colorOf("wiki.newChild"), "Delete renders in the same colour as a normal item");
   for (const key of ["wiki.newChild", "pages.archive"] as const) check(await item(key).count() === 1, `page menu is missing ${key}`);
@@ -118,7 +146,8 @@ try {
   console.log("PASS lock from the page menu shows a Locked badge and the switch clears it");
 
   // Keyboard (ticket 17): ArrowDown/ArrowUp move between items, Home/End jump, Escape closes and returns focus to the "..." button.
-  await menuButton().click();
+  await menuButton().focus();
+  await page.keyboard.press("Enter");
   const focusedLabel = () => page.evaluate(() => document.activeElement?.firstElementChild?.textContent?.trim() ?? ""); // a menu item's first child holds its visible name; the hidden help text is outside it
   check(await focusedLabel() === translate("wiki.exportMarkdown", "en"), "opening the page menu does not focus its first item");
   await page.keyboard.press("ArrowDown");

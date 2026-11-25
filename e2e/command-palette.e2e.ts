@@ -100,7 +100,8 @@ try {
   await page.keyboard.press("ArrowUp");
   await page.keyboard.press("Enter");
   await page.waitForURL(`${web}/${slug}/browse/MOB-1`);
-  check(await palette().count() === 0, "the palette stayed open after Enter");
+  await palette().waitFor({ state: "hidden" });
+  check(!(await palette().isVisible()), "the palette stayed visible after Enter");
   console.log("palette ok: search by title and key, keyboard selection opens the work item");
   await page.screenshot({ path: `${shots}/01-search-result-opened.png` });
 

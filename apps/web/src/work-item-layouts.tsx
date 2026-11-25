@@ -415,10 +415,10 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     const assignees = item.assigneeIds;
     const mine = modulesOf[item.id] ?? [];
     switch (property) {
-      case "state": return <SingleSelect label={t("workItems.state")} summary={states.find((state) => state.id === item.stateId)?.name ?? ""} value={item.stateId} readOnly={readOnly} quiet={rowQuiet} iconOnly={iconOnly}
+      case "state": return <SingleSelect label={t("workItems.state")} summary={states.find((state) => state.id === item.stateId)?.name ?? ""} value={item.stateId} readOnly={readOnly} quiet={rowQuiet} iconOnly={iconOnly} hideIconOnlyTextOnPhone={iconOnly}
           icon={<StateIcon group={states.find((state) => state.id === item.stateId)?.group ?? "unstarted"} />}
           options={states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> }))} onSelect={(stateId) => void change(item, { stateId })} />;
-      case "priority": return <SingleSelect label={t("workItems.priority")} iconOnly={iconOnly || (compact && item.priority === "none")} quiet={rowQuiet} summary={t(`workItems.priority.${item.priority}`)} display={rowQuiet && item.priority === "none" && !iconOnly ? "—" : undefined} value={item.priority} readOnly={readOnly} icon={<PriorityIcon priority={item.priority} />}
+      case "priority": return <SingleSelect label={t("workItems.priority")} iconOnly={iconOnly || (compact && item.priority === "none")} quiet={rowQuiet} summary={t(`workItems.priority.${item.priority}`)} display={rowQuiet && item.priority === "none" && !iconOnly ? "—" : undefined} value={item.priority} readOnly={readOnly} icon={<PriorityIcon priority={item.priority} />} hideIconOnlyTextOnPhone={iconOnly}
           options={priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> }))} onSelect={(priority) => void change(item, { priority })} />;
       case "assignee": return <MultiSelect label={t("workItems.assignees")} readOnly={readOnly} selected={assignees} quiet={rowQuiet} searchAlways onOpen={() => { void action<Person[]>("list_project_members", { projectId }).then((rows) => rows && setPeople(rows)); }} icon={assignees.length === 0 ? <Users aria-hidden size={14} className="text-secondary" /> : undefined}
           summary={assignees.length === 0 ? rowQuiet ? <span className="text-tertiary">—</span> : compact ? <span className="hidden text-11 max-sm:inline">{t("workItems.noAssignee")}</span> : <span className="text-secondary">{t("workItems.noAssignee")}</span> : <span className="flex items-center -space-x-1">{assignees.slice(0, 3).map((id) => <Avatar key={id} name={personName(id)} id={id} agent={isAgentId(id)} />)}{assignees.length > 3 && <span className="pl-2 text-12">+{formatNumber(assignees.length - 3)}</span>}</span>}
@@ -456,44 +456,66 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const isEmptyProperty = (item: Item, property: DisplayProperty) => property === "priority" ? item.priority === "none" : property === "estimate" ? !item.estimatePointId
     : property === "assignee" ? item.assigneeIds.length === 0 : property === "labels" ? item.labelIds.length === 0 : property === "dates" ? !item.startDate && !item.dueDate
     : property === "cycle" ? !cycleOf[item.id] : property === "modules" ? (modulesOf[item.id] ?? []).length === 0 : false;
-  /**
-   * Each shown property has a fixed grid track, and the header uses this same template. The measured width includes the checkbox, ID, 12rem title floor, visible properties, row action and grid gaps.
-   * If those tracks do not fit, the header disappears and the properties wrap beneath the title. Phones keep their wrapping row.
-   */
+  /** Reserve stable tracks for each visible property; shed dates, modules and cycle before the title loses room. */
   const slotRem: Record<string, number> = { state: 6.5, priority: 5.75, estimate: 4, labels: 5.5, cycle: 6, modules: 5, dates: 7.5, assignee: 5 };
-  const shownProperties = (["estimate", "labels", "cycle", "modules", "dates", "assignee"] as const).filter((property) => listShows(property));
+  const allListProperties = (["estimate", "labels", "cycle", "modules", "dates", "assignee"] as const).filter((property) => listShows(property));
   const leadingProperties = (["priority", "state"] as const).filter((property) => listShows(property));
-  const columnTracks = ["1rem", ...(leadingProperties.includes("priority") ? ["1.75rem"] : []), "5rem", ...(leadingProperties.includes("state") ? ["1.75rem"] : []), "minmax(7rem,1fr)", ...shownProperties.map((property) => `${slotRem[property]}rem`), ...(rowAction ? ["7rem"] : [])];
-  const gridColumns = columnTracks.join(" ");
   const gapPx = 8;
-  const rowTracksPx = 16 + 80 + 112 + leadingProperties.length * 28 + shownProperties.reduce((sum, property) => sum + slotRem[property] * 16, 0) + (rowAction ? 112 : 0);
-  const rowGapsPx = Math.max(0, columnTracks.length - 1) * gapPx;
-  const oneLine = listWidth >= 40 + rowTracksPx + rowGapsPx;
+  const tracksFor = (properties: readonly (typeof allListProperties)[number][]) => ["1rem", ...(leadingProperties.includes("priority") ? ["1.75rem"] : []), "5rem", ...(leadingProperties.includes("state") ? ["1.75rem"] : []), "minmax(7rem,1fr)", ...properties.map((property) => `${slotRem[property]}rem`), ...(rowAction ? ["7rem"] : [])];
+  const widthFor = (properties: readonly (typeof allListProperties)[number][]) => {
+    const tracks = tracksFor(properties);
+    return 40 + 16 + 80 + 112 + leadingProperties.length * 28 + properties.reduce((sum, property) => sum + slotRem[property] * 16, 0)
+      + (rowAction ? 112 : 0) + Math.max(0, tracks.length - 1) * gapPx;
+  };
+  const responsiveProperties = [...allListProperties];
+  for (const property of ["dates", "modules", "cycle"] as const) {
+    if (listWidth >= widthFor(responsiveProperties)) break;
+    const index = responsiveProperties.indexOf(property);
+    if (index >= 0) responsiveProperties.splice(index, 1);
+  }
+  for (const property of ["estimate", "labels", "assignee"] as const) {
+    if (listWidth >= widthFor(responsiveProperties)) break;
+    const index = responsiveProperties.indexOf(property);
+    if (index >= 0) responsiveProperties.splice(index, 1);
+  }
+  const shownProperties = responsiveProperties;
+  const columnTracks = tracksFor(shownProperties);
+  const gridColumns = columnTracks.join(" ");
+  const oneLine = listWidth >= widthFor(shownProperties);
   const columnStyle = { "--cols": gridColumns } as React.CSSProperties;
-  const propertyCell = (item: Item, property: (typeof shownProperties)[number]) => <span key={property} className={`flex min-w-0 items-center whitespace-nowrap ${isEmptyProperty(item, property) ? "[&_button]:text-transparent [&_button_span]:!text-transparent sm:[&_svg]:hidden [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-hover/row:pointer-events-auto [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:pointer-events-auto" : ""} [&>*]:max-w-full [&_*]:min-w-0 [&_svg]:shrink-0`}>
+  const propertyCell = (item: Item, property: (typeof allListProperties)[number], mobile = false) => <span key={property} className={`flex min-w-0 items-center justify-end whitespace-nowrap sm:order-6 ${mobile ? "rounded-md bg-layer-1 px-1.5 py-0.5 text-11 text-secondary [&_button]:px-1 [&_button]:py-0 [&_button]:text-11" : ""} ${isEmptyProperty(item, property) ? "[&_button]:text-transparent [&_button_span]:!text-transparent sm:[&_svg]:hidden [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-hover/row:pointer-events-auto [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:pointer-events-auto" : ""} [&>*]:max-w-full [&_*]:min-w-0 [&_svg]:shrink-0`}>
     {cellOf(item, property, false, true)}
   </span>;
   const rowOf = (item: Item) => {
     const checkbox = pickBox(item, true);
     const rowActionCell = rowAction?.(item);
+    const phoneProperties = allListProperties.filter((property) => !isEmptyProperty(item, property));
+    const priorityEmpty = isEmptyProperty(item, "priority");
     return <li key={item.id} data-testid={`row-${item.displayId}`} className="group/row border-b border-subtle px-1 py-0.5">
-      <div style={columnStyle} className={`mx-1 flex flex-wrap items-center gap-x-2 gap-y-2 rounded-lg px-3 py-0 ${selected.includes(item.id) ? "bg-layer-2" : "bg-transparent hover:bg-layer-transparent-hover"} sm:grid ${oneLine ? "sm:grid-cols-[var(--cols)]" : "sm:grid-cols-[1rem_1.75rem_5rem_1.75rem_minmax(7rem,1fr)]"}`}>
-        <span className="flex size-4 shrink-0 items-center justify-center">{checkbox ? React.cloneElement(checkbox, { className: `${checkbox.props.className ?? ""} rounded-sm` }) : <span aria-hidden />}</span>
-        {leadingProperties.includes("priority") ? <span className="flex min-w-0 items-center">{cellOf(item, "priority", false, true, true)}</span> : null}
-        {shows("id") ? <span title={item.displayId} className="min-w-0 truncate whitespace-nowrap text-12 tabular-nums text-tertiary">{item.displayId}</span> : <span aria-hidden />}
-        {leadingProperties.includes("state") ? <span className="flex min-w-0 items-center">{cellOf(item, "state", false, true, true)}</span> : null}
-        <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="min-w-0 flex-1 truncate text-14 font-medium text-primary">{item.title}</Link>
-        {oneLine ? <>{shownProperties.map((property) => propertyCell(item, property))}{rowActionCell}</> : <div data-testid="list-property-wrap" className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 sm:col-start-3 sm:col-span-full">{shownProperties.map((property) => propertyCell(item, property))}{rowActionCell}</div>}
+      <div style={columnStyle} className={`mx-1 grid min-w-0 grid-cols-1 gap-y-1 rounded-lg px-3 py-1 ${selected.includes(item.id) ? "bg-layer-2" : "bg-transparent hover:bg-layer-transparent-hover"} sm:grid-cols-[var(--cols)] sm:gap-x-2 sm:gap-y-0 sm:py-0`}>
+        <div className="flex min-w-0 items-center gap-2 sm:contents">
+          <span className="flex size-4 shrink-0 items-center justify-center sm:order-1">{checkbox ? React.cloneElement(checkbox, { className: `${checkbox.props.className ?? ""} rounded-sm` }) : <span aria-hidden />}</span>
+          <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="line-clamp-2 min-w-0 flex-1 text-14 font-medium text-primary sm:order-5 sm:truncate">{item.title}</Link>
+        </div>
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-1 sm:contents max-sm:flex-nowrap max-sm:justify-start max-sm:overflow-x-auto">
+          {leadingProperties.includes("priority") && <span className={`flex min-w-7 shrink-0 items-center justify-center sm:order-2 ${priorityEmpty ? "opacity-0 group-hover/row:opacity-100 group-has-[:focus-visible]/row:opacity-100" : ""}`}>{cellOf(item, "priority", false, true, true)}</span>}
+          {shows("id") ? <span title={item.displayId} className="min-w-0 shrink-0 truncate whitespace-nowrap text-11 tabular-nums text-tertiary sm:order-3 sm:text-12">{item.displayId}</span> : <span aria-hidden className="sm:order-3" />}
+          {leadingProperties.includes("state") && <span className="flex min-w-7 shrink-0 items-center justify-center sm:order-4">{cellOf(item, "state", false, true, true)}</span>}
+          {allListProperties.filter((property) => !shownProperties.includes(property) && !isEmptyProperty(item, property)).map((property) => <span key={property} className="shrink-0 sm:hidden">{propertyCell(item, property, true)}</span>)}
+          {oneLine ? shownProperties.map((property) => propertyCell(item, property))
+            : <div data-testid="list-property-wrap" className="flex min-w-0 flex-wrap items-center justify-end gap-x-1 gap-y-1 sm:col-span-full">{shownProperties.map((property) => propertyCell(item, property))}</div>}
+          {rowActionCell && <span className="sm:order-7">{rowActionCell}</span>}
+        </div>
       </div>
     </li>;
   };
 
-  const quickForm = (groupKey: string) => <form className="mx-1 my-1 flex items-center gap-2 rounded-lg border-b border-subtle bg-surface-1 px-4 py-2" onSubmit={(event) => { event.preventDefault(); void create(groupKey); }}>
-    <input autoFocus aria-label={t("workItems.titleField")} placeholder={t("workItems.quickTitle")} value={quickTitle} maxLength={500} className="flex-1" onChange={(event) => setQuickTitle(event.target.value)}
+  const quickForm = (groupKey: string) => <form className="mx-1 my-1 flex flex-wrap items-center gap-2 rounded-xl border border-subtle bg-layer-1 px-3 py-2" onSubmit={(event) => { event.preventDefault(); void create(groupKey); }}>
+    <input autoFocus aria-label={t("workItems.titleField")} placeholder={t("workItems.quickTitle")} value={quickTitle} maxLength={500} className="min-w-0 flex-1 max-sm:basis-full" onChange={(event) => setQuickTitle(event.target.value)}
       onKeyDown={(event) => { if (event.key === "Escape") { setQuick(null); setQuickTitle(""); } }} />
-    <button type="submit">{t("workItems.create")}</button>
+    <button type="submit" className={`${ghost} max-sm:ml-auto whitespace-nowrap`}>{t("workItems.create")}</button>
   </form>;
-  const newButton = (groupKey: string) => <button type="button" className="flex w-full items-center gap-2 border-b border-subtle bg-surface-1 px-5 py-2.5 text-left text-13 font-medium text-secondary hover:bg-layer-transparent-hover" onClick={() => { setQuick(groupKey); setQuickTitle(""); }}>
+  const newButton = (groupKey: string) => <button type="button" className="mx-1 my-1 flex w-[calc(100%-0.5rem)] items-center gap-2 rounded-lg bg-layer-1 px-3 py-2 text-left text-13 font-medium text-secondary hover:bg-layer-transparent-hover" onClick={() => { setQuick(groupKey); setQuickTitle(""); }}>
     <Plus aria-hidden size={14} />{t("workItems.new")}</button>;
 
   const groupedItems = items.map((item) => ({ ...item, cycleId: cycleOf[item.id] ?? null, moduleIds: modulesOf[item.id] ?? [], creatorId: item.createdBy }));
@@ -701,7 +723,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     {sheet && !emptyProject && sheetView}
     {params.layout === "calendar" && calendarView}
     {params.layout === "gantt" && ganttView}
-    {!board && !sheet && !emptyProject && params.layout !== "calendar" && params.layout !== "gantt" && <div ref={setListBox} className="overflow-hidden rounded-xl border border-subtle">
+    {!board && !sheet && !emptyProject && params.layout !== "calendar" && params.layout !== "gantt" && <div ref={setListBox} className="overflow-hidden rounded-xl border border-subtle bg-surface-1">
       {filtered && items.length === 0 && <p className="border-b border-subtle bg-surface-1 px-5 py-3 text-14 text-secondary">{t("layout.noMatch")}</p>}
       {groups.map((group) => {
         const empty = group.items.length === 0;
@@ -709,7 +731,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
         const open = empty ? expandedEmpty.includes(group.key) || quick === group.key : !collapsed.includes(group.key);
         const name = params.group === "none" ? "" : groupLabel(group.key);
         return <section key={group.key} aria-label={params.group === "none" ? undefined : name}>
-          {params.group !== "none" && <div className="mx-1 my-1 flex items-center gap-2 rounded-lg border-b border-subtle bg-layer-1 px-3 py-1.5">
+          {params.group !== "none" && <div className="mx-1 my-1 flex items-center gap-2 rounded-lg border border-subtle bg-layer-1 px-3 py-1.5">
             <button type="button" aria-expanded={open} aria-label={`${t("layout.toggleGroup")}: ${name}`} className="flex flex-1 items-center gap-2 bg-transparent p-0 text-left text-14 font-medium text-primary hover:bg-transparent"
               onClick={() => empty ? (open ? (setExpandedEmpty(expandedEmpty.filter((key) => key !== group.key)), quick === group.key && setQuick(null)) : setExpandedEmpty([...expandedEmpty, group.key])) : setCollapsed(open ? [...collapsed, group.key] : collapsed.filter((key) => key !== group.key))}>
               {open ? <ChevronDown aria-hidden size={14} className="text-secondary" /> : <ChevronRight aria-hidden size={14} className="text-secondary" />}

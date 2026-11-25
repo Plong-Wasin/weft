@@ -310,14 +310,14 @@ export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag
       const closed = collapsed.includes(column.key);
       const over = drag?.over?.column === column.key;
       if (closed) return <section key={column.key} data-column={column.key} data-testid={`column-${column.name}`} aria-label={column.name} data-collapsed
-        className={`flex w-11 shrink-0 flex-col items-center gap-2 rounded-xl border border-subtle py-2 ${over ? "bg-accent-subtle" : "bg-layer-1"}`}>
+        className={`flex w-11 shrink-0 flex-col items-center gap-2 rounded-xl border border-subtle py-2 ${over ? "bg-accent-subtle" : "bg-surface-1"}`}>
         <button type="button" aria-expanded={false} aria-label={`${t("layout.toggleGroup")}: ${column.name}`} title={t("layout.toggleGroup")} className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={() => onToggle(column.key)}><ChevronsRight aria-hidden size={14} /></button>
         {column.icon}
         <span className="text-13 font-medium text-primary [writing-mode:vertical-rl]">{column.name}</span>
         <span className="text-12 text-tertiary">{formatNumber(column.items.length)}</span>
       </section>;
       return <section key={column.key} data-column={column.key} data-testid={`column-${column.name}`} aria-label={column.name}
-        className={`flex w-[22rem] max-w-[85vw] shrink-0 flex-col gap-2 rounded-xl border p-2 transition-colors ${over ? "border-accent-strong bg-accent-subtle" : "border-transparent bg-layer-1"}`}>
+        className={`flex w-[22rem] max-w-[85vw] shrink-0 flex-col gap-2 rounded-xl border border-subtle bg-surface-1 p-2 ${over ? "border-accent-strong bg-accent-subtle" : ""}`}>
         <header className="flex items-center gap-2 px-1 py-0.5">
           {column.icon}
           <h4 className="m-0 flex-1 truncate text-16 font-medium text-primary">{column.name} <span className="font-normal text-tertiary">{formatNumber(column.items.length)}</span></h4>

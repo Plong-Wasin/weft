@@ -89,7 +89,10 @@ export function Popover({ label, panelLabel = label, trigger, align = "left", cl
     const size = { width: rect.width, height: Math.min(panel.current.scrollHeight, authoredHeightLimit) };
     const next = getPopoverPosition(bounds, size, { width: window.innerWidth, height: window.innerHeight }, align);
     const maxHeight = Math.min(Number.parseFloat(next.maxHeight), authoredHeightLimit);
-    setPosition({ ...next, maxHeight: `${maxHeight}px` });
+    const positioned = { ...next, maxHeight: `${maxHeight}px` };
+    // Resize handlers need to move a visible panel before the browser's next paint; React may batch the state update until after a resize caller measures it.
+    Object.assign(panel.current.style, { left: `${positioned.left}px`, top: `${positioned.top}px`, maxHeight: positioned.maxHeight, visibility: "visible" });
+    setPosition(positioned);
   }, [align]);
   React.useEffect(() => {
     if (!open) return;

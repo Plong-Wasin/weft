@@ -35,6 +35,26 @@ try {
   const page = await context.newPage();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
+  const checkBoardSurface = async () => {
+    const lane = page.locator('[data-testid^="column-"]').first();
+    const colors = await lane.evaluate((element) => {
+      const probe = document.createElement("div");
+      probe.className = "bg-surface-1";
+      document.body.append(probe);
+      const expected = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      const heading = element.querySelector<HTMLElement>("h4")!;
+      const context = document.createElement("canvas").getContext("2d")!;
+      const rgb = (value: string) => { context.clearRect(0, 0, 1, 1); context.fillStyle = value; context.fillRect(0, 0, 1, 1); return [...context.getImageData(0, 0, 1, 1).data.slice(0, 3)].map((channel) => { const v = channel / 255; return v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; }); };
+      const luminance = (value: string) => { const [r, g, b] = rgb(value); return .2126 * r! + .7152 * g! + .0722 * b!; };
+      const background = getComputedStyle(element).backgroundColor;
+      const foreground = getComputedStyle(heading).color;
+      const [light, dark] = [luminance(background), luminance(foreground)].sort((a, b) => b - a);
+      return { background, expected, foreground, contrast: (light! + .05) / (dark! + .05), theme: document.documentElement.getAttribute("data-theme"), token: getComputedStyle(document.documentElement).getPropertyValue("--bg-surface-1"), classes: element.className };
+    });
+    check(colors.background === colors.expected, `board lane uses the active surface token: ${JSON.stringify(colors)}`);
+    check(colors.contrast >= 4.5, `board lane title is readable against its surface: ${JSON.stringify(colors)}`);
+  };
   const call = async <T>(name: string, body: unknown) => { const response = await context.request.post(`${api}/actions/${name}`, { data: body }); check(response.ok(), `${name} failed: ${response.status()}`); return await response.json() as T; };
   await page.goto(web);
   await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
@@ -111,8 +131,8 @@ try {
   for (const [property, label] of [["Estimate", translate("workItems.estimate")], ["Labels", translate("workItems.labels")], ["Cycle", translate("workItems.cycle")], ["Modules", translate("workItems.modules")], ["Dates", translate("layout.property.dates")], ["Assignees", translate("workItems.assignees")]] as const) {
     const trigger = firstRow.getByRole("button", { name: new RegExp(`^${label}:`) });
     if (await trigger.count() === 0) continue;
-    const xs = await Promise.all(["MOB-1", "MOB-2", "MOB-3"].map((id) => page.getByTestId(`row-${id}`).getByRole("button", { name: new RegExp(`^${label}:`) }).evaluate((element) => element.getBoundingClientRect().x)));
-    check(Math.max(...xs) - Math.min(...xs) <= 1, `${property} chips share a stable right-side slot (List${property}SlotStable): ${xs.join(", ")}`);
+    const rightEdges = await Promise.all(["MOB-1", "MOB-2", "MOB-3"].map((id) => page.getByTestId(`row-${id}`).getByRole("button", { name: new RegExp(`^${label}:`) }).evaluate((element) => element.getBoundingClientRect().right)));
+    check(Math.max(...rightEdges) - Math.min(...rightEdges) <= 1, `${property} chips share a right-aligned slot (List${property}RightAligned): ${rightEdges.join(", ")}`);
   }
   for (const property of ["state", "priority"] as const) {
     const control = firstRow.getByRole("button", { name: new RegExp(`^${translate(`workItems.${property}`)}:`) });
@@ -139,8 +159,8 @@ try {
   await row.screenshot({ path: `${shots}/popover-scroll-row-after-hover.png` });
   await page.mouse.move(0, 0);
   await row.getByRole("link", { name: "Alpha" }).focus();
-  await page.keyboard.press("Shift+Tab");
-  check(await row.getByRole("button", { name: new RegExp(`^${translate("workItems.state")}:`) }).evaluate((element) => document.activeElement === element), "keyboard focus should move to the next visible row control, State");
+  await page.keyboard.press("Tab");
+  check(await row.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}:`) }).evaluate((element) => document.activeElement === element), "keyboard focus should move from the title to the next visible row control, Priority");
   const cycleAfterKeyboardFocus = await emptyCycleTrigger.boundingBox();
   check(Boolean(cycleAfterHover && cycleAfterKeyboardFocus) && Math.abs(cycleAfterHover!.x - cycleAfterKeyboardFocus!.x) < 1 && Math.abs(cycleAfterHover!.y - cycleAfterKeyboardFocus!.y) < 1, "keyboard focus keeps row controls in stable positions");
   await emptyCycleTrigger.focus();
@@ -202,15 +222,61 @@ try {
   await row.getByRole("button", { name: `${translate("workItems.modules")}: Auth` }).waitFor();
   await page.keyboard.press("Escape");
   await page.mouse.move(0, 0);
+
+  // A wider seed exercises responsive rows with varied values and enough data to expose ragged heights.
+  for (const name of ["Security", "Docs", "Frontend"]) await call("create_label", { projectId: project!.id, name });
+  for (const name of ["API", "UI", "Core"]) await call("create_module", { projectId: project!.id, name });
+  const labels = await call<Array<{ id: string; name: string }>>("list_labels", { projectId: project!.id });
+  const cycles = await call<Array<{ id: string; name: string }>>("list_cycles", { projectId: project!.id });
+  const modules = await call<Array<{ id: string; name: string }>>("list_modules", { projectId: project!.id });
+  const states = await call<Array<{ id: string; name: string }>>("list_states", { projectId: project!.id });
+  const variedIds: string[] = [];
+  for (let index = 0; index < 28; index += 1) {
+    const longTitle = `A deliberately long work item title that exceeds eighty characters to exercise narrow responsive rows number ${index + 1}`;
+    const item = await call<{ id: string }>("create_work_item", {
+      projectId: project!.id, title: longTitle,
+      stateId: states[index % states.length]!.id,
+      priority: (["urgent", "high", "medium", "low", "none"] as const)[index % 5],
+      assigneeIds: index % 3 === 0 ? [me.user.id] : [],
+      labelIds: index % 7 === 0 ? labels.map((label) => label.id) : index % 2 === 0 ? [labels[index % labels.length]!.id] : [],
+      ...(index % 4 === 0 ? { startDate: day(-5), dueDate: day(-1) } : index % 4 === 1 ? { dueDate: day(4) } : {}),
+    });
+    variedIds.push(item.id);
+  }
+  const sprintOne = cycles.find((cycle) => cycle.name === "Sprint 1")!;
+  await call("add_cycle_items", { cycleId: sprintOne.id, workItemIds: variedIds.slice(0, 14) });
+  for (const [index, module] of modules.entries()) await call("add_module_items", { moduleId: module.id, workItemIds: variedIds.slice(index * 6, index * 6 + 8) });
+  check(await page.evaluate(() => (window as unknown as { __noReload?: boolean }).__noReload === true), "the page reloaded before seeding responsive rows");
+  await page.reload();
+  await page.evaluate(() => { (window as unknown as { __noReload: boolean }).__noReload = true; });
+  await page.getByTestId("row-MOB-1").waitFor();
+  await page.mouse.move(0, 0);
   await mkdir(evidenceShots, { recursive: true });
   for (const width of [1920, 1440, 1100, 390] as const) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     const columnHeader = page.getByTestId("list-column-header");
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
     check(await columnHeader.count() === 0, `${width}px Linear Issues list has no header row (ListNoHeaderAt${width})`);
-    if (width >= 1440) {
+    if (width >= 768) {
       const heights = await page.locator('[data-testid^="row-"]').evaluateAll((rows) => rows.map((item) => item.getBoundingClientRect().height));
-      check(heights.length > 0 && heights.every((height) => height <= 40), `${width}px uses one-line rows no taller than 40px (ListOneLineAt${width}): ${JSON.stringify(heights)}`);
+      check(heights.length > 0 && heights.every((height) => height <= 40), `${width}px list rows stay at most 40px tall (ListRowsAtMost40pxAt${width}): ${JSON.stringify(heights)}`);
+      check(Math.max(...heights) - Math.min(...heights) <= 1, `${width}px list rows have equal heights (ListRowsEqualHeightAt${width}): ${JSON.stringify(heights)}`);
+      check(await page.getByTestId("list-property-wrap").count() === 0, `${width}px keeps the property block on the title row (ListNoPropertyWrapAt${width})`);
+    }
+    if (width === 390) {
+      check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "390px list has no horizontal page scroll (ListNoHorizontalScroll390)");
+      const phoneHeights = await page.locator('[data-testid^="row-"]').evaluateAll((rows) => rows.map((item) => item.getBoundingClientRect().height));
+      check(phoneHeights.length > 0 && phoneHeights.every((height) => height < 100), `390px list keeps rows below 100px (ListPhoneRowsBelow100px): ${JSON.stringify(phoneHeights)}`);
+      const titleWidth = await firstRow.getByRole("link", { name: "Alpha" }).evaluate((element) => element.getBoundingClientRect().width);
+      check(titleWidth >= 140, `390px list title gets at least 140px (ListPhoneTitleWidth140): ${titleWidth}`);
+      check(await firstRow.locator("[data-testid=list-property-wrap]").count() === 0, "390px list omits the empty property row (ListNoEmptySecondLine)");
+      const denseRowMetadata = page.getByTestId("row-MOB-4").locator(":scope > div > div").nth(1);
+      check(await denseRowMetadata.evaluate((element) => element.scrollWidth > element.clientWidth), "390px list keeps the populated property chips in one horizontally scrollable metadata line (ListPhonePropertiesSingleLine)");
+      for (const property of ["priority", "state"] as const) {
+        const control = firstRow.getByRole("button", { name: new RegExp(`^${translate(`workItems.${property}`)}:`) });
+        const visibleLabel = await control.evaluate((element) => element.innerText.trim() !== "");
+        check(!visibleLabel, `390px list ${property} control shows only its icon (ListPhone${property}IconOnly)`);
+      }
     }
     for (const theme of ["light", "dark"] as const) {
       await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
@@ -218,8 +284,33 @@ try {
       await page.screenshot({ path: `${evidenceShots}/work-items-list-${width}-${theme}.png`, fullPage: true });
     }
   }
+  for (const group of ["state", "priority", "assignee", "none"] as const) {
+    await page.getByRole("button", { name: translate("layout.display") }).click();
+    await page.getByLabel(translate("layout.group")).selectOption(group);
+    await page.keyboard.press("Escape");
+    await page.getByTestId("row-MOB-1").waitFor();
+    for (const [width, height] of [[1920, 900], [1440, 900], [1100, 900], [768, 900], [390, 844]] as const) {
+      await page.setViewportSize({ width, height });
+      for (const theme of ["light", "dark"] as const) {
+        await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+        const metrics = await page.locator('[data-testid^="row-"]').evaluateAll((rows) => rows.map((element) => {
+          const row = element.getBoundingClientRect();
+          return { height: row.height, titleWidth: element.querySelector("a")?.getBoundingClientRect().width ?? 0 };
+        }));
+        if (width >= 768) check(metrics.length > 0 && metrics.every((row) => row.height <= 40) && Math.max(...metrics.map((row) => row.height)) - Math.min(...metrics.map((row) => row.height)) <= 1, `${group} grouping keeps equal rows at ${width}px: ${JSON.stringify(metrics)}`);
+        if (width === 390) check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth) && (metrics[0]?.titleWidth ?? 0) >= 140, `${group} grouping keeps a readable 390px title without horizontal page scroll: ${JSON.stringify(metrics[0])}`);
+        await page.screenshot({ path: `${evidenceShots}/list-${group}-${theme}-${width}.png`, fullPage: true });
+      }
+    }
+  }
+  await page.getByRole("button", { name: translate("layout.display") }).click();
+  await page.getByLabel(translate("layout.group")).selectOption("priority");
+  await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+  const defaultAuthChip = page.getByTestId("row-MOB-1").getByRole("button", { name: `${translate("workItems.modules")}: Auth` });
+  const authDefaultRing = await defaultAuthChip.evaluate((element) => ({ outline: getComputedStyle(element).outlineStyle, width: getComputedStyle(element).outlineWidth, focusVisible: element.matches(":focus-visible") }));
+  check(!authDefaultRing.focusVisible && (authDefaultRing.outline === "none" || authDefaultRing.width === "0px"), `Auth row chip has no blue box by default: ${JSON.stringify(authDefaultRing)}`);
   await page.screenshot({ path: `${shots}/list-1440-light.png` });
   check(await page.evaluate(() => (window as unknown as { __noReload?: boolean }).__noReload === true), "the page reloaded");
 
@@ -241,16 +332,21 @@ try {
   await cycleMenu.evaluate((element) => { element.scrollTop = 160; });
   check(await cycleMenu.evaluate((element) => element.scrollTop > 0), `Cycle options should scroll inside the menu: ${JSON.stringify(cycleMenuMetrics)}`);
   await page.screenshot({ path: `${shots}/popover-scroll-desktop-open.png` });
-  await main.evaluate((element) => { element.scrollTop += 40; });
-  await page.waitForFunction(() => {
+  const [triggerBounds, mainBounds] = await Promise.all([cycleTrigger.boundingBox(), main.boundingBox()]);
+  check(Boolean(triggerBounds && mainBounds), "Cycle trigger and main scroll container remain visible before scrolling");
+  const anchorInset = triggerBounds!.y - mainBounds!.y;
+  await main.evaluate((element, amount) => { element.scrollTop += amount; }, Math.max(1, Math.min(40, anchorInset - 4)));
+  await page.waitForTimeout(100);
+  const cyclePopoverPosition = await page.evaluate(() => {
     const trigger = document.querySelector<HTMLButtonElement>('[data-testid="row-MOB-1"] button[aria-label^="Cycle:"]');
     const menu = document.querySelector<HTMLElement>("[data-popover-panel]");
-    if (!trigger || !menu) return false;
+    if (!trigger || !menu) return null;
     const anchor = trigger.getBoundingClientRect();
     const panel = menu.getBoundingClientRect();
     const overlapsHorizontally = panel.left < anchor.right && panel.right > anchor.left;
-    return overlapsHorizontally && (Math.abs(panel.top - anchor.bottom - 4) < 1 || Math.abs(anchor.top - panel.bottom - 4) < 1);
+    return { anchor: { top: anchor.top, bottom: anchor.bottom, left: anchor.left, right: anchor.right }, panel: { top: panel.top, bottom: panel.bottom, left: panel.left, right: panel.right }, overlapsHorizontally, verticalGap: Math.min(Math.abs(panel.top - anchor.bottom - 4), Math.abs(anchor.top - panel.bottom - 4)) };
   });
+  check(Boolean(cyclePopoverPosition && cyclePopoverPosition.overlapsHorizontally && cyclePopoverPosition.verticalGap < 1), `Cycle picker should remain anchored to its visible trigger while scrolling (CycleAnchorStaysAligned): ${JSON.stringify(cyclePopoverPosition)}`);
   check(await cycleMenu.isVisible(), "Cycle picker should remain open while its trigger is visible");
   await page.keyboard.press("Escape");
   await cycleMenu.waitFor({ state: "detached" });
@@ -264,9 +360,9 @@ try {
   check(await cycleTrigger.getAttribute("aria-label") === `${translate("workItems.cycle")}: Sprint 17`, "selection should work after scrolling the long Cycle menu");
   await cycleTrigger.click();
   await cycleMenu.waitFor();
-  await main.evaluate((element) => { element.scrollTop = 0; });
+  await main.evaluate((element) => { element.scrollTop = element.scrollHeight; });
   await cycleMenu.waitFor({ state: "detached" });
-  check(await main.evaluate((element) => element.scrollTop === 0), "dismissing an offscreen picker should not scroll its trigger back into view");
+  check(await main.evaluate((element) => element.scrollTop > 0), "dismissing an offscreen picker should not scroll its trigger back into view");
   await main.evaluate((element) => { element.scrollTop = 0; });
   await page.screenshot({ path: `${shots}/list-1440-edited.png` });
 
@@ -308,12 +404,17 @@ try {
   const mobilePage = await mobileContext.newPage();
   await mobilePage.goto(mobileListUrl);
   const mobileRow = mobilePage.getByTestId("row-MOB-1");
+  await mobileRow.getByRole("link", { name: "Alpha" }).waitFor();
+  await mobileRow.getByRole("button", { name: `${translate("workItems.cycle")}: Sprint 17` }).waitFor();
   const mobileRowLines = await mobileRow.evaluate((row) => {
-    const title = row.querySelector("a")!.getBoundingClientRect();
-    const cycle = row.querySelector<HTMLButtonElement>('button[aria-label^="Cycle:"]')!.getBoundingClientRect();
+    const titleLink = row.querySelector("a");
+    const cycleControl = row.querySelector<HTMLButtonElement>('button[aria-label^="Cycle:"]');
+    if (!titleLink || !cycleControl) return null;
+    const title = titleLink.getBoundingClientRect();
+    const cycle = cycleControl.getBoundingClientRect();
     return { titleY: title.y, titleBottom: title.bottom, rightY: cycle.y, viewport: document.documentElement.clientWidth, page: document.documentElement.scrollWidth };
   });
-  check(mobileRowLines.rightY > mobileRowLines.titleBottom - 1 && mobileRowLines.page <= mobileRowLines.viewport, `390 px rows should wrap properties under the title without horizontal page scroll: ${JSON.stringify(mobileRowLines)}`);
+  check(Boolean(mobileRowLines && mobileRowLines.rightY > mobileRowLines.titleBottom - 1 && mobileRowLines.page <= mobileRowLines.viewport), `390 px title and properties use separate compact lines without horizontal page scroll: ${JSON.stringify(mobileRowLines)}`);
   const mobileCycleTrigger = mobilePage.getByTestId("row-MOB-1").getByRole("button", { name: `${translate("workItems.cycle")}: Sprint 17` });
   await mobileCycleTrigger.click();
   const mobileCycleMenu = mobilePage.locator("[data-popover-panel]");
@@ -351,7 +452,7 @@ try {
   await page.getByTestId("gantt-bar-MOB-1").waitFor();
   check(await page.getByTestId("row-MOB-1").count() === 0, "phone Gantt silently falls back to the grouped list");
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "phone Gantt scrolls the whole page sideways instead of its timeline");
-  const dueEdge = page.getByRole("button", { name: `${translate("layout.gantt.resizeDue")} MOB-1` });
+  const dueEdge = page.getByRole("button", { name: `${translate("layout.gantt.resizeDue")} MOB-1`, exact: true });
   await dueEdge.focus();
   const keyboardResize = page.waitForResponse((response) => response.url().includes("update_work_item") && response.ok() && (response.request().postData() ?? "").includes("dueDate"));
   await page.keyboard.press("ArrowRight");
@@ -362,11 +463,47 @@ try {
     await page.getByRole("button", { name: translate(`layout.${layout}`) }).click();
     const surface = layout === "board" ? page.getByTestId("board") : layout === "spreadsheet" ? page.getByTestId("sheet-scroll") : page.getByTestId(`${layout}-layout`);
     await surface.waitFor();
+    if (layout === "board") {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+      const authChip = page.getByTestId("card-MOB-1").getByRole("button", { name: `${translate("workItems.modules")}: Auth` });
+      await authChip.waitFor();
+      await page.evaluate(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
+      const defaultOutline = await authChip.evaluate((element) => ({ width: getComputedStyle(element).outlineWidth, style: getComputedStyle(element).outlineStyle, visible: element.matches(":focus-visible") }));
+      check(!defaultOutline.visible && (defaultOutline.style === "none" || defaultOutline.width === "0px"), `Auth chip has no default blue focus box: ${JSON.stringify(defaultOutline)}`);
+      let keyboardFocused = false;
+      for (let attempt = 0; attempt < 100 && !keyboardFocused; attempt += 1) {
+        await page.keyboard.press("Tab");
+        keyboardFocused = await authChip.evaluate((element) => document.activeElement === element);
+      }
+      check(keyboardFocused, "Auth chip is reachable by keyboard (BoardAuthKeyboardReachable)");
+      const keyboardOutline = await authChip.evaluate((element) => ({ width: getComputedStyle(element).outlineWidth, style: getComputedStyle(element).outlineStyle, visible: element.matches(":focus-visible") }));
+      check(keyboardOutline.visible && keyboardOutline.width === "2px", `Auth blue box is the 2px keyboard focus ring: ${JSON.stringify(keyboardOutline)}`);
+      await page.screenshot({ path: `${evidenceShots}/board-auth-keyboard-focus-dark-1440.png`, fullPage: true });
+      await authChip.evaluate((element) => element.blur());
+    }
     for (const [width, height] of [[1440, 900], [390, 844]] as const) {
       await page.setViewportSize({ width, height });
       for (const theme of ["light", "dark"] as const) {
         await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+        if (layout === "board") await checkBoardSurface();
         await page.screenshot({ path: `${evidenceShots}/${layout}-${theme}-${width}.png`, fullPage: true });
+      }
+    }
+    if (layout === "board") {
+      for (const grouping of ["state", "priority", "assignee", "label", "cycle", "module", "creator", "dueDate"] as const) {
+        await page.getByRole("button", { name: translate("layout.display") }).click();
+        await page.getByLabel(translate("layout.group")).selectOption(grouping);
+        await page.keyboard.press("Escape");
+        await page.getByTestId("board").waitFor();
+        for (const [width, height] of [[1440, 900], [390, 844]] as const) {
+          await page.setViewportSize({ width, height });
+          for (const theme of ["light", "dark"] as const) {
+            await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+            await checkBoardSurface();
+            await page.screenshot({ path: `${evidenceShots}/board-${grouping}-${theme}-${width}.png`, fullPage: true });
+          }
+        }
       }
     }
   }

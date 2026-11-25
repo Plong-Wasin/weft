@@ -22,6 +22,7 @@ type Insights = { x: Axis; groupBy: Axis | null; buckets: Array<Bucket & { group
 const selectClass = "min-w-0 max-w-full pl-2 pr-7 py-1.5 text-14 text-primary";
 const palette = ["#3f76ff", "#f59e0b", "#16a34a", "#e11d48", "#8b5cf6", "#0ea5e9", "#f97316", "#14b8a6", "#a3a3a3", "#d946ef"];
 const colorOf = (index: number) => palette[index % palette.length]!;
+const chartColorOf = (index: number) => `color-mix(in srgb, ${colorOf(index)} 86%, var(--bg-canvas))`;
 
 /** The text of a bucket: enums and months are formatted here, names come from the data, and a null key is "none". */
 export function bucketLabel(axis: Axis, bucket: Bucket): string {
@@ -48,7 +49,7 @@ function ProjectFilter({ projects, selected, onChange }: { projects: Project[]; 
   return <Popover label={t("analytics.projects")} panelRole="dialog" panelClassName="w-72 max-w-[85vw] rounded-xl p-2" className="border border-subtle px-2.5 py-1.5 text-14"
     trigger={<><span className="truncate">{selected.length === 0 ? t("analytics.allProjects") : t("analytics.projectsSelected", { count: selected.length })}</span><ChevronDown aria-hidden size={14} /></>}>
     {() => <div className="grid gap-1">
-      <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("analytics.searchProjects")} aria-label={t("analytics.searchProjects")} className="rounded-md border border-subtle px-2 py-1 text-14" />
+      <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("analytics.searchProjects")} aria-label={t("analytics.searchProjects")} className="rounded-lg border border-subtle px-3 py-1.5 text-14" />
       <ul className="m-0 grid max-h-64 list-none gap-0.5 overflow-y-auto p-0">
         {shown.map((project) => <li key={project.id}><label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-14 hover:bg-layer-transparent-hover">
           <input type="checkbox" checked={selected.includes(project.id)} onChange={() => toggle(project.id)} />
@@ -69,15 +70,15 @@ export function Chart({ insights }: { insights: Insights }) {
   const groupIndex = (key: string | null) => groupKeys.findIndex((known) => known.key === key);
   return <figure className="m-0 grid gap-3 rounded-xl border border-subtle bg-surface-1 p-4" aria-label={t("analytics.chart", { axis: t(`analytics.axis.${insights.x}`) })}>
     {insights.groupBy && <ul className="m-0 flex list-none flex-wrap gap-x-3 gap-y-1 p-0 text-12 text-secondary">
-      {groupKeys.map((group, index) => <li key={group.key ?? "none"} className="flex items-center gap-1.5"><span aria-hidden className="size-2.5 rounded-sm" style={{ background: colorOf(index) }} />{bucketLabel(insights.groupBy!, group)}</li>)}
+      {groupKeys.map((group, index) => <li key={group.key ?? "none"} className="flex items-center gap-1.5"><span aria-hidden className="size-2.5 rounded-sm" style={{ background: chartColorOf(index) }} />{bucketLabel(insights.groupBy!, group)}</li>)}
     </ul>}
     <ul className="m-0 grid list-none gap-2 p-0">
       {insights.buckets.map((bucket) => <li key={bucket.key ?? "none"} className="grid grid-cols-[minmax(0,9rem)_minmax(0,1fr)_auto] items-center gap-3 text-13 max-md:grid-cols-[minmax(0,6rem)_minmax(0,1fr)_auto]">
         <span className="truncate text-secondary" title={bucketLabel(insights.x, bucket)}>{bucketLabel(insights.x, bucket)}</span>
         <span className="flex h-5 overflow-hidden rounded-sm bg-layer-1" role="img" aria-label={`${bucketLabel(insights.x, bucket)}: ${bucket.count}`}>
           {insights.groupBy
-            ? bucket.groups.map((group) => <span key={group.key ?? "none"} title={`${bucketLabel(insights.groupBy!, group)}: ${group.count}`} style={{ width: `${(group.count / max) * 100}%`, background: colorOf(groupIndex(group.key)) }} />)
-            : <span style={{ width: `${(bucket.count / max) * 100}%`, background: colorOf(0) }} />}
+            ? bucket.groups.map((group) => <span key={group.key ?? "none"} title={`${bucketLabel(insights.groupBy!, group)}: ${group.count}`} style={{ width: `${(group.count / max) * 100}%`, background: chartColorOf(groupIndex(group.key)) }} />)
+            : <span style={{ width: `${(bucket.count / max) * 100}%`, background: chartColorOf(0) }} />}
         </span>
         <span className="tabular-nums text-primary">{formatNumber(bucket.count)}</span>
         {insights.groupBy && <span className="sr-only">{t("analytics.groupBy")}: {bucket.groups.map((group) => `${bucketLabel(insights.groupBy!, group)}: ${formatNumber(group.count)}`).join(", ")}</span>}
@@ -91,7 +92,7 @@ const monthText = (month: string) => new Intl.DateTimeFormat(getLocale() === "th
 /** Created vs Resolved by month: two bars per month row on a shared scale. Plain HTML, so it shrinks to 390px. */
 function CreatedVsResolved({ months }: { months: Month[] }) {
   const max = Math.max(1, ...months.flatMap((row) => [row.created, row.resolved]));
-  const series: Array<[keyof Omit<Month, "month">, string, string]> = [["created", "analytics.created", colorOf(0)], ["resolved", "analytics.resolved", colorOf(2)]];
+  const series: Array<[keyof Omit<Month, "month">, string, string]> = [["created", "analytics.created", chartColorOf(0)], ["resolved", "analytics.resolved", chartColorOf(2)]];
   return <figure className="m-0 grid gap-3 rounded-xl border border-subtle bg-surface-1 p-4" aria-label={t("analytics.createdVsResolved")}>
     <ul className="m-0 flex list-none flex-wrap gap-x-3 gap-y-1 p-0 text-12 text-secondary">
       {series.map(([key, label, color]) => <li key={key} className="flex items-center gap-1.5"><span aria-hidden className="size-2.5 rounded-sm" style={{ background: color }} />{t(label)}</li>)}

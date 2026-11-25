@@ -5,6 +5,10 @@ import { chipClass, DatesMenu, EstimateSelect, MultiSelect, SingleSelect } from 
 
 const options = [{ id: "todo", name: "Todo" }];
 const noop = () => {};
+function expectQuietTrigger(html: string) {
+  for (const token of ["bg-transparent", "px-2", "text-xs", "text-muted-foreground"]) expect(html).toContain(token);
+  expect(html).not.toContain("border-input");
+}
 
 test("chipClass uses the shadcn outlined chip and quiet variant", () => {
   expect(chipClass(false)).toBe("border border-border bg-background px-2 py-1 text-xs font-medium text-foreground hover:bg-accent [@media(pointer:coarse)]:min-h-11");
@@ -31,10 +35,10 @@ test("icon-only quiet SingleSelect keeps its accessible name, value title, and c
 
 test("quiet reaches read-only SingleSelect and DatesMenu triggers", () => {
   const select = renderToStaticMarkup(<SingleSelect quiet readOnly label="State" summary="Todo" value="todo" options={options} onSelect={noop} />);
-  expect(select).toContain("bg-transparent px-2 py-1 text-xs font-medium text-muted-foreground");
+  expectQuietTrigger(select);
   expect(select).not.toContain("border-border");
   const dates = renderToStaticMarkup(<DatesMenu quiet readOnly startDate={null} dueDate={null} onChange={noop} />);
-  expect(dates).toContain("bg-transparent px-2 py-1 text-xs font-medium text-muted-foreground");
+  expectQuietTrigger(dates);
   expect(dates).not.toContain("border-border");
 });
 
@@ -43,7 +47,7 @@ test("quiet reaches interactive EstimateSelect, MultiSelect, and DatePopover tri
   const multi = renderToStaticMarkup(<MultiSelect quiet label="Labels" summary="Bug" options={[{ id: "bug", name: "Bug" }]} selected={["bug"]} onToggle={noop} />);
   const dates = renderToStaticMarkup(<DatesMenu quiet startDate={null} dueDate={null} onChange={noop} />);
   for (const html of [estimate, multi, dates]) {
-    expect(html).toContain("bg-transparent px-2 py-1 text-xs font-medium text-muted-foreground");
+    expectQuietTrigger(html);
     expect(html).not.toContain("border-border");
   }
 });

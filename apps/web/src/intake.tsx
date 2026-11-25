@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { ChevronDown, ChevronUp, Clock, Copy, CopyCheck, Inbox, MoreHorizontal, Plus, X } from "lucide-react";
 import { formatDate, translate, type MessageKey } from "@weft/shared";
@@ -98,7 +99,7 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
   }} className="fixed left-0 right-0 top-[10dvh] z-50 mx-auto max-h-[80dvh] w-[calc(100vw-1.5rem)] max-w-lg overflow-auto rounded-2xl border border-subtle bg-surface-1 p-6 text-primary shadow-xl backdrop:bg-backdrop">
       <div className="mb-4 flex items-center gap-2">
         <h2 id={titleId} className="m-0 flex-1 text-18 font-semibold text-primary">{title}</h2>
-        <button type="button" className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={t("intake.cancel")} onClick={onClose}><X aria-hidden size={16} /></button>
+        <Button type="button" className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={t("intake.cancel")} onClick={onClose}><X aria-hidden size={16} /></Button>
       </div>
       {children}
   </dialog>;
@@ -162,13 +163,13 @@ function SubmitModal({ action, workspaceId, projectId, onClose, onSubmitted }: {
       <div className="grid gap-1 text-13 text-secondary"><span>{t("workItems.labels")}</span><MultiSelect label={t("workItems.labels")} searchAlways selected={labelIds} summary={<span>{labelIds.length ? labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ") : t("workItems.noLabels")}</span>} options={labels.map((label) => ({ id: label.id, name: label.name }))} onToggle={(id, on) => setLabelIds(on ? [...labelIds, id] : labelIds.filter((value) => value !== id))} /></div>
       <label className="grid gap-1 text-13 text-secondary">{t("workItems.dueDate")}<input type="date" value={dueDate} className={field} onChange={(event) => setDueDate(event.target.value)} /></label>
       <input ref={picker} hidden type="file" multiple data-testid="intake-attach-input" onChange={(event) => { const selected = Array.from(event.currentTarget.files ?? []); setFiles((current) => [...current, ...selected]); event.currentTarget.value = ""; }} />
-      <div className="grid gap-1"><button type="button" className={quietButton} onClick={() => picker.current?.click()}>{t("assets.attach")}</button>{files.map((file, index) => <span key={`${file.name}-${index}`} className="text-13 text-secondary">{file.name}</span>)}</div>
+      <div className="grid gap-1"><Button type="button" className={quietButton} onClick={() => picker.current?.click()}>{t("assets.attach")}</Button>{files.map((file, index) => <span key={`${file.name}-${index}`} className="text-13 text-secondary">{file.name}</span>)}</div>
       <input ref={imagePicker} hidden type="file" multiple accept="image/png,image/jpeg,image/gif,image/webp" data-testid="intake-inline-image-input" onChange={(event) => { const selected = Array.from(event.currentTarget.files ?? []); setInlineImages((current) => [...current, ...selected]); event.currentTarget.value = ""; }} />
-      <div className="grid gap-1"><button type="button" className={quietButton} onClick={() => imagePicker.current?.click()}>{t("assets.inlineImage")}</button>{inlineImages.map((file, index) => <span key={`${file.name}-${index}`} className="text-13 text-secondary">{file.name}</span>)}</div>
+      <div className="grid gap-1"><Button type="button" className={quietButton} onClick={() => imagePicker.current?.click()}>{t("assets.inlineImage")}</Button>{inlineImages.map((file, index) => <span key={`${file.name}-${index}`} className="text-13 text-secondary">{file.name}</span>)}</div>
       {note && <p role="alert" className="m-0 text-13 text-danger-text">{note}</p>}
       <div className="flex justify-end gap-2">
-        <button type="button" className={quietButton} disabled={submitting} onClick={onClose}>{t("intake.cancel")}</button>
-        <button className={primaryButton} disabled={submitting}>{t("intake.submit")}</button>
+        <Button type="button" className={quietButton} disabled={submitting} onClick={onClose}>{t("intake.cancel")}</Button>
+        <Button className={primaryButton} disabled={submitting}>{t("intake.submit")}</Button>
       </div>
       </fieldset>
     </form>
@@ -183,8 +184,8 @@ function SnoozeModal({ onClose, onSnooze }: { onClose: () => void; onSnooze: (ti
         <input autoFocus required type="datetime-local" value={till} className={field} onChange={(event) => setTill(event.target.value)} />
       </label>
       <div className="flex justify-end gap-2">
-        <button type="button" className={quietButton} onClick={onClose}>{t("intake.cancel")}</button>
-        <button className={primaryButton} disabled={!till}>{t("intake.snooze")}</button>
+        <Button type="button" className={quietButton} onClick={onClose}>{t("intake.cancel")}</Button>
+        <Button className={primaryButton} disabled={!till}>{t("intake.snooze")}</Button>
       </div>
     </form>
   </Modal>;
@@ -214,8 +215,8 @@ function AcceptModal({ action, projectId, onClose, onAccept }: { action: Call; p
         </select>
       </label>
       <div className="flex justify-end gap-2">
-        <button type="button" className={quietButton} onClick={onClose}>{t("intake.cancel")}</button>
-        <button className={primaryButton} disabled={!stateId}>{t("intake.accept")}</button>
+        <Button type="button" className={quietButton} onClick={onClose}>{t("intake.cancel")}</Button>
+        <Button className={primaryButton} disabled={!stateId}>{t("intake.accept")}</Button>
       </div>
     </form>
   </Modal>;
@@ -239,8 +240,8 @@ function DuplicateModal({ action, workspaceId, item, onClose, onPick }: { action
       </label>
       {failed && <p role="alert" className="m-0 text-13 text-danger-text">{t("intake.failed")}</p>}
       <div className="flex justify-end gap-2">
-        <button type="button" className={quietButton} onClick={onClose}>{t("intake.cancel")}</button>
-        <button className={primaryButton} disabled={!value.trim()}>{t("intake.markDuplicate")}</button>
+        <Button type="button" className={quietButton} onClick={onClose}>{t("intake.cancel")}</Button>
+        <Button className={primaryButton} disabled={!value.trim()}>{t("intake.markDuplicate")}</Button>
       </div>
     </form>
   </Modal>;
@@ -248,7 +249,7 @@ function DuplicateModal({ action, workspaceId, item, onClose, onPick }: { action
 
 function ListRow({ item, selected, onSelect }: { item: IntakeItem; selected: boolean; onSelect: () => void }) {
   return <li>
-    <button type="button" data-testid={`intake-${item.displayId}`} aria-current={selected ? "true" : undefined} onClick={onSelect}
+    <Button type="button" data-testid={`intake-${item.displayId}`} aria-current={selected ? "true" : undefined} onClick={onSelect}
       className={`grid w-full gap-2 rounded-lg border-0 bg-transparent px-4 py-3 text-left hover:bg-layer-transparent-hover ${selected ? "bg-layer-transparent-hover outline outline-1 -outline-offset-1 outline-accent-primary" : ""}`}>
       <span className="text-12 text-tertiary">{item.displayId}</span>
       <span className="truncate text-14 font-medium text-primary">{item.title}</span>
@@ -259,7 +260,7 @@ function ListRow({ item, selected, onSelect }: { item: IntakeItem; selected: boo
         <StatusBadge item={item} />
         <Avatar name={item.createdByName} id={item.createdBy} />
       </span>
-    </button>
+    </Button>
   </li>;
 }
 
@@ -351,23 +352,23 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
       <span className="text-16 font-medium text-secondary">{item.displayId}</span>
       <StatusBadge item={item} />
       <span className="ml-auto flex flex-wrap items-center gap-2">
-        <button type="button" className={iconButton} aria-label={t("intake.previous")} disabled={index <= 0} onClick={() => onMove(-1)}><ChevronUp aria-hidden size={16} /></button>
-        <button type="button" className={iconButton} aria-label={t("intake.next")} disabled={index >= count - 1} onClick={() => onMove(1)}><ChevronDown aria-hidden size={16} /></button>
+        <Button type="button" className={iconButton} aria-label={t("intake.previous")} disabled={index <= 0} onClick={() => onMove(-1)}><ChevronUp aria-hidden size={16} /></Button>
+        <Button type="button" className={iconButton} aria-label={t("intake.next")} disabled={index >= count - 1} onClick={() => onMove(1)}><ChevronDown aria-hidden size={16} /></Button>
         {canDecide && undecided && <>
-          <button type="button" className={quietButton} onClick={() => setDialog("accept")}>{t("intake.accept")}</button>
-          <button type="button" className={quietButton} onClick={() => void run("reject_intake_item", {})}>{t("intake.reject")}</button>
+          <Button type="button" className={quietButton} onClick={() => setDialog("accept")}>{t("intake.accept")}</Button>
+          <Button type="button" className={quietButton} onClick={() => void run("reject_intake_item", {})}>{t("intake.reject")}</Button>
         </>}
-        {canDecide && unsnoozed && <button type="button" className={quietButton} onClick={() => void run("unsnooze_intake_item", {})}>{t("intake.unsnooze")}</button>}
+        {canDecide && unsnoozed && <Button type="button" className={quietButton} onClick={() => void run("unsnooze_intake_item", {})}>{t("intake.unsnooze")}</Button>}
         <Popover label={t("intake.more")} align="right" className="size-9 justify-center border border-subtle bg-surface-1" trigger={<MoreHorizontal aria-hidden size={16} />}>
           {(close) => <>
             {canDecide && undecided && <>
-              <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setDialog("snooze"); }}><Clock aria-hidden size={14} />{t("intake.snooze")}</button>
-              <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setDialog("duplicate"); }}><Copy aria-hidden size={14} />{t("intake.markDuplicate")}</button>
+              <Button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setDialog("snooze"); }}><Clock aria-hidden size={14} />{t("intake.snooze")}</Button>
+              <Button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setDialog("duplicate"); }}><Copy aria-hidden size={14} />{t("intake.markDuplicate")}</Button>
             </>}
-            <button type="button" role="menuitem" className={menuItemClass} onClick={() => {
+            <Button type="button" role="menuitem" className={menuItemClass} onClick={() => {
               close();
               void navigator.clipboard?.writeText(location.href).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }, () => undefined);
-            }}>{copied ? <CopyCheck aria-hidden size={14} /> : <Copy aria-hidden size={14} />}{t("intake.copyLink")}</button>
+            }}>{copied ? <CopyCheck aria-hidden size={14} /> : <Copy aria-hidden size={14} />}{t("intake.copyLink")}</Button>
           </>}
         </Popover>
       </span>
@@ -380,7 +381,7 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
         <label className="grid gap-1 text-13 text-secondary">{t("workItems.assignees")}<select multiple aria-label={t("workItems.assignees")} value={assigneeIds} className={`${field} min-h-20`} onChange={(event) => changeDraft({ assigneeIds: [...event.currentTarget.selectedOptions].map((option) => option.value) })}>{people.map((person) => <option key={person.userId} value={person.userId} disabled={person.isAgent && person.hasAccess === false}>{person.name}{person.isAgent && person.hasAccess === false ? " (no access)" : ""}</option>)}</select></label>
         <div className="grid gap-1 text-13 text-secondary"><span>{t("workItems.labels")}</span><MultiSelect label={t("workItems.labels")} searchAlways selected={labelIds} summary={<span>{labelIds.length ? labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ") : t("workItems.noLabels")}</span>} options={labels.map((label) => ({ id: label.id, name: label.name }))} onToggle={(id, on) => changeDraft({ labelIds: on ? [...labelIds, id] : labelIds.filter((value) => value !== id) })} /></div>
         <label className="grid gap-1 text-13 text-secondary">{t("workItems.dueDate")}<input type="date" aria-label={t("workItems.dueDate")} value={dueDate} className={field} onChange={(event) => changeDraft({ dueDate: event.target.value || null })} /></label>
-        <div className="flex gap-2"><button type="button" className={primaryButton} disabled={saving || retryingImages || !title.trim()} onClick={() => void save()}>{saving ? t("intake.saving") : t("intake.save")}</button></div>
+        <div className="flex gap-2"><Button type="button" className={primaryButton} disabled={saving || retryingImages || !title.trim()} onClick={() => void save()}>{saving ? t("intake.saving") : t("intake.save")}</Button></div>
       </div> : <><h2 className="m-0 text-24 font-semibold text-primary">{item.title}</h2>
       {item.descriptionMarkdown ? <DescriptionEditor workspaceId={workspaceId} workItemId={item.workItemId} initial={markdownToDoc(item.descriptionMarkdown)} editable={false} onChange={() => undefined} /> : <p className="m-0 text-14 text-tertiary">{t("intake.noDescription")}</p>}</>}
       <dl className="m-0 grid max-w-md grid-cols-[8rem_1fr] items-center gap-x-3 gap-y-3 text-13">
@@ -399,7 +400,7 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
       <TimelinePanel workspaceId={workspaceId} workItemId={item.workItemId} projectId={projectId} selfId={selfId} canComment={item.outcome === "accepted" ? canDecide : true} linkBase={item.outcome === "accepted" ? paths.workItem(workspaceSlug, item.displayId) : paths.intake(workspaceSlug, projectKey)} action={action as never} actionResult={actionResult} onChange={onChanged} />
       {note && <p role="alert" className="m-0 text-13 text-danger-text">{note}</p>}
       <AttachmentsPanel workItemId={item.workItemId} canWrite={editable || (item.outcome === "accepted" && canDecide)} action={action} onChange={() => { void loadActivity(); onChanged(); }} showForm={editable} onCount={() => undefined} failedFiles={failedFiles} onFailedFilesChange={onFailedFilesChange} />
-      {editable && (pendingImages.files.length > 0 || pendingImages.assetIds.length > 0) && <div role="alert" className="grid gap-1 text-13 text-danger-text"><p className="m-0">{t("assets.uploadFailed")}</p><ul>{pendingImages.files.map((file, index) => <li key={`${file.name}-${index}`}>{file.name}</li>)}</ul><button type="button" className={quietButton} disabled={saving || retryingImages} onClick={() => void retryImages()}>{t("assets.retryFailed")}</button></div>}
+      {editable && (pendingImages.files.length > 0 || pendingImages.assetIds.length > 0) && <div role="alert" className="grid gap-1 text-13 text-danger-text"><p className="m-0">{t("assets.uploadFailed")}</p><ul>{pendingImages.files.map((file, index) => <li key={`${file.name}-${index}`}>{file.name}</li>)}</ul><Button type="button" className={quietButton} disabled={saving || retryingImages} onClick={() => void retryImages()}>{t("assets.retryFailed")}</Button></div>}
       <section aria-label={t("intake.activity")} className="grid gap-2 border-t border-subtle pt-3">
         <h3 className="m-0 text-14 font-medium text-primary">{t("intake.activity")}</h3>
         <ul className="m-0 grid list-none gap-2 !pl-0 text-13 text-secondary">{activity.filter((row) => row.field === "attachment_added" || row.field === "attachment_removed").map((row) => {
@@ -497,18 +498,18 @@ export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, 
     <div className="flex items-center gap-2">
       <Inbox aria-hidden size={18} className="text-secondary" />
       <h2 className="m-0 flex-1 text-16 font-semibold text-primary">{t("intake.title")}</h2>
-      {!emptyOpen && <button type="button" className={`${primaryButton} flex items-center gap-1.5`} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("intake.add")}</button>}
+      {!emptyOpen && <Button type="button" className={`${primaryButton} flex items-center gap-1.5`} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("intake.add")}</Button>}
     </div>
     <div className="flex min-h-[28rem] min-w-0 flex-col rounded-xl border border-subtle bg-surface-1 xl:h-[calc(100dvh-14rem)] xl:flex-row">
       <div className="flex w-full shrink-0 flex-col border-b border-subtle p-2 xl:w-[26rem] xl:border-b-0 xl:border-r">
         <div role="tablist" className="flex gap-2 border-b border-subtle px-2">
-          {(["open", "closed"] as const).map((value) => <button key={value} role="tab" type="button" aria-selected={tab === value} onClick={() => { if (value !== tab) select(null, value); }}
+          {(["open", "closed"] as const).map((value) => <Button key={value} role="tab" type="button" aria-selected={tab === value} onClick={() => { if (value !== tab) select(null, value); }}
             className={`flex items-center gap-1.5 rounded-md border-0 px-3 py-2.5 text-14 font-medium ${tab === value ? "bg-layer-1 text-accent-primary" : "bg-transparent text-secondary hover:bg-layer-transparent-hover hover:text-primary"}`}>
             {t(`intake.tab.${value}`)}
             {value === "open" && tab === "open" && items && <span data-testid="intake-open-count" className="rounded-full bg-accent-primary/20 px-1.5 py-0.5 text-11 font-semibold text-accent-primary">{items.length}</span>}
-          </button>)}
+          </Button>)}
         </div>
-        {loadFailed && <div role="alert" className="flex flex-wrap items-center gap-2 px-4 py-3 text-13 text-danger-text"><span>{t("intake.loadFailed")}</span><button type="button" className={quietButton} onClick={() => void load()}>{t("intake.retry")}</button></div>}
+        {loadFailed && <div role="alert" className="flex flex-wrap items-center gap-2 px-4 py-3 text-13 text-danger-text"><span>{t("intake.loadFailed")}</span><Button type="button" className={quietButton} onClick={() => void load()}>{t("intake.retry")}</Button></div>}
         <ul aria-label={t("intake.list")} className="m-0 min-h-0 flex-1 list-none overflow-auto p-0">
           {(items ?? []).map((item) => <ListRow key={item.id} item={item} selected={item.id === selectedId} onSelect={() => select(item.id)} />)}
         </ul>
@@ -517,7 +518,7 @@ export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, 
         onMove={(delta) => select(items![index + delta]!.id)} onDecided={afterDecision} onChanged={afterChange} onUpdated={() => { const { [current.id]: _removed, ...rest } = draftsRef.current; draftsRef.current = rest; setDrafts(rest); void load(); }} />
         : items?.length === 0
           ? <div className="grid min-w-0 flex-1 place-items-center">{tab === "open"
-            ? <EmptyState title={t("intake.empty")} description={t("intake.emptyHint")} action={<button type="button" className={`${primaryButton} flex items-center gap-1.5`} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("intake.add")}</button>} />
+            ? <EmptyState title={t("intake.empty")} description={t("intake.emptyHint")} action={<Button type="button" className={`${primaryButton} flex items-center gap-1.5`} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("intake.add")}</Button>} />
             : <EmptyState title={t("intake.emptyClosed")} description={t("intake.emptyClosedHint")} />}</div>
           : <div className="grid min-w-0 flex-1 place-items-center p-6 text-14 text-secondary">{t("intake.pick")}</div>}
     </div>

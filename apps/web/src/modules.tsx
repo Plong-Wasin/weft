@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { Link, useNavigate } from "react-router";
 import { Archive, ArchiveRestore, CalendarRange, ChevronRight, CircleUserRound, Ellipsis, LayoutGrid, List, Package, Pencil, Plus, Trash2, Users, X } from "lucide-react";
@@ -105,7 +106,7 @@ function ModuleFormModal({ action, projectId, workspaceId, module, onClose, onSa
     }}>
       <div className="flex items-center gap-2">
         <h2 className="m-0 flex-1 text-18 font-semibold text-primary">{title}</h2>
-        <button type="button" className={iconButton} aria-label={t("modules.close")} onClick={onClose}><X aria-hidden size={16} /></button>
+        <Button type="button" className={iconButton} aria-label={t("modules.close")} onClick={onClose}><X aria-hidden size={16} /></Button>
       </div>
       <input autoFocus required aria-label={t("modules.name")} placeholder={t("modules.name")} value={name} maxLength={255} className="w-full text-16" onChange={(event) => setName(event.target.value)} />
       <div className="grid gap-1 text-13 text-secondary"><span>{t("workItems.description")}</span><DescriptionEditor workspaceId={workspaceId} owner={module ? { ownerType: "module", ownerId: module.id } : undefined} mentionPeople={people} initial={description} editable onChange={setDescription} /></div>
@@ -124,8 +125,8 @@ function ModuleFormModal({ action, projectId, workspaceId, module, onClose, onSa
       </div>
       {note && <p role="alert" className="m-0 text-danger-text">{note}</p>}
       <div className="flex justify-end gap-2 border-t border-subtle pt-4">
-        <button type="button" className="secondary" onClick={onClose}>{t("modules.cancel")}</button>
-        <button type="submit" disabled={busy}>{t(module ? "modules.save" : "modules.create")}</button>
+        <Button type="button" className="secondary" onClick={onClose}>{t("modules.cancel")}</Button>
+        <Button type="submit" disabled={busy}>{t(module ? "modules.save" : "modules.create")}</Button>
       </div>
     </form>
   </Overlay>;
@@ -137,11 +138,11 @@ function ModuleMenu({ module, canWrite, canAdmin, onEdit, onArchive, onDelete }:
   const archivable = module.status === "completed" || module.status === "cancelled";
   return <Popover label={t("modules.actions")} align="right" className={iconButton} trigger={<Ellipsis aria-hidden size={16} />} panelClassName="w-52">
     {(close) => <>
-      {canWrite && !module.archived && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onEdit(); }}><Pencil aria-hidden size={14} />{t("modules.edit")}</button>}
+      {canWrite && !module.archived && <Button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onEdit(); }}><Pencil aria-hidden size={14} />{t("modules.edit")}</Button>}
       {canAdmin && (module.archived
-        ? <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onArchive(); }}><ArchiveRestore aria-hidden size={14} />{t("modules.unarchive")}</button>
-        : <button type="button" role="menuitem" className={`${menuItemClass} disabled:opacity-50`} disabled={!archivable} title={t("modules.archiveHint")} onClick={() => { close(); onArchive(); }}><Archive aria-hidden size={14} />{t("modules.archive")}</button>)}
-      {canAdmin && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onDelete(); }}><Trash2 aria-hidden size={14} />{t("modules.delete")}</button>}
+        ? <Button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onArchive(); }}><ArchiveRestore aria-hidden size={14} />{t("modules.unarchive")}</Button>
+        : <Button type="button" role="menuitem" className={`${menuItemClass} disabled:opacity-50`} disabled={!archivable} title={t("modules.archiveHint")} onClick={() => { close(); onArchive(); }}><Archive aria-hidden size={14} />{t("modules.archive")}</Button>)}
+      {canAdmin && <Button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onDelete(); }}><Trash2 aria-hidden size={14} />{t("modules.delete")}</Button>}
     </>}
   </Popover>;
 }
@@ -184,8 +185,8 @@ export function ModulesPage({ workspaceId, workspaceSlug, projectKey, projectId,
   const menu = (module: Module) => <ModuleMenu module={module} canWrite={canWrite} canAdmin={canAdmin} onEdit={() => setForm({ module })}
     onArchive={() => void run(module.archived ? "unarchive_module" : "archive_module", { moduleId: module.id })} onDelete={() => remove(module)} />;
   const leadOf = (module: Module) => people.find((person) => person.userId === module.leadId);
-  const toggle = (value: Display, icon: React.ReactNode) => <button type="button" aria-pressed={display === value} aria-label={t(`modules.display.${value}`)} title={t(`modules.display.${value}`)}
-    className={`${iconButton} ${display === value ? "bg-layer-transparent-selected text-primary" : ""}`} onClick={() => setDisplay(value)}>{icon}</button>;
+  const toggle = (value: Display, icon: React.ReactNode) => <Button type="button" aria-pressed={display === value} aria-label={t(`modules.display.${value}`)} title={t(`modules.display.${value}`)}
+    className={`${iconButton} ${display === value ? "bg-layer-transparent-selected text-primary" : ""}`} onClick={() => setDisplay(value)}>{icon}</Button>;
   return <section className="grid gap-4">
     <header className="flex flex-wrap items-center gap-3 border-b border-subtle pb-3">
       <nav aria-label={t("workItems.breadcrumb")} className="flex items-center gap-2 text-13 text-secondary">
@@ -195,7 +196,7 @@ export function ModulesPage({ workspaceId, workspaceSlug, projectKey, projectId,
       <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
         <label className="flex items-center gap-1.5 whitespace-nowrap text-13 text-secondary"><input type="checkbox" checked={archived} onChange={(event) => setArchived(event.target.checked)} />{t("modules.showArchived")}</label>
         <div role="group" aria-label={t("modules.display")} className="flex items-center gap-0.5 rounded-md bg-layer-1 p-0.5">{toggle("list", <List aria-hidden size={15} />)}{toggle("grid", <LayoutGrid aria-hidden size={15} />)}</div>
-        {canWrite && !archived && <button type="button" className={primaryButton} onClick={() => setForm({})}><Plus aria-hidden size={14} />{t("modules.addNew")}</button>}
+        {canWrite && !archived && <Button type="button" className={primaryButton} onClick={() => setForm({})}><Plus aria-hidden size={14} />{t("modules.addNew")}</Button>}
       </div>
     </header>
     <div className="flex flex-wrap items-center gap-2 rounded-xl border border-subtle bg-surface-1 p-3">
@@ -205,12 +206,12 @@ export function ModulesPage({ workspaceId, workspaceSlug, projectKey, projectId,
       <select aria-label={t("modules.memberFilter")} value={memberFilter} onChange={(event) => setMemberFilter(event.target.value)}><option value="">{t("modules.anyMember")}</option>{people.map((person) => <option key={person.userId} value={person.userId}>{person.name}</option>)}</select>
       <label className="flex items-center gap-1 text-12 text-secondary">{t("modules.dateFrom")}<input aria-label={t("modules.dateFrom")} type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /></label>
       <label className="flex items-center gap-1 text-12 text-secondary">{t("modules.dateTo")}<input aria-label={t("modules.dateTo")} type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /></label>
-      {(search || statusFilter || leadFilter || memberFilter || dateFrom || dateTo) && <button type="button" className={primaryButton} onClick={() => { setSearch(""); setStatusFilter(""); setLeadFilter(""); setMemberFilter(""); setDateFrom(""); setDateTo(""); }}>{t("modules.clearFilters")}</button>}
+      {(search || statusFilter || leadFilter || memberFilter || dateFrom || dateTo) && <Button type="button" className={primaryButton} onClick={() => { setSearch(""); setStatusFilter(""); setLeadFilter(""); setMemberFilter(""); setDateFrom(""); setDateTo(""); }}>{t("modules.clearFilters")}</Button>}
     </div>
     {note && <p role="alert" className="m-0 px-4 py-2 text-danger-text">{note}</p>}
     {modules?.length === 0 && (archived || search || statusFilter || leadFilter || memberFilter || dateFrom || dateTo
       ? <EmptyState title={search || statusFilter || leadFilter || memberFilter || dateFrom || dateTo ? t("modules.noMatches") : t("modules.empty")} />
-      : <EmptyState title={t("modules.empty")} description={t("modules.emptyHint")} action={canWrite ? <button type="button" className={primaryButton} onClick={() => setForm({})}><Plus aria-hidden size={14} />{t("modules.createFirst")}</button> : undefined} />)}
+      : <EmptyState title={t("modules.empty")} description={t("modules.emptyHint")} action={canWrite ? <Button type="button" className={primaryButton} onClick={() => setForm({})}><Plus aria-hidden size={14} />{t("modules.createFirst")}</Button> : undefined} />)}
     {display === "list"
       ? <ul aria-label={t("modules.title")} className="m-0 grid list-none gap-1 rounded-xl border border-subtle bg-surface-1 p-1 empty:hidden">{(modules ?? []).map((module) => <li key={module.id} data-testid={`module-row-${module.name}`} className="flex flex-wrap items-center gap-3 rounded-lg px-4 py-3 transition-colors hover:bg-layer-transparent-hover">
         <ProgressRing percent={module.progress.percent} />
@@ -248,7 +249,7 @@ function AddItemsModal({ candidates, onAdd, onClose }: { candidates: Item[]; onA
     <div className="grid gap-3 p-5">
       <div className="flex items-center gap-2">
         <h2 className="m-0 flex-1 text-18 font-semibold text-primary">{t("modules.addItemsTitle")}</h2>
-        <button type="button" className={iconButton} aria-label={t("modules.close")} onClick={onClose}><X aria-hidden size={16} /></button>
+        <Button type="button" className={iconButton} aria-label={t("modules.close")} onClick={onClose}><X aria-hidden size={16} /></Button>
       </div>
       <input autoFocus type="search" aria-label={t("modules.searchItems")} placeholder={t("modules.searchItems")} value={query} className="w-full text-14" onChange={(event) => setQuery(event.target.value)} />
       {candidates.length === 0 && <p className="m-0 text-13 text-secondary">{t("modules.noneToAdd")}</p>}
@@ -259,8 +260,8 @@ function AddItemsModal({ candidates, onAdd, onClose }: { candidates: Item[]; onA
         </label>
       </li>)}</ul>
       <div className="flex justify-end gap-2 border-t border-subtle pt-4">
-        <button type="button" className="secondary" onClick={onClose}>{t("modules.cancel")}</button>
-        <button type="button" disabled={selected.length === 0} onClick={async () => { await onAdd(selected); onClose(); }}>{t("modules.add")}</button>
+        <Button type="button" className="secondary" onClick={onClose}>{t("modules.cancel")}</Button>
+        <Button type="button" disabled={selected.length === 0} onClick={async () => { await onAdd(selected); onClose(); }}>{t("modules.add")}</Button>
       </div>
     </div>
   </Overlay>;
@@ -318,7 +319,7 @@ export function ModuleDetailPage({ workspaceId, workspaceSlug, projectKey, proje
       </nav>
       <div className="ml-auto flex items-center gap-2">
         <DetailsPanelToggle open={detailsPanel.open} onToggle={detailsPanel.toggle} panelId="module-details-panel" />
-        {editable && <button type="button" className={primaryButton} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("modules.addWorkItems")}</button>}
+        {editable && <Button type="button" className={primaryButton} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("modules.addWorkItems")}</Button>}
         <ModuleMenu module={module} canWrite={canWrite} canAdmin={canAdmin} onEdit={() => setEditing(true)}
           onArchive={() => void run(module.archived ? "unarchive_module" : "archive_module", { moduleId })}
           onDelete={async () => {
@@ -333,7 +334,7 @@ export function ModuleDetailPage({ workspaceId, workspaceSlug, projectKey, proje
       <div className="min-w-0 flex-1 overflow-x-auto p-4">
         <h2 className="sr-only">{t("modules.workItems")}</h2>
         <WorkItemLayouts projectId={projectId} workspaceSlug={workspaceSlug} action={action} run={runQuery} refreshKey={refreshKey} moduleId={moduleId}
-          rowAction={editable ? (item) => <button className="whitespace-nowrap rounded-md border border-subtle bg-surface-1 px-2 py-1 text-12 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={() => void run("remove_module_items", { moduleId, workItemIds: [item.id] })}>{t("modules.remove")}</button> : undefined} />
+          rowAction={editable ? (item) => <Button className="whitespace-nowrap rounded-md border border-subtle bg-surface-1 px-2 py-1 text-12 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={() => void run("remove_module_items", { moduleId, workItemIds: [item.id] })}>{t("modules.remove")}</Button> : undefined} />
       </div>
       <aside id="module-details-panel" aria-label={t("modules.properties")} className={`grid content-start gap-3 rounded-xl border border-subtle bg-surface-1 p-4 sm:p-5 lg:w-80 lg:shrink-0 ${detailsPanel.open ? "" : "lg:hidden"}`}>
         <section className="grid gap-2" aria-label={t("workItems.description")}><h3 className="m-0 text-14 font-semibold">{t("workItems.description")}</h3><EntityDescription key={module.id} action={action} workspaceId={workspaceId} owner={{ ownerType: "module", ownerId: module.id }} mentionPeople={people} initial={module.description ?? null} editable={editable} /></section>

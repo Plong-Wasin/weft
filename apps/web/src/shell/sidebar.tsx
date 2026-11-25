@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import { useIntegrationsEnabled } from "../integrations-flag";
 import { AiOnly } from "../ai-flag";
 import { adminState } from "../admin-state";
@@ -65,14 +66,14 @@ function ProjectEntry({ workspace, project, current, starred, expanded, canMoveU
     onDragEnd={() => { drag.current = null; }}>
     <div className="inset-row-hover flex items-center gap-0.5 rounded-lg">
       <span aria-hidden title={translate("sidebar.dragHandle")} className="flex shrink-0 cursor-grab items-center px-0.5 text-tertiary max-md:hidden"><GripVertical size={14} /></span>
-      <button type="button" aria-pressed={starred} aria-label={`${starLabel}: ${project.name}`} title={starLabel} onClick={() => reorder.star(project.id, !starred)} className="shrink-0 bg-transparent p-1 text-tertiary hover:bg-transparent hover:text-primary">
+      <Button type="button" aria-pressed={starred} aria-label={`${starLabel}: ${project.name}`} title={starLabel} onClick={() => reorder.star(project.id, !starred)} className="shrink-0 bg-transparent p-1 text-tertiary hover:bg-transparent hover:text-primary">
         <Star aria-hidden size={14} className={starred ? "text-accent-primary" : undefined} fill={starred ? "currentColor" : "none"} />
-      </button>
-      <button type="button" data-project-toggle={project.id} aria-expanded={expanded} aria-label={`${translate("sidebar.toggleProject")}: ${project.name}`} title={translate("sidebar.reorderHint")} onKeyDown={onKeyDown} onClick={() => reorder.expand(project.id, !expanded)}
+      </Button>
+      <Button type="button" data-project-toggle={project.id} aria-expanded={expanded} aria-label={`${translate("sidebar.toggleProject")}: ${project.name}`} title={translate("sidebar.reorderHint")} onKeyDown={onKeyDown} onClick={() => reorder.expand(project.id, !expanded)}
         className="flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-lg bg-transparent px-1 py-1.5 text-left text-14 font-medium text-primary hover:bg-transparent max-md:min-h-11">
         <Folder aria-hidden size={14} className="shrink-0 text-secondary" /><span className="flex-1 truncate">{project.name}</span>
         <ChevronRight aria-hidden size={14} className={`shrink-0 text-tertiary transition-transform ${expanded ? "rotate-90" : ""}`} />
-      </button>
+      </Button>
       <Popover label={`${translate("sidebar.projectOptions")}: ${project.name}`} align="right" panelClassName="!min-w-44" trigger={<MoreHorizontal aria-hidden size={14} />} className="!p-1 text-tertiary">
         {(close) => <>
           <MenuItem icon={Settings} onClick={() => { close(); navigate(paths.projectSettings(workspace.slug, project.key)); }}>{translate("projects.settingsTitle")}</MenuItem>
@@ -140,7 +141,7 @@ function ProjectGroups({ workspace, projects, prefs, projectKey, reorder, drag, 
       <NavLink to={paths.projects(workspace.slug)} end aria-label={translate("sidebar.allProjects")} title={translate("sidebar.allProjects")} className="mt-2 rounded-md p-1 text-secondary hover:bg-layer-transparent-hover"><Plus aria-hidden size={14} /></NavLink></div>
     <ul aria-label={translate("projects.title")} className="grid gap-0.5">{others.map((project) => entry(project, false))}</ul>
     {query.trim() && starred.length + others.length === 0 && <p role="status" className="m-0 px-2.5 py-2 text-12 text-secondary">{translate("projects.noSearchResults")}</p>}
-    {prefs.some((pref) => pref.position !== null) && <button type="button" title={translate("sidebar.resetOrderTip")} onClick={() => void reorder.reset()} className="mx-2.5 mt-1 justify-self-start bg-transparent px-0 py-1 text-12 font-medium text-secondary hover:bg-transparent hover:text-primary">{translate("sidebar.resetOrder")}</button>}
+    {prefs.some((pref) => pref.position !== null) && <Button type="button" title={translate("sidebar.resetOrderTip")} onClick={() => void reorder.reset()} className="mx-2.5 mt-1 justify-self-start bg-transparent px-0 py-1 text-12 font-medium text-secondary hover:bg-transparent hover:text-primary">{translate("sidebar.resetOrder")}</Button>}
   </>;
 }
 

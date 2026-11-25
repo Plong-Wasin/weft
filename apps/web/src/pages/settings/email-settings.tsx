@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { translate, type MessageKey } from "@weft/shared";
 import { action, api } from "../../api";
@@ -62,7 +63,7 @@ export function AccountNotificationsPage() {
           {prefs.emailVerified
             ? <span className="text-13 text-secondary">{translate("email.confirmed")}</span>
             : <span className="text-13 text-secondary">{translate("email.unconfirmed")}</span>}
-          {!prefs.emailVerified && emailEnabled && <button type="button" className="h-8 rounded-md border border-strong px-3 text-13 font-medium text-primary hover:bg-layer-transparent-hover" onClick={() => void sendConfirmation()}>{translate("email.sendConfirmation")}</button>}
+          {!prefs.emailVerified && emailEnabled && <Button type="button" className="h-8 rounded-md border border-strong px-3 text-13 font-medium text-primary hover:bg-layer-transparent-hover" onClick={() => void sendConfirmation()}>{translate("email.sendConfirmation")}</Button>}
         </Row>
       </RowList>
     </SettingsBlock>
@@ -77,7 +78,7 @@ export function AccountNotificationsPage() {
     </SettingsBlock>
     <SettingsBlock>
       <div className="grid gap-1">
-        <div><button type="button" className="h-9 rounded-md border border-strong px-3 text-14 font-medium text-primary hover:bg-layer-transparent-hover disabled:opacity-50" disabled={prefs.kinds.length === 0} onClick={() => void save([])}>{translate("email.turnOffAll")}</button></div>
+        <div><Button type="button" className="h-9 rounded-md border border-strong px-3 text-14 font-medium text-primary hover:bg-layer-transparent-hover disabled:opacity-50" disabled={prefs.kinds.length === 0} onClick={() => void save([])}>{translate("email.turnOffAll")}</Button></div>
         <p className="m-0 text-13 text-secondary">{translate("email.turnOffHelp")}</p>
       </div>
       <Note note={note} error={noteError} />

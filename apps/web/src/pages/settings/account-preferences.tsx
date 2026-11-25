@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { translate } from "@weft/shared";
@@ -32,7 +33,7 @@ function AiPreferencesForm() {
     <SettingsHeader title={translate("accountPrefs.title")} description={translate("accountPrefs.description")} />
     {data === null && <div className="flex flex-wrap items-center gap-2">
       <Note note={translate("accountPrefs.loadFailed")} error />
-      <button type="button" className="secondary" disabled={isFetching} onClick={() => void refetch()}>{translate("account.retry")}</button>
+      <Button type="button" className="secondary" disabled={isFetching} onClick={() => void refetch()}>{translate("account.retry")}</Button>
     </div>}
     {data === undefined && <p role="status" className="text-13 text-secondary">{translate("account.loading")}</p>}
     {data && <SettingsBlock>

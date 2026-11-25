@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { Plus } from "lucide-react";
 import { translate } from "@weft/shared";
@@ -16,7 +17,7 @@ export function ProjectWorkItems() {
   const canWrite = project.role !== "Guest";
   return <section className="grid gap-3">
     {canWrite && !project.archived && <div className="flex justify-end">
-      <button type="button" className="flex items-center gap-1.5" onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{translate("workItems.addNew")}</button>
+      <Button type="button" className="flex items-center gap-1.5" onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{translate("workItems.addNew")}</Button>
     </div>}
     <WorkItemLayouts projectId={project.id} workspaceSlug={workspace.slug} action={action} run={actionResult} refreshKey={refreshKey} cyclesEnabled={project.features.cycles} modulesEnabled={project.features.modules} typesEnabled={project.features.types} canWrite={canWrite} canCreate onAddItem={() => setCreating(true)}
       toolbarExtra={(params) => canWrite && !project.archived ? <SaveAsViewButton params={params} project={project} workspaceSlug={workspace.slug} /> : null} />

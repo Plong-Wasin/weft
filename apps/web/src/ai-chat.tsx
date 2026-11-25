@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import { action, api } from "./api";
 import React from "react";
 import { useChat } from "@ai-sdk/react";
@@ -75,8 +76,8 @@ function ResultCard({ card, diff, project, selectable, selected, onSelect, onDec
       </div>
       {card.status !== "pending" && <span aria-hidden className={`shrink-0 rounded-full px-2 py-0.5 text-12 font-medium ${badgeTone[card.status]}`}>{translate(`ai.proposal.status.${card.status}`)}</span>}
       {pending && onDecide && <span className="flex shrink-0 gap-2">
-        <button type="button" disabled={busy} aria-label={`${translate("ai.confirm.confirm")}: ${title}`} onClick={() => onDecide("confirm")} className="rounded-md bg-accent-primary px-3 py-1 text-13 font-medium text-white hover:bg-accent-primary-hover disabled:opacity-60">{translate("ai.confirm.confirm")}</button>
-        <button type="button" disabled={busy} aria-label={`${translate("ai.confirm.reject")}: ${title}`} onClick={() => onDecide("reject")} className="secondary rounded-md border border-strong bg-transparent px-3 py-1 text-13 font-medium text-primary hover:bg-layer-transparent-hover disabled:opacity-60">{translate("ai.confirm.reject")}</button>
+        <Button type="button" disabled={busy} aria-label={`${translate("ai.confirm.confirm")}: ${title}`} onClick={() => onDecide("confirm")} className="rounded-md bg-accent-primary px-3 py-1 text-13 font-medium text-white hover:bg-accent-primary-hover disabled:opacity-60">{translate("ai.confirm.confirm")}</Button>
+        <Button type="button" disabled={busy} aria-label={`${translate("ai.confirm.reject")}: ${title}`} onClick={() => onDecide("reject")} className="secondary rounded-md border border-strong bg-transparent px-3 py-1 text-13 font-medium text-primary hover:bg-layer-transparent-hover disabled:opacity-60">{translate("ai.confirm.reject")}</Button>
       </span>}
     </div>
     {diff && diff.length > 0 && <div role="alert" className="mt-2 text-13 text-danger-primary">
@@ -140,8 +141,8 @@ export function ProposalSet({ ids, refreshKey, onResolved, workspaceId }: { ids:
       <p className="text-14 font-semibold text-primary">{translate("ai.awaiting")}</p>
       <p className="mb-2 text-14 text-secondary">{translate("ai.confirmPrompt")}</p>
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" disabled={busy || chosen.length === 0} onClick={() => void decide(chosen, "confirm")} className="rounded-md bg-accent-primary px-3 py-1 text-14 font-medium text-white hover:bg-accent-primary-hover disabled:opacity-60">{translate(acknowledged ? "ai.confirm.anyway" : several ? "ai.confirmSelected" : "ai.confirmAll")}{several && !acknowledged ? ` (${chosen.length}/${pending.length})` : ""}</button>
-        <button type="button" disabled={busy || chosen.length === 0} onClick={() => void decide(chosen, "reject")} className="secondary rounded-md border border-strong bg-transparent px-3 py-1 text-14 font-medium text-primary hover:bg-layer-transparent-hover disabled:opacity-60">{translate(several ? "ai.rejectSelected" : "ai.rejectAll")}</button>
+        <Button type="button" disabled={busy || chosen.length === 0} onClick={() => void decide(chosen, "confirm")} className="rounded-md bg-accent-primary px-3 py-1 text-14 font-medium text-white hover:bg-accent-primary-hover disabled:opacity-60">{translate(acknowledged ? "ai.confirm.anyway" : several ? "ai.confirmSelected" : "ai.confirmAll")}{several && !acknowledged ? ` (${chosen.length}/${pending.length})` : ""}</Button>
+        <Button type="button" disabled={busy || chosen.length === 0} onClick={() => void decide(chosen, "reject")} className="secondary rounded-md border border-strong bg-transparent px-3 py-1 text-14 font-medium text-primary hover:bg-layer-transparent-hover disabled:opacity-60">{translate(several ? "ai.rejectSelected" : "ai.rejectAll")}</Button>
         <small className="text-tertiary">{translate("ai.confirm.expires")} {formatDate(soonest!)}</small>
       </div>
     </div>}
@@ -169,11 +170,11 @@ function AnswerActions({ text, workspace, onRegenerate }: { text: string; worksp
     navigate(paths.wikiPage(workspace.slug, page.id));
   }
   return <div className="flex items-center gap-0.5">
-    <button type="button" className={iconButton} aria-label={translate("ai.copy")} title={translate("ai.copy")} onClick={() => { void navigator.clipboard?.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }); }}>{copied ? <Check aria-hidden size={14} /> : <Copy aria-hidden size={14} />}</button>
-    <button type="button" className={iconButton} aria-pressed={rating === "up"} aria-label={translate("ai.thumbUp")} title={translate("ai.thumbUp")} onClick={() => setRating(rating === "up" ? null : "up")}><ThumbsUp aria-hidden size={14} className={rating === "up" ? "text-accent-primary" : ""} /></button>
-    <button type="button" className={iconButton} aria-pressed={rating === "down"} aria-label={translate("ai.thumbDown")} title={translate("ai.thumbDown")} onClick={() => setRating(rating === "down" ? null : "down")}><ThumbsDown aria-hidden size={14} className={rating === "down" ? "text-accent-primary" : ""} /></button>
-    {onRegenerate && <button type="button" className={iconButton} aria-label={translate("ai.regenerate")} title={translate("ai.regenerate")} onClick={onRegenerate}><RefreshCw aria-hidden size={14} /></button>}
-    <button type="button" disabled={converted === "busy"} className={iconButton} aria-label={translate("ai.convert")} title={translate("ai.convert")} onClick={() => void convert()}><FilePlus aria-hidden size={14} /></button>
+    <Button type="button" className={iconButton} aria-label={translate("ai.copy")} title={translate("ai.copy")} onClick={() => { void navigator.clipboard?.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }); }}>{copied ? <Check aria-hidden size={14} /> : <Copy aria-hidden size={14} />}</Button>
+    <Button type="button" className={iconButton} aria-pressed={rating === "up"} aria-label={translate("ai.thumbUp")} title={translate("ai.thumbUp")} onClick={() => setRating(rating === "up" ? null : "up")}><ThumbsUp aria-hidden size={14} className={rating === "up" ? "text-accent-primary" : ""} /></Button>
+    <Button type="button" className={iconButton} aria-pressed={rating === "down"} aria-label={translate("ai.thumbDown")} title={translate("ai.thumbDown")} onClick={() => setRating(rating === "down" ? null : "down")}><ThumbsDown aria-hidden size={14} className={rating === "down" ? "text-accent-primary" : ""} /></Button>
+    {onRegenerate && <Button type="button" className={iconButton} aria-label={translate("ai.regenerate")} title={translate("ai.regenerate")} onClick={onRegenerate}><RefreshCw aria-hidden size={14} /></Button>}
+    <Button type="button" disabled={converted === "busy"} className={iconButton} aria-label={translate("ai.convert")} title={translate("ai.convert")} onClick={() => void convert()}><FilePlus aria-hidden size={14} /></Button>
     {converted === "failed" && <span role="alert" className="ml-2 text-12 text-danger-primary">{translate("ai.convertFailed")}</span>}
   </div>;
 }
@@ -324,7 +325,7 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
         {messages.length === 0 && <li className="grid gap-2 py-6">
           <p className="m-0 text-14 font-medium text-secondary">{translate("ai.suggest.heading")}</p>
           <ul className="m-0 grid list-none gap-2 p-0 sm:grid-cols-2">
-            {([1, 2, 3, 4] as const).map((n) => <li key={n}><button type="button" onClick={() => { setInput(translate(`ai.suggest.${n}`)); composerRef.current?.focus(); }} className="w-full rounded-lg border border-subtle bg-surface-1 px-3 py-2 text-left text-14 text-primary hover:bg-layer-transparent-hover">{translate(`ai.suggest.${n}`)}</button></li>)}
+            {([1, 2, 3, 4] as const).map((n) => <li key={n}><Button type="button" onClick={() => { setInput(translate(`ai.suggest.${n}`)); composerRef.current?.focus(); }} className="w-full rounded-lg border border-subtle bg-surface-1 px-3 py-2 text-left text-14 text-primary hover:bg-layer-transparent-hover">{translate(`ai.suggest.${n}`)}</Button></li>)}
           </ul>
         </li>}
         {messages.map((message, index) => {
@@ -359,8 +360,8 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
       <form ref={composerForm} onSubmit={(event) => { event.preventDefault(); const text = input.trim(); if (!text || busy) return; setInput(""); send(text); }} className="card-surface rounded-2xl p-3 shadow-sm sm:p-4">
         <span title={translate("ai.contextHint")} className="mb-2 flex w-fit max-w-full items-center gap-1.5 truncate rounded-md border border-subtle px-2 py-1 text-14 text-primary"><span className="sr-only">{translate("ai.contextPill")}: </span>{pill}</span>
         <label className="sr-only" htmlFor={`composer-${chatId}`}>{translate("ai.message")}</label>
-        {selectedSkill && <button type="button" onClick={() => setSelectedSkill(null)} className="mb-2 inline-flex rounded-md border border-subtle px-2 py-1 text-13 text-primary">/{selectedSkill.name} · {translate(selectedSkill.scope === "personal" ? "skills.personal" : "skills.workspace")} ×</button>}
-        {skillPickerOpen && <div role="listbox" aria-label={translate("skills.picker")} className="mb-2 max-h-44 overflow-auto rounded-md border border-subtle bg-surface-1">{matchingSkills.map((skill) => <button key={skill.id} type="button" role="option" onClick={() => pickSkill(skill)} className="flex w-full items-center justify-between px-3 py-2 text-left text-14 hover:bg-layer-1"><span>/{skill.name}</span><span className="text-12 text-tertiary">{translate(skill.scope === "personal" ? "skills.personal" : "skills.workspace")}</span></button>)}{matchingSkills.length === 0 && <p className="px-3 py-2 text-13 text-tertiary">{translate("skills.empty")}</p>}</div>}
+        {selectedSkill && <Button type="button" onClick={() => setSelectedSkill(null)} className="mb-2 inline-flex rounded-md border border-subtle px-2 py-1 text-13 text-primary">/{selectedSkill.name} · {translate(selectedSkill.scope === "personal" ? "skills.personal" : "skills.workspace")} ×</Button>}
+        {skillPickerOpen && <div role="listbox" aria-label={translate("skills.picker")} className="mb-2 max-h-44 overflow-auto rounded-md border border-subtle bg-surface-1">{matchingSkills.map((skill) => <Button key={skill.id} type="button" role="option" onClick={() => pickSkill(skill)} className="flex w-full items-center justify-between px-3 py-2 text-left text-14 hover:bg-layer-1"><span>/{skill.name}</span><span className="text-12 text-tertiary">{translate(skill.scope === "personal" ? "skills.personal" : "skills.workspace")}</span></Button>)}{matchingSkills.length === 0 && <p className="px-3 py-2 text-13 text-tertiary">{translate("skills.empty")}</p>}</div>}
         <textarea ref={composerRef} id={`composer-${chatId}`} value={input} placeholder={translate("ai.placeholder")} rows={2} onChange={(event) => setInput(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Escape" && skillPickerOpen) { event.preventDefault(); setDismissedSkillInput(input); return; }
@@ -379,9 +380,9 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
               <option value="build">{translate("ai.mode.build")}</option>
               {canAutopilot && <option value="autopilot">{translate("ai.mode.autopilot")}</option>}
             </select>
-            {canSearchWeb && <button type="button" aria-pressed={webSearch} aria-label={translate("ai.webSearch")} title={translate(webSearch ? "ai.webSearch.on" : "ai.webSearch.off")} onClick={() => setWebSearch(!webSearch)} className={`inline-flex size-8 items-center justify-center rounded-lg border p-0 ${webSearch ? "border-accent-primary bg-accent-primary/10 text-accent-primary" : "border-subtle bg-surface-1 text-secondary"}`}><Globe aria-hidden size={16} /></button>}
+            {canSearchWeb && <Button type="button" aria-pressed={webSearch} aria-label={translate("ai.webSearch")} title={translate(webSearch ? "ai.webSearch.on" : "ai.webSearch.off")} onClick={() => setWebSearch(!webSearch)} className={`inline-flex size-8 items-center justify-center rounded-lg border p-0 ${webSearch ? "border-accent-primary bg-accent-primary/10 text-accent-primary" : "border-subtle bg-surface-1 text-secondary"}`}><Globe aria-hidden size={16} /></Button>}
           </div>
-          <button type="submit" aria-label={translate("ai.send")} title={translate("ai.send")} disabled={busy || input.trim() === ""} className="inline-flex size-8 items-center justify-center rounded-lg border-0 bg-accent-primary p-0 text-white hover:bg-accent-primary-hover disabled:opacity-50"><ArrowUp aria-hidden size={16} /></button>
+          <Button type="submit" aria-label={translate("ai.send")} title={translate("ai.send")} disabled={busy || input.trim() === ""} className="inline-flex size-8 items-center justify-center rounded-lg border-0 bg-accent-primary p-0 text-white hover:bg-accent-primary-hover disabled:opacity-50"><ArrowUp aria-hidden size={16} /></Button>
         </div>
       </form>
       <p className="py-2 text-center text-12 text-tertiary">{translate("ai.disclaimer")}</p>
@@ -415,7 +416,7 @@ export function AiSidebar({ workspace, activeId }: { workspace: Workspace; activ
   return <div className="flex min-h-0 flex-col gap-2">
     <div className="flex items-center gap-2">
       <Link to={paths.ai(workspace.slug)} className="flex flex-1 items-center gap-2 rounded-md border border-subtle bg-surface-1 px-3 py-1.5 text-14 text-primary hover:bg-layer-transparent-hover"><Pencil aria-hidden size={14} />{translate("ai.new")}</Link>
-      <button type="button" aria-label={translate("ai.search")} title={translate("ai.search")} aria-pressed={searching} onClick={() => { setSearching(!searching); setQuery(""); }} className="inline-flex size-8 items-center justify-center rounded-md border border-subtle bg-surface-1 p-0 text-secondary hover:bg-layer-transparent-hover"><SearchIcon /></button>
+      <Button type="button" aria-label={translate("ai.search")} title={translate("ai.search")} aria-pressed={searching} onClick={() => { setSearching(!searching); setQuery(""); }} className="inline-flex size-8 items-center justify-center rounded-md border border-subtle bg-surface-1 p-0 text-secondary hover:bg-layer-transparent-hover"><SearchIcon /></Button>
     </div>
     {searching && <input type="search" autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder={translate("ai.searchPlaceholder")} aria-label={translate("ai.search")} className="rounded-md border border-subtle bg-surface-1 px-2.5 py-1.5 text-14 text-primary" />}
     <nav aria-label={translate("ai.recents")} className="min-h-0 overflow-y-auto overflow-x-hidden">
@@ -426,18 +427,18 @@ export function AiSidebar({ workspace, activeId }: { workspace: Workspace; activ
           {renaming?.id === chat.id
             ? <form className="flex w-full min-w-0 items-center gap-1 p-1" onSubmit={(event) => { event.preventDefault(); void saveRename(); }}>
               <input autoFocus value={renaming.title} onChange={(event) => setRenaming({ id: chat.id, title: event.target.value })} aria-label={translate("ai.rename")} className="min-w-0 flex-1 basis-0 rounded border border-subtle bg-surface-1 px-1.5 py-0.5 text-14" />
-              <button type="submit" className="shrink-0 rounded !bg-transparent !px-1 !py-0.5 text-13 !text-accent-primary hover:!bg-layer-transparent-hover">{translate("ai.renameSave")}</button>
-              <button type="button" onClick={() => setRenaming(null)} className="shrink-0 rounded !border-0 !bg-transparent !px-1 !py-0.5 text-13 !text-accent-primary hover:!bg-layer-transparent-hover">{translate("ai.cancel")}</button>
+              <Button type="submit" className="shrink-0 rounded !bg-transparent !px-1 !py-0.5 text-13 !text-accent-primary hover:!bg-layer-transparent-hover">{translate("ai.renameSave")}</Button>
+              <Button type="button" onClick={() => setRenaming(null)} className="shrink-0 rounded !border-0 !bg-transparent !px-1 !py-0.5 text-13 !text-accent-primary hover:!bg-layer-transparent-hover">{translate("ai.cancel")}</Button>
             </form>
             : deleting === chat.id
               ? <div className="flex items-center gap-1 px-2 py-1.5 text-13"><span className="flex-1 truncate">{translate("ai.deleteConfirm")}</span>
-                <button type="button" onClick={() => void remove(chat.id)} className="rounded bg-danger-primary px-1.5 py-0.5 text-13 text-white">{translate("ai.deleteYes")}</button>
-                <button type="button" onClick={() => setDeleting(null)} className="secondary rounded px-1.5 py-0.5 text-13">{translate("ai.cancel")}</button></div>
+                <Button type="button" onClick={() => void remove(chat.id)} className="rounded bg-danger-primary px-1.5 py-0.5 text-13 text-white">{translate("ai.deleteYes")}</Button>
+                <Button type="button" onClick={() => setDeleting(null)} className="secondary rounded px-1.5 py-0.5 text-13">{translate("ai.cancel")}</Button></div>
               : <div className="flex items-center">
                 <Link to={paths.aiChat(workspace.slug, chat.id)} title={chat.title} aria-current={chat.id === activeId ? "page" : undefined} className="min-w-0 flex-1 truncate px-2.5 py-1.5 text-14 text-primary">{chat.title}</Link>
                 <span className="flex pr-1 opacity-0 focus-within:opacity-100 group-hover:opacity-100 max-md:opacity-100">
-                  <button type="button" className={iconButton} aria-label={`${translate("ai.rename")}: ${chat.title}`} onClick={() => setRenaming({ id: chat.id, title: chat.title })}><Pencil aria-hidden size={13} /></button>
-                  <button type="button" className={iconButton} aria-label={`${translate("ai.delete")}: ${chat.title}`} onClick={() => setDeleting(chat.id)}><Trash2 aria-hidden size={13} /></button>
+                  <Button type="button" className={iconButton} aria-label={`${translate("ai.rename")}: ${chat.title}`} onClick={() => setRenaming({ id: chat.id, title: chat.title })}><Pencil aria-hidden size={13} /></Button>
+                  <Button type="button" className={iconButton} aria-label={`${translate("ai.delete")}: ${chat.title}`} onClick={() => setDeleting(chat.id)}><Trash2 aria-hidden size={13} /></Button>
                 </span></div>}
         </li>)}</ul>}
     </nav>

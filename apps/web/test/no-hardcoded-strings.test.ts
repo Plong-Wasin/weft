@@ -9,7 +9,7 @@ test("web source has no literal user-facing text in JSX or accessible attributes
   const offenders: string[] = [];
   for (const name of files.filter((file) => file.endsWith(".tsx"))) {
     readFileSync(join(dir, name), "utf8").split("\n").forEach((line, index) => {
-      const jsxText = /<(?:h\d|p|small|strong|label|button|legend|span|li|a|option|summary|th|td)\b[^>]*>([^<>{}]*[A-Za-z฀-๿]{2,}[^<>{}]*)</.test(line);
+      const jsxText = /<(?:h\d|p|small|strong|label|button|Button|legend|span|li|a|option|summary|th|td)\b[^>]*>([^<>{}]*[A-Za-z฀-๿]{2,}[^<>{}]*)</.test(line);
       const attribute = /\b(?:placeholder|title|alt|aria-label|aria-description)="[^"{]*[A-Za-z]/.test(line);
       if (jsxText || attribute) offenders.push(`${name}:${index + 1}: ${line.trim().slice(0, 100)}`);
     });

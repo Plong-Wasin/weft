@@ -52,7 +52,7 @@ export function Shell({ current, workspace, signOut, refresh }: { current: Curre
       </div>
       {drawer && <div className="fixed inset-0 z-40 md:hidden">
         <button type="button" aria-label={translate("shell.closeMenu")} onClick={() => setDrawer(false)} className="absolute inset-0 rounded-none bg-backdrop p-0 hover:bg-backdrop" />
-        <aside role="dialog" aria-label={translate("shell.sidebar")} className="absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col rounded-r-2xl border-r border-subtle bg-surface-1 shadow-menu">
+        <aside role="dialog" aria-label={translate("shell.sidebar")} className="absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col rounded-r-2xl border-r border-subtle bg-surface-1 shadow-lg">
           <div className="flex items-center justify-end p-2"><button type="button" aria-label={translate("shell.closeMenu")} onClick={() => setDrawer(false)} className="min-h-11 min-w-11 rounded-lg bg-transparent p-3 text-secondary hover:bg-layer-transparent-hover"><X aria-hidden size={18} /></button></div>
           <AppRail workspaceSlug={workspace.slug} horizontal />
           <button type="button" onClick={() => { setDrawer(false); window.dispatchEvent(new Event(openPaletteEvent)); }} className="inset-row-hover mx-3 mt-2 flex min-h-11 items-center gap-2 rounded-lg bg-transparent px-3 text-left text-14 text-primary"><Command aria-hidden size={16} />{translate("palette.menuLabel")}</button>

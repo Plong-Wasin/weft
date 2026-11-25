@@ -60,7 +60,7 @@ export function InboxLink({ workspace }: { workspace: Workspace }) {
   const { data } = useQuery({ queryKey: inboxKey(workspace.id), queryFn: () => fetchInbox(workspace.id) });
   const unread = data?.unreadCount ?? 0;
   return <Link to={paths.notifications(workspace.slug)} aria-label={translate("topbar.notifications")} title={translate("topbar.notifications")}
-    className="relative rounded-md p-1.5 text-secondary hover:bg-layer-transparent-hover hover:text-primary">
+    className="relative rounded-lg p-2 text-secondary hover:bg-layer-transparent-hover hover:text-primary">
     <Bell aria-hidden size={18} />
     {unread > 0 && <span aria-label={translate("inbox.unread").replace("{count}", formatNumber(unread))} className="absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-accent-primary px-1 text-10 font-semibold text-on-color">{formatNumber(unread)}</span>}
   </Link>;
@@ -71,7 +71,7 @@ export function InboxNavLink({ workspace }: { workspace: Workspace }) {
   const { data } = useQuery({ queryKey: inboxKey(workspace.id), queryFn: () => fetchInbox(workspace.id) });
   const unread = data?.unreadCount ?? 0;
   return <Link to={paths.notifications(workspace.slug)} aria-label={`${translate("inbox.navLabel")}${unread ? `, ${translate("inbox.unread").replace("{count}", formatNumber(unread))}` : ""}`}
-    className="flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-14 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary">
+    className="flex items-center justify-between gap-2 inset-row-hover min-h-9 max-md:min-h-11 rounded-lg px-3 py-1.5 text-14 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary">
     <span>{translate("inbox.navLabel")}</span>{unread > 0 && <span className="rounded-full bg-accent-primary px-1.5 text-11 font-semibold text-on-color">{formatNumber(unread)}</span>}
   </Link>;
 }

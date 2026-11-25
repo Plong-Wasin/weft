@@ -33,7 +33,7 @@ export function Popover({ label, panelLabel = label, trigger, align = "left", cl
 }) {
   const [open, setOpen] = React.useState(false);
   const root = React.useRef<HTMLDivElement>(null);
-  const panelContainer = root.current?.closest<HTMLElement>('dialog, [data-slot="dialog-content"], [data-create-modal]') ?? undefined;
+  const panelContainer = root.current?.closest<HTMLElement>('dialog[open], [data-slot="dialog-content"], [data-create-modal]') ?? undefined;
   React.useEffect(() => {
     if (!open || panelRole !== "dialog") return;
     const anchor = root.current?.querySelector("button");

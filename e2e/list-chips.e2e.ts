@@ -51,12 +51,11 @@ try {
   await call("create_work_item", { projectId: project!.id, title: "Alpha" });
   const listUrl = `${web}/${slug}/projects/MOB/issues`;
 
-  /** The wrapper a row puts around an empty chip: `sr-only` (absolute, 1px, clipped) while hidden. */
+  /** The list reserves a stable slot for the empty chip, then reveals it on hover or focus. */
   const wrapper = async (row: import("playwright").Locator, property: string) => await row.getByRole("button", { name: new RegExp(`^${property}:`) }).evaluate((button) => {
-    let node: HTMLElement = button;
-    while (node.parentElement && node.parentElement.parentElement?.tagName !== "LI") node = node.parentElement;
+    const node = button.parentElement?.parentElement as HTMLElement;
     const style = getComputedStyle(node);
-    return { position: style.position, width: node.getBoundingClientRect().width };
+    return { opacity: style.opacity, pointerEvents: style.pointerEvents };
   });
   const priority = translate("workItems.priority");
 
@@ -75,25 +74,33 @@ try {
   await page.goto(listUrl);
   await page.getByTestId("row-MOB-1").waitFor();
   await page.mouse.move(0, 0);
-  let hidden = await wrapper(row, priority);
-  check(hidden.position === "absolute" && hidden.width <= 1, `an empty chip should be hidden on desktop (${JSON.stringify(hidden)})`);
+  const emptyProperties = [priority, translate("workItems.assignees"), translate("workItems.labels")];
+  for (const property of emptyProperties) {
+    const hidden = await wrapper(row, property);
+    check(hidden.opacity === "0" && hidden.pointerEvents === "none", `${property} chip should be hidden on desktop (${JSON.stringify(hidden)})`);
+  }
   await row.hover();
-  let shown = await wrapper(row, priority);
-  check(shown.position !== "absolute" && shown.width > 1, `hovering the row should reveal the empty chip (${JSON.stringify(shown)})`);
+  for (const property of emptyProperties) {
+    const shown = await wrapper(row, property);
+    check(shown.opacity === "1" && shown.pointerEvents === "auto", `hovering the row should reveal ${property} chip (${JSON.stringify(shown)})`);
+  }
   await page.mouse.move(0, 0);
-  hidden = await wrapper(row, priority);
-  check(hidden.position === "absolute", "moving away should hide the empty chip again");
+  for (const property of emptyProperties) {
+    const hidden = await wrapper(row, property);
+    check(hidden.opacity === "0" && hidden.pointerEvents === "none", `${property} chip should hide again when the pointer leaves`);
+  }
   await row.getByRole("checkbox").click();
   await page.mouse.move(0, 0);
-  hidden = await wrapper(row, priority);
-  check(hidden.position === "absolute" && hidden.width <= 1, "clicking the row checkbox then moving away should hide the empty chip");
+  const hiddenAfterCheckbox = await wrapper(row, priority);
+  check(hiddenAfterCheckbox.opacity === "0" && hiddenAfterCheckbox.pointerEvents === "none", "clicking the row checkbox then moving away should hide the empty chip");
   // The checkbox still has focus from the click; Tab is a real keyboard move, so the link is focus-visible.
   await page.keyboard.press("Tab");
-  shown = await wrapper(row, priority);
-  check(shown.position !== "absolute" && shown.width > 1, `focusing into the row should reveal the empty chip (${JSON.stringify(shown)})`);
+  const shownOnFocus = await wrapper(row, priority);
+  check(shownOnFocus.opacity === "1" && shownOnFocus.pointerEvents === "auto", `focusing into the row should reveal the empty chip (${JSON.stringify(shownOnFocus)})`);
+  // The Priority chip is the next keyboard stop after the focused title link.
   await page.keyboard.press("Tab");
-  await page.keyboard.press("Tab");
-  check(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")?.startsWith("Priority") || document.activeElement?.textContent?.includes("Priority") || false), "Tab should reach the Priority chip");
+  const activeAfterTabs = await page.evaluate(() => ({ label: document.activeElement?.getAttribute("aria-label"), text: document.activeElement?.textContent }));
+  check(activeAfterTabs.label?.startsWith("Priority") || activeAfterTabs.text?.includes("Priority") || false, `Tab should reach the Priority chip (${JSON.stringify(activeAfterTabs)})`);
   console.log("list-chips ok: desktop hides until hover or focus");
 
   // Touch: there is no hover, so every chip shows.
@@ -102,11 +109,12 @@ try {
   await touchPage.goto(listUrl);
   const touchRow = touchPage.getByTestId("row-MOB-1");
   await touchRow.waitFor();
-  for (const property of [priority, translate("workItems.assignees"), translate("workItems.labels")]) {
+  // The narrow layout removes empty Assignees and Labels slots to preserve room for the title.
+  for (const property of [priority]) {
     const box = await wrapper(touchRow, property);
-    check(box.position !== "absolute" && box.width > 1, `${property} chip should be visible on touch (${JSON.stringify(box)})`);
+    check(box.opacity === "1" && box.pointerEvents === "auto", `${property} chip should be visible on touch (${JSON.stringify(box)})`);
   }
-  console.log("list-chips ok: touch shows every chip");
+  console.log("list-chips ok: touch shows the empty Priority chip");
   await browser.close();
 } catch (error) {
   failed = true;

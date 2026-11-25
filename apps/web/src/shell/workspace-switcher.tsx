@@ -19,8 +19,8 @@ export function WorkspaceSwitcher({ workspace, workspaces, canCreate, refresh }:
   React.useEffect(() => {
     if (creating) form.current?.querySelector<HTMLInputElement>("input")?.focus();
     else if (wasCreating.current) {
-      // The dialog popover is replaced by the menu popup after the render; wait for Base UI's popup autofocus before restoring the invoking menu item.
-      requestAnimationFrame(() => createButton.current?.focus());
+      // Base UI restores focus after the newly mounted menu popup completes its open cycle.
+      requestAnimationFrame(() => requestAnimationFrame(() => createButton.current?.focus()));
     }
     wasCreating.current = creating;
   }, [creating]);

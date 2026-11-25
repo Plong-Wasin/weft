@@ -2,7 +2,7 @@ import { accessReasonText } from "./access-reason";
 import React from "react";
 import { handleImeSafeEnter } from "./ime";
 import { Link, useNavigate } from "react-router";
-import { ArrowUpRight, CalendarCheck, CalendarClock, ChevronDown, CircleUserRound, Gauge, Layers, Link2, Maximize2, RefreshCw, Package, Tag, Trash2, Users, Archive, ArchiveRestore, X, CircleDot, Sigma, Shapes, MoreHorizontal, PanelRight } from "lucide-react";
+import { ArrowUpRight, CalendarCheck, CalendarClock, ChevronDown, CircleUserRound, Gauge, Layers, Link2, Maximize2, RefreshCw, Package, Tag, Trash2, Users, Archive, ArchiveRestore, X, CircleDot, Sigma, Shapes, MoreHorizontal } from "lucide-react";
 import { translate, type MessageKey } from "@weft/shared";
 import { action, actionResult, richTextActionError } from "./api";
 import { copyText } from "./toast";
@@ -27,12 +27,12 @@ import { useLocale } from "./locale";
 import { useInboxNotificationOpen } from "./inbox";
 import type { Estimate, Label, Member, Project, WorkItem, WorkState } from "./types";
 import { PropertyFields, TypePicker, droppedByTypeChange, missingRequired, propertiesOfType, useWorkItemTypes, type CustomProperty } from "./work-item-types";
+import { DetailsPanelToggle, useDetailsPanel } from "./details-panel";
 
 type Named = { id: string; name: string; status?: string };
 const t = (key: string) => translate(key as MessageKey);
 const sectionClass = "grid gap-2 [&_form]:my-0 [&_form]:flex [&_form]:flex-wrap [&_form]:items-center [&_form]:gap-2 [&_select]:w-auto [&_button]:w-auto [&_button]:whitespace-nowrap [&_p]:m-0 [&_h3]:m-0 [&_h3]:text-16 [&_h3]:font-semibold [&_h3]:text-primary [&_ul]:m-0 [&_ul]:pl-5";
 const iconButton = "grid size-8 place-items-center rounded-md border border-subtle bg-surface-1 p-0 text-secondary hover:bg-layer-transparent-hover hover:text-primary";
-const propertiesOpenKey = "weft:work-item-properties-open";
 const propertiesCollapsedKey = "weft:work-item-properties-collapsed";
 // When browser storage is blocked the choice still lasts for the visit: this module outlives the page component, so the memory survives remounts.
 const storedMemory: Record<string, string> = {};
@@ -141,8 +141,9 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const [subTitle, setSubTitle] = React.useState("");
   const [sectionCounts, setSectionCounts] = React.useState({ relations: 0, links: 0, attachments: 0, pullRequests: 0 });
   const [collapsed, setCollapsed] = React.useState<string[]>([]);
-  // The Properties panel: shown or hidden on wide screens, and which of its sections are collapsed. Both are remembered per viewer.
-  const [propertiesOpen, setPropertiesOpen] = React.useState(() => readStored(propertiesOpenKey) !== "0");
+  // The details panel is remembered per kind; the Properties sections are remembered per viewer.
+  const detailsPanel = useDetailsPanel("work-item", mode === "page");
+  const propertiesOpen = detailsPanel.open;
   const [collapsedProps, setCollapsedProps] = React.useState<string[]>(readCollapsedProps);
   const [activeForm, setActiveForm] = React.useState<string | null>(null);
   const attachmentPicker = React.useRef<HTMLInputElement>(null);
@@ -290,11 +291,6 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     setCollapsedProps(next);
     writeStored(propertiesCollapsedKey, JSON.stringify(next));
   };
-  const togglePropertiesPanel = () => {
-    const next = !propertiesOpen;
-    setPropertiesOpen(next);
-    writeStored(propertiesOpenKey, next ? "1" : "0");
-  };
 
   const setCycle = async (to: string) => {
     if (cycleId && await action("remove_cycle_items", { cycleId, workItemIds: [item.id] }) === null) return setNote(t("workItems.failed"));
@@ -326,7 +322,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       </nav>}
     {mode === "page" && <div className="ml-auto flex items-center gap-2">
       <span className="[&_button]:whitespace-nowrap"><AiOnly><SidecarTrigger context={{ type: "work_item", id: item.displayId, title: item.title }} /></AiOnly></span>
-      <span className="hidden lg:block"><button type="button" className="icon-button-ghost" data-testid="work-item-properties-toggle" aria-pressed={propertiesOpen} aria-label={t(propertiesOpen ? "workItems.properties.hide" : "workItems.properties.show")} title={t(propertiesOpen ? "workItems.properties.hide" : "workItems.properties.show")} onClick={togglePropertiesPanel}><PanelRight aria-hidden size={16} /></button></span>
+      <span className="hidden lg:block"><DetailsPanelToggle open={propertiesOpen} onToggle={detailsPanel.toggle} panelId={`work-item-details-${item.id}`} testId="work-item-properties-toggle" /></span>
       <Popover label={t("workItems.more")} align="right" className="!size-10 shrink-0 border border-subtle bg-surface-1 p-0 sm:hidden" trigger={<MoreHorizontal aria-hidden size={18} />}>
         {(close) => <>
           <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void copy(); }}>{t("workItems.copyLink")}</button>
@@ -471,7 +467,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   };
   // The peek is two columns from 800 px of panel width (its container), where Properties sits in a sticky right column; below that it stacks.
   const peekColumn = "order-1 @[800px]:col-start-2 @[800px]:row-start-1 @[800px]:border-l @[800px]:border-t-0 @[800px]:sticky @[800px]:top-0 @[800px]:self-start @[800px]:max-h-[calc(100dvh-3.5rem)] @[800px]:overflow-y-auto";
-  const sidebar = <aside aria-label={t("workItems.properties")} className={`grid content-start gap-3 p-4 sm:p-6 ${mode === "page" ? `border-t border-subtle lg:w-80 lg:shrink-0 lg:border-l lg:border-t-0 lg:sticky lg:top-0 lg:max-h-screen lg:self-start lg:overflow-y-auto ${propertiesOpen ? "" : "lg:hidden"}` : `border-t border-subtle ${peekColumn}`}`}>
+  const sidebar = <aside id={mode === "page" ? `work-item-details-${item.id}` : undefined} aria-label={t("workItems.properties")} className={`grid content-start gap-3 p-4 sm:p-6 ${mode === "page" ? `border-t border-subtle lg:w-80 lg:shrink-0 lg:border-l lg:border-t-0 lg:sticky lg:top-0 lg:max-h-screen lg:self-start lg:overflow-y-auto ${propertiesOpen ? "" : "lg:hidden"}` : `border-t border-subtle ${peekColumn}`}`}>
     <h2 className="m-0 text-14 font-semibold text-primary">{t("workItems.properties")}</h2>
     {propSection("primary", <>
       <PropertyRow icon={<CircleDot aria-hidden size={15} />} label={t("workItems.state")}>

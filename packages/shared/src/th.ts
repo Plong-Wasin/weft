@@ -1204,6 +1204,8 @@ export const th: Record<keyof typeof en, string> = {
   "cycles.cancel": "ยกเลิก",
   "cycles.addItems": "เพิ่มงาน",
   "cycles.details": "รายละเอียด Cycle",
+  "detailsPanel.show": "แสดงรายละเอียด",
+  "detailsPanel.hide": "ซ่อนรายละเอียด",
   "cycles.burndown": "แผนภูมิ Burndown",
   "cycles.burndownLabel": "แผนภูมิ Burndown: งานที่ยังเปิดอยู่ในแต่ละวัน เทียบกับเส้นอุดมคติ",
   "cycles.burndownLabelPoints": "แผนภูมิ Burndown: คะแนนการประเมินที่ยังเปิดอยู่ในแต่ละวัน เทียบกับเส้นอุดมคติ",

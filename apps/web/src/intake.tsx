@@ -55,13 +55,13 @@ const statusTone: Record<Outcome, string> = {
   pending: "bg-warning-subtle text-warning-primary", snoozed: "bg-layer-2 text-secondary", accepted: "bg-success-subtle text-success-text",
   rejected: "bg-danger-subtle text-danger-text", duplicate: "bg-layer-2 text-secondary",
 };
-const primaryButton = "min-h-9 rounded-md bg-accent-primary px-3 py-1.5 text-13 font-medium text-on-color hover:opacity-90 disabled:opacity-50";
-const quietButton = "min-h-9 rounded-md border border-subtle bg-surface-1 px-3 py-1.5 text-13 font-medium text-primary hover:bg-layer-transparent-hover disabled:opacity-50";
-const iconButton = "grid size-9 place-items-center rounded-md border border-subtle bg-surface-1 p-0 text-secondary hover:bg-layer-transparent-hover hover:text-primary disabled:opacity-40";
+const primaryButton = "min-h-9 rounded-lg bg-accent-primary px-3 py-1.5 text-13 font-medium text-on-color hover:opacity-90 disabled:opacity-50";
+const quietButton = "min-h-9 rounded-lg border border-subtle bg-surface-1 px-3 py-1.5 text-13 font-medium text-primary hover:bg-layer-transparent-hover disabled:opacity-50";
+const iconButton = "grid size-9 place-items-center rounded-lg border border-subtle bg-surface-1 p-0 text-secondary hover:bg-layer-transparent-hover hover:text-primary disabled:opacity-40";
 const field = "w-full rounded-md border border-subtle bg-surface-1 px-2.5 py-1.5 text-14 text-primary";
 
 function StatusBadge({ item }: { item: IntakeItem }) {
-  return <span data-testid="intake-status" className={`inline-flex items-center rounded px-1.5 py-0.5 text-12 font-medium ${statusTone[item.outcome]}`}>{t(`intake.status.${item.outcome}`)}</span>;
+  return <span data-testid="intake-status" className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-12 font-medium ${statusTone[item.outcome]}`}>{t(`intake.status.${item.outcome}`)}</span>;
 }
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
@@ -95,7 +95,7 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
     if (!first || !last) { event.preventDefault(); dialog.focus(); }
     else if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
     else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
-  }} className="fixed left-0 right-0 top-[10vh] z-50 mx-auto max-h-[80vh] w-[calc(100vw-1.5rem)] max-w-lg overflow-auto rounded-lg border border-subtle bg-surface-1 p-5 text-primary shadow-xl backdrop:bg-backdrop">
+  }} className="fixed left-0 right-0 top-[10vh] z-50 mx-auto max-h-[80vh] w-[calc(100vw-1.5rem)] max-w-lg overflow-auto rounded-2xl border border-subtle bg-surface-1 p-6 text-primary shadow-xl backdrop:bg-backdrop">
       <div className="mb-4 flex items-center gap-2">
         <h2 id={titleId} className="m-0 flex-1 text-18 font-semibold text-primary">{title}</h2>
         <button type="button" className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={t("intake.cancel")} onClick={onClose}><X aria-hidden size={16} /></button>
@@ -249,7 +249,7 @@ function DuplicateModal({ action, workspaceId, item, onClose, onPick }: { action
 function ListRow({ item, selected, onSelect }: { item: IntakeItem; selected: boolean; onSelect: () => void }) {
   return <li>
     <button type="button" data-testid={`intake-${item.displayId}`} aria-current={selected ? "true" : undefined} onClick={onSelect}
-      className={`grid w-full gap-1.5 border-0 border-b border-subtle bg-transparent px-4 py-3 text-left hover:bg-layer-transparent-hover ${selected ? "bg-layer-transparent-hover outline outline-1 -outline-offset-1 outline-accent-primary" : ""}`}>
+      className={`grid w-full gap-2 rounded-lg border-0 bg-transparent px-4 py-3 text-left hover:bg-layer-transparent-hover ${selected ? "bg-layer-transparent-hover outline outline-1 -outline-offset-1 outline-accent-primary" : ""}`}>
       <span className="text-12 text-tertiary">{item.displayId}</span>
       <span className="truncate text-14 font-medium text-primary">{item.title}</span>
       <span className="flex items-center gap-2 text-12 text-secondary">
@@ -347,7 +347,7 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
     finally { setSaving(false); }
   };
   return <section aria-label={t("intake.detail")} className="flex min-w-0 flex-1 flex-col">
-    <header className="flex flex-wrap items-center gap-2 border-b border-subtle px-5 py-3">
+    <header className="flex flex-wrap items-center gap-2 border-b border-subtle px-6 py-4">
       <span className="text-16 font-medium text-secondary">{item.displayId}</span>
       <StatusBadge item={item} />
       <span className="ml-auto flex flex-wrap items-center gap-2">
@@ -372,7 +372,7 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
         </Popover>
       </span>
     </header>
-    <div className="grid gap-5 overflow-auto px-5 py-5">
+    <div className="grid gap-6 overflow-auto px-6 py-6">
       {editable ? <div className="grid gap-3">
         <label className="grid gap-1 text-13 text-secondary">{t("intake.titleField")}<input ref={titleInputRef} name="title" aria-label={t("intake.titleField")} required maxLength={500} value={title} className={`${field} text-18 font-semibold sm:text-24`} onInput={(event) => { titleValueRef.current = event.currentTarget.value; setTitle(event.currentTarget.value); sessionStorage.setItem(titleDraftKey(item.id), event.currentTarget.value); changeDraft({ title: event.currentTarget.value }); }} /></label>
         <div><p className="mb-1 text-13 text-secondary">{t("intake.descriptionField")}</p><DescriptionEditor key={editorRevision} workspaceId={workspaceId} workItemId={item.workItemId} initial={description} editable onChange={(doc) => changeDraft({ description: doc })} /></div>
@@ -493,17 +493,17 @@ export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, 
     setDrafts(draftsRef.current);
   };
   const afterChange = () => { void load(); };
-  return <section className="flex flex-col gap-3" aria-label={t("intake.title")}>
+  return <section className="flex flex-col gap-4" aria-label={t("intake.title")}>
     <div className="flex items-center gap-2">
       <Inbox aria-hidden size={18} className="text-secondary" />
       <h2 className="m-0 flex-1 text-16 font-semibold text-primary">{t("intake.title")}</h2>
       {!emptyOpen && <button type="button" className={`${primaryButton} flex items-center gap-1.5`} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("intake.add")}</button>}
     </div>
-    <div className="flex min-h-[28rem] flex-col overflow-hidden rounded-lg border border-subtle bg-surface-1 md:h-[calc(100vh-14rem)] md:flex-row">
-      <div className="flex w-full shrink-0 flex-col border-b border-subtle md:w-[26rem] md:border-b-0 md:border-r">
-        <div role="tablist" className="flex gap-4 border-b border-subtle px-4">
+    <div className="flex min-h-[28rem] flex-col rounded-xl border border-subtle bg-surface-1 md:h-[calc(100vh-14rem)] md:flex-row">
+      <div className="flex w-full shrink-0 flex-col border-b border-subtle p-2 md:w-[26rem] md:border-b-0 md:border-r">
+        <div role="tablist" className="flex gap-2 border-b border-subtle px-2">
           {(["open", "closed"] as const).map((value) => <button key={value} role="tab" type="button" aria-selected={tab === value} onClick={() => { if (value !== tab) select(null, value); }}
-            className={`flex items-center gap-1.5 rounded-none border-0 border-b-2 bg-transparent px-1 py-3 text-14 font-medium ${tab === value ? "border-accent-primary text-accent-primary" : "border-transparent text-primary"}`}>
+            className={`flex items-center gap-1.5 rounded-md border-0 px-3 py-2.5 text-14 font-medium ${tab === value ? "bg-layer-1 text-accent-primary" : "bg-transparent text-secondary hover:bg-layer-transparent-hover hover:text-primary"}`}>
             {t(`intake.tab.${value}`)}
             {value === "open" && tab === "open" && items && <span data-testid="intake-open-count" className="rounded-full bg-accent-primary/20 px-1.5 py-0.5 text-11 font-semibold text-accent-primary">{items.length}</span>}
           </button>)}

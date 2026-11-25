@@ -85,29 +85,30 @@ export function InboxPanel({ workspace }: { workspace: Workspace }) {
   const markUnread = useMutation({ mutationFn: (notificationId: string) => call("mark_notification_unread", { notificationId }), ...changed });
   const markAll = useMutation({ mutationFn: () => call("mark_all_notifications_read", { workspaceId: workspace.id }), ...changed });
   const shown = (data?.notifications ?? []).filter((item) => !unreadOnly || item.readAt === null);
-  return <section aria-labelledby="inbox-title">
-    <h1 id="inbox-title">{translate("inbox.title")}{data ? ` — ${translate("inbox.unread").replace("{count}", formatNumber(data.unreadCount))}` : ""}</h1>
+  return <section aria-labelledby="inbox-title" className="mx-auto w-full max-w-5xl">
+    <h1 id="inbox-title" className="mb-5 text-24 font-semibold text-primary">{translate("inbox.title")}{data ? ` — ${translate("inbox.unread").replace("{count}", formatNumber(data.unreadCount))}` : ""}</h1>
     {isError && <p role="alert">{translate("inbox.failed")}</p>}
-    <div className="my-3 flex flex-wrap items-center gap-2">
-      <div role="group" aria-label={translate("inbox.title")} className="inline-flex rounded-md border border-subtle p-0.5">
+    <div className="mb-4 flex flex-wrap items-center gap-2">
+      <div role="group" aria-label={translate("inbox.title")} className="inline-flex rounded-lg border border-subtle bg-layer-1 p-1">
         <button type="button" aria-pressed={unreadOnly} className={unreadOnly ? "primary" : "secondary"} onClick={() => setUnreadOnly(true)}>{translate("inbox.unreadTab")}{data ? ` (${formatNumber(data.unreadCount)})` : ""}</button>
         <button type="button" aria-pressed={!unreadOnly} className={!unreadOnly ? "primary" : "secondary"} onClick={() => setUnreadOnly(false)}>{translate("inbox.all")}</button>
       </div>
       <button className="secondary" disabled={!data || data.unreadCount === 0 || markAll.isPending} onClick={() => markAll.mutate()}>{translate("inbox.markAllRead")}</button>
     </div>
-    {data && shown.length === 0 && <p>{translate("inbox.empty")}</p>}
-    <ul style={{ listStyle: "none", paddingLeft: 0 }}>
+    {data && shown.length === 0 && <p className="rounded-xl border border-subtle bg-surface-1 px-5 py-8 text-center text-14 text-secondary">{translate("inbox.empty")}</p>}
+    <ul className="m-0 grid list-none gap-2 p-0">
       {shown.map((item) => {
         const descriptionId = `notification-description-${item.id}`;
         const actionLabelId = `notification-action-${item.id}`;
         const actionLabel = translate(item.readAt ? "inbox.markUnread" : "inbox.markRead");
-        return <li key={item.id} className={`mb-2 grid min-w-0 gap-2 rounded-md border border-subtle p-3 sm:grid-cols-[minmax(0,1fr)_auto] ${item.readAt ? "" : "bg-layer-1"}`}>
-        <div id={descriptionId} className="min-w-0">
+        return <li key={item.id} className={`grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-3 rounded-xl p-4 transition-colors hover:bg-layer-transparent-hover sm:grid-cols-[auto_minmax(0,1fr)_auto] ${item.readAt ? "bg-layer-1" : "bg-layer-2"}`}>
+        <span aria-hidden="true" className={`mt-1.5 size-2 shrink-0 rounded-full ${item.readAt ? "bg-tertiary" : "bg-accent-primary"}`} />
+        <div id={descriptionId} className={`min-w-0 ${item.readAt ? "" : "font-medium"}`}>
         {item.kind === "recurrence_paused" ? `${translate(inboxMessage[item.kind])}: ${item.detail ?? ""}` : <>{translate(item.kind === "wake_skipped" ? `inbox.wakeSkipped.${item.detail ?? "no_agent_access"}` as never : item.kind === "run_skipped" && item.detail ? `inbox.runSkipped.${item.detail}` as never : inboxMessage[item.kind]).replace("{actor}", item.actorName)}{" "}
         {item.workItemId || item.wikiPageId || item.runId ? <Link to={item.readAt ? notificationTarget(workspace.slug, item) : notificationTargetWithInboxId(workspace.slug, item, item.id)}>{item.wikiPageId ? item.pageTitle : item.runId ? translate("inbox.openScheduledRun") : `${item.displayId} ${item.workItemTitle}`}</Link> : <span>{item.kind === "secret_output_blocked" ? translate("inbox.secretOutputBlockedDetail") : item.detail}</span>}{item.kind === "auto_rule" && item.detail && <>{": "}{autoRuleReasonText(item.detail, translate)}</>}</>}{" "}
-        <small className="block text-secondary">{formatDate(item.createdAt)}</small>
+        <small className="block font-normal text-secondary">{formatDate(item.createdAt)}</small>
         </div>
-        <button type="button" aria-labelledby={`${actionLabelId} ${descriptionId}`} className="secondary min-h-11 justify-self-start sm:min-h-9 sm:justify-self-end" disabled={markRead.isPending || markUnread.isPending} onClick={() => item.readAt ? markUnread.mutate(item.id) : markRead.mutate(item.id)}><span id={actionLabelId}>{actionLabel}</span></button>
+        <button type="button" aria-labelledby={`${actionLabelId} ${descriptionId}`} className="secondary col-start-2 min-h-11 justify-self-start sm:col-start-auto sm:min-h-9 sm:justify-self-end" disabled={markRead.isPending || markUnread.isPending} onClick={() => item.readAt ? markUnread.mutate(item.id) : markRead.mutate(item.id)}><span id={actionLabelId}>{actionLabel}</span></button>
       </li>;
       })}
     </ul>

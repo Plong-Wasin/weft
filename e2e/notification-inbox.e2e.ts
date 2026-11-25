@@ -78,6 +78,28 @@ try {
   await page.screenshot({ path: `${shots}/inbox-1440.png`, fullPage: true });
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "desktop Inbox overflows horizontally");
 
+  const topBarCenters = async () => page.evaluate((labels) => labels.map((label) => {
+    const el = [...document.querySelectorAll("header a, header button")].find((node) => node.getAttribute("aria-label") === label);
+    if (!el) return null;
+    const box = (el.querySelector("svg") ?? el).getBoundingClientRect();
+    return Math.round((box.top + box.height / 2) * 10) / 10;
+  }), [translate("topbar.notifications"), translate("topbar.help")]);
+  const [bellCenter, helpCenter] = await topBarCenters();
+  check(bellCenter !== null && helpCenter !== null && Math.abs(bellCenter - helpCenter) <= 1, `top bar bell and help icon glyphs must share a vertical center at 1440px, found ${bellCenter} and ${helpCenter}`);
+  // Touch layouts enlarge targets (pointer: coarse), which once left the bell link above its neighbours.
+  const touchContext = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, storageState: await context.storageState() });
+  const touchPage = await touchContext.newPage();
+  await touchPage.goto(page.url(), { waitUntil: "domcontentloaded" });
+  await touchPage.getByRole("link", { name: translate("topbar.notifications") }).waitFor();
+  const [touchBellCenter, touchHelpCenter] = await touchPage.evaluate((labels) => labels.map((label) => {
+    const el = [...document.querySelectorAll("header a, header button")].find((node) => node.getAttribute("aria-label") === label);
+    if (!el) return null;
+    const box = (el.querySelector("svg") ?? el).getBoundingClientRect();
+    return Math.round((box.top + box.height / 2) * 10) / 10;
+  }), [translate("topbar.notifications"), translate("topbar.help")]);
+  check(touchBellCenter !== null && touchHelpCenter !== null && Math.abs(touchBellCenter - touchHelpCenter) <= 1, `top bar bell and help icon glyphs must share a vertical center on touch at 390px, found ${touchBellCenter} and ${touchHelpCenter}`);
+  await touchContext.close();
+
   await page.setViewportSize({ width: 390, height: 844 });
   const notificationActionHeights = await page.locator('section[aria-labelledby="inbox-title"] ul li button').evaluateAll((buttons) => buttons.map((button) => button.getBoundingClientRect().height));
   check(notificationActionHeights.length > 0, "mobile Inbox must show notification actions");

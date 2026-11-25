@@ -59,22 +59,22 @@ export function ProfileMenu({ user, signOut }: { user: Current["user"]; signOut:
     adoptUserLocale(next);
     setFailed((await action("set_my_locale", { locale: next })) === null);
   }
-  const heading = "px-2.5 pb-1 pt-2 text-12 font-medium text-tertiary";
-  return <Popover label={translate("profile.menu")} align="right" panelClassName="w-64"
+  const heading = "px-3 pb-1 pt-3 text-12 font-medium text-tertiary";
+  return <Popover label={translate("profile.menu")} align="right" panelClassName="w-64" className="rounded-full p-2"
     trigger={<Avatar name={user.name} id={user.id} size="md" />}>
     {() => <>
-      <div className="flex items-center gap-2 border-b border-subtle px-2.5 py-2"><Avatar name={user.name} id={user.id} size="md" /><div className="min-w-0"><p className="truncate text-14 font-medium">{user.name}</p><p className="truncate text-12 text-secondary">{user.email}</p></div></div>
+      <div className="flex items-center gap-2 border-b border-subtle px-3 py-3"><Avatar name={user.name} id={user.id} size="md" /><div className="min-w-0"><p className="truncate text-14 font-medium">{user.name}</p><p className="truncate text-12 text-secondary">{user.email}</p></div></div>
       <p className={heading}>{translate("language.label")}</p>
       {locales.map((code) => <button type="button" role="menuitemradio" aria-checked={locale === code} key={code} className={menuItemClass} onClick={() => void chooseLocale(code)}>
         <span className="flex-1">{translate(`language.${code}`, code)}</span>{locale === code && <Check aria-hidden size={14} />}</button>)}
       {failed && <p role="alert" className="px-2.5 text-12 text-danger-text">{translate("language.saveFailed")}</p>}
       <button type="button" role="menuitem" className={`${menuItemClass} mt-1 border-t border-subtle`} onClick={() => { setChangingPassword(!changingPassword); setPasswordIssue(null); }}><LockKeyhole aria-hidden size={14} />{translate("auth.changePassword")}</button>
       {changingPassword && <form className="grid gap-2 px-2.5 py-2" onSubmit={(event) => void changePassword(event)}>
-        <label className="grid gap-1 text-12 text-secondary">{translate("auth.currentPassword")}<input className="h-9 rounded border border-strong bg-layer-1 px-2 text-primary" type="password" required autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} /></label>
-        <label className="grid gap-1 text-12 text-secondary">{translate("auth.newPassword")}<input className="h-9 rounded border border-strong bg-layer-1 px-2 text-primary" type="password" required minLength={passwordMinimum} maxLength={256} autoComplete="new-password" aria-describedby="change-password-hint" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label>
+        <label className="grid gap-1 text-12 text-secondary">{translate("auth.currentPassword")}<input className="h-9 rounded-lg border border-strong bg-layer-1 px-3 text-primary" type="password" required autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} /></label>
+        <label className="grid gap-1 text-12 text-secondary">{translate("auth.newPassword")}<input className="h-9 rounded-lg border border-strong bg-layer-1 px-3 text-primary" type="password" required minLength={passwordMinimum} maxLength={256} autoComplete="new-password" aria-describedby="change-password-hint" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label>
         <p id="change-password-hint" className="m-0 text-11 text-tertiary">{translate("auth.passwordHint").replace("{min}", String(passwordMinimum))}</p>
         {passwordIssue && <p role="alert" className="m-0 text-12 text-danger-text">{passwordIssue}</p>}
-        <button type="submit" className="h-8 rounded bg-accent-strong px-2 text-12 font-medium text-white">{translate("auth.savePassword")}</button>
+        <button type="submit" className="h-8 rounded-lg bg-accent-strong px-3 text-12 font-medium text-white">{translate("auth.savePassword")}</button>
       </form>}
       {microsoftEnabled && <>
         <button type="button" role="menuitem" className={`${menuItemClass} mt-1 border-t border-subtle`} onClick={() => void linkMicrosoft()}>{translate("auth.linkMicrosoft")}</button>

@@ -26,9 +26,9 @@ export function ScheduledRunPage() {
     return () => { active = false; };
   }, [runId, markLoaded, markUnavailable]);
 
-  return <section className="mx-auto grid max-w-3xl gap-3 p-4">
+  return <section className="card-surface mx-auto grid max-w-3xl gap-4 rounded-xl p-5 sm:p-6">
     <Link to={paths.notifications(workspace.slug)} className="text-13 text-secondary">{translate("inbox.title")}</Link>
-    <h1 className="m-0 text-24 font-semibold">{translate("runs.scheduled")}</h1>
+    <h1 className="m-0 text-20 font-semibold">{translate("runs.scheduled")}</h1>
     {run === undefined ? <p role="status">{translate("runs.scheduledLoading")}</p> : !run ? <p role="status">{translate("runs.scheduledUnavailable")}</p> : <>
       <p className="m-0 text-14 text-secondary">{translateDynamic(`runs.status.${run.status}`) ?? run.status} · {formatDate(run.createdAt)}</p>
       {run.failureReason && <p className="m-0" role="status">{runFailureText(run.failureReason) ?? run.failureMessage ?? translate("runs.scheduledUnavailable")}</p>}

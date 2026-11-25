@@ -54,8 +54,8 @@ The product owner wants a tool that can do many things and still feels easy and 
 - Search fields: a bordered field with a leading magnifier; the global search opens a results list below it.
 - Tabs: text tabs with an accent underline for the active one (used for Upcoming, Active, Completed; All, Public, Private, Archived; Overview, Work items; List, Board, Spreadsheet, Calendar, Gantt).
 - Toolbar chips and view switchers: a grouped row of icon-and-label toggles; a filter chip row follows it when filters are active.
-- Work item row: checkbox, key, title, and property chips (state, priority, cycle). Rows sit in group sections with a collapsible header that shows the count and a plus button to add.
-- Property chips: outlined pills with an icon and value.
+- Work item row: checkbox, icon-only Priority and State, key, title, then fixed-slot quiet properties (estimate, labels, Cycle, Modules, dates, assignee). Desktop rows stay on one line when their measured width permits; on phones the property block sits under the title. Rows sit in group sections with a collapsible header that shows the count and a plus button to add.
+- Property chips: list rows use muted, borderless text chips (a label keeps its colour dot); outlined pills remain on board cards, the spreadsheet and the work item detail page. Quiet chips gain the hover fill and keyboard focus ring when hovered or focused. Empty list properties keep a reserved slot and stay visually quiet until the row is hovered or focused, so controls never move.
 - Cards for summary numbers (analytics overview, work item counts) and for list-style items (cycles, modules, views).
 - Danger zone: a bordered section with a red heading at the foot of settings pages, holding destructive actions only.
 - Editor toolbar: a wrapping row of icon tools with separators; the rich text editor reads as an open page with a placeholder "Press '/' for commands".

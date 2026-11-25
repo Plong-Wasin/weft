@@ -1,6 +1,8 @@
 // Browser end-to-end flow for the work items list layout: groups, inline property dropdowns, display options, quick create.
 // Run with `bun e2e/work-items-list.e2e.ts` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
 import { chromium } from "playwright";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -11,6 +13,7 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5207);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const shots = reviewShots("05-work-items-list-layout");
+const evidenceShots = join(import.meta.dir, "../.local/shots");
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
   Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
@@ -96,20 +99,41 @@ try {
   check(await done.getAttribute("aria-expanded") === "true", "an empty group did not expand through its toggle");
   await done.click();
   check(await done.getAttribute("aria-expanded") === "false", "an empty group did not collapse again");
+  await mkdir(evidenceShots, { recursive: true });
+  for (const width of [1920, 1440, 1100, 390] as const) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    for (const theme of ["light", "dark"] as const) {
+      await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+      await page.screenshot({ path: `${evidenceShots}/work-items-list-${width}-${theme}.png`, fullPage: true });
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   await page.screenshot({ path: `${shots}/list-1440-light.png` });
 
   // Named acceptance check: the 1440 px list row is icon-first, quiet, and fits on one line.
   const firstRow = page.getByTestId("row-MOB-1");
   const priorityControl = firstRow.getByRole("button", { name: `${translate("workItems.priority")}: ${translate("workItems.priority.none")}` });
   const stateControl = firstRow.getByRole("button", { name: `${translate("workItems.state")}: Backlog` });
-  const desktopRowMetrics = await page.locator('[data-testid^="row-"]').evaluateAll((rows) => rows.map((row) => ({ id: row.getAttribute("data-testid"), height: row.getBoundingClientRect().height, title: row.querySelector("a")?.getBoundingClientRect().toJSON() })));
-  check(desktopRowMetrics.length > 0 && desktopRowMetrics.every((row) => row.height <= 44 && row.height >= 36), `every 1440 px list row should be one line and at most 44 px tall: ${JSON.stringify(desktopRowMetrics)}`);
+  const desktopRowMetrics = await page.locator('[data-testid^="row-"]').evaluateAll((rows) => rows.map((row) => {
+    const title = row.querySelector("a")!.getBoundingClientRect();
+    const props = [...row.querySelectorAll<HTMLButtonElement>('button[aria-label^="Estimate:"], button[aria-label^="Labels:"], button[aria-label^="Cycle:"], button[aria-label^="Modules:"], button[aria-label^="Dates:"], button[aria-label^="Assignees:"]')];
+    const titleCenter = title.y + title.height / 2;
+    return { id: row.getAttribute("data-testid"), height: row.getBoundingClientRect().height, titleHeight: title.height, propertyCenters: props.map((property) => { const box = property.getBoundingClientRect(); return box.y + box.height / 2; }), titleCenter };
+  }));
+  check(desktopRowMetrics.length > 0 && desktopRowMetrics.every((row) => row.height <= 44 && row.height >= 36 && row.titleHeight <= row.height && row.propertyCenters.every((center) => Math.abs(center - row.titleCenter) < 1)), `1440px list rows stay on one line and at most 44px tall (QuietListRowsOneLineAt1440): ${JSON.stringify(desktopRowMetrics)}`);
   for (const control of [priorityControl, stateControl]) {
-    check(await control.evaluate((element) => getComputedStyle(element).borderTopWidth === "0px" && getComputedStyle(element.querySelector(".hidden.text-11")!).display === "none"), "row State and Priority controls should be icon-only with no border");
+    check(await control.evaluate((element) => getComputedStyle(element).borderTopWidth === "0px" && getComputedStyle(element.querySelector(".hidden.text-11")!).display === "none"), "row State and Priority controls are icon-only and borderless (QuietStatePriorityIconOnlyBorderless)");
     check(await control.evaluate((element) => { const box = element.getBoundingClientRect(); return box.width >= 28 && box.height >= 28; }), "row State and Priority hit areas should be at least 28 px square");
   }
-  const cycleSlots = await Promise.all(["MOB-1", "MOB-2"].map(async (id) => page.getByTestId(`row-${id}`).getByRole("button", { name: new RegExp(`^${translate("workItems.cycle")}:`) }).evaluate((element) => element.getBoundingClientRect().x)));
-  check(Math.abs(cycleSlots[0]! - cycleSlots[1]!) < 1, `the same property slot should start at a fixed x: ${cycleSlots.join(", ")}`);
+  for (const [property, label] of [["Estimate", translate("workItems.estimate")], ["Labels", translate("workItems.labels")], ["Cycle", translate("workItems.cycle")], ["Modules", translate("workItems.modules")], ["Dates", translate("layout.property.dates")], ["Assignees", translate("workItems.assignees")]] as const) {
+    const triggers = ["MOB-1", "MOB-2", "MOB-3"].map((id) => page.getByTestId(`row-${id}`).getByRole("button", { name: new RegExp(`^${label}:`) }));
+    const counts = await Promise.all(triggers.map((trigger) => trigger.count()));
+    if (counts.every((count) => count === 0)) continue; // Estimate is optional and disabled in this seed.
+    check(counts.every((count) => count === 1), `${property} is present in every list row (Quiet${property}SlotsAlign): ${counts.join(", ")}`);
+    const slots = await Promise.all(triggers.map((trigger) => trigger.evaluate((element) => element.getBoundingClientRect().x)));
+    check(Math.max(...slots) - Math.min(...slots) < 1, `${property} slots share an x across list rows (Quiet${property}SlotsAlign): ${slots.join(", ")}`);
+  }
 
   // Each inline dropdown changes the work item without a reload (a marker on window survives only without navigation).
   await page.evaluate(() => { (window as unknown as { __noReload: boolean }).__noReload = true; });
@@ -122,7 +146,7 @@ try {
   await row.screenshot({ path: `${shots}/popover-scroll-row-before.png` });
   await row.hover();
   const cycleAfterHover = await emptyCycleTrigger.boundingBox();
-  check(Boolean(cycleBeforeReveal && cycleAfterHover) && Math.abs(cycleBeforeReveal!.x - cycleAfterHover!.x) < 1 && Math.abs(cycleBeforeReveal!.y - cycleAfterHover!.y) < 1, `hovering a row should reveal its Cycle control without moving it: ${JSON.stringify({ before: cycleBeforeReveal, after: cycleAfterHover })}`);
+  check(Boolean(cycleBeforeReveal && cycleAfterHover) && Math.abs(cycleBeforeReveal!.x - cycleAfterHover!.x) < 1 && Math.abs(cycleBeforeReveal!.y - cycleAfterHover!.y) < 1, `hovering a row reveals its Cycle control without moving it (QuietRowHoverMovesNothing): ${JSON.stringify({ before: cycleBeforeReveal, after: cycleAfterHover })}`);
   await row.screenshot({ path: `${shots}/popover-scroll-row-after-hover.png` });
   await page.mouse.move(0, 0);
   await row.getByRole("link", { name: "Alpha" }).focus();
@@ -309,7 +333,7 @@ try {
   await phoneCard.getByText(translate("workItems.noCycle"), { exact: true }).waitFor();
   await phoneCard.getByText(translate("workItems.noDates"), { exact: true }).waitFor();
   const boardPriority = phoneCard.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}:`) });
-  check(await boardPriority.evaluate((element) => getComputedStyle(element).borderTopWidth === "1px"), "board card Priority chip should retain its outlined border");
+  check(await boardPriority.evaluate((element) => getComputedStyle(element).borderTopWidth === "1px"), "board card Priority chip retains its outlined border (BoardCardOutlinedChipStillBordered)");
   await page.screenshot({ path: `${shots}/board-390-light.png` });
   await page.getByRole("button", { name: translate("layout.addToGroup").replace("{group}", translate("workItems.priority.none")) }).getByText(translate("layout.addShort")).waitFor();
   await page.getByRole("button", { name: translate("layout.gantt") }).click();

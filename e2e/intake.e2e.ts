@@ -138,6 +138,7 @@ try {
   await intakeDialog.getByRole("button", { name: new RegExp(`^${translate("workItems.labels")}:`) }).click();
   await intakeDialog.getByRole("menuitemcheckbox").first().waitFor();
   await page.keyboard.press("Escape");
+  await intakeDialog.getByRole("menuitemcheckbox").first().waitFor({ state: "detached" });
   check(await intakeDialog.getByRole("menuitemcheckbox").count() === 0, "Escape did not close the open labels popover");
   check(await intakeDialog.evaluate((element) => element.matches(":modal")), "Escape closed the Intake dialog while its labels popover was open");
   await page.keyboard.press("Escape");

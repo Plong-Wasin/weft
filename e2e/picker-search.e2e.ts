@@ -164,7 +164,8 @@ try {
   // Parent: a single-select picker with nine options also searches, and Enter picks the highlighted item and closes.
   await sidebar.getByRole("button", { name: new RegExp(`^${t("workItems.parent")}:`) }).click();
   await searchField.waitFor();
-  await page.keyboard.type("candidate 3");
+  await searchField.fill("candidate 3");
+  await panel.getByRole("menuitemradio").nth(1).waitFor({ state: "detached" });
   await panel.getByRole("menuitemradio", { name: /Candidate 3/ }).waitFor();
   check(await panel.getByRole("menuitemradio").count() === 1, "typing should leave only the matching parent");
   await page.keyboard.press("Enter");

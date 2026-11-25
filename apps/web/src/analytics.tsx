@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { NavLink } from "react-router";
 import { ChartColumn, Check, ChevronDown } from "lucide-react";
@@ -57,7 +58,7 @@ function ProjectFilter({ projects, selected, onChange }: { projects: Project[]; 
           {selected.includes(project.id) && <Check aria-hidden size={12} className="ml-auto shrink-0" />}
         </label></li>)}
       </ul>
-      {selected.length > 0 && <button type="button" onClick={() => onChange([])} className="text-left text-13">{t("analytics.clearProjects")}</button>}
+      {selected.length > 0 && <Button type="button" onClick={() => onChange([])} className="text-left text-13">{t("analytics.clearProjects")}</Button>}
     </div>}
   </Popover>;
 }

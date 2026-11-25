@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { Check, type LucideIcon } from "lucide-react";
 import { cn } from "../lib/utils";
@@ -56,7 +57,7 @@ export function Popover({ label, panelLabel = label, trigger, align = "left", cl
   </DropdownMenu>;
   return <PopoverPrimitive open={open} onOpenChange={(nextOpen) => { if (nextOpen && !open) onOpen?.(); setOpen(nextOpen); }}>
     <div ref={root} className="relative">
-      <PopoverTrigger render={<button type="button" aria-label={label} title={label} className={cn("flex items-center gap-1.5 rounded-md bg-transparent p-1.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background pointer-coarse:min-h-11 pointer-coarse:min-w-11", className, "pointer-coarse:min-h-11 pointer-coarse:min-w-11")} />}>{trigger}</PopoverTrigger>
+      <PopoverTrigger render={<Button type="button" aria-label={label} title={label} className={cn("flex items-center gap-1.5 rounded-md bg-transparent p-1.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background pointer-coarse:min-h-11 pointer-coarse:min-w-11", className, "pointer-coarse:min-h-11 pointer-coarse:min-w-11")} />}>{trigger}</PopoverTrigger>
       <PopoverContent container={panelContainer} align={align === "right" ? "end" : "start"} sideOffset={4} role={panelRole} aria-label={panelLabel} data-popover-panel className={cn("w-auto p-1", panelClassName)}>
         {children(() => setOpen(false))}
       </PopoverContent>
@@ -76,11 +77,11 @@ export function MenuItem({ icon: Icon, role = "menuitem", checked, hint, danger 
   const hintId = React.useId();
   const isSwitch = role === "menuitemcheckbox";
   const rowClass = cn(menuItemClass, "cursor-default outline-none select-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50", isSwitch && "!justify-between", danger && "text-destructive focus:text-destructive", className);
-  if (isSwitch) return <button type="button" role={role} aria-checked={Boolean(checked)} title={hint} aria-describedby={hint ? hintId : undefined} className={rowClass} {...props}>
+  if (isSwitch) return <Button type="button" role={role} aria-checked={Boolean(checked)} title={hint} aria-describedby={hint ? hintId : undefined} className={rowClass} {...props}>
     <span className="flex min-w-0 items-center gap-2"><Icon aria-hidden size={16} className={`shrink-0 ${danger ? "" : "text-secondary"}`} />{children}</span>
     <Check aria-hidden size={14} className={`shrink-0 ${checked ? "text-current" : "invisible"}`} />
     {hint && <span id={hintId} hidden>{hint}</span>}
-  </button>;
+  </Button>;
   return <DropdownMenuItem title={hint} aria-describedby={hint ? hintId : undefined} className={rowClass} {...props as React.ComponentProps<typeof DropdownMenuItem>}>
     <span className="flex min-w-0 items-center gap-2"><Icon aria-hidden size={16} className={`shrink-0 ${danger ? "" : "text-muted-foreground"}`} />{children}</span>
     {hint && <span id={hintId} hidden>{hint}</span>}

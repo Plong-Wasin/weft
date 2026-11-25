@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import { copyText } from "./toast";
 import React from "react";
 import { Link, useNavigate } from "react-router";
@@ -73,7 +74,7 @@ export function ViewFormModal({ mode, view, target, settings, onClose, onSaved }
   };
   return <ViewDialog title={title} onClose={onClose} className="max-w-lg">
       <form className="my-0 grid gap-4" onSubmit={(event) => void submit(event)}>
-        <button type="button" className="absolute right-4 top-4 rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={t("views.cancel")} onClick={onClose}><X aria-hidden size={16} /></button>
+        <Button type="button" className="absolute right-4 top-4 rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={t("views.cancel")} onClick={onClose}><X aria-hidden size={16} /></Button>
         <label className="grid gap-1 text-13 text-secondary">{t("views.name")}<input required maxLength={100} value={name} className="w-full text-14" onChange={(event) => setName(event.target.value)} /></label>
         <label className="grid gap-1 text-13 text-secondary">{t("views.description")}<textarea rows={3} maxLength={2000} value={description} className="w-full text-14" onChange={(event) => setDescription(event.target.value)} /></label>
         <label className="grid gap-1 text-13 text-secondary">{t("views.access")}
@@ -82,8 +83,8 @@ export function ViewFormModal({ mode, view, target, settings, onClose, onSaved }
           </select></label>
         {note && <p role="alert" className="m-0 text-13 text-danger-text">{note}</p>}
         <div className="flex justify-end gap-2">
-          <button type="button" className="secondary" onClick={onClose}>{t("views.cancel")}</button>
-          <button type="submit" disabled={busy || name.trim() === ""} className={primary}>{t(mode === "edit" ? "views.save" : "views.create")}</button>
+          <Button type="button" className="secondary" onClick={onClose}>{t("views.cancel")}</Button>
+          <Button type="submit" variant="primary" disabled={busy || name.trim() === ""}>{t(mode === "edit" ? "views.save" : "views.create")}</Button>
         </div>
       </form>
   </ViewDialog>;
@@ -96,8 +97,8 @@ export function DeleteViewModal({ view, onClose, onDeleted }: { view: SavedView;
       <p id="delete-view-description" className="m-0 text-14 text-secondary">{t("views.deleteConfirm").replace("{name}", view.name)}</p>
       {note && <p role="alert" className="m-0 text-13 text-danger-text">{note}</p>}
       <div className="flex justify-end gap-2">
-        <button type="button" data-safe-action className="secondary" onClick={onClose}>{t("views.cancel")}</button>
-        <button type="button" className={primary} onClick={async () => { if ((await action("delete_view", { viewId: view.id })) === null) setNote(t("views.failed")); else onDeleted(); }}>{t("views.deleteAction")}</button>
+        <Button type="button" data-safe-action className="secondary" onClick={onClose}>{t("views.cancel")}</Button>
+        <Button type="button" variant="primary" onClick={async () => { if ((await action("delete_view", { viewId: view.id })) === null) setNote(t("views.failed")); else onDeleted(); }}>{t("views.deleteAction")}</Button>
       </div>
   </ViewDialog>;
 }
@@ -107,10 +108,10 @@ function ViewMenu({ view, scope, onEdit, onDelete }: { view: SavedView; scope: S
   const link = `${window.location.origin}${paths.view(scope.workspaceSlug, scope.project.key, view.id)}`;
   return <Popover label={t("views.menu")} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-44">
     {(close) => <>
-      <button type="button" role="menuitem" className={menuItemClass} onClick={() => { void copyText(link, t("views.linkCopied"), t("comments.copyFailed")); close(); }}>{t("views.copyLink")}</button>
+      <Button type="button" role="menuitem" className={menuItemClass} onClick={() => { void copyText(link, t("views.linkCopied"), t("comments.copyFailed")); close(); }}>{t("views.copyLink")}</Button>
       {canChange(view, scope) && <>
-        <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onEdit(); }}>{t("views.edit")}</button>
-        <button type="button" role="menuitem" className={`${menuItemClass} text-destructive`} onClick={() => { close(); onDelete(); }}>{t("views.delete")}</button>
+        <Button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onEdit(); }}>{t("views.edit")}</Button>
+        <Button type="button" role="menuitem" className={`${menuItemClass} text-destructive`} onClick={() => { close(); onDelete(); }}>{t("views.delete")}</Button>
       </>}
     </>}
   </Popover>;
@@ -146,11 +147,11 @@ export function ViewsPage({ workspaceSlug, project, selfId }: Scope) {
       <label className="relative my-0 block w-full sm:w-auto"><span className="sr-only">{t("views.search")}</span>
         <Search aria-hidden size={14} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-tertiary" />
         <input type="search" value={search} placeholder={t("views.search")} className="w-full pl-7 text-13 sm:w-48" onChange={(event) => setSearch(event.target.value)} /></label>
-      {canWrite && <button type="button" className={`${primary} flex items-center gap-1.5`} onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{t("views.add")}</button>}
+      {canWrite && <Button type="button" variant="primary" className="flex items-center gap-1.5" onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{t("views.add")}</Button>}
     </header>
     {loadFailed && <div role="alert" className="flex flex-wrap items-center gap-2 px-3 py-6 text-14 text-secondary">
       <span>{t("views.loadFailed")}</span>
-      <button type="button" className={ghost} onClick={() => { void load(); }}>{t("views.retry")}</button>
+      <Button type="button" variant="ghost" onClick={() => { void load(); }}>{t("views.retry")}</Button>
     </div>}
     {views !== null && shown.length === 0 && <div className="rounded-xl bg-layer-1 px-4 py-6"><p role="status" className="m-0 text-14 text-secondary">{t(views.length === 0 ? "views.empty" : "views.noMatch")}</p></div>}
     <ul aria-label={t("views.title")} className="m-0 grid list-none gap-1 rounded-xl border border-subtle bg-surface-1 p-1 empty:hidden">{shown.map((view) => <li key={view.id} data-testid={`view-row-${view.name}`} className="flex items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-layer-transparent-hover">
@@ -176,7 +177,7 @@ export function SaveAsViewButton({ params, project, workspaceSlug }: { params: L
   const navigate = useNavigate();
   return <>
     {/* On phone the label drops out of the toolbar (the icon and title remain), so the toolbar fits in two rows. */}
-    <button type="button" className={`${ghost} max-sm:min-h-9`} aria-label={t("views.saveAs")} title={t("views.saveAs")} onClick={(event) => { event.currentTarget.focus(); setOpen(true); }}><BookmarkPlus aria-hidden size={14} /><span className="max-sm:sr-only">{t("views.saveAs")}</span></button>
+    <Button type="button" variant="ghost" className="max-sm:min-h-9" aria-label={t("views.saveAs")} title={t("views.saveAs")} onClick={(event) => { event.currentTarget.focus(); setOpen(true); }}><BookmarkPlus aria-hidden size={14} /><span className="max-sm:sr-only">{t("views.saveAs")}</span></Button>
     {open && <ViewFormModal mode="save" target={{ projectId: project.id }} settings={paramsToSettings(params)} onClose={() => setOpen(false)} onSaved={(view) => { setOpen(false); navigate(paths.view(workspaceSlug, project.key, view.id)); }} />}
   </>;
 }
@@ -219,16 +220,16 @@ export function ViewDetailPage({ workspaceSlug, project, selfId, viewId }: Scope
         <h3 className="m-0 text-14 font-medium text-primary [overflow-wrap:anywhere]">{view.name}</h3><AccessBadge access={view.access} />
         {owner && <span className="hidden items-center gap-1.5 text-12 text-tertiary md:flex"><Avatar name={owner} id={view.ownerId} />{owner}</span>}
       </nav>
-      {canWrite && !project.archived && <button type="button" className={`${primary} flex items-center gap-1.5`} onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{t("workItems.addNew")}</button>}
+      {canWrite && !project.archived && <Button type="button" variant="primary" className="flex items-center gap-1.5" onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{t("workItems.addNew")}</Button>}
       <ViewMenu view={view} scope={scope} onEdit={() => setEditing(true)} onDelete={() => setDeleting(true)} />
     </header>
     {view.description && <p className="m-0 text-13 text-secondary">{view.description}</p>}
     {status && <p role="status" className="m-0 text-13 text-secondary">{status}</p>}
     {ready && <WorkItemLayouts key={`${view.id}`} projectId={project.id} workspaceSlug={workspaceSlug} action={action} refreshKey={refreshKey} cyclesEnabled={project.features.cycles} modulesEnabled={project.features.modules} typesEnabled={project.features.types} canWrite={canWrite} canCreate
-      toolbarExtra={(params) => canChange(view, scope) && differsFromView(view, params) ? <button type="button" className={primary} onClick={async () => {
+      toolbarExtra={(params) => canChange(view, scope) && differsFromView(view, params) ? <Button type="button" variant="primary" onClick={async () => {
         const saved = await action<SavedView>("update_view", { viewId: view.id, ...paramsToSettings(params) });
         if (saved) { setView(saved); setStatus(t("views.updated")); } else setStatus(t("views.failed"));
-      }}>{t("views.update")}</button> : null} />}
+      }}>{t("views.update")}</Button> : null} />}
     {creating && <CreateWorkItemModal project={project} onClose={() => setCreating(false)} onCreated={() => setRefreshKey((key) => key + 1)} />}
     {editing && <ViewFormModal mode="edit" view={view} target={{ projectId: project.id }} onClose={() => setEditing(false)} onSaved={(saved) => { setEditing(false); setView(saved); }} />}
     {deleting && <DeleteViewModal view={view} onClose={() => setDeleting(false)} onDeleted={() => navigate(paths.views(workspaceSlug, project.key))} />}

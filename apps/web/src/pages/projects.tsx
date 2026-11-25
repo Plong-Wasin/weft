@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { Globe, Lock, Plus, Star } from "lucide-react";
 import { sanitizeProjectKey, translate, type MessageKey } from "@weft/shared";
@@ -67,8 +68,8 @@ export function ProjectsPanel() {
         </div>
       </fieldset>
       <div className="flex flex-wrap gap-2">
-        <button>{translate("projects.create")}</button>
-        <button type="button" className="secondary" onClick={() => { setCreating(false); setNote(null); }}>{translate("projects.cancel")}</button>
+        <Button>{translate("projects.create")}</Button>
+        <Button type="button" className="secondary" onClick={() => { setCreating(false); setNote(null); }}>{translate("projects.cancel")}</Button>
       </div>
       {note && <p role="alert" className="m-0 text-13 text-danger-text">{note}</p>}
     </form>;
@@ -77,11 +78,11 @@ export function ProjectsPanel() {
       <h1 className="m-0 flex-1 text-20 font-semibold text-primary">{translate("projects.title")}</h1>
       <label className="w-full max-w-sm text-13 font-medium text-secondary">{translate("projects.find")}<input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={translate("projects.searchPlaceholder")} /></label>
       <label className="secondary flex items-center gap-2 text-13"><input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />{translate("projects.showArchived")}</label>
-      {!creating && <button type="button" className="flex items-center gap-1.5" onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{translate("projects.new")}</button>}
+      {!creating && <Button type="button" className="flex items-center gap-1.5" onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{translate("projects.new")}</Button>}
     </header>
     {form}
     {projects !== null && projects.length === 0 && <EmptyState title={translate(showArchived ? "projects.noArchived" : "projects.empty")} description={showArchived ? undefined : translate("projects.emptyHint")}
-      action={showArchived || creating ? undefined : <button type="button" onClick={() => setCreating(true)}>{translate("projects.createFirst")}</button>} />}
+      action={showArchived || creating ? undefined : <Button type="button" onClick={() => setCreating(true)}>{translate("projects.createFirst")}</Button>} />}
     {projects !== null && projects.length > 0 && visibleProjects.length === 0 && <p role="status" className="m-0 text-13 text-secondary">{search.trim() ? translate("projects.noSearchResults") : translate("projects.empty")}</p>}
     {projects !== null && visibleProjects.length > 0 && <ul aria-label={translate("projects.title")} className="m-0 grid list-none gap-1 rounded-xl border border-subtle bg-surface-1 p-1 empty:hidden">{visibleProjects.map((project) => <li key={project.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg px-4 py-3 transition-colors hover:bg-layer-transparent-hover">
       <Link to={paths.workItems(workspace.slug, project.key)} aria-label={`${project.key} · ${project.name}`} className="flex min-w-40 flex-1 items-center gap-3 text-14 font-medium !text-primary">
@@ -91,13 +92,13 @@ export function ProjectsPanel() {
       {(() => {
         const starred = preferenceOf(prefs, project.id)?.starred ?? false;
         const label = translate(starred ? "sidebar.unstar" : "sidebar.star");
-        return <button type="button" aria-pressed={starred} aria-label={`${label}: ${project.name}`} title={label} onClick={() => void setPreference(project.id, { starred: !starred })} className="bg-transparent p-1 text-tertiary hover:bg-transparent hover:text-primary">
+        return <Button type="button" aria-pressed={starred} aria-label={`${label}: ${project.name}`} title={label} onClick={() => void setPreference(project.id, { starred: !starred })} className="bg-transparent p-1 text-tertiary hover:bg-transparent hover:text-primary">
           <Star aria-hidden size={14} className={starred ? "text-accent-primary" : undefined} fill={starred ? "currentColor" : "none"} />
-        </button>;
+        </Button>;
       })()}
       <span className="flex items-center gap-1.5 text-13 text-secondary">{project.visibility === "private" ? <Lock aria-hidden size={13} /> : <Globe aria-hidden size={13} />}{translate(`projects.visibility.${project.visibility}`)}</span>
       {project.archived && <span className="rounded-full bg-layer-1 px-2 py-0.5 text-12 font-medium text-secondary">{translate("projects.archivedBadge")}</span>}
-      {project.role === null && !project.archived && project.visibility === "public" && <button type="button" className="secondary" onClick={async () => { await action("join_project", { projectId: project.id }); await load(); }}>{translate("projects.join")}</button>}
+      {project.role === null && !project.archived && project.visibility === "public" && <Button type="button" className="secondary" onClick={async () => { await action("join_project", { projectId: project.id }); await load(); }}>{translate("projects.join")}</Button>}
     </li>)}</ul>}
   </section>;
 }

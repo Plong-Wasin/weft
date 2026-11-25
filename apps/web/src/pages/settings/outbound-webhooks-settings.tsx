@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { formatDate, translate, type MessageKey } from "@weft/shared";
 import { action, actionResult } from "../../api";
@@ -44,11 +45,11 @@ function WebhookBlock({ webhook, secret, onSecret, onChanged, say }: {
   return <SettingsBlock title={webhook.name} description={webhook.displayUrl}>
     {webhook.disabledReason === "failures" && <div role="status" className="grid gap-2 rounded-lg border border-subtle p-3">
       <p className="m-0 text-13 text-primary">{translate("outboundWebhooks.disabledByFailures")}</p>
-      <button type="button" className="secondary w-fit" onClick={async () => {
+      <Button type="button" className="secondary w-fit" onClick={async () => {
         const result = await action("update_outbound_webhook", { webhookId: webhook.id, enabled: true });
         say(result === null ? translate("outboundWebhooks.failed") : translate("outboundWebhooks.saved"), result === null);
         await onChanged();
-      }}>{translate("outboundWebhooks.reEnable")}</button>
+      }}>{translate("outboundWebhooks.reEnable")}</Button>
     </div>}
     <label className="flex items-center gap-2"><input type="checkbox" checked={webhook.enabled} onChange={async (event) => {
       const result = await action("update_outbound_webhook", { webhookId: webhook.id, enabled: event.target.checked });
@@ -63,12 +64,12 @@ function WebhookBlock({ webhook, secret, onSecret, onChanged, say }: {
     }} />{translate("outboundWebhooks.includePrivate")}</label>
     <p className="m-0 text-13 text-secondary">{translate("outboundWebhooks.includePrivateHelp")}</p>
     <p className="m-0 text-13 text-secondary">{translate("outboundWebhooks.sends")} {webhook.events.map(eventLabel).join(" · ")}</p>
-    <button type="button" className="secondary w-fit" onClick={async () => {
+    <Button type="button" className="secondary w-fit" onClick={async () => {
       if (fullUrl !== null) { setFullUrl(null); return; }
       const result = await action<{ url: string }>("get_outbound_webhook_url", { webhookId: webhook.id });
       if (!result) { say(translate("outboundWebhooks.failed"), true); return; }
       setFullUrl(result.url);
-    }}>{fullUrl === null ? translate("outboundWebhooks.revealUrl") : translate("outboundWebhooks.hideUrl")}</button>
+    }}>{fullUrl === null ? translate("outboundWebhooks.revealUrl") : translate("outboundWebhooks.hideUrl")}</Button>
     {fullUrl !== null && <p className="m-0 break-all text-13 text-secondary">{fullUrl}</p>}
 
     {secret && <div className="grid gap-2 rounded-lg border border-subtle p-3">
@@ -76,34 +77,34 @@ function WebhookBlock({ webhook, secret, onSecret, onChanged, say }: {
       <p className="m-0 text-13 text-secondary">{translate("outboundWebhooks.secretOnce")}</p>
       <div className="flex flex-wrap items-center gap-2">
         <input readOnly value={secret} aria-label={translate("outboundWebhooks.secretTitle")} onFocus={(event) => event.target.select()} className="min-w-0 flex-1 bg-layer-1" />
-        <button type="button" className="secondary" onClick={async () => { if (await copyText(secret, translate("outboundWebhooks.copySecret"), translate("comments.copyFailed"))) say(translate("outboundWebhooks.copySecret")); }}>{translate("outboundWebhooks.copySecret")}</button>
+        <Button type="button" className="secondary" onClick={async () => { if (await copyText(secret, translate("outboundWebhooks.copySecret"), translate("comments.copyFailed"))) say(translate("outboundWebhooks.copySecret")); }}>{translate("outboundWebhooks.copySecret")}</Button>
       </div>
     </div>}
 
     <div className="flex flex-wrap items-start gap-3">
       <div className="grid gap-1">
-        <button type="button" className="secondary w-fit" onClick={async () => {
+        <Button type="button" className="secondary w-fit" onClick={async () => {
           const result = await actionResult<{ status: string; message: string }>("test_outbound_webhook", { webhookId: webhook.id });
           if ("error" in result) { say(translate("outboundWebhooks.failed"), true); return; }
           say(result.data.message, result.data.status !== "succeeded");
           await load();
-        }}>{translate("outboundWebhooks.test")}</button>
+        }}>{translate("outboundWebhooks.test")}</Button>
         <p className="m-0 text-13 text-secondary">{translate("outboundWebhooks.testHelp")}</p>
       </div>
-      <button type="button" className="secondary w-fit" onClick={async () => {
+      <Button type="button" className="secondary w-fit" onClick={async () => {
         if (!window.confirm(translate("outboundWebhooks.rotateConfirm"))) return;
         const result = await action<{ secret: string }>("rotate_outbound_webhook_secret", { webhookId: webhook.id });
         if (!result) { say(translate("outboundWebhooks.failed"), true); return; }
         onSecret(result.secret);
         say(null);
-      }}>{translate("outboundWebhooks.rotate")}</button>
-      <button type="button" className="secondary w-fit" onClick={async () => {
+      }}>{translate("outboundWebhooks.rotate")}</Button>
+      <Button type="button" className="secondary w-fit" onClick={async () => {
         if (!window.confirm(translate("outboundWebhooks.deleteConfirm"))) return;
         const result = await action("delete_outbound_webhook", { webhookId: webhook.id });
         if (!result) { say(translate("outboundWebhooks.failed"), true); return; }
         say(translate("outboundWebhooks.deleted"));
         await onChanged();
-      }}>{translate("outboundWebhooks.delete")}</button>
+      }}>{translate("outboundWebhooks.delete")}</Button>
     </div>
 
     <div className="grid min-w-0 gap-2">
@@ -127,14 +128,14 @@ function WebhookBlock({ webhook, secret, onSecret, onChanged, say }: {
               <td>{translate(`outboundWebhooks.status.${delivery.status}` as MessageKey)}</td>
               <td className="break-words">{answerOf(delivery)}</td>
               <td>{delivery.attempts}</td>
-              <td><button type="button" className="secondary" disabled={delivery.status === "retrying" || redelivering.has(delivery.id)} title={delivery.status === "retrying" ? translate("outboundWebhooks.stillRetrying") : undefined} aria-label={`${translate("outboundWebhooks.redeliver")}: ${eventLabel(delivery.eventType)}`} onClick={async () => {
+              <td><Button type="button" className="secondary" disabled={delivery.status === "retrying" || redelivering.has(delivery.id)} title={delivery.status === "retrying" ? translate("outboundWebhooks.stillRetrying") : undefined} aria-label={`${translate("outboundWebhooks.redeliver")}: ${eventLabel(delivery.eventType)}`} onClick={async () => {
                 if (redelivering.has(delivery.id)) return;
                 setRedelivering((current) => new Set(current).add(delivery.id));
                 const result = await action("redeliver_outbound_webhook_delivery", { deliveryId: delivery.id });
                 say(result === null ? translate("outboundWebhooks.failed") : translate("outboundWebhooks.saved"), result === null);
                 await load();
                 setRedelivering((current) => { const next = new Set(current); next.delete(delivery.id); return next; });
-              }}>{translate("outboundWebhooks.redeliver")}</button></td>
+              }}>{translate("outboundWebhooks.redeliver")}</Button></td>
             </tr>)}</tbody>
           </table>
         </div>}
@@ -184,7 +185,7 @@ function AddWebhook({ workspaceId, onCreated, say }: { workspaceId: string; onCr
         <input type="checkbox" checked={includePrivate} onChange={(event) => setIncludePrivate(event.target.checked)} />{translate("outboundWebhooks.includePrivate")}
       </label>
       <p className="m-0 text-13 text-secondary">{translate("outboundWebhooks.includePrivateHelp")}</p>
-      <button type="submit" className="primary w-fit" disabled={busy}>{translate("outboundWebhooks.create")}</button>
+      <Button type="submit" className="primary w-fit" disabled={busy}>{translate("outboundWebhooks.create")}</Button>
     </form>
   </SettingsBlock>;
 }

@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { Outlet, useLocation } from "react-router";
 import { Command } from "lucide-react";
@@ -49,7 +50,7 @@ export function Shell({ current, workspace, signOut, refresh }: { current: Curre
         <SheetContent side="left" closeLabel={translate("shell.closeMenu")} aria-label={translate("shell.sidebar")} className="md:hidden">
           <SheetTitle className="sr-only">{translate("shell.sidebar")}</SheetTitle>
           <AppRail workspaceSlug={workspace.slug} horizontal />
-          <button type="button" onClick={() => { setDrawer(false); window.dispatchEvent(new Event(openPaletteEvent)); }} className="inset-row-hover mx-3 mt-2 flex min-h-11 items-center gap-2 rounded-lg bg-transparent px-3 text-left text-14 text-primary"><Command aria-hidden size={16} />{translate("palette.menuLabel")}</button>
+          <Button type="button" onClick={() => { setDrawer(false); window.dispatchEvent(new Event(openPaletteEvent)); }} className="inset-row-hover mx-3 mt-2 flex min-h-11 items-center gap-2 rounded-lg bg-transparent px-3 text-left text-14 text-primary"><Command aria-hidden size={16} />{translate("palette.menuLabel")}</Button>
           <Sidebar workspace={workspace} />
         </SheetContent>
       </Sheet>

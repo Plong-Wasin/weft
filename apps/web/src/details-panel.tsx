@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { PanelRight, PanelRightClose } from "lucide-react";
 import { translate, type MessageKey } from "@weft/shared";
@@ -48,8 +49,8 @@ export function useDetailsPanel(kind: DetailsPanelKind, enabled = true) {
 
 export function DetailsPanelToggle({ open, onToggle, panelId, testId }: { open: boolean; onToggle: () => void; panelId: string; testId?: string }) {
   const label = translate((open ? "detailsPanel.hide" : "detailsPanel.show") as MessageKey);
-  return <button type="button" className="icon-button-ghost hidden lg:grid rounded-lg" data-testid={testId} aria-expanded={open} aria-pressed={open} aria-controls={panelId} aria-label={label}
+  return <Button type="button" className="icon-button-ghost hidden lg:grid rounded-lg" data-testid={testId} aria-expanded={open} aria-pressed={open} aria-controls={panelId} aria-label={label}
     title={`${label} (Ctrl/⌘+I)`} onClick={onToggle}>
     {open ? <PanelRightClose aria-hidden size={16} /> : <PanelRight aria-hidden size={16} />}
-  </button>;
+  </Button>;
 }

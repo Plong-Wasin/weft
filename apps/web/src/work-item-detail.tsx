@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import { accessReasonText } from "./access-reason";
 import React from "react";
 import { handleImeSafeEnter } from "./ime";
@@ -90,8 +91,8 @@ function TypeRows({ project, item, canWrite, people, onSaved }: { project: Proje
       <span className="font-medium text-primary">{t("types.dropHeading")}</span>
       <span className="text-13 text-secondary">{t("types.dropBody").replace("{type}", types.find((type) => type.id === pending.typeId)?.name ?? "").replace("{names}", pending.names.join(", "))}</span>
       <span className="flex flex-wrap gap-2">
-        <button type="button" onClick={() => { const next = pending.typeId; setPending(null); void save({ typeId: next, dropPropertyValues: true }); }}>{t("types.dropConfirm")}</button>
-        <button type="button" className="secondary" onClick={() => setPending(null)}>{t("types.dropKeep")}</button>
+        <Button type="button" onClick={() => { const next = pending.typeId; setPending(null); void save({ typeId: next, dropPropertyValues: true }); }}>{t("types.dropConfirm")}</Button>
+        <Button type="button" className="secondary" onClick={() => setPending(null)}>{t("types.dropKeep")}</Button>
       </span>
     </div>}
     {typeProperties.length > 0 && <PropertyFields properties={typeProperties} values={values} members={people} idPrefix={`peek-${item.id}`} disabled={!canWrite} commitOnBlur onChange={setValue} />}
@@ -311,7 +312,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       ? <>
         <span aria-hidden className="flex-1" />
         <Link to={itemPath} className={`${iconButton} max-sm:flex max-sm:h-auto max-sm:w-auto max-sm:items-center max-sm:gap-1 max-sm:px-1.5 max-sm:py-1`} aria-label={t("workItems.peek.expand")} title={t("workItems.peek.expand")}><Maximize2 aria-hidden size={15} /><span className="hidden text-10 max-sm:inline">{t("workItems.peek.expand")}</span></Link>
-        <button type="button" className={`${iconButton} max-sm:flex max-sm:h-auto max-sm:w-auto max-sm:items-center max-sm:gap-1 max-sm:px-1.5 max-sm:py-1`} aria-label={t("workItems.peek.close")} title={t("workItems.peek.close")} onClick={onClose}><X aria-hidden size={16} /><span className="hidden text-10 max-sm:inline">{t("workItems.peek.close")}</span></button>
+        <Button type="button" className={`${iconButton} max-sm:flex max-sm:h-auto max-sm:w-auto max-sm:items-center max-sm:gap-1 max-sm:px-1.5 max-sm:py-1`} aria-label={t("workItems.peek.close")} title={t("workItems.peek.close")} onClick={onClose}><X aria-hidden size={16} /><span className="hidden text-10 max-sm:inline">{t("workItems.peek.close")}</span></Button>
       </>
       : <nav aria-label={t("workItems.breadcrumb")} className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden whitespace-nowrap text-13 text-secondary">
         {project && <Link to={paths.workItems(workspace.slug, project.key)} className="hidden truncate text-secondary hover:text-primary sm:inline">{project.name}</Link>}
@@ -325,15 +326,15 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       <span className="hidden lg:block"><DetailsPanelToggle open={propertiesOpen} onToggle={detailsPanel.toggle} panelId={`work-item-details-${item.id}`} testId="work-item-properties-toggle" /></span>
       <Popover label={t("workItems.more")} align="right" className="!size-10 shrink-0 border border-subtle bg-surface-1 p-0 sm:hidden" trigger={<MoreHorizontal aria-hidden size={18} />}>
         {(close) => <>
-          <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void copy(); }}>{t("workItems.copyLink")}</button>
-          {mayArchive && !isArchived && eligible && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void archiveOrRestore("archive_work_item"); }}>{t("workItems.archive")}</button>}
-          {canWrite && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void remove(); }}>{t("workItems.delete")}</button>}
+          <Button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void copy(); }}>{t("workItems.copyLink")}</Button>
+          {mayArchive && !isArchived && eligible && <Button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void archiveOrRestore("archive_work_item"); }}>{t("workItems.archive")}</Button>}
+          {canWrite && <Button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void remove(); }}>{t("workItems.delete")}</Button>}
         </>}
       </Popover>
       <div className="hidden items-center gap-2 sm:flex">
-        <button type="button" className={iconButton} aria-label={t("workItems.copyLink")} title={t("workItems.copyLink")} onClick={() => void copy()}><Link2 aria-hidden size={15} /></button>
-        {mayArchive && !isArchived && eligible && <button type="button" className={iconButton} aria-label={t("workItems.archive")} title={t("workItems.archive")} onClick={() => void archiveOrRestore("archive_work_item")}><Archive aria-hidden size={15} /></button>}
-        {canWrite && <button type="button" className={`${iconButton} hover:text-danger-text`} aria-label={t("workItems.delete")} title={t("workItems.delete")} onClick={() => void remove()}><Trash2 aria-hidden size={15} /></button>}
+        <Button type="button" className={iconButton} aria-label={t("workItems.copyLink")} title={t("workItems.copyLink")} onClick={() => void copy()}><Link2 aria-hidden size={15} /></Button>
+        {mayArchive && !isArchived && eligible && <Button type="button" className={iconButton} aria-label={t("workItems.archive")} title={t("workItems.archive")} onClick={() => void archiveOrRestore("archive_work_item")}><Archive aria-hidden size={15} /></Button>}
+        {canWrite && <Button type="button" className={`${iconButton} hover:text-danger-text`} aria-label={t("workItems.delete")} title={t("workItems.delete")} onClick={() => void remove()}><Trash2 aria-hidden size={15} /></Button>}
       </div>
     </div>}
   </header>;
@@ -391,7 +392,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const mainTop = <>
     {isArchived &&<div role="status" className="flex flex-wrap items-center gap-3 rounded-md border border-subtle bg-layer-1 px-3 py-2 text-13 text-secondary">
       <Archive aria-hidden size={15} /><span>{t("workItems.archivedBanner")}</span>
-      {mayArchive && <button type="button" className="secondary ml-auto flex items-center gap-1.5" onClick={() => void archiveOrRestore("restore_work_item")}><ArchiveRestore aria-hidden size={14} />{t("workItems.restore")}</button>}
+      {mayArchive && <Button type="button" className="secondary ml-auto flex items-center gap-1.5" onClick={() => void archiveOrRestore("restore_work_item")}><ArchiveRestore aria-hidden size={14} />{t("workItems.restore")}</Button>}
     </div>}
     <div className="grid gap-2">
       {mode === "page" ? <h1 className="m-0 text-14 font-medium text-tertiary">{item.displayId}</h1> : <h2 className="m-0 text-14 font-medium text-tertiary">{item.displayId}</h2>}
@@ -410,16 +411,16 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
         onSourceDraftChange={(hasDraft) => { if (hasDraft) setDescriptionSaveState("notSaved"); }}
         onChange={(doc) => { pending.current = { id: item.id, doc }; setDescriptionSaveError(null); setDescriptionSaveState("saving"); if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(flush, 700); }} />
     </div>
-    {lastDescriptionEdit && <button data-testid="description-last-edited" type="button" className="justify-self-start bg-transparent p-0 text-13 text-secondary hover:bg-transparent hover:text-primary" onClick={() => void openVersions()}>
+    {lastDescriptionEdit && <Button data-testid="description-last-edited" type="button" className="justify-self-start bg-transparent p-0 text-13 text-secondary hover:bg-transparent hover:text-primary" onClick={() => void openVersions()}>
       {t("workItems.lastEditedBy").replace("{name}", lastDescriptionEdit.name).replace("{time}", relativeTime(lastDescriptionEdit.at))} ▾
-    </button>}
+    </Button>}
     <OutlinksPanel kind="work-item" id={item.id} run={action} refreshKey={descriptionOutlinksKey} updating={descriptionSaveState === "saving" || descriptionSaveState === "updating"} onRefreshComplete={onDescriptionOutlinksRefreshComplete} />
     <div role="group" className="flex w-full min-w-0 max-w-full flex-wrap gap-2 max-sm:grid max-sm:grid-cols-[auto_auto] max-sm:justify-items-start max-sm:[&>button]:whitespace-nowrap" aria-label={t("workItems.actions")}>
       {canWrite && <>
-        <button type="button" className="secondary max-sm:min-h-11" onClick={() => openAction("subItems")}>{t("workItems.addSubItemAction")}</button>
-        <button type="button" className="secondary max-sm:min-h-11" onClick={() => { setActiveForm("relations"); setCollapsed((current) => current.filter((value) => value !== "relations")); }}>{t("workItems.addRelationAction")}</button>
-        <button type="button" className="secondary max-sm:min-h-11" onClick={() => openAction("links")}>{t("workItems.addLinkAction")}</button>
-        <button type="button" className="secondary max-sm:min-h-11" onClick={() => { setActiveForm("attachments"); setCollapsed((current) => current.filter((value) => value !== "attachments")); attachmentPicker.current?.click(); }}>{t("workItems.attachAction")}</button>
+        <Button type="button" className="secondary max-sm:min-h-11" onClick={() => openAction("subItems")}>{t("workItems.addSubItemAction")}</Button>
+        <Button type="button" className="secondary max-sm:min-h-11" onClick={() => { setActiveForm("relations"); setCollapsed((current) => current.filter((value) => value !== "relations")); }}>{t("workItems.addRelationAction")}</Button>
+        <Button type="button" className="secondary max-sm:min-h-11" onClick={() => openAction("links")}>{t("workItems.addLinkAction")}</Button>
+        <Button type="button" className="secondary max-sm:min-h-11" onClick={() => { setActiveForm("attachments"); setCollapsed((current) => current.filter((value) => value !== "attachments")); attachmentPicker.current?.click(); }}>{t("workItems.attachAction")}</Button>
       </>}
     </div>
     {section("subItems", t("workItems.subItems"), subItems.length, <>
@@ -429,7 +430,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       </li>)}</ul>
       {canWrite && activeForm === "subItems" && <form className="my-0 flex items-center gap-2 [&>button]:shrink-0 [&>button]:whitespace-nowrap" onSubmit={async (event) => { event.preventDefault(); await guard(await action("create_work_item", { projectId: item.projectId, title: subTitle, parentId: item.id })); setSubTitle(""); setActiveForm((current) => current === "subItems" ? null : current); }}>
         <input required aria-label={`${t("workItems.subItems")}: ${t("workItems.titleField")}`} placeholder={t("workItems.quickTitle")} value={subTitle} className="flex-1" onChange={(event) => setSubTitle(event.target.value)} />
-        <button>{t("workItems.subItems.add")}</button>
+        <Button>{t("workItems.subItems.add")}</Button>
       </form>}
     </>)}
     {section("relations", t("relations.title"), sectionCounts.relations, <RelationsPanel workspaceSlug={workspace.slug} workItemId={item.id} candidates={projectItems.filter((candidate) => candidate.id !== item.id)} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "relations"} onClose={() => setActiveForm(null)} onCount={countCallbacks.relations} />)}
@@ -443,10 +444,10 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     {note && <p role="alert" className="text-danger-text">{note}</p>}
     {versionsOpen && <div role="presentation" className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setVersionsOpen(false); }}>
       <section role="dialog" aria-modal="true" aria-labelledby="description-versions-title" className="grid max-h-[80dvh] w-full max-w-xl gap-4 overflow-auto rounded-2xl bg-surface-1 p-5 shadow-xl">
-        <div className="flex items-center justify-between"><h2 id="description-versions-title" className="m-0 text-18 font-semibold">{t("workItems.descriptionVersions")}</h2><button type="button" className="secondary" onClick={() => setVersionsOpen(false)}>{t("workItems.close")}</button></div>
-        {descriptionVersions.length === 0 ? (versionsFirstFailed ? <button type="button" className="secondary justify-self-start" data-testid="retry-versions" onClick={() => void openVersions()}>{t("workItems.retryOlderVersions")}</button> : <p>{t("workItems.noDescriptionVersions")}</p>) : <ul className="m-0 grid gap-3 p-0">{descriptionVersions.map((version) => <li key={version.id} className="list-none rounded border border-subtle p-3"><p className="m-0 text-12 text-secondary">{version.createdByName} · {relativeTime(version.createdAt)}</p><p className="my-2 whitespace-pre-wrap text-13">{version.contentText || t("workItems.emptyDescription")}</p>{canWrite && <button type="button" className="secondary" onClick={() => void restoreVersion(version.id)}>{t("workItems.restoreVersion")}</button>}</li>)}</ul>}
+        <div className="flex items-center justify-between"><h2 id="description-versions-title" className="m-0 text-18 font-semibold">{t("workItems.descriptionVersions")}</h2><Button type="button" className="secondary" onClick={() => setVersionsOpen(false)}>{t("workItems.close")}</Button></div>
+        {descriptionVersions.length === 0 ? (versionsFirstFailed ? <Button type="button" className="secondary justify-self-start" data-testid="retry-versions" onClick={() => void openVersions()}>{t("workItems.retryOlderVersions")}</Button> : <p>{t("workItems.noDescriptionVersions")}</p>) : <ul className="m-0 grid gap-3 p-0">{descriptionVersions.map((version) => <li key={version.id} className="list-none rounded border border-subtle p-3"><p className="m-0 text-12 text-secondary">{version.createdByName} · {relativeTime(version.createdAt)}</p><p className="my-2 whitespace-pre-wrap text-13">{version.contentText || t("workItems.emptyDescription")}</p>{canWrite && <Button type="button" className="secondary" onClick={() => void restoreVersion(version.id)}>{t("workItems.restoreVersion")}</Button>}</li>)}</ul>}
         {versionsError && <p role="alert" data-testid="older-versions-error" className="m-0 text-13 text-danger-text">{t("workItems.olderVersionsFailed")}</p>}
-        {versionsMore && <button type="button" className="secondary justify-self-start" data-testid="show-older-versions" disabled={versionsLoading} aria-busy={versionsLoading} onClick={() => void showOlderVersions()}>{versionsLoading ? t("workItems.loadingOlderVersions") : versionsError ? t("workItems.retryOlderVersions") : t("workItems.showOlderVersions")}</button>}
+        {versionsMore && <Button type="button" className="secondary justify-self-start" data-testid="show-older-versions" disabled={versionsLoading} aria-busy={versionsLoading} onClick={() => void showOlderVersions()}>{versionsLoading ? t("workItems.loadingOlderVersions") : versionsError ? t("workItems.retryOlderVersions") : t("workItems.showOlderVersions")}</Button>}
       </section>
     </div>}
   </>;
@@ -458,9 +459,9 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     const panelId = `work-item-props-${item.id}-${key}`;
     return <section data-props-section={key} className="grid content-start gap-3">
       <h3 className="m-0 text-13 font-medium">
-        <button type="button" aria-expanded={open} aria-controls={panelId} className="flex w-full items-center gap-1.5 rounded-md bg-transparent p-0 text-left text-13 font-medium text-secondary hover:bg-transparent hover:text-primary" onClick={() => setSectionOpen(key, !open)}>
+        <Button type="button" aria-expanded={open} aria-controls={panelId} className="flex w-full items-center gap-1.5 rounded-md bg-transparent p-0 text-left text-13 font-medium text-secondary hover:bg-transparent hover:text-primary" onClick={() => setSectionOpen(key, !open)}>
           <ChevronDown aria-hidden size={15} className={`shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} />{t(`workItems.properties.${key}`)}
-        </button>
+        </Button>
       </h3>
       <div id={panelId} className={open ? "grid content-start gap-3" : "hidden"}>{content}</div>
     </section>;
@@ -518,9 +519,9 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       {project && <TypeRows project={project} item={item} canWrite={canWrite} people={people} onSaved={async () => { await load(); onChanged?.(); }} />}
     </>)}
     {mode === "peek" && <div className="flex flex-wrap gap-2 border-t border-subtle pt-4" data-peek-actions>
-      <button type="button" className="secondary flex items-center gap-1.5 whitespace-nowrap" onClick={() => void copy()}><Link2 aria-hidden size={14} />{t("workItems.copyLink")}</button>
-      {mayArchive && !isArchived && eligible && <button type="button" className="secondary flex items-center gap-1.5 whitespace-nowrap" onClick={() => void archiveOrRestore("archive_work_item")}><Archive aria-hidden size={14} />{t("workItems.archive")}</button>}
-      {canWrite && <button type="button" className="secondary flex items-center gap-1.5 whitespace-nowrap hover:text-danger-text" onClick={() => void remove()}><Trash2 aria-hidden size={14} />{t("workItems.delete")}</button>}
+      <Button type="button" className="secondary flex items-center gap-1.5 whitespace-nowrap" onClick={() => void copy()}><Link2 aria-hidden size={14} />{t("workItems.copyLink")}</Button>
+      {mayArchive && !isArchived && eligible && <Button type="button" className="secondary flex items-center gap-1.5 whitespace-nowrap" onClick={() => void archiveOrRestore("archive_work_item")}><Archive aria-hidden size={14} />{t("workItems.archive")}</Button>}
+      {canWrite && <Button type="button" className="secondary flex items-center gap-1.5 whitespace-nowrap hover:text-danger-text" onClick={() => void remove()}><Trash2 aria-hidden size={14} />{t("workItems.delete")}</Button>}
     </div>}
   </aside>;
 

@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { Link, useNavigate } from "react-router";
 import { ArchiveRestore, CalendarDays, CalendarSync, EllipsisVertical, Plus, X } from "lucide-react";
@@ -67,7 +68,7 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
     }} className="fixed left-1/2 top-[10dvh] z-50 m-0 max-h-[80dvh] w-[calc(100vw-1.5rem)] max-w-lg -translate-x-1/2 overflow-auto rounded-lg border border-subtle bg-surface-1 p-5 text-primary shadow-lg backdrop:bg-backdrop">
       <div className="mb-3 flex items-center gap-2">
         <h2 id={titleId} className="m-0 flex-1 text-18 font-semibold text-primary">{title}</h2>
-        <button type="button" className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={t("cycles.close")} onClick={onClose}><X aria-hidden size={16} /></button>
+        <Button type="button" className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={t("cycles.close")} onClick={onClose}><X aria-hidden size={16} /></Button>
       </div>
       {children}
     </dialog>
@@ -101,8 +102,8 @@ function CycleModal({ action, projectId, workspaceId, cycle, onClose, onSaved }:
       {overlap.length > 0 && <p role="status" data-testid="cycle-overlap" className="m-0 rounded-md bg-warning-subtle px-3 py-2 text-13 text-primary">{t("cycles.overlap").replace("{names}", overlap.join(", "))}</p>}
       {note && <p role="alert" className="m-0 text-danger-text">{note}</p>}
       <div className="flex justify-end gap-2 border-t border-subtle pt-3">
-        <button type="button" className="secondary" onClick={onClose}>{t("cycles.cancel")}</button>
-        <button type="submit">{t(cycle ? "cycles.save" : "cycles.create")}</button>
+        <Button type="button" className="secondary" onClick={onClose}>{t("cycles.cancel")}</Button>
+        <Button type="submit">{t(cycle ? "cycles.save" : "cycles.create")}</Button>
       </div>
     </form>
   </Modal>;
@@ -126,10 +127,10 @@ function CycleMenu({ cycle, canWrite, canAdmin, onEdit, onArchive, onDelete }: {
   if (!canWrite && !canAdmin) return null;
   return <Popover label={`${t("cycles.menu")}: ${cycle.name}`} align="right" trigger={<EllipsisVertical aria-hidden size={16} />}>
     {(close) => <>
-      {canWrite && !cycle.archived && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onEdit(); }}>{t("cycles.edit")}</button>}
-      {canAdmin && cycle.archived && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onArchive(); }}><ArchiveRestore aria-hidden size={14} />{t("cycles.unarchive")}</button>}
-      {canArchive && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onArchive(); }}>{t("cycles.archive")}</button>}
-      {canAdmin && <button type="button" role="menuitem" className={`${menuItemClass} text-destructive`} onClick={() => { close(); onDelete(); }}>{t("cycles.delete")}</button>}
+      {canWrite && !cycle.archived && <Button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onEdit(); }}>{t("cycles.edit")}</Button>}
+      {canAdmin && cycle.archived && <Button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onArchive(); }}><ArchiveRestore aria-hidden size={14} />{t("cycles.unarchive")}</Button>}
+      {canArchive && <Button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onArchive(); }}>{t("cycles.archive")}</Button>}
+      {canAdmin && <Button type="button" role="menuitem" className={`${menuItemClass} text-destructive`} onClick={() => { close(); onDelete(); }}>{t("cycles.delete")}</Button>}
     </>}
   </Popover>;
 }
@@ -177,15 +178,15 @@ export function CyclesPage({ workspaceId, workspaceSlug, projectKey, projectId, 
     <header className="flex flex-wrap items-center gap-3">
       <h2 className="m-0 flex flex-1 items-center gap-2 text-16 font-semibold"><CalendarSync aria-hidden size={16} />{t("cycles.title")}</h2>
       <label className="flex items-center gap-2 text-13 text-secondary"><input type="checkbox" checked={archived} onChange={(event) => setArchived(event.target.checked)} /> {t("cycles.showArchived")}</label>
-      {canWrite && <button type="button" className={primaryButton} onClick={() => setEditing("new")}><Plus aria-hidden size={14} />{t("cycles.new")}</button>}
+      {canWrite && <Button type="button" className={primaryButton} onClick={() => setEditing("new")}><Plus aria-hidden size={14} />{t("cycles.new")}</Button>}
     </header>
     <div role="tablist" aria-label={t("cycles.title")} className="flex w-fit max-w-full flex-wrap gap-1 rounded-lg bg-layer-1 p-1">
-      {tabs.map((status) => <button key={status} type="button" role="tab" aria-selected={tab === status} onClick={() => setTab(status)}
-        className={`rounded-md border-0 px-3 py-2 text-14 font-medium ${tab === status ? "bg-surface-1 text-primary shadow-sm" : "bg-transparent text-secondary hover:bg-layer-transparent-hover"}`}>{t(`cycles.status.${status}`)} <span className="text-12 text-tertiary">{count(counts(status))}</span></button>)}
+      {tabs.map((status) => <Button key={status} type="button" role="tab" aria-selected={tab === status} onClick={() => setTab(status)}
+        className={`rounded-md border-0 px-3 py-2 text-14 font-medium ${tab === status ? "bg-surface-1 text-primary shadow-sm" : "bg-transparent text-secondary hover:bg-layer-transparent-hover"}`}>{t(`cycles.status.${status}`)} <span className="text-12 text-tertiary">{count(counts(status))}</span></Button>)}
     </div>
     {cycles !== null && cycles.length === 0 && (archived
       ? <EmptyState title={t("archives.emptyCycles")} />
-      : <EmptyState title={t("cycles.empty")} description={t("cycles.emptyHint")} action={canWrite ? <button type="button" className={primaryButton} onClick={() => setEditing("new")}><Plus aria-hidden size={14} />{t("cycles.createFirst")}</button> : undefined} />)}
+      : <EmptyState title={t("cycles.empty")} description={t("cycles.emptyHint")} action={canWrite ? <Button type="button" className={primaryButton} onClick={() => setEditing("new")}><Plus aria-hidden size={14} />{t("cycles.createFirst")}</Button> : undefined} />)}
     {cycles !== null && cycles.length > 0 && shown.length === 0 && <p role="status" className="m-0 px-1 py-4 text-14 text-secondary">{t("cycles.emptyTab")}</p>}
     <ul role="tabpanel" className="m-0 grid list-none gap-1 rounded-xl border border-subtle bg-surface-1 p-1 empty:hidden">
       {shown.map((cycle) => <CycleRow key={cycle.id} cycle={cycle} href={paths.cycle(workspaceSlug, projectKey, cycle.id)}>
@@ -251,7 +252,7 @@ export function BurndownChart({ action, name, body, projectId, refreshKey, testI
   return <div className="grid gap-2" data-testid={testId}>
     <div className="flex items-center justify-between gap-2"><span className="text-13 font-medium">{t("cycles.burndown")}</span>
       {hasPoints && <div role="group" aria-label={t("cycles.burndownUnit")} className="flex gap-1" data-testid="burndown-unit">
-        {(["items", "points"] as const).map((value) => <button key={value} type="button" aria-pressed={mode === value} onClick={() => setUnit(value)} className={`rounded-md border border-subtle px-2 py-0.5 text-12 ${mode === value ? "bg-layer-1 font-medium text-primary" : "text-secondary"}`}>{t(`cycles.burndownUnit.${value}`)}</button>)}
+        {(["items", "points"] as const).map((value) => <Button key={value} type="button" aria-pressed={mode === value} onClick={() => setUnit(value)} className={`rounded-md border border-subtle px-2 py-0.5 text-12 ${mode === value ? "bg-layer-1 font-medium text-primary" : "text-secondary"}`}>{t(`cycles.burndownUnit.${value}`)}</Button>)}
       </div>}
     </div>
     {data.finalOutcome && <p className="m-0 text-12 text-secondary" role="status">
@@ -335,7 +336,7 @@ export function CycleDetailPage({ workspaceId, workspaceSlug, projectKey, projec
       <Link to={paths.cycles(workspaceSlug, projectKey)} className="text-13">{t("cycles.back")}</Link>
       <h2 title={cycle.name} className="m-0 min-w-32 flex-1 truncate text-20 font-semibold">{cycle.name}</h2>
       <DetailsPanelToggle open={detailsPanel.open} onToggle={detailsPanel.toggle} panelId="cycle-details-panel" />
-      {canWrite && !ended && !cycle.archived && <button type="button" className={primaryButton} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("cycles.addItems")}</button>}
+      {canWrite && !ended && !cycle.archived && <Button type="button" className={primaryButton} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("cycles.addItems")}</Button>}
       <CycleMenu cycle={cycle} canWrite={canWrite} canAdmin={canAdmin} onEdit={() => setEditing(true)} onArchive={() => void (cycle.archived ? commands.restore(cycle) : commands.archive(cycle))} onDelete={() => void commands.destroy(cycle).then((gone) => { if (gone) navigate(paths.cycles(workspaceSlug, projectKey)); })} />
     </header>
     {note && <p role="alert" className="m-0 text-danger-text">{note}</p>}
@@ -343,7 +344,7 @@ export function CycleDetailPage({ workspaceId, workspaceSlug, projectKey, projec
       <div className="min-w-0 flex-1">
         <h4 className="mb-2 mt-0 text-14 font-semibold">{t("cycles.workItems")}</h4>
         <WorkItemLayouts projectId={projectId} workspaceSlug={workspaceSlug} action={action} run={runQuery} refreshKey={refreshKey} cycleId={cycleId}
-          rowAction={canWrite && !cycle.archived ? (item) => <button className="secondary whitespace-nowrap px-2 py-1 text-12" onClick={() => void remove(item.id)}>{t("cycles.remove")}</button> : undefined} />
+          rowAction={canWrite && !cycle.archived ? (item) => <Button className="secondary whitespace-nowrap px-2 py-1 text-12" onClick={() => void remove(item.id)}>{t("cycles.remove")}</Button> : undefined} />
       </div>
       <aside id="cycle-details-panel" aria-label={t("cycles.details")} className={`grid h-fit gap-4 rounded-xl bg-layer-1 p-4 lg:w-80 lg:shrink-0 ${detailsPanel.open ? "" : "lg:hidden"}`}>
         <section className="grid gap-2" aria-label={t("workItems.description")}><h3 className="m-0 text-14 font-semibold">{t("workItems.description")}</h3><EntityDescription key={cycle.id} action={action} workspaceId={workspaceId} owner={{ ownerType: "cycle", ownerId: cycle.id }} mentionPeople={mentionPeople} initial={cycle.description ?? null} editable={canWrite && !cycle.archived} /></section>
@@ -361,7 +362,7 @@ export function CycleDetailPage({ workspaceId, workspaceSlug, projectKey, projec
           </select>
           {transferSelection.length === 0 && <p className="m-0 text-12 text-secondary">{t("cycles.noTransferItems")}</p>}
           <ul className="m-0 grid list-none gap-1 p-0">{everyone.filter((item) => cycle.workItemIds.includes(item.id) && (() => { const group = states.find((state) => state.id === item.stateId)?.group; return group !== "completed" && group !== "cancelled"; })()).map((item) => <li key={item.id} className="flex items-center gap-2 text-13"><input type="checkbox" aria-label={`${t("cycles.selectTransferItem")} ${item.displayId}`} checked={transferSelection.includes(item.id)} onChange={(event) => setTransferSelection((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))} /><span className="truncate">{item.displayId} · {item.title}</span></li>)}</ul>
-          <button disabled={!target || transferSelection.length === 0} onClick={() => void transfer()}>{t("cycles.transfer")}</button>
+          <Button disabled={!target || transferSelection.length === 0} onClick={() => void transfer()}>{t("cycles.transfer")}</Button>
         </div>}
       </aside>
     </div>
@@ -376,12 +377,12 @@ export function CycleDetailPage({ workspaceId, workspaceSlug, projectKey, projec
         const disabled = !!currentCycle && (!moveCandidates || currentCycle.archived);
         return <li key={item.id} className="flex items-center gap-2 text-13"><input type="checkbox" aria-label={`${t("cycles.selectCandidate")} ${item.displayId}`} disabled={disabled} checked={selectedCandidates.includes(item.id)} onChange={(event) => setSelectedCandidates((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))} /><span className="min-w-0 flex-1 truncate">{item.displayId} · {item.title}</span><span title={currentCycle?.name} className="min-w-0 max-w-[40%] truncate text-secondary">{currentCycle ?t("cycles.currentCycle").replace("{name}", currentCycle.name) : t("cycles.noCurrentCycle")}</span></li>;
       })}</ul>
-      <div className="flex justify-end"><button disabled={selectedCandidates.length === 0} onClick={async () => {
+      <div className="flex justify-end"><Button disabled={selectedCandidates.length === 0} onClick={async () => {
         const expectedCycleIds = Object.fromEntries(selectedCandidates.map((id) => [id, cycleOf[id]?.id ?? null]));
         const result = await action<{ added: string[]; skipped: Array<{ workItemId: string; cycleId: string }> }>("add_cycle_items", { cycleId, workItemIds: selectedCandidates, move: moveCandidates, expectedCycleIds });
         setNote(result === null ? t("cycles.failed") : result.skipped.length ? t("cycles.selectionConflict").replace("{count}", count(result.skipped.length)) : null);
         setSelectedCandidates([]); setAdding(false); await load();
-      }}>{t("cycles.addSelected").replace("{count}", count(selectedCandidates.length))}</button></div>
+      }}>{t("cycles.addSelected").replace("{count}", count(selectedCandidates.length))}</Button></div>
       </div>
     </Modal>}
   </section>;

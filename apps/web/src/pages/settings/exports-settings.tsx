@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { formatDate, translate, type MessageKey } from "@weft/shared";
 import { action, actionResult } from "../../api";
@@ -88,21 +89,21 @@ export function WorkspaceExports() {
               <option value="csv">{translate("exports.formatCsv")}</option><option value="json">{translate("exports.formatJson")}</option>
             </select>
           </label>
-          <button type="submit">{translate("exports.request")}</button>
+          <Button type="submit">{translate("exports.request")}</Button>
         </div>
       </form>}
       <p className="m-0 max-w-xl text-13 text-tertiary">{translate("exports.csvNote")}</p>
       <Note note={note} error={error} />
     </SettingsBlock>
     <SettingsBlock title={translate("exports.previous")}>
-      {listFailed ? <div className="flex flex-wrap items-center gap-3" role="alert"><p className="m-0 text-13 text-danger-text">{translate("exports.listFailed")}</p><button type="button" className="secondary" onClick={() => void load()}>{translate("exports.retry")}</button></div> : items === null ? <p role="status" className="text-secondary">{translate("exports.loading")}</p> : items.length === 0 ? <p className="text-secondary">{translate("exports.none")}</p> : <RowList>{items.map((item) => <Row key={item.id}>
+      {listFailed ? <div className="flex flex-wrap items-center gap-3" role="alert"><p className="m-0 text-13 text-danger-text">{translate("exports.listFailed")}</p><Button type="button" className="secondary" onClick={() => void load()}>{translate("exports.retry")}</Button></div> : items === null ? <p role="status" className="text-secondary">{translate("exports.loading")}</p> : items.length === 0 ? <p className="text-secondary">{translate("exports.none")}</p> : <RowList>{items.map((item) => <Row key={item.id}>
         <div className="grid min-w-0 flex-1 gap-1">
           <span className="font-medium">{item.projects.map((project) => `${project.key} · ${project.name}`).join(", ")} · {item.format.toUpperCase()}</span>
           <span className="text-13 text-secondary">{translate("exports.requestedAt")}: {formatDate(item.createdAt)}</span>
           {item.status === "failed" && item.failureReason && <span className="text-13 text-danger-text">{translate("exports.reason")}: {item.failureReason}</span>}
         </div>
         <span className="text-13" data-status={item.status}>{expired(item) ? translate("exports.expired") : translate(`exports.status.${item.status}` as MessageKey)}</span>
-        {item.status === "completed" && !expired(item) && <button type="button" className="secondary" onClick={() => void download(item)}>{translate("exports.download")}</button>}
+        {item.status === "completed" && !expired(item) && <Button type="button" className="secondary" onClick={() => void download(item)}>{translate("exports.download")}</Button>}
       </Row>)}</RowList>}
     </SettingsBlock>
     </>}

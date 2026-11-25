@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import { api } from "./api";
 import React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -91,10 +92,10 @@ export function InboxPanel({ workspace }: { workspace: Workspace }) {
     {isError && <p role="alert">{translate("inbox.failed")}</p>}
     <div className="mb-4 flex flex-wrap items-center gap-2">
       <div role="group" aria-label={translate("inbox.title")} className="inline-flex rounded-lg border border-subtle bg-layer-1 p-1">
-        <button type="button" aria-pressed={unreadOnly} className={unreadOnly ? "primary" : "secondary"} onClick={() => setUnreadOnly(true)}>{translate("inbox.unreadTab")}{data ? ` (${formatNumber(data.unreadCount)})` : ""}</button>
-        <button type="button" aria-pressed={!unreadOnly} className={!unreadOnly ? "primary" : "secondary"} onClick={() => setUnreadOnly(false)}>{translate("inbox.all")}</button>
+        <Button type="button" aria-pressed={unreadOnly} className={unreadOnly ? "primary" : "secondary"} onClick={() => setUnreadOnly(true)}>{translate("inbox.unreadTab")}{data ? ` (${formatNumber(data.unreadCount)})` : ""}</Button>
+        <Button type="button" aria-pressed={!unreadOnly} className={!unreadOnly ? "primary" : "secondary"} onClick={() => setUnreadOnly(false)}>{translate("inbox.all")}</Button>
       </div>
-      <button className="secondary" disabled={!data || data.unreadCount === 0 || markAll.isPending} onClick={() => markAll.mutate()}>{translate("inbox.markAllRead")}</button>
+      <Button className="secondary" disabled={!data || data.unreadCount === 0 || markAll.isPending} onClick={() => markAll.mutate()}>{translate("inbox.markAllRead")}</Button>
     </div>
     {data && shown.length === 0 && <p className="rounded-xl border border-subtle bg-surface-1 px-5 py-8 text-center text-14 text-secondary">{translate("inbox.empty")}</p>}
     <ul className="m-0 grid list-none gap-2 p-0">
@@ -109,7 +110,7 @@ export function InboxPanel({ workspace }: { workspace: Workspace }) {
         {item.workItemId || item.wikiPageId || item.runId ? <Link to={item.readAt ? notificationTarget(workspace.slug, item) : notificationTargetWithInboxId(workspace.slug, item, item.id)}>{item.wikiPageId ? item.pageTitle : item.runId ? translate("inbox.openScheduledRun") : `${item.displayId} ${item.workItemTitle}`}</Link> : <span>{item.kind === "secret_output_blocked" ? translate("inbox.secretOutputBlockedDetail") : item.detail}</span>}{item.kind === "auto_rule" && item.detail && <>{": "}{autoRuleReasonText(item.detail, translate)}</>}</>}{" "}
         <small className="block font-normal text-secondary">{formatDate(item.createdAt)}</small>
         </div>
-        <button type="button" aria-labelledby={`${actionLabelId} ${descriptionId}`} className="secondary col-start-2 min-h-11 justify-self-start sm:col-start-auto sm:min-h-9 sm:justify-self-end" disabled={markRead.isPending || markUnread.isPending} onClick={() => item.readAt ? markUnread.mutate(item.id) : markRead.mutate(item.id)}><span id={actionLabelId}>{actionLabel}</span></button>
+        <Button type="button" aria-labelledby={`${actionLabelId} ${descriptionId}`} className="secondary col-start-2 min-h-11 justify-self-start sm:col-start-auto sm:min-h-9 sm:justify-self-end" disabled={markRead.isPending || markUnread.isPending} onClick={() => item.readAt ? markUnread.mutate(item.id) : markRead.mutate(item.id)}><span id={actionLabelId}>{actionLabel}</span></Button>
       </li>;
       })}
     </ul>

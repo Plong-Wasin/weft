@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { Editor } from "@tiptap/react";
@@ -21,11 +22,11 @@ function TaskPicker({ current, initialLanguage, onRun, unavailable, onUnavailabl
   };
   return <div className="grid gap-1.5">
     <div className="flex flex-wrap gap-1" role="group" aria-label={translate("assist.menu")}>
-      {ASSIST_TASKS.map((task) => <button key={task} type="button" className={buttonClass} title={unavailable} aria-pressed={task === current} onClick={() => press(task)}>{label(task)}</button>)}
+      {ASSIST_TASKS.map((task) => <Button key={task} type="button" className={buttonClass} title={unavailable} aria-pressed={task === current} onClick={() => press(task)}>{label(task)}</Button>)}
     </div>
     {asking && <form className="flex gap-1" onSubmit={(event) => { event.preventDefault(); if (language.trim()) onRun("translate", language.trim()); }}>
       <input value={language} onChange={(event) => setLanguage(event.target.value)} maxLength={100} aria-label={translate("assist.targetLanguage")} placeholder={translate("assist.targetLanguage.placeholder")} className="!py-1 !text-12" />
-      <button type="submit" className={buttonClass} disabled={!language.trim()}>{translate("assist.translateRun")}</button>
+      <Button type="submit" className={buttonClass} disabled={!language.trim()}>{translate("assist.translateRun")}</Button>
     </form>}
   </div>;
 }
@@ -41,9 +42,9 @@ export function AssistPreview({ view, canReplace = true, onRun, onReplace, onIns
     {view.status === "result" && <p data-testid="assist-result" className="m-0 max-h-60 overflow-auto whitespace-pre-wrap text-13 text-primary">{view.result}</p>}
     {view.status === "result" && !canReplace && <p role="note" className="m-0 text-12 text-secondary">{translate("assist.replaceBlocked")}</p>}
     <div className="flex flex-wrap gap-1">
-      {view.status === "result" && <button type="button" onClick={onReplace} disabled={!canReplace}>{translate("assist.replace")}</button>}
-      {view.status === "result" && <button type="button" className="secondary" onClick={onInsertBelow}>{translate("assist.insertBelow")}</button>}
-      <button type="button" className="secondary" onClick={onDiscard}>{translate("assist.discard")}</button>
+      {view.status === "result" && <Button type="button" onClick={onReplace} disabled={!canReplace}>{translate("assist.replace")}</Button>}
+      {view.status === "result" && <Button type="button" className="secondary" onClick={onInsertBelow}>{translate("assist.insertBelow")}</Button>}
+      <Button type="button" className="secondary" onClick={onDiscard}>{translate("assist.discard")}</Button>
     </div>
     <details className="text-12 text-secondary">
       <summary>{translate("assist.rerun")}</summary>

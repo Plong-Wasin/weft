@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { formatDate, translate, type MessageKey } from "@weft/shared";
 import { action } from "../../api";
@@ -75,17 +76,17 @@ export function ProjectRecurrences() {
   const toggle = (key: "assigneeIds" | "labelIds" | "moduleIds", id: string, checked: boolean) => field(key, checked ? [...template[key], id] : template[key].filter((value) => value !== id));
   return <section>
     <SettingsHeader title={t("recurrences.title")} description={t("recurrences.description")} />
-    {canWrite && <button type="button" className="mb-4" onClick={() => openForm()}>{t("recurrences.create")}</button>}
+    {canWrite && <Button type="button" className="mb-4" onClick={() => openForm()}>{t("recurrences.create")}</Button>}
     {rows.length === 0 ? <p className="text-secondary">{t("recurrences.empty")}</p> : <RowList>{rows.map((row) => {
       const schedule = typeof row.schedule === "string" ? JSON.parse(row.schedule) as Schedule : row.schedule;
       const status = row.status === "active" && row.lastWarning ? "warning" : row.status;
       return <Row key={row.id}>
         <span className="grid min-w-0 flex-1"><strong className="truncate">{row.name}</strong><span className="text-13 text-secondary">{t("recurrences.status." + status)} · {t("recurrences.nextRun")}: {formatDate(row.nextRunAt, undefined, schedule.timezone)} · {t("recurrences.lastRun")}: {row.lastRunAt ? formatDate(row.lastRunAt, undefined, schedule.timezone) : t("recurrences.never")}</span>{row.status === "paused" && row.pausedReason && <span className="text-13 text-secondary">{row.pausedReason}</span>}{row.lastWarning && <span role="status" className="text-13 text-warning-text">{t("recurrences.warning")}: {row.lastWarning}</span>}</span>
         {canWrite && <div className="flex flex-wrap gap-2">
-          {row.status !== "ended" && <button type="button" className="secondary" onClick={() => void guard(action(row.status === "paused" ? "resume_recurrence" : "pause_recurrence", { recurrenceId: row.id }))}>{t(row.status === "paused" ? "recurrences.resume" : "recurrences.pause")}</button>}
-          <button type="button" className="secondary" onClick={() => openForm(row)}>{t("recurrences.edit")}</button>
-          <button type="button" className="secondary" onClick={() => void guard(action("run_recurrence_now", { recurrenceId: row.id }), "recurrences.ranNow")}>{t("recurrences.runNow")}</button>
-          <button type="button" className="secondary hover:!text-danger-text" onClick={async () => { if (window.confirm(t("recurrences.deleteConfirm"))) await guard(action("delete_recurrence", { recurrenceId: row.id }), "recurrences.deleted"); }}>{t("recurrences.delete")}</button>
+          {row.status !== "ended" && <Button type="button" className="secondary" onClick={() => void guard(action(row.status === "paused" ? "resume_recurrence" : "pause_recurrence", { recurrenceId: row.id }))}>{t(row.status === "paused" ? "recurrences.resume" : "recurrences.pause")}</Button>}
+          <Button type="button" className="secondary" onClick={() => openForm(row)}>{t("recurrences.edit")}</Button>
+          <Button type="button" className="secondary" onClick={() => void guard(action("run_recurrence_now", { recurrenceId: row.id }), "recurrences.ranNow")}>{t("recurrences.runNow")}</Button>
+          <Button type="button" className="secondary hover:!text-danger-text" onClick={async () => { if (window.confirm(t("recurrences.deleteConfirm"))) await guard(action("delete_recurrence", { recurrenceId: row.id }), "recurrences.deleted"); }}>{t("recurrences.delete")}</Button>
         </div>}
       </Row>;
     })}</RowList>}
@@ -115,7 +116,7 @@ export function ProjectRecurrences() {
         <label>{t("recurrences.timezone")}<input required value={timezone} onChange={(e) => setTimezone(e.target.value)} /></label>
         <label>{t("recurrences.endDate")}<input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} /></label>
       </SettingsBlock>
-      <div className="flex justify-end gap-2"><button type="button" className="secondary" onClick={() => setEditing(false)}>{t("settings.cancel")}</button><button type="submit">{t("recurrences.save")}</button></div>
+      <div className="flex justify-end gap-2"><Button type="button" className="secondary" onClick={() => setEditing(false)}>{t("settings.cancel")}</Button><Button type="submit">{t("recurrences.save")}</Button></div>
     </form>}
     <Note note={note} error={failed} />
   </section>;

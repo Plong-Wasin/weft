@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import { setIntegrationsEnabled } from "../integrations-flag";
 import { setAiEnabled } from "../ai-flag";
 import { setOutboundWebhooksEnabled } from "../outbound-webhooks-flag";
@@ -44,7 +45,7 @@ export function WorkspaceChooser({ current, languageSwitch, signOut, refresh }: 
 
   const signOutAction = <>
     <span className="hidden text-secondary sm:inline">{current.user.email}</span>
-    <button type="button" className="!h-auto !bg-transparent !p-0 font-semibold !text-accent-text hover:underline" onClick={() => void signOut()}>{translate("auth.signOut")}</button>
+    <Button type="button" className="!h-auto !bg-transparent !p-0 font-semibold !text-accent-text hover:underline" onClick={() => void signOut()}>{translate("auth.signOut")}</Button>
   </>;
 
   return <OnboardingShell action={signOutAction}>
@@ -58,7 +59,7 @@ export function WorkspaceChooser({ current, languageSwitch, signOut, refresh }: 
         if (!slug || slug === slugify(workspaceName)) setSlug(slugify(value));
       }} /></label>
       <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("workspace.slug")}<input className={fieldClass} required pattern="[a-z0-9]+(-[a-z0-9]+)*" value={slug} onChange={(event) => setSlug(event.target.value)} /></label>
-      <button className={primaryButton}>{translate("workspace.create")}</button>
+      <Button className={primaryButton}>{translate("workspace.create")}</Button>
     </form>}
     {needsFirstWorkspace && !current.canCreateWorkspace && <p className="text-14 text-secondary">{translate("workspace.noAccess")}</p>}
     {error && <p role="alert" className="text-13 text-danger-text">{error}</p>}

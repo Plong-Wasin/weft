@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { CircleAlert, FileText } from "lucide-react";
 import type { Editor } from "@tiptap/react";
@@ -22,9 +23,9 @@ export function editorLimitWarnings(value: unknown): string[] {
 
 /** The ghost icon switch in an editor toolbar: pressed while the Markdown (Written form) text is shown. */
 export function SourceModeButton({ active, onClick }: { active: boolean; onClick: () => void }) {
-  return <button type="button" className="editor-tool" aria-label={translate("editor.sourceMode")} aria-pressed={active} title={translate(active ? "editor.visualMode" : "editor.sourceMode")} onMouseDown={(event) => event.preventDefault()} onClick={onClick}>
+  return <Button type="button" className="editor-tool" aria-label={translate("editor.sourceMode")} aria-pressed={active} title={translate(active ? "editor.visualMode" : "editor.sourceMode")} onMouseDown={(event) => event.preventDefault()} onClick={onClick}>
     <FileText aria-hidden size={14} />
-  </button>;
+  </Button>;
 }
 
 /** Toggle an existing editor between its visual document and the exact Written form text. The caller renders the switch (SourceModeButton) and flips the mode through `toggleRef`; `onModeChange` reports the mode back. */

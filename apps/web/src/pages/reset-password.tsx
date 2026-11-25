@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { translate } from "@weft/shared";
 import { AuthShell, fieldClass, primaryButton } from "../layouts/auth-shell";
@@ -36,7 +37,7 @@ export function ResetPasswordScreen({ api, languageSwitch, minPasswordLength }: 
       <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.newPassword")}<input className={fieldClass} required type="password" minLength={minPasswordLength} autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
       <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.confirmPassword")}<input className={`${fieldClass} ${mismatch ? "border-danger-strong" : ""}`} required type="password" minLength={minPasswordLength} autoComplete="new-password" aria-invalid={mismatch || undefined} value={confirm} onChange={(event) => setConfirm(event.target.value)} /></label>
       {mismatch && <p role="status" className="-mt-2 text-13 text-danger-text">{translate("auth.passwordMismatch")}</p>}
-      <button className={primaryButton} disabled={mismatch}>{translate("auth.resetSubmit")}</button>
+      <Button className={primaryButton} disabled={mismatch}>{translate("auth.resetSubmit")}</Button>
       {error && <p role="alert" className="text-13 text-danger-text">{error}</p>}
     </form>}
     <div className="mt-6 border-t border-subtle pt-6 text-center">

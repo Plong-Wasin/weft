@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
@@ -135,7 +136,7 @@ async function fetchPublicUrl(): Promise<string | null> {
 function CopyBlock({ text, label }: { text: string; label: string }) {
   return <div className="grid gap-2">
     <pre aria-label={label} className="m-0 overflow-x-auto rounded-md border border-subtle bg-layer-1 p-3 font-mono text-12 text-primary">{text}</pre>
-    <button type="button" className="secondary justify-self-start" onClick={() => void copyText(text, translate("connectAi.copied"), translate("connectAi.copyFailed"))}>{translate("connectAi.copy")}</button>
+    <Button type="button" className="secondary justify-self-start" onClick={() => void copyText(text, translate("connectAi.copied"), translate("connectAi.copyFailed"))}>{translate("connectAi.copy")}</Button>
   </div>;
 }
 
@@ -146,8 +147,8 @@ function McpCard({ publicUrl }: { publicUrl: string | null }) {
   return <SettingsBlock title={translate("connectAi.mcpTitle")} description={translate("connectAi.mcpDescription")}>
     {publicUrl === null ? <Note note={translate("connectAi.notReady")} /> : <>
       <div role="tablist" aria-label={translate("connectAi.clientsLabel")} className="flex flex-wrap gap-1">
-        {clients.map((item) => <button key={item.id} type="button" role="tab" id={`mcp-tab-${item.id}`} aria-selected={client === item.id} aria-controls="mcp-client-panel" onClick={() => setClient(item.id)}
-          className={`rounded-md px-3 py-1.5 text-13 ${client === item.id ? "bg-accent-subtle text-accent-text" : "text-secondary hover:bg-layer-2"}`}>{item.label}</button>)}
+        {clients.map((item) => <Button key={item.id} type="button" role="tab" id={`mcp-tab-${item.id}`} aria-selected={client === item.id} aria-controls="mcp-client-panel" onClick={() => setClient(item.id)}
+          className={`rounded-md px-3 py-1.5 text-13 ${client === item.id ? "bg-accent-subtle text-accent-text" : "text-secondary hover:bg-layer-2"}`}>{item.label}</Button>)}
       </div>
       <div role="tabpanel" id="mcp-client-panel" aria-labelledby={`mcp-tab-${client}`} className="grid gap-2">
         <CopyBlock text={mcpSnippets(publicUrl)[client]} label={selected.label} />
@@ -169,7 +170,7 @@ function McpCard({ publicUrl }: { publicUrl: string | null }) {
 function GuideCard({ publicUrl }: { publicUrl: string | null }) {
   const { workspace } = useWorkspace();
   return <SettingsBlock title={translate("connectAi.guideTitle")} description={translate("connectAi.guideDescription")}>
-    <button type="button" className="secondary justify-self-start" onClick={() => { void copyText(guidePrompt(publicUrl, cliServerUrl(publicUrl), `${location.origin}${paths.workspaceApiTokens(workspace.slug)}`), translate("connectAi.copied"), translate("connectAi.copyFailed")); }}>{translate("connectAi.copyGuide")}</button>
+    <Button type="button" className="secondary justify-self-start" onClick={() => { void copyText(guidePrompt(publicUrl, cliServerUrl(publicUrl), `${location.origin}${paths.workspaceApiTokens(workspace.slug)}`), translate("connectAi.copied"), translate("connectAi.copyFailed")); }}>{translate("connectAi.copyGuide")}</Button>
   </SettingsBlock>;
 }
 

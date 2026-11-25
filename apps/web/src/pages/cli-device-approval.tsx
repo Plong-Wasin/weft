@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { translate } from "@weft/shared";
 import { api } from "../api";
@@ -60,8 +61,8 @@ export function CliDeviceApprovalPage() {
       </dl>
       <p className="mt-4 text-14 text-secondary">{translate("cliDevice.warning")}</p>
       <div className="mt-6 grid gap-3">
-        <button className={primaryButton} disabled={submitting} onClick={() => void decide("approve")}>{translate("cliDevice.approve")}</button>
-        <button type="button" className="min-h-11 rounded-md border border-subtle bg-transparent px-3 text-14 font-medium text-primary hover:bg-layer-1-hover focus-visible:outline focus-visible:outline-2" disabled={submitting} onClick={() => void decide("deny")}>{translate("cliDevice.deny")}</button>
+        <Button className={primaryButton} disabled={submitting} onClick={() => void decide("approve")}>{translate("cliDevice.approve")}</Button>
+        <Button type="button" className="min-h-11 rounded-md border border-subtle bg-transparent px-3 text-14 font-medium text-primary hover:bg-layer-1-hover focus-visible:outline focus-visible:outline-2" disabled={submitting} onClick={() => void decide("deny")}>{translate("cliDevice.deny")}</Button>
       </div>
     </>}
   </AuthShell>;

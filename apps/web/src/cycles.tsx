@@ -128,7 +128,7 @@ function CycleMenu({ cycle, canWrite, canAdmin, onEdit, onArchive, onDelete }: {
       {canWrite && !cycle.archived && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onEdit(); }}>{t("cycles.edit")}</button>}
       {canAdmin && cycle.archived && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onArchive(); }}><ArchiveRestore aria-hidden size={14} />{t("cycles.unarchive")}</button>}
       {canArchive && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onArchive(); }}>{t("cycles.archive")}</button>}
-      {canAdmin && <button type="button" role="menuitem" className={`${menuItemClass} text-danger-text`} onClick={() => { close(); onDelete(); }}>{t("cycles.delete")}</button>}
+      {canAdmin && <button type="button" role="menuitem" className={`${menuItemClass} text-destructive`} onClick={() => { close(); onDelete(); }}>{t("cycles.delete")}</button>}
     </>}
   </Popover>;
 }

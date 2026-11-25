@@ -220,7 +220,7 @@ export function ProjectStates() {
                     <button type="button" role="menuitem" className={menuItemClass} disabled={index === 0} onClick={async () => { close(); await guard(await move(index, -1)); }}>{translate("states.moveUp")}</button>
                     <button type="button" role="menuitem" className={menuItemClass} disabled={index === inGroup.length - 1} onClick={async () => { close(); await guard(await move(index, 1)); }}>{translate("states.moveDown")}</button>
                     <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setEditing({ id: state.id, name: state.name }); }}>{translate("states.rename")}</button>
-                    <button type="button" role="menuitem" className={`${menuItemClass} text-danger-text`} onClick={async () => { close(); await guard(await action("delete_state", { stateId: state.id })); }}>{translate("states.remove")}</button>
+                    <button type="button" role="menuitem" className={`${menuItemClass} text-destructive`} onClick={async () => { close(); await guard(await action("delete_state", { stateId: state.id })); }}>{translate("states.remove")}</button>
                   </>}
                 </Popover>}
               </>}

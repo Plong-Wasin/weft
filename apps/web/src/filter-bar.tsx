@@ -10,6 +10,9 @@ import { aiStatusKey, requestAiStatus } from "./ai-status";
 import { AiOnly } from "./ai-flag";
 import type { Option } from "./property-dropdowns";
 
+import { Checkbox } from "@/ui/checkbox";
+import { Input } from "@/ui/input";
+import { Textarea } from "@/ui/textarea";
 const t = (key: string) => translate(key as MessageKey);
 const ghost = "flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-sm font-medium text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-sm:min-h-9";
 const chipClass = "flex items-center gap-1.5 rounded-md border border-transparent bg-layer-1 py-0.5 pl-2 pr-1 text-12 text-primary";
@@ -36,7 +39,7 @@ export function FilterPicker({ sections, filters, count, onChange, onClear }: { 
     {() => <>
       <label className="relative my-0 block"><span className="sr-only">{t("layout.filter.search")}</span>
         <Search aria-hidden size={14} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-        <input type="search" value={search} placeholder={t("layout.filter.search")} className="min-h-9 w-full rounded-md border border-input bg-background py-2 pl-7 pr-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11" onChange={(event) => setSearch(event.target.value)} /></label>
+        <Input type="search" value={search} placeholder={t("layout.filter.search")} className="min-h-9 w-full rounded-md border border-input bg-background py-2 pl-7 pr-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11" onChange={(event) => setSearch(event.target.value)} /></label>
       {matchingSections.map((section) => {
         const sectionMatches = t(`layout.filter.${section.key}`).toLowerCase().includes(needle);
         const shown = section.options.filter((option) => !needle || sectionMatches || option.name.toLowerCase().includes(needle));
@@ -47,8 +50,14 @@ export function FilterPicker({ sections, filters, count, onChange, onClear }: { 
             <span>{t(`layout.filter.${section.key}`)}</span>{selected > 0 && <span className="rounded bg-muted px-1.5 text-xs text-muted-foreground">{selected}</span>}</Button>
           {expanded && <fieldset className="m-0 grid gap-0.5 border-0 p-0 px-1" aria-label={t(`layout.filter.${section.key}`)}>
             <legend className="sr-only">{t(`layout.filter.${section.key}`)}</legend>
-            {shown.map((option) => <label key={option.id} className="my-0 flex min-h-9 items-center gap-2 rounded-md px-1.5 py-1 text-sm text-foreground hover:bg-accent pointer-coarse:min-h-11">
-              <input type="checkbox" checked={filters[section.key].includes(option.id)} onChange={(event) => toggle(section.key, option.id, event.target.checked)} />{option.isAgent ? <span title={t("comments.agent")}><Bot aria-hidden size={14} className="text-muted-foreground" /></span> : option.icon}<span className="truncate">{option.name}{option.isAgent && <> <span className="ml-1.5 text-xs text-muted-foreground">{t("comments.agent")}</span></>}</span>{option.codeCapable && <span className="inline-flex items-center gap-1 whitespace-nowrap rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground" title={t("agents.codeCapable")}><Code2 aria-hidden size={13} className="text-warning-primary" />{t("agents.canEditCode")}</span>}</label>)}
+            {shown.map((option) => {
+              const optionLabelId = `filter-option-${section.key}-${option.id}`;
+              return <div key={option.id} className="my-0 flex min-h-9 items-center gap-2 rounded-md px-1.5 py-1 text-sm text-foreground hover:bg-accent pointer-coarse:min-h-11" onClick={(event) => {
+                if (!event.currentTarget.querySelector("[data-slot=checkbox]")?.contains(event.target as Node)) toggle(section.key, option.id, !filters[section.key].includes(option.id));
+              }}>
+                <Checkbox aria-labelledby={optionLabelId} checked={filters[section.key].includes(option.id)} onChange={(event) => toggle(section.key, option.id, event.target.checked)} />{option.isAgent ? <span title={t("comments.agent")}><Bot aria-hidden size={14} className="text-muted-foreground" /></span> : option.icon}<span id={optionLabelId} className="truncate">{option.name}{option.isAgent && <> <span className="ml-1.5 text-xs text-muted-foreground">{t("comments.agent")}</span></>}</span>{option.codeCapable && <span className="inline-flex items-center gap-1 whitespace-nowrap rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground" title={t("agents.codeCapable")}><Code2 aria-hidden size={13} className="text-warning-primary" />{t("agents.canEditCode")}</span>}
+              </div>;
+            })}
           </fieldset>}
         </div>;
       })}
@@ -60,8 +69,8 @@ export function FilterPicker({ sections, filters, count, onChange, onClear }: { 
             <span>{t(`layout.filter.${key}`)}</span>{(range.from || range.to) && <span className="rounded bg-muted px-1.5 text-xs text-muted-foreground">1</span>}</Button>
           {expanded && <fieldset className="m-0 grid gap-1 border-0 p-0 px-2" aria-label={t(`layout.filter.${key}`)}>
             <legend className="sr-only">{t(`layout.filter.${key}`)}</legend>
-            <label className="my-0 grid gap-1 text-xs text-muted-foreground">{t("layout.filter.from")}<input type="date" value={range.from} className="min-h-9 rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring" onChange={(event) => onChange({ ...filters, [key]: { ...range, from: event.target.value } })} /></label>
-            <label className="my-0 grid gap-1 text-xs text-muted-foreground">{t("layout.filter.to")}<input type="date" value={range.to} className="min-h-9 rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring" onChange={(event) => onChange({ ...filters, [key]: { ...range, to: event.target.value } })} /></label>
+            <label className="my-0 grid gap-1 text-xs text-muted-foreground">{t("layout.filter.from")}<Input type="date" value={range.from} className="min-h-9 rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring" onChange={(event) => onChange({ ...filters, [key]: { ...range, from: event.target.value } })} /></label>
+            <label className="my-0 grid gap-1 text-xs text-muted-foreground">{t("layout.filter.to")}<Input type="date" value={range.to} className="min-h-9 rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring" onChange={(event) => onChange({ ...filters, [key]: { ...range, to: event.target.value } })} /></label>
           </fieldset>}
         </div>;
       })}
@@ -100,7 +109,7 @@ export function FilterQueryEditor({ text, error, onApply, generate }: { text: st
   return <form className="my-0 grid gap-2 rounded-xl border border-transparent bg-layer-1 p-3" onSubmit={(event) => { event.preventDefault(); onApply(draft); }}>
     {generate && <AiOnly><FilterQueryGenerate scope={generate} onQuery={setDraft} /></AiOnly>}
     <label className="my-0 grid gap-1 text-12 font-medium text-tertiary">{t("layout.filterQuery.label")}
-      <textarea value={draft} rows={2} maxLength={2000} spellCheck={false} aria-invalid={error !== null} placeholder={t("layout.filterQuery.placeholder")} className="font-mono text-13"
+      <Textarea value={draft} rows={2} maxLength={2000} spellCheck={false} aria-invalid={error !== null} placeholder={t("layout.filterQuery.placeholder")} className="font-mono text-13"
         onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); onApply(draft); } }} /></label>
     <div className="flex items-center gap-2"><Button type="submit">{t("layout.filterQuery.apply")}</Button>
       {error && <p role="alert" data-testid="filter-query-error" className="my-0 text-13 text-danger-text">{error}</p>}</div>
@@ -125,7 +134,7 @@ function FilterQueryGenerate({ scope, onQuery }: { scope: FilterQueryScope; onQu
   return <div className="my-0 grid gap-1">
     <label className="my-0 grid gap-1 text-12 font-medium text-tertiary">{t("layout.filterQuery.generate.label")}
       <span className="flex items-center gap-2">
-        <input type="text" value={request} maxLength={1000} placeholder={t("layout.filterQuery.generate.placeholder")} className="min-w-0 flex-1 text-13" onChange={(event) => setRequest(event.target.value)}
+        <Input type="text" value={request} maxLength={1000} placeholder={t("layout.filterQuery.generate.placeholder")} className="min-w-0 flex-1 text-13" onChange={(event) => setRequest(event.target.value)}
           onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); void run(); } }} />
         <Button type="button" disabled={busy || request.trim() === ""} className={ghost} onClick={() => void run()}><Sparkles aria-hidden size={14} /><span>{busy ? t("layout.filterQuery.generate.busy") : t("layout.filterQuery.generate.button")}</span></Button>
       </span></label>

@@ -16,6 +16,9 @@ import { ProjectMergeSetting } from "./project-merge-setting";
 import { DangerZone, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 import { WorkItemTypesSettings } from "./project-work-item-types";
 
+import { Checkbox } from "@/ui/checkbox";
+import { Input } from "@/ui/input";
+import { Switch } from "@/ui/switch";
 /** Loads the project of `/settings/projects/:projectKey` and renders the routed section; the project name heads every section. */
 export function ProjectSettingsLayout() {
   const { workspace } = useWorkspace();
@@ -49,7 +52,7 @@ export function ProjectGeneral() {
     <SettingsHeader title={translate("settings.general")} description={translate("settings.projectGeneralDesc")} />
     <SettingsBlock title={translate("settings.generalInfo")}>
       <form className="my-0 max-w-md" onSubmit={async (event) => { event.preventDefault(); await done(await action("update_project", { projectId: project.id, name, visibility })); }}>
-        <label>{translate("projects.name")}<input required disabled={!canAdmin} value={name} onChange={(event) => setName(event.target.value)} /></label>
+        <label>{translate("projects.name")}<Input required disabled={!canAdmin} value={name} onChange={(event) => setName(event.target.value)} /></label>
         <label>{translate("projects.visibility")}<select disabled={!canAdmin} value={visibility} onChange={(event) => setVisibility(event.target.value as Project["visibility"])}>
           <option value="public">{translate("projects.visibility.public")}</option>
           <option value="private">{translate("projects.visibility.private")}</option>
@@ -63,7 +66,7 @@ export function ProjectGeneral() {
         const result = await action<Project>("rename_project_key", { projectId: project.id, key: newKey });
         if (result) { setRenaming(false); navigate(paths.projectSettings(workspace.slug, result.key), { replace: true }); } else await done(null);
       }}>
-        <label>{translate("projects.key")}<input required autoFocus pattern="[A-Z][A-Z0-9]{1,11}" title={translate("projects.keyHint")} value={newKey} onChange={(event) => setNewKey(event.target.value.toUpperCase())} /></label>
+        <label>{translate("projects.key")}<Input required autoFocus pattern="[A-Z][A-Z0-9]{1,11}" title={translate("projects.keyHint")} value={newKey} onChange={(event) => setNewKey(event.target.value.toUpperCase())} /></label>
         <div className="mt-3 flex flex-wrap gap-2"><Button>{translate("projects.renameConfirm")}</Button><Button type="button" className="secondary" onClick={cancelRename}>{translate("settings.cancel")}</Button></div>
       </form> : <div className="flex flex-wrap items-center gap-3">
         <span className="font-mono text-14 text-primary">{project.key}</span>
@@ -141,12 +144,12 @@ export function ProjectLabels() {
   return <section>
     <SettingsHeader title={translate("labels.title")} description={translate("settings.labelsDesc")} />
     {canAdmin && <form className="mb-5 mt-0 flex flex-wrap items-end gap-3" onSubmit={async (event) => { event.preventDefault(); if (await guard(await action("create_label", { projectId: project.id, name, color }))) setName(""); }}>
-      <label>{translate("labels.name")}<input required value={name} onChange={(event) => setName(event.target.value)} /></label>
+      <label>{translate("labels.name")}<Input required value={name} onChange={(event) => setName(event.target.value)} /></label>
       <input type="color" aria-label={translate("labels.color")} value={color} onChange={(event) => setColor(event.target.value)} className="h-8 w-10 rounded-md border border-strong bg-surface-1 p-0.5" />
       <Button>{translate("labels.create")}</Button>
     </form>}
     {labels.length === 0 ? <p className="text-secondary">{translate("labels.empty")}</p> : <>
-    <search className="mb-3 block"><label className="grid max-w-sm gap-1 text-13 text-secondary">{translate("picker.search")}<input type="search" autoComplete="off" value={labelQuery} onChange={(event) => setLabelQuery(event.target.value)} /></label></search>
+    <search className="mb-3 block"><label className="grid max-w-sm gap-1 text-13 text-secondary">{translate("picker.search")}<Input type="search" autoComplete="off" value={labelQuery} onChange={(event) => setLabelQuery(event.target.value)} /></label></search>
     {visibleLabels.length === 0 ? <p className="text-secondary">{translate("picker.noMatches")}</p> : <SortableList ids={visibleLabels.map((label) => label.id)} disabled={!reorderable || editing !== null} label={(id) => labels.find((label) => label.id === id)?.name ?? ""}
       onReorder={reorderLabels}
       renderRow={(id, grip) => {
@@ -160,7 +163,7 @@ export function ProjectLabels() {
         return <>
           {canAdmin && grip}
         {editing?.id === label.id ? <form className="my-0 flex flex-1 flex-wrap items-center gap-2" onSubmit={async (event) => { event.preventDefault(); if (await guard(await action("update_label", { labelId: label.id, name: editing.name, color: editing.color }))) setEditing(null); }}>
-          <input required aria-label={translate("labels.name")} value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} />
+          <Input required aria-label={translate("labels.name")} value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} />
           <input type="color" aria-label={translate("labels.color")} value={editing.color} onChange={(event) => setEditing({ ...editing, color: event.target.value })} className="h-8 w-10 rounded-md border border-strong bg-surface-1 p-0.5" />
           <Button>{translate("labels.save")}</Button>
           <Button type="button" className="secondary" onClick={() => setEditing(null)}>{translate("settings.cancel")}</Button>
@@ -211,7 +214,7 @@ export function ProjectStates() {
             return <>
               {canAdmin && grip}
               {editing?.id === state.id ? <form className="my-0 flex flex-1 flex-wrap items-center gap-2" onSubmit={async (event) => { event.preventDefault(); if (await guard(await action("update_state", { stateId: state.id, name: editing.name }))) setEditing(null); }}>
-                <input required aria-label={translate("states.name")} value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} />
+                <Input required aria-label={translate("states.name")} value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} />
                 <Button>{translate("labels.save")}</Button>
                 <Button type="button" className="secondary" onClick={() => setEditing(null)}>{translate("settings.cancel")}</Button>
               </form> : <>
@@ -233,7 +236,7 @@ export function ProjectStates() {
             event.preventDefault();
             if (await guard(await action("create_state", { projectId: project.id, group, name: newName[group] ?? "" }))) { setNewName({ ...newName, [group]: "" }); setAdding({ ...adding, [group]: false }); }
           }}>
-            <label>{translate("states.name")}<input required autoFocus value={newName[group] ?? ""} onChange={(event) => setNewName({ ...newName, [group]: event.target.value })} /></label>
+            <label>{translate("states.name")}<Input required autoFocus value={newName[group] ?? ""} onChange={(event) => setNewName({ ...newName, [group]: event.target.value })} /></label>
             <Button>{translate("states.create")}</Button>
             <Button type="button" className="secondary" onClick={() => setAdding({ ...adding, [group]: false })}>{translate("settings.cancel")}</Button>
           </form>}
@@ -283,7 +286,7 @@ export function ProjectFeatures() {
           </span>
         </span>}
       </span>
-      <label className="flex-row items-center gap-2"><input type="checkbox" role="switch" disabled={!canAdmin} checked={project.features[feature]} aria-label={translate(`features.${feature}` as MessageKey)} onChange={(event) => void requestChange(feature, event.target.checked)} /></label>
+      <label className="flex-row items-center gap-2"><Switch disabled={!canAdmin} checked={project.features[feature]} aria-label={translate(`features.${feature}` as MessageKey)} onChange={(event) => void requestChange(feature, event.target.checked)} /></label>
     </Row>)}</RowList>
     {project.features.types && <div className="mt-6"><WorkItemTypesSettings project={project} /></div>}
     <ProjectMergeSetting projectId={project.id} canAdmin={canAdmin} onNote={setNote} />
@@ -341,12 +344,12 @@ export function ProjectAutomation() {
       setPreview(null);
     }}>
       <SettingsBlock title={translate("autoRules.closeTitle")} description={translate("autoRules.closeDesc")}>
-        <label className="flex items-center gap-2"><input type="checkbox" role="switch" disabled={!canAdmin} checked={closeOn} onChange={(event) => setCloseOn(event.target.checked)} />{translate("autoRules.closeOn")}</label>
-        <label>{translate("autoRules.closeAfter")}<input type="number" min={1} max={3650} required={closeOn} disabled={!canAdmin || !closeOn} value={closeAfter} onChange={(event) => setCloseAfter(event.target.value)} className="max-w-32" /></label>
+        <label className="flex items-center gap-2"><Switch disabled={!canAdmin} checked={closeOn} onChange={(event) => setCloseOn(event.target.checked)} />{translate("autoRules.closeOn")}</label>
+        <label>{translate("autoRules.closeAfter")}<Input type="number" min={1} max={3650} required={closeOn} disabled={!canAdmin || !closeOn} value={closeAfter} onChange={(event) => setCloseAfter(event.target.value)} className="max-w-32" /></label>
         <fieldset className="grid gap-2 border-0 p-0">
           <legend className="mb-1 text-14 font-medium text-secondary">{translate("autoRules.watchStates")}</legend>
           {openStates.length === 0 ? <p className="text-secondary">{translate("autoRules.noOpenStates")}</p> : openStates.map((state) => <label key={state.id} className="flex items-center gap-2">
-            <input type="checkbox" disabled={!canAdmin || !closeOn} checked={watched.includes(state.id)} onChange={() => toggleWatched(state.id)} />{state.name}</label>)}
+            <Checkbox disabled={!canAdmin || !closeOn} checked={watched.includes(state.id)} onChange={() => toggleWatched(state.id)} />{state.name}</label>)}
         </fieldset>
         <label>{translate("autoRules.moveTo")}
           <select disabled={!canAdmin || !closeOn} value={target} onChange={(event) => setTarget(event.target.value)}>
@@ -356,8 +359,8 @@ export function ProjectAutomation() {
         </label>
       </SettingsBlock>
       <SettingsBlock title={translate("autoRules.archiveTitle")} description={translate("autoRules.archiveDesc")}>
-        <label className="flex items-center gap-2"><input type="checkbox" role="switch" disabled={!canAdmin} checked={archiveOn} onChange={(event) => setArchiveOn(event.target.checked)} />{translate("autoRules.archiveOn")}</label>
-        <label>{translate("autoRules.archiveAfter")}<input type="number" min={1} max={3650} required={archiveOn} disabled={!canAdmin || !archiveOn} value={archiveAfter} onChange={(event) => setArchiveAfter(event.target.value)} className="max-w-32" /></label>
+        <label className="flex items-center gap-2"><Switch disabled={!canAdmin} checked={archiveOn} onChange={(event) => setArchiveOn(event.target.checked)} />{translate("autoRules.archiveOn")}</label>
+        <label>{translate("autoRules.archiveAfter")}<Input type="number" min={1} max={3650} required={archiveOn} disabled={!canAdmin || !archiveOn} value={archiveAfter} onChange={(event) => setArchiveAfter(event.target.value)} className="max-w-32" /></label>
       </SettingsBlock>
       {preview && <p role="status" className="text-14 text-primary">{translate("autoRules.previewResult").replace("{close}", String(preview.toClose)).replace("{archive}", String(preview.toArchive))}</p>}
       {canAdmin && <div className="flex flex-wrap gap-3">

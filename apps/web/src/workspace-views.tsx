@@ -15,6 +15,7 @@ import { differsFromView, paramsToSettings, viewToParams, type SavedView } from 
 import { DeleteViewModal, ViewFormModal } from "./views";
 import type { Member, Project, StateGroup, Workspace } from "./types";
 
+import { Checkbox } from "@/ui/checkbox";
 const t = (key: string) => translate(key as MessageKey);
 const primary = "rounded-md border-0 bg-accent-primary px-3 py-1 text-13 font-medium text-on-color hover:bg-accent-primary-hover disabled:opacity-60";
 const ghost = "flex items-center gap-1.5 rounded-md border border-subtle bg-surface-1 px-2.5 py-1 text-13 font-medium text-primary hover:bg-layer-transparent-hover";
@@ -172,7 +173,7 @@ export function WorkspaceViewPage({ workspace, selfId, viewId }: { workspace: Wo
           <label>{t("layout.direction")}<select value={params.dir} onChange={(event) => update({ dir: event.target.value as LayoutParams["dir"] })}>
             {(["asc", "desc"] as const).map((value) => <option key={value} value={value}>{t(`layout.direction.${value}`)}</option>)}</select></label>
           <fieldset className="m-0 grid gap-1 border-0 p-0"><legend className="text-12 font-medium text-tertiary">{t("layout.properties")}</legend>
-            {columnProperties.map((property) => <label key={property} className="flex items-center gap-2 text-13"><input type="checkbox" checked={params.props.includes(property)}
+            {columnProperties.map((property) => <label key={property} className="flex items-center gap-2 text-13"><Checkbox checked={params.props.includes(property)}
               onChange={(event) => update({ props: columnProperties.filter((other) => other === property ? event.target.checked : params.props.includes(other)) })} />{t(`layout.property.${property}`)}</label>)}</fieldset>
         </>}
       </Popover>

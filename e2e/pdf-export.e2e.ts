@@ -73,7 +73,7 @@ try {
     check(await paper.locator(`option[value="${value}"]`).count() === 1, `paper choice ${label} is missing`);
   }
   const images = dialog.getByRole("checkbox", { name: translate("wiki.pdfIncludeImages") });
-  check(await images.isChecked(), "include images should be on by default");
+  check(await images.getAttribute("aria-checked") === "true", "include images should be on by default");
   const imageLoaded = await page.getByTestId("wiki-editor").locator(".ProseMirror").evaluate((editor) => {
     const image = document.createElement("img");
     image.alt = "PDF image fixture"; image.width = 120; image.height = 80;
@@ -103,8 +103,8 @@ try {
   await page.getByRole("menuitem", { name: translate("wiki.exportPdf"), exact: true }).click();
   const omitDialog = page.getByRole("dialog", { name: translate("wiki.pdfTitle") });
   const omitImages = omitDialog.getByRole("checkbox", { name: translate("wiki.pdfIncludeImages") });
-  await omitImages.uncheck();
-  check(!(await omitImages.isChecked()), "include-images switch must turn images off");
+  await omitImages.click();
+  check(await omitImages.getAttribute("aria-checked") === "false", "include-images switch must turn images off");
   const [withoutImage] = await Promise.all([
     page.waitForEvent("download"),
     omitDialog.getByRole("button", { name: translate("wiki.exportPdf"), exact: true }).click(),

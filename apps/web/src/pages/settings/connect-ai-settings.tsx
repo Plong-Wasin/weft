@@ -1,4 +1,5 @@
 import { Button } from "@/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/ui/tabs";
 import React from "react";
 import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
@@ -9,6 +10,7 @@ import { useWorkspace } from "../../layouts/workspace-layout";
 import { paths } from "../../routes";
 import { Note, SettingsBlock, SettingsHeader } from "./settings-ui";
 
+import { Input } from "@/ui/input";
 const clients = [
   { id: "claude-code", label: "Claude Code" },
   { id: "claude-desktop", label: "Claude Desktop" },
@@ -115,7 +117,7 @@ function CliRuntimeCard({ publicUrl }: { publicUrl: string | null }) {
       </>}
     </div>
     <label className="grid gap-1 text-13 font-medium text-primary">{translate("connectAi.clonePathLabel")}
-      <input value={clonePath} placeholder={defaultClonePath} onChange={(event) => setClonePath(event.target.value)} className="font-mono" />
+      <Input value={clonePath} placeholder={defaultClonePath} onChange={(event) => setClonePath(event.target.value)} className="font-mono" />
     </label>
     <p className="m-0 text-13 text-secondary">{translate("connectAi.clonePathHelp")}</p>
     <ol className="m-0 grid list-none gap-4 p-0">
@@ -146,14 +148,15 @@ function McpCard({ publicUrl }: { publicUrl: string | null }) {
   const selected = clients.find((item) => item.id === client)!;
   return <SettingsBlock title={translate("connectAi.mcpTitle")} description={translate("connectAi.mcpDescription")}>
     {publicUrl === null ? <Note note={translate("connectAi.notReady")} /> : <>
-      <div role="tablist" aria-label={translate("connectAi.clientsLabel")} className="flex flex-wrap gap-1">
-        {clients.map((item) => <Button key={item.id} type="button" role="tab" id={`mcp-tab-${item.id}`} aria-selected={client === item.id} aria-controls="mcp-client-panel" onClick={() => setClient(item.id)}
-          className={`rounded-md px-3 py-1.5 text-13 ${client === item.id ? "bg-accent-subtle text-accent-text" : "text-secondary hover:bg-layer-2"}`}>{item.label}</Button>)}
-      </div>
-      <div role="tabpanel" id="mcp-client-panel" aria-labelledby={`mcp-tab-${client}`} className="grid gap-2">
+      <Tabs value={client} onValueChange={(value) => setClient(value as ClientId)}>
+        <TabsList aria-label={translate("connectAi.clientsLabel")} className="flex h-auto flex-wrap gap-1">
+          {clients.map((item) => <TabsTrigger key={item.id} value={item.id} id={`mcp-tab-${item.id}`} className={`rounded-md px-3 py-1.5 text-13 ${client === item.id ? "bg-accent-subtle text-accent-text" : "text-secondary hover:bg-layer-2"}`}>{item.label}</TabsTrigger>)}
+        </TabsList>
+        <TabsContent value={client} id="mcp-client-panel" aria-labelledby={`mcp-tab-${client}`} className="grid gap-2">
         <CopyBlock text={mcpSnippets(publicUrl)[client]} label={selected.label} />
         <p className="m-0 text-13 text-secondary">{translate("connectAi.oauthHelp")}</p>
-      </div>
+        </TabsContent>
+      </Tabs>
       <details className="grid gap-3 rounded-md border border-subtle p-3">
         <summary className="cursor-pointer text-14 font-medium text-primary">{translate("connectAi.advanced")}</summary>
         <p className="m-0 text-13 text-secondary">{translate("connectAi.advancedHelp")}</p>

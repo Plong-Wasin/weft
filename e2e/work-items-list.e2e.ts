@@ -407,7 +407,7 @@ try {
 
   // Display options: hiding a property removes it from the rows and persists in the URL.
   await page.getByRole("button", { name: translate("layout.display") }).click();
-  await page.getByLabel(translate("layout.property.labels"), { exact: true }).uncheck();
+  await page.getByRole("checkbox", { name: translate("layout.property.labels"), exact: true }).click();
   await page.keyboard.press("Escape");
   check(page.url().includes("props="), "visible properties are not in the URL");
   check(await page.getByTestId("row-MOB-1").getByRole("button", { name: new RegExp(`^${translate("workItems.labels")}:`) }).count() === 0, "hidden property still shown");
@@ -422,10 +422,10 @@ try {
   await page.getByRole("region", { name: translate("workItems.priority.urgent") }).getByRole("link", { name: "Alpha" }).waitFor();
   check(page.url().includes("group=priority"), "group is not in the URL");
   await page.getByRole("button", { name: translate("layout.display") }).click();
-  const labelsProperty = page.getByLabel(translate("layout.property.labels"), { exact: true });
-  if (!(await labelsProperty.isChecked())) await labelsProperty.check();
-  const cycleProperty = page.getByLabel(translate("layout.property.cycle"), { exact: true });
-  if (!(await cycleProperty.isChecked())) await cycleProperty.check();
+  const labelsProperty = page.getByRole("checkbox", { name: translate("layout.property.labels"), exact: true });
+  if (await labelsProperty.getAttribute("aria-checked") !== "true") await labelsProperty.click();
+  const cycleProperty = page.getByRole("checkbox", { name: translate("layout.property.cycle"), exact: true });
+  if (await cycleProperty.getAttribute("aria-checked") !== "true") await cycleProperty.click();
   await page.keyboard.press("Escape");
 
   await page.setViewportSize({ width: 390, height: 844 });

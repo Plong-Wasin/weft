@@ -6,6 +6,7 @@ import { useWorkspace } from "../../layouts/workspace-layout";
 import { formatDuration, formatUsd, tokensOf, totalsBy, usageCsv, type UsageRow, type UsageTotal } from "../../usage-format";
 import { Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 
+import { Input } from "@/ui/input";
 type Summary = { from: string; to: string; rows: UsageRow[]; unpricedModels: Array<{ model: string; runs: number }>; totals: Omit<UsageRow, "day" | "agentId" | "agentName" | "personId" | "personName"> };
 type Price = { id: string; model: string; inputUsdPerMillion: number; outputUsdPerMillion: number; cachedInputUsdPerMillion: number | null; updatedAt: string };
 
@@ -108,8 +109,8 @@ export function WorkspaceUsage() {
   return <section>
     <SettingsHeader title={translate("usage.title")} description={translate("usage.description")} />
     <div className="mb-5 flex flex-wrap items-end gap-3">
-      <label>{translate("usage.from")}<input type="date" value={from} onChange={(event) => setFrom(event.target.value)} /></label>
-      <label>{translate("usage.to")}<input type="date" value={to} onChange={(event) => setTo(event.target.value)} /></label>
+      <label>{translate("usage.from")}<Input type="date" value={from} onChange={(event) => setFrom(event.target.value)} /></label>
+      <label>{translate("usage.to")}<Input type="date" value={to} onChange={(event) => setTo(event.target.value)} /></label>
       <Button type="button" className="secondary" disabled={!summary || rows.length === 0} onClick={() => download(`usage-${from}-${to}.csv`, usageCsv(rows, agentLabel, (row) => row.personName))}>{translate("usage.exportCsv")}</Button>
     </div>
     <Note note={!range ? translate("usage.invalidRange") : failed ? translate("usage.loadFailed") : null} error />
@@ -138,10 +139,10 @@ export function WorkspaceUsage() {
         </Row>)}
       </RowList>}
       <div className="grid gap-3 md:grid-cols-4">
-        <label>{translate("usage.priceModel")}<input value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} /></label>
-        <label>{translate("usage.priceInput")}<input type="number" min={0} step="0.0001" value={draft.input} onChange={(event) => setDraft({ ...draft, input: event.target.value })} /></label>
-        <label>{translate("usage.priceOutput")}<input type="number" min={0} step="0.0001" value={draft.output} onChange={(event) => setDraft({ ...draft, output: event.target.value })} /></label>
-        <label title={translate("usage.priceCachedHint")}>{translate("usage.priceCached")}<input type="number" min={0} step="0.0001" value={draft.cached} onChange={(event) => setDraft({ ...draft, cached: event.target.value })} /></label>
+        <label>{translate("usage.priceModel")}<Input value={draft.model} onChange={(event) => setDraft({ ...draft, model: event.target.value })} /></label>
+        <label>{translate("usage.priceInput")}<Input type="number" min={0} step="0.0001" value={draft.input} onChange={(event) => setDraft({ ...draft, input: event.target.value })} /></label>
+        <label>{translate("usage.priceOutput")}<Input type="number" min={0} step="0.0001" value={draft.output} onChange={(event) => setDraft({ ...draft, output: event.target.value })} /></label>
+        <label title={translate("usage.priceCachedHint")}>{translate("usage.priceCached")}<Input type="number" min={0} step="0.0001" value={draft.cached} onChange={(event) => setDraft({ ...draft, cached: event.target.value })} /></label>
       </div>
       <Button type="button" className="w-fit" disabled={!draft.model.trim() || draft.input === "" || draft.output === ""} onClick={() => void savePrice()}>{translate("usage.priceSave")}</Button>
       <Note note={note} error={noteFailed} />

@@ -7,6 +7,7 @@ import { markdownToDocWithWarnings } from "../../../packages/actions/src/markdow
 import { richTextMarkdown } from "../../../packages/actions/src/written-form";
 import { normalizeAssetImages } from "../../../packages/actions/src/wiki-yjs";
 
+import { Textarea } from "@/ui/textarea";
 /** Finds legacy formatting that the Written form cannot express before the editor schema removes it. */
 export function editorLimitWarnings(value: unknown): string[] {
   const found = new Set<string>();
@@ -101,7 +102,7 @@ export function EditorSourceMode({ editor, initialWarnings = [], onSourceDraftCh
   React.useEffect(() => () => { if (toggleRef) toggleRef.current = null; }, [toggleRef]);
 
   return <div className="grid w-full min-w-0 max-w-full gap-2" data-testid="editor-source-mode">
-    {source && <textarea aria-label={translate("editor.sourceText")} data-testid="editor-source-text" rows={Math.min(30, Math.max(6, text.split("\n").length + 1))} className="editor-source-text min-h-40 w-full min-w-0 max-w-full resize-y rounded-md border border-subtle bg-surface-1 p-3 font-mono text-13 text-primary" value={text} onChange={(event) => { draft.current = event.target.value; setText(event.target.value); setWarnings([]); onSourceDraftChange?.(true); }} />}
+    {source && <Textarea aria-label={translate("editor.sourceText")} data-testid="editor-source-text" rows={Math.min(30, Math.max(6, text.split("\n").length + 1))} className="editor-source-text min-h-40 w-full min-w-0 max-w-full resize-y rounded-md border border-subtle bg-surface-1 p-3 font-mono text-13 text-primary" value={text} onChange={(event) => { draft.current = event.target.value; setText(event.target.value); setWarnings([]); onSourceDraftChange?.(true); }} />}
     {source && <p className="m-0 text-12 text-secondary">{translate("editor.sourceReferenceHelp")}</p>}
     {initialWarnings.includes("alignment") && <p role="status" className="m-0 text-13 text-warning-primary">{translate("editor.removedAlignment")}</p>}
     {initialWarnings.includes("cellBackground") && <p role="status" className="m-0 text-13 text-warning-primary">{translate("editor.removedCellBackground")}</p>}

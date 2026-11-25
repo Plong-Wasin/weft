@@ -10,9 +10,9 @@ function DropdownMenuTrigger({ ...props }: MenuPrimitive.Trigger.Props) {
   return <MenuPrimitive.Trigger data-slot="dropdown-menu-trigger" {...props} />;
 }
 
-const DropdownMenuContent = React.forwardRef<HTMLDivElement, MenuPrimitive.Popup.Props & { align?: "start" | "center" | "end"; sideOffset?: number }>(function DropdownMenuContent({ className, align = "start", sideOffset = 4, children, ...props }, ref) {
+const DropdownMenuContent = React.forwardRef<HTMLDivElement, MenuPrimitive.Popup.Props & { align?: "start" | "center" | "end"; sideOffset?: number; container?: HTMLElement | ShadowRoot | React.RefObject<HTMLElement | ShadowRoot | null> | null }>(function DropdownMenuContent({ className, align = "start", sideOffset = 4, container, children, ...props }, ref) {
   return (
-    <MenuPrimitive.Portal>
+    <MenuPrimitive.Portal container={container}>
       <MenuPrimitive.Positioner align={align} sideOffset={sideOffset} className="z-50">
         <MenuPrimitive.Popup ref={ref} data-slot="dropdown-menu-content" className={cn("max-h-[var(--available-height)] min-w-32 overflow-y-auto overflow-x-hidden rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md", className)} {...props}>
           {children}

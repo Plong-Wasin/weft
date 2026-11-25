@@ -1,4 +1,5 @@
 import { Button } from "@/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/ui/tabs";
 import React from "react";
 import { translate } from "@weft/shared";
 import { action, actionResult } from "../../api";
@@ -7,16 +8,18 @@ import type { Member } from "../../types";
 import { validateSkillDraft, type SkillDraft } from "../../skills-form";
 import { Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 
+import { Input } from "@/ui/input";
+import { Textarea } from "@/ui/textarea";
 type Skill = { id: string; name: string; description: string; scope: "personal" | "workspace"; instructions?: string };
 const blank: SkillDraft = { name: "", description: "", instructions: "" };
 
 function SkillEditor({ draft, onChange, onSubmit, onCancel }: { draft: SkillDraft; onChange: (value: SkillDraft) => void; onSubmit: () => void; onCancel?: () => void }) {
   const set = (key: keyof SkillDraft) => (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => onChange({ ...draft, [key]: event.target.value });
   return <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
-    <label>{translate("skills.name")}<input maxLength={64} value={draft.name} onChange={set("name")} aria-describedby="skill-name-hint" /></label>
+    <label>{translate("skills.name")}<Input maxLength={64} value={draft.name} onChange={set("name")} aria-describedby="skill-name-hint" /></label>
     <p id="skill-name-hint" className="text-13 text-secondary">{translate("skills.nameHint")}</p>
-    <label>{translate("skills.descriptionField")}<textarea maxLength={1024} rows={2} value={draft.description} onChange={set("description")} /></label>
-    <label>{translate("skills.instructions")}<textarea maxLength={8000} rows={5} value={draft.instructions} onChange={set("instructions")} /></label>
+    <label>{translate("skills.descriptionField")}<Textarea maxLength={1024} rows={2} value={draft.description} onChange={set("description")} /></label>
+    <label>{translate("skills.instructions")}<Textarea maxLength={8000} rows={5} value={draft.instructions} onChange={set("instructions")} /></label>
     <div className="flex gap-2"><Button type="submit">{translate("skills.save")}</Button>{onCancel && <Button type="button" className="secondary" onClick={onCancel}>{translate("agents.cancel")}</Button>}</div>
   </form>;
 }
@@ -73,9 +76,11 @@ export function WorkspaceSkills() {
   };
   return <section>
     <SettingsHeader title={translate("skills.title")} description={translate("skills.description")} />
-    <div role="tablist" aria-label={translate("skills.title")} className="mb-4 flex gap-2">
-      {(["personal", "workspace"] as const).map((scope) => <Button type="button" role="tab" aria-selected={tab === scope} key={scope} className={tab === scope ? "" : "secondary"} onClick={() => { setTab(scope); setEditor(null); setNote(null); }}>{translate(`skills.${scope}`)}</Button>)}
-    </div>
+    <Tabs value={tab} onValueChange={(value) => { setTab(value as "personal" | "workspace"); setEditor(null); setNote(null); }}>
+      <TabsList aria-label={translate("skills.title")}>
+        {(["personal", "workspace"] as const).map((scope) => <TabsTrigger value={scope} key={scope}>{translate(`skills.${scope}`)}</TabsTrigger>)}
+      </TabsList>
+      <TabsContent value={tab} className="grid gap-3">
     {tab === "workspace" && !isAdmin && <p className="mb-3 text-13 text-secondary">{translate("skills.readOnly")}</p>}
     {role === "Guest" && tab === "personal" && <p className="mb-3 text-13 text-secondary">{translate("skills.guestReadOnly")}</p>}
     {!editor && ((tab === "personal" && canPersonal) || (tab === "workspace" && isAdmin)) && <SettingsBlock title={translate("skills.create")}>
@@ -91,5 +96,7 @@ export function WorkspaceSkills() {
       </Row>)}</RowList>}
     </SettingsBlock>
     <Note note={note} error={error} />
+      </TabsContent>
+    </Tabs>
   </section>;
 }

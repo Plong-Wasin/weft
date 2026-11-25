@@ -14,6 +14,8 @@ import { WorkItemLayouts } from "./work-item-layouts";
 import { CreateWorkItemModal } from "./create-work-item-modal";
 import type { Member, Project } from "./types";
 
+import { Input } from "@/ui/input";
+import { Textarea } from "@/ui/textarea";
 const t = (key: string) => translate(key as MessageKey);
 const primary = "rounded-md border-0 bg-accent-primary px-3 py-1 text-13 font-medium text-on-color hover:bg-accent-primary-hover disabled:opacity-60";
 const ghost = "flex items-center gap-1.5 rounded-md border border-subtle bg-surface-1 px-2.5 py-1 text-13 font-medium text-primary hover:bg-layer-transparent-hover";
@@ -75,8 +77,8 @@ export function ViewFormModal({ mode, view, target, settings, onClose, onSaved }
   return <ViewDialog title={title} onClose={onClose} className="max-w-lg">
       <form className="my-0 grid gap-4" onSubmit={(event) => void submit(event)}>
         <Button type="button" className="absolute right-4 top-4 rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={t("views.cancel")} onClick={onClose}><X aria-hidden size={16} /></Button>
-        <label className="grid gap-1 text-13 text-secondary">{t("views.name")}<input required maxLength={100} value={name} className="w-full text-14" onChange={(event) => setName(event.target.value)} /></label>
-        <label className="grid gap-1 text-13 text-secondary">{t("views.description")}<textarea rows={3} maxLength={2000} value={description} className="w-full text-14" onChange={(event) => setDescription(event.target.value)} /></label>
+        <label className="grid gap-1 text-13 text-secondary">{t("views.name")}<Input required maxLength={100} value={name} className="w-full text-14" onChange={(event) => setName(event.target.value)} /></label>
+        <label className="grid gap-1 text-13 text-secondary">{t("views.description")}<Textarea rows={3} maxLength={2000} value={description} className="w-full text-14" onChange={(event) => setDescription(event.target.value)} /></label>
         <label className="grid gap-1 text-13 text-secondary">{t("views.access")}
           <select value={access} className="text-14" onChange={(event) => setAccess(event.target.value as SavedView["access"])}>
             {(["public", "private"] as const).map((value) => <option key={value} value={value}>{t(`views.access.${value}`)}</option>)}
@@ -146,7 +148,7 @@ export function ViewsPage({ workspaceSlug, project, selfId }: Scope) {
       </nav>
       <label className="relative my-0 block w-full sm:w-auto"><span className="sr-only">{t("views.search")}</span>
         <Search aria-hidden size={14} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-tertiary" />
-        <input type="search" value={search} placeholder={t("views.search")} className="w-full pl-7 text-13 sm:w-48" onChange={(event) => setSearch(event.target.value)} /></label>
+        <Input type="search" value={search} placeholder={t("views.search")} className="w-full pl-7 text-13 sm:w-48" onChange={(event) => setSearch(event.target.value)} /></label>
       {canWrite && <Button type="button" variant="primary" className="flex items-center gap-1.5" onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{t("views.add")}</Button>}
     </header>
     {loadFailed && <div role="alert" className="flex flex-wrap items-center gap-2 px-3 py-6 text-14 text-secondary">

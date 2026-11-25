@@ -73,7 +73,7 @@ try {
   const fits = async (page: Page, label: string) => check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${label}: page scrolls sideways`);
   await fits(admin, "1440px");
 
-  await admin.getByRole("checkbox", { name: "MOB · Mobile" }).check();
+  await admin.getByRole("checkbox", { name: "MOB · Mobile" }).click();
   await admin.getByRole("button", { name: translate("exports.request"), exact: true }).click();
   await admin.getByText(translate("exports.status.completed"), { exact: true }).waitFor({ timeout: 30_000 });
   const [download] = await Promise.all([admin.waitForEvent("download"), admin.getByRole("button", { name: translate("exports.download") }).click()]);

@@ -8,6 +8,8 @@ import type { Estimate } from "../../types";
 import { SortableList } from "../../sortable-list";
 import { dangerButton, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 
+import { Input } from "@/ui/input";
+import { Switch } from "@/ui/switch";
 type Draft = { id?: string; value: string };
 
 /** Role null means a workspace Admin who is no project member; the server decides. */
@@ -33,7 +35,7 @@ function ValueList({ values, onChange, disabled, numeric }: { values: Draft[]; o
         const entry = values[index]!;
         return <>
           {!disabled && grip}
-          <input className="min-w-0 flex-1" required inputMode={numeric ? "decimal" : "text"} maxLength={20} disabled={disabled} aria-label={`${translate("estimates.value")} ${index + 1}`} value={entry.value} onChange={(event) => set(index, event.target.value)} />
+          <Input className="min-w-0 flex-1" required inputMode={numeric ? "decimal" : "text"} maxLength={20} disabled={disabled} aria-label={`${translate("estimates.value")} ${index + 1}`} value={entry.value} onChange={(event) => set(index, event.target.value)} />
           {!disabled && <Button type="button" className="secondary hover:!text-danger-text" disabled={values.length <= estimateLimits.min} onClick={() => onChange(values.filter((_, at) => at !== index))}>{translate("estimates.removeValue")}</Button>}
         </>;
       }} />
@@ -80,7 +82,7 @@ export function ProjectEstimates() {
       <form className="grid gap-4" onSubmit={async (event) => { event.preventDefault(); await send("create_estimate", { name: name.trim() || undefined, type, values: values.map((entry) => entry.value) }); }}>
         <SettingsBlock title={translate("estimates.create")} description={translate("estimates.createDesc")}>
           <div className="flex flex-wrap items-end gap-3">
-            <label className="min-w-[200px] flex-1">{translate("estimates.name")}<input maxLength={100} value={name} onChange={(event) => setName(event.target.value)} /></label>
+            <label className="min-w-[200px] flex-1">{translate("estimates.name")}<Input maxLength={100} value={name} onChange={(event) => setName(event.target.value)} /></label>
             <label>{translate("estimates.type")}<select value={type} onChange={(event) => setType(event.target.value as "points" | "categories")}>
               <option value="points">{translate("estimates.type.points")}</option>
               <option value="categories">{translate("estimates.type.categories")}</option>
@@ -111,13 +113,13 @@ export function ProjectEstimates() {
     <SettingsBlock>
       <Row>
         <span className="grid flex-1"><span className="font-medium">{translate("estimates.enabled")}</span><span className="text-13 text-secondary">{translate("estimates.enabledDesc")}</span></span>
-        <label className="flex-row items-center gap-2"><input type="checkbox" role="switch" disabled={!canAdmin} checked={estimate.enabled} aria-label={translate("estimates.enabled")} onChange={(event) => void send("update_estimate", { enabled: event.target.checked })} /></label>
+        <label className="flex-row items-center gap-2"><Switch disabled={!canAdmin} checked={estimate.enabled} aria-label={translate("estimates.enabled")} onChange={(event) => void send("update_estimate", { enabled: event.target.checked })} /></label>
       </Row>
     </SettingsBlock>
     {!estimate.enabled && <p className="mb-3 text-13 text-secondary">{translate("estimates.offHint")}</p>}
     <form className="grid gap-4" onSubmit={async (event) => { event.preventDefault(); await send("update_estimate", { name: name.trim() || undefined, points: values.map((entry) => ({ ...(entry.id ? { id: entry.id } : {}), value: entry.value })) }); }}>
       <SettingsBlock title={translate(`estimates.type.${estimate.type}` as MessageKey)}>
-        <label className="max-w-[420px]">{translate("estimates.name")}<input required maxLength={100} disabled={readOnly} value={name} onChange={(event) => setName(event.target.value)} /></label>
+        <label className="max-w-[420px]">{translate("estimates.name")}<Input required maxLength={100} disabled={readOnly} value={name} onChange={(event) => setName(event.target.value)} /></label>
         <ValueList values={values} onChange={setValues} disabled={readOnly} numeric={estimate.type === "points"} />
       </SettingsBlock>
       {!readOnly && <div><Button>{translate("labels.save")}</Button></div>}

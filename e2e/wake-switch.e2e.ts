@@ -86,13 +86,13 @@ try {
   await page.goto(`${web}/${slug}/settings/agents`);
   const coderRow = page.locator(`[data-agent="${coder.name}"]`);
   await coderRow.getByRole("button", { name: translate("agents.edit"), exact: true }).click();
-  const toggle = coderRow.getByLabel(translate("agents.canWakeAgents"), { exact: true });
-  await toggle.check();
+  const toggle = coderRow.getByRole("checkbox", { name: translate("agents.canWakeAgents"), exact: true });
+  await toggle.click();
   await coderRow.getByRole("button", { name: translate("agents.save"), exact: true }).click();
   await page.reload();
   await page.locator(`[data-agent="${coder.name}"]`).getByRole("button", { name: translate("agents.edit"), exact: true }).click();
-  await page.locator(`[data-agent="${coder.name}"]`).getByLabel(translate("agents.canWakeAgents"), { exact: true }).waitFor();
-  if (!(await page.locator(`[data-agent="${coder.name}"]`).getByLabel(translate("agents.canWakeAgents"), { exact: true }).isChecked())) throw new Error("Can wake Agents did not stay on after saving");
+  await page.locator(`[data-agent="${coder.name}"]`).getByRole("checkbox", { name: translate("agents.canWakeAgents"), exact: true }).waitFor();
+  if (await page.locator(`[data-agent="${coder.name}"]`).getByRole("checkbox", { name: translate("agents.canWakeAgents"), exact: true }).getAttribute("aria-checked") !== "true") throw new Error("Can wake Agents did not stay on after saving");
   await Bun.write(`${shots}/wake-switch-settings-1440.png`, await page.screenshot({ fullPage: true }));
   await page.setViewportSize({ width: 390, height: 844 });
   await Bun.write(`${shots}/wake-switch-settings-390.png`, await page.screenshot({ fullPage: true }));

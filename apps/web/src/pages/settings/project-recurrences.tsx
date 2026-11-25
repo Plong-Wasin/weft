@@ -7,6 +7,9 @@ import { useProject } from "../../layouts/project-layout";
 import { Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 import { priorities, type Estimate, type Label, type Member, type WorkItem, type WorkState } from "../../types";
 
+import { Checkbox } from "@/ui/checkbox";
+import { Input } from "@/ui/input";
+import { Textarea } from "@/ui/textarea";
 type Schedule = { unit: "day" | "week" | "month" | "year"; interval: number; time: string; timezone: string; anchorDate: string; weekdays?: number[]; dayOfMonth?: number; month?: number; day?: number };
 type Template = { title: string; description?: unknown; priority: typeof priorities[number]; stateId?: string; assigneeIds: string[]; labelIds: string[]; estimatePointId?: string; moduleIds: string[]; parentId?: string; dueDateOffsetDays?: number; addToActiveCycle: boolean };
 type Recurrence = { id: string; name: string; template: Template; schedule: string | Schedule; status: string; nextRunAt: string; lastRunAt: string | null; lastWarning: string | null; endDate: string | null; pausedReason?: string | null };
@@ -93,28 +96,28 @@ export function ProjectRecurrences() {
     {editing !== false && <form className="my-5 grid gap-4 rounded-lg border border-subtle p-4" onSubmit={submit}>
       <h2 className="text-16 font-medium">{t(editing ? "recurrences.edit" : "recurrences.create")}</h2>
       <SettingsBlock title={t("recurrences.template")}>
-        <label>{t("recurrences.name")}<input required maxLength={200} value={name} onChange={(e) => setName(e.target.value)} /></label>
-        <label>{t("workItems.titleField")}<input required maxLength={500} value={template.title} onChange={(e) => field("title", e.target.value)} /></label>
-        <label>{t("workItems.description")}<textarea rows={3} value={descriptionText(template.description)} onChange={(e) => field("description", e.target.value || undefined)} /></label>
+        <label>{t("recurrences.name")}<Input required maxLength={200} value={name} onChange={(e) => setName(e.target.value)} /></label>
+        <label>{t("workItems.titleField")}<Input required maxLength={500} value={template.title} onChange={(e) => field("title", e.target.value)} /></label>
+        <label>{t("workItems.description")}<Textarea rows={3} value={descriptionText(template.description)} onChange={(e) => field("description", e.target.value || undefined)} /></label>
         <label>{t("workItems.priority")}<select value={template.priority} onChange={(e) => field("priority", e.target.value as Template["priority"])}>{priorities.map((v) => <option key={v} value={v}>{t("workItems.priority." + v)}</option>)}</select></label>
         <label>{t("workItems.state")}<select value={template.stateId ?? ""} onChange={(e) => field("stateId", e.target.value || undefined)}><option value="">{t("recurrences.defaultState")}</option>{states.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
-        <fieldset><legend>{t("workItems.assignees")}</legend>{members.map((m) => <label key={m.userId} className="flex-row"><input type="checkbox" checked={template.assigneeIds.includes(m.userId)} onChange={(e) => toggle("assigneeIds", m.userId, e.target.checked)} />{m.name}</label>)}</fieldset>
+        <fieldset><legend>{t("workItems.assignees")}</legend>{members.map((m) => <label key={m.userId} className="flex-row"><Checkbox checked={template.assigneeIds.includes(m.userId)} onChange={(e) => toggle("assigneeIds", m.userId, e.target.checked)} />{m.name}</label>)}</fieldset>
         <div className="grid gap-1"><span className="text-13 text-secondary">{t("workItems.labels")}</span><MultiSelect label={t("workItems.labels")} searchAlways selected={template.labelIds} summary={<span>{template.labelIds.length ? template.labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ") : t("workItems.noLabels")}</span>} options={labels.map((label) => ({ id: label.id, name: label.name, icon: <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: label.color }} /> }))} onToggle={(id, on) => toggle("labelIds", id, on)} />{labels.length === 0 && <span className="text-13 text-tertiary">—</span>}</div>
         {estimate?.enabled && <label>{t("estimates.title")}<select value={template.estimatePointId ?? ""} onChange={(e) => field("estimatePointId", e.target.value || undefined)}><option value="">{t("recurrences.none")}</option>{estimate.points.map((p) => <option key={p.id} value={p.id}>{p.value}</option>)}</select></label>}
-        {project.features.modules && <fieldset><legend>{t("workItems.modules")}</legend>{modules.map((m) => <label key={m.id} className="flex-row"><input type="checkbox" checked={template.moduleIds.includes(m.id)} onChange={(e) => toggle("moduleIds", m.id, e.target.checked)} />{m.name}</label>)}</fieldset>}
+        {project.features.modules && <fieldset><legend>{t("workItems.modules")}</legend>{modules.map((m) => <label key={m.id} className="flex-row"><Checkbox checked={template.moduleIds.includes(m.id)} onChange={(e) => toggle("moduleIds", m.id, e.target.checked)} />{m.name}</label>)}</fieldset>}
         <label>{t("workItems.modal.parent")}<select value={template.parentId ?? ""} onChange={(e) => field("parentId", e.target.value || undefined)}><option value="">{t("recurrences.none")}</option>{items.map((i) => <option key={i.id} value={i.id}>{i.displayId} {i.title}</option>)}</select></label>
-        <label>{t("recurrences.dueOffset")}<input type="number" min="0" value={template.dueDateOffsetDays ?? ""} onChange={(e) => field("dueDateOffsetDays", e.target.value === "" ? undefined : Number(e.target.value))} /></label>
-        <label className="flex-row"><input type="checkbox" checked={template.addToActiveCycle} onChange={(e) => field("addToActiveCycle", e.target.checked)} />{t("recurrences.addToActiveCycle")}</label>
+        <label>{t("recurrences.dueOffset")}<Input type="number" min="0" value={template.dueDateOffsetDays ?? ""} onChange={(e) => field("dueDateOffsetDays", e.target.value === "" ? undefined : Number(e.target.value))} /></label>
+        <label className="flex-row"><Checkbox checked={template.addToActiveCycle} onChange={(e) => field("addToActiveCycle", e.target.checked)} />{t("recurrences.addToActiveCycle")}</label>
       </SettingsBlock>
       <SettingsBlock title={t("recurrences.schedule")}>
         <label>{t("recurrences.frequency")}<select value={unit} onChange={(e) => setUnit(e.target.value as Schedule["unit"])}>{(["day", "week", "month", "year"] as const).map((v) => <option key={v} value={v}>{t("recurrences.unit." + v)}</option>)}</select></label>
-        <label>{t("recurrences.interval")}<input type="number" min="1" required value={interval} onChange={(e) => setInterval(Number(e.target.value))} /></label>
-        {unit === "week" && <fieldset><legend>{t("recurrences.weekdays")}</legend>{[1, 2, 3, 4, 5, 6, 7].map((d) => <label key={d} className="flex-row"><input type="checkbox" checked={weekdays.includes(d)} onChange={(e) => setWeekdays(e.target.checked ? [...weekdays, d] : weekdays.filter((v) => v !== d))} />{t("recurrences.weekday." + d)}</label>)}</fieldset>}
-        {unit === "month" && <label>{t("recurrences.dayOfMonth")}<input type="number" min="1" max="31" value={dayOfMonth} onChange={(e) => setDayOfMonth(Number(e.target.value))} /></label>}
-        {unit === "year" && <><label>{t("recurrences.month")}<input type="number" min="1" max="12" value={month} onChange={(e) => setMonth(Number(e.target.value))} /></label><label>{t("recurrences.day")}<input type="number" min="1" max="31" value={yearDay} onChange={(e) => setYearDay(Number(e.target.value))} /></label></>}
-        <label>{t("recurrences.time")}<input type="time" required value={time} onChange={(e) => setTime(e.target.value)} /></label>
-        <label>{t("recurrences.timezone")}<input required value={timezone} onChange={(e) => setTimezone(e.target.value)} /></label>
-        <label>{t("recurrences.endDate")}<input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} /></label>
+        <label>{t("recurrences.interval")}<Input type="number" min="1" required value={interval} onChange={(e) => setInterval(Number(e.target.value))} /></label>
+        {unit === "week" && <fieldset><legend>{t("recurrences.weekdays")}</legend>{[1, 2, 3, 4, 5, 6, 7].map((d) => <label key={d} className="flex-row"><Checkbox checked={weekdays.includes(d)} onChange={(e) => setWeekdays(e.target.checked ? [...weekdays, d] : weekdays.filter((v) => v !== d))} />{t("recurrences.weekday." + d)}</label>)}</fieldset>}
+        {unit === "month" && <label>{t("recurrences.dayOfMonth")}<Input type="number" min="1" max="31" value={dayOfMonth} onChange={(e) => setDayOfMonth(Number(e.target.value))} /></label>}
+        {unit === "year" && <><label>{t("recurrences.month")}<Input type="number" min="1" max="12" value={month} onChange={(e) => setMonth(Number(e.target.value))} /></label><label>{t("recurrences.day")}<Input type="number" min="1" max="31" value={yearDay} onChange={(e) => setYearDay(Number(e.target.value))} /></label></>}
+        <label>{t("recurrences.time")}<Input type="time" required value={time} onChange={(e) => setTime(e.target.value)} /></label>
+        <label>{t("recurrences.timezone")}<Input required value={timezone} onChange={(e) => setTimezone(e.target.value)} /></label>
+        <label>{t("recurrences.endDate")}<Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} /></label>
       </SettingsBlock>
       <div className="flex justify-end gap-2"><Button type="button" className="secondary" onClick={() => setEditing(false)}>{t("settings.cancel")}</Button><Button type="submit">{t("recurrences.save")}</Button></div>
     </form>}

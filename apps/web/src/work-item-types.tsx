@@ -7,6 +7,9 @@ import { SingleSelect } from "./property-dropdowns";
 import { editorPalette } from "../../../packages/actions/src/wiki-editor-extensions";
 import type { Member, Project } from "./types";
 
+import { Checkbox } from "@/ui/checkbox";
+import { Input } from "@/ui/input";
+import { Switch } from "@/ui/switch";
 const t = (key: string) => translate(key as MessageKey);
 
 export { typeIcons, type TypeIcon };
@@ -205,7 +208,7 @@ export function PropertyFields({ properties, values, members, onChange, disabled
       const hint = <span className="text-12 text-tertiary">{t(`types.kindHint.${property.kind}`)}</span>;
       if (property.kind === "boolean") {
         return <label key={property.id} htmlFor={id} className="flex items-center gap-2 text-13">
-          <input id={id} type="checkbox" role="switch" disabled={disabled} checked={value === true} onChange={(event) => onChange(property, event.target.checked ? true : null)} />
+          <Switch id={id} disabled={disabled} checked={value === true} onChange={(event) => onChange(property, event.target.checked ? true : null)} />
           <span className="font-medium text-primary">{property.name}</span>{property.required && <span className="rounded bg-layer-1 px-1.5 py-0.5 text-11 font-medium text-secondary" data-required-marker>{t("types.required")}</span>}
         </label>;
       }
@@ -214,7 +217,7 @@ export function PropertyFields({ properties, values, members, onChange, disabled
         return <fieldset key={property.id} className={fieldClass} data-property={property.id}>
           <legend className="mb-1">{label}</legend>
           <div className="flex flex-wrap gap-2">{property.options.map((option) => <label key={option.id} className="flex items-center gap-1.5 rounded-md border border-subtle px-2 py-1 text-13">
-            <input type="checkbox" disabled={disabled} checked={selected.includes(option.id)} onChange={(event) => {
+            <Checkbox disabled={disabled} checked={selected.includes(option.id)} onChange={(event) => {
               const next = event.target.checked ? [...selected, option.id] : selected.filter((id) => id !== option.id);
               onChange(property, next.length ? next : null);
             }} />{option.label}
@@ -240,7 +243,7 @@ export function PropertyFields({ properties, values, members, onChange, disabled
         </label>;
       }
       return <label key={property.id} htmlFor={id} className={fieldClass} data-property={property.id}>{label}
-        <input id={id} type={inputType} disabled={disabled} value={inputValue(value)} maxLength={property.kind === "text" ? 2000 : undefined}
+        <Input id={id} type={inputType} disabled={disabled} value={inputValue(value)} maxLength={property.kind === "text" ? 2000 : undefined}
           onChange={(event) => onChange(property, convert(event.target.value))} />
         {hint}
       </label>;
@@ -253,7 +256,7 @@ function DraftInput({ id, type, value, disabled, maxLength, onCommit }: { id: st
   const [draft, setDraft] = React.useState(value);
   React.useEffect(() => setDraft(value), [value]);
   const commit = () => { if (draft !== value) onCommit(draft); };
-  return <input id={id} type={type} disabled={disabled} value={draft} maxLength={maxLength} onChange={(event) => setDraft(event.target.value)}
+  return <Input id={id} type={type} disabled={disabled} value={draft} maxLength={maxLength} onChange={(event) => setDraft(event.target.value)}
     onBlur={commit} onKeyDown={(event) => { if (type !== "number") handleImeSafeEnter(event.nativeEvent, commit); }} />;
 }
 

@@ -14,6 +14,8 @@ import { dangerButton, DangerZone, Note, Row, RowList, SettingsBlock, SettingsHe
 import { adminState } from "../../admin-state";
 import { AuditLogPage, MemberSecurityList } from "./member-security";
 
+import { Checkbox } from "@/ui/checkbox";
+import { Input } from "@/ui/input";
 const fillMessage = (message: string, values: Record<string, string>) => Object.entries(values).reduce((result, [key, value]) => result.split(`{${key}}`).join(value), message);
 
 /** Settings area: the contextual sidebar holds the section links, this layout holds the routed section page. */
@@ -49,19 +51,19 @@ export function WorkspaceGeneral() {
   return <section>
     <SettingsHeader title={translate("settings.workspaceTitle")} description={translate("settings.workspaceGeneralDesc")} />
     <SettingsBlock>
-      <label className="max-w-md">{translate("settings.workspaceName")}<input readOnly value={workspace.name} className="bg-layer-1" /></label>
-      <label className="max-w-md">{translate("settings.workspaceUrl")}<input readOnly value={workspace.slug} className="bg-layer-1" /></label>
+      <label className="max-w-md">{translate("settings.workspaceName")}<Input readOnly value={workspace.name} className="bg-layer-1" /></label>
+      <label className="max-w-md">{translate("settings.workspaceUrl")}<Input readOnly value={workspace.slug} className="bg-layer-1" /></label>
     </SettingsBlock>
     <SettingsBlock title={translate("settings.autopilot")}>
-      <label className="flex items-center gap-2"><input type="checkbox" checked={autopilot?.allowAutopilot ?? false} disabled={!isAdmin || !autopilot} onChange={async (event) => {
+      <label className="flex items-center gap-2"><Checkbox checked={autopilot?.allowAutopilot ?? false} disabled={!isAdmin || !autopilot} onChange={async (event) => {
         const updated = await action("set_autopilot_setting", { workspaceId: workspace.id, allowAutopilot: event.target.checked });
         if (updated === null) setNote(translate("members.failed")); else { setNote(null); await reloadAutopilot(); }
       }} />{translate("settings.allowAutopilot")}</label>
     </SettingsBlock>
     <SettingsBlock title={translate("settings.runtimeRunLimits")}>
       <p className="text-13 text-secondary">{translate("settings.runtimeRunLimitsDesc")}</p>
-      <label className="max-w-xs">{translate("settings.runsPerPersonPerHour")}<input type="number" min={1} max={10000} disabled={!isAdmin} value={(runLimitDraft ?? runLimits)?.runsPerPersonPerHour ?? 30} onChange={(event) => setRunLimitDraft({ ...(runLimitDraft ?? runLimits ?? { runsPerPersonPerHour: 30, runsPerAgentPerHour: 30 }), runsPerPersonPerHour: Number(event.target.value) })} /></label>
-      <label className="max-w-xs">{translate("settings.runsPerAgentPerHour")}<input type="number" min={1} max={10000} disabled={!isAdmin} value={(runLimitDraft ?? runLimits)?.runsPerAgentPerHour ?? 30} onChange={(event) => setRunLimitDraft({ ...(runLimitDraft ?? runLimits ?? { runsPerPersonPerHour: 30, runsPerAgentPerHour: 30 }), runsPerAgentPerHour: Number(event.target.value) })} /></label>
+      <label className="max-w-xs">{translate("settings.runsPerPersonPerHour")}<Input type="number" min={1} max={10000} disabled={!isAdmin} value={(runLimitDraft ?? runLimits)?.runsPerPersonPerHour ?? 30} onChange={(event) => setRunLimitDraft({ ...(runLimitDraft ?? runLimits ?? { runsPerPersonPerHour: 30, runsPerAgentPerHour: 30 }), runsPerPersonPerHour: Number(event.target.value) })} /></label>
+      <label className="max-w-xs">{translate("settings.runsPerAgentPerHour")}<Input type="number" min={1} max={10000} disabled={!isAdmin} value={(runLimitDraft ?? runLimits)?.runsPerAgentPerHour ?? 30} onChange={(event) => setRunLimitDraft({ ...(runLimitDraft ?? runLimits ?? { runsPerPersonPerHour: 30, runsPerAgentPerHour: 30 }), runsPerAgentPerHour: Number(event.target.value) })} /></label>
       {isAdmin && <Button type="button" className="secondary w-fit" disabled={!runLimitDraft || runLimitDraft.runsPerPersonPerHour < 1 || runLimitDraft.runsPerAgentPerHour < 1} onClick={async () => {
         if (!runLimitDraft) return;
         const updated = await action("set_runtime_run_limits", { workspaceId: workspace.id, ...runLimitDraft });
@@ -139,7 +141,7 @@ export function WorkspaceInvites() {
           if (invite) { say(translate("invite.expires")); await load(); } else say(translate("members.failed"), true);
         }}>{translate("invite.create")}</Button>
       </div>
-      {link && <div className="flex flex-wrap items-center gap-2"><input readOnly value={link} aria-label={translate("settings.inviteLink")} onFocus={(event) => event.target.select()} className="min-w-0 flex-1" />
+      {link && <div className="flex flex-wrap items-center gap-2"><Input readOnly value={link} aria-label={translate("settings.inviteLink")} onFocus={(event) => event.target.select()} className="min-w-0 flex-1" />
         <Button type="button" className="secondary" onClick={async () => { if (await copyText(link, translate("invite.copied"), translate("comments.copyFailed"))) say(translate("invite.copied")); }}>{translate("invite.copy")}</Button></div>}
     </SettingsBlock>
     <SettingsBlock title={translate("settings.openInvites")}>

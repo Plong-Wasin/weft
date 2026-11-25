@@ -153,7 +153,7 @@ try {
 
   // Column chooser: hide Labels, move Dates earlier; both live in the URL and survive reload.
   await page.getByRole("button", { name: translate("layout.display") }).click();
-  await page.getByRole("checkbox", { name: translate("layout.property.labels") }).uncheck();
+  await page.getByRole("checkbox", { name: translate("layout.property.labels") }).click();
   await page.getByRole("button", { name: `${translate("layout.column.earlier")}: ${translate("layout.property.dates")}` }).click();
   await page.keyboard.press("Escape");
   const props = new URL(page.url()).searchParams.get("props")!.split(",");

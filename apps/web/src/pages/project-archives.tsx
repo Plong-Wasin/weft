@@ -1,4 +1,5 @@
 import { Button } from "@/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/ui/tabs";
 import React from "react";
 import { Link } from "react-router";
 import { Archive } from "lucide-react";
@@ -30,19 +31,6 @@ export function ProjectArchivesRoute() {
   const canRestoreStructure = project.role === "Admin" && !project.archived;
   const canWrite = canWriteIn(project);
   const selectTab = (next: Tab) => { setTab(next); setNote(null); };
-  const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    const currentIndex = tabs.indexOf(active);
-    const nextIndex = event.key === "ArrowRight" ? (currentIndex + 1) % tabs.length
-      : event.key === "ArrowLeft" ? (currentIndex - 1 + tabs.length) % tabs.length
-      : event.key === "Home" ? 0
-      : event.key === "End" ? tabs.length - 1
-      : -1;
-    if (nextIndex < 0) return;
-    event.preventDefault();
-    const next = tabs[nextIndex]!;
-    selectTab(next);
-    event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`#archives-tab-${next}`)?.focus();
-  };
   const load = React.useCallback(async () => {
     const rows = (await action<ArchivedItem[]>("list_work_items", { projectId: project.id, archived: true })) ?? [];
     setItems([...rows].sort((a, b) => b.archivedAt.localeCompare(a.archivedAt)));
@@ -67,12 +55,13 @@ export function ProjectArchivesRoute() {
   };
   return <section className="grid gap-4">
     <h2 className="m-0 flex items-center gap-2 text-16 font-semibold"><Archive aria-hidden size={16} />{t("archives.title")}</h2>
-    <div role="tablist" aria-label={t("archives.tabs")} className="flex w-fit max-w-full flex-wrap gap-1 rounded-lg bg-layer-1 p-1">
-      {tabs.map((id) => <Button key={id} id={`archives-tab-${id}`} type="button" role="tab" aria-selected={id === active} tabIndex={id === active ? 0 : -1} onKeyDown={handleTabKeyDown} onClick={() => selectTab(id)}
-        className={`rounded-md border-0 px-3 py-2 text-14 font-medium ${id === active ? "bg-surface-1 text-primary shadow-sm" : "bg-transparent text-secondary hover:bg-layer-transparent-hover"}`}>{t(tabLabel[id])}</Button>)}
-    </div>
-    {note && <p role="alert" className="m-0 text-danger-text">{note}</p>}
-    {active !== "workItems" && <div role="tabpanel" aria-labelledby={`archives-tab-${active}`} tabIndex={0}>
+    <Tabs value={active} onValueChange={(value) => selectTab(value as Tab)}>
+      <TabsList aria-label={t("archives.tabs")} className="flex h-auto w-fit max-w-full flex-wrap gap-1 rounded-lg bg-layer-1 p-1">
+        {tabs.map((id) => <TabsTrigger key={id} value={id} id={`archives-tab-${id}`} className={`rounded-md border-0 px-3 py-2 text-14 font-medium ${id === active ? "bg-surface-1 text-primary shadow-sm" : "bg-transparent text-secondary hover:bg-layer-transparent-hover"}`}>{t(tabLabel[id])}</TabsTrigger>)}
+      </TabsList>
+      {note && <p role="alert" className="m-0 text-danger-text">{note}</p>}
+      <TabsContent value={active}>
+    {active !== "workItems" && <div>
       {structures?.length === 0 && <p className="m-0 rounded-xl bg-layer-1 p-4 text-secondary">{t(active === "cycles" ? "archives.emptyCycles" : "archives.emptyModules")}</p>}
       <ul className="m-0 grid list-none gap-1 rounded-xl border border-subtle bg-surface-1 p-1 empty:hidden">{(structures ?? []).map((row) => <li key={row.id} data-testid={`archived-row-${row.id}`} className="flex flex-wrap items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-layer-transparent-hover max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-x-3 max-sm:gap-y-2">
         <Link to={active === "cycles" ? paths.cycle(workspace.slug, project.key, row.id) : paths.module(workspace.slug, project.key, row.id)} className="min-w-0 flex-1 truncate text-14 font-medium text-primary max-sm:col-span-2">{row.name}</Link>
@@ -80,7 +69,7 @@ export function ProjectArchivesRoute() {
         {canRestoreStructure && <Button type="button" className="secondary max-sm:min-h-11 shrink-0" aria-label={t("archives.restoreItem").replace("{name}", row.name)} onClick={() => void restoreStructure(row)}>{t("archives.restore")}</Button>}
     </li>)}</ul>
     </div>}
-    {active === "workItems" && <div role="tabpanel" aria-labelledby="archives-tab-workItems" tabIndex={0}>
+    {active === "workItems" && <div>
     {items?.length === 0 && <p className="m-0 rounded-xl bg-layer-1 p-4 text-secondary">{t("archives.empty")}</p>}
     <ul className="m-0 grid list-none gap-1 rounded-xl border border-subtle bg-surface-1 p-1 empty:hidden">{(items ?? []).map((item) => <li key={item.id} data-testid={`archived-row-${item.displayId}`} className="flex flex-wrap items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-layer-transparent-hover max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-x-3 max-sm:gap-y-2">
       <span className="text-12 text-secondary max-sm:col-span-2">{item.displayId}</span>
@@ -89,5 +78,7 @@ export function ProjectArchivesRoute() {
       {canWrite && <Button type="button" className="secondary max-sm:min-h-11 shrink-0" aria-label={t("archives.restoreItem").replace("{name}", item.displayId)} onClick={() => void restore(item)}>{t("archives.restore")}</Button>}
     </li>)}</ul>
     </div>}
+      </TabsContent>
+    </Tabs>
   </section>;
 }

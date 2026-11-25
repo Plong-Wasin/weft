@@ -120,45 +120,14 @@
   input::placeholder, textarea::placeholder { color: var(--txt-placeholder); }
   :where(a) { @apply text-link; }
   :where(label) { @apply grid gap-1.5 text-14; }
-  /* A label that wraps a checkbox or radio reads as one row (control, then text), not a stacked grid. */
-  :where(label:has(> input[type="checkbox"], > input[type="radio"])) { @apply flex items-center gap-2; }
+  /* A label that wraps a toggle stays one row, not a stacked form field. */
+  :where(label:has(> [data-slot="checkbox"], > [data-slot="switch"])) { @apply flex items-center gap-2; }
   :where(form) { @apply my-4 grid gap-3; }
 }
 
 /* Component classes; class selectors only. */
 @layer components {
   /* Preflight (base layer) strips native form controls. Restore a Plane-like look in the components layer at zero specificity (:where): it wins over preflight by layer order, and any Tailwind utility on the element still overrides it. */
-  :where(input:not([type="checkbox"], [type="radio"], [type="color"], [type="range"], [type="file"]), textarea, select) {
-    @apply box-border rounded-lg border border-subtle bg-surface-1 px-3 py-1.5 text-14 text-primary;
-    font: inherit;
-  }
-  :where(input[type="checkbox"]) {
-    appearance: none;
-    display: inline-grid;
-    flex: none;
-    width: 1rem;
-    height: 1rem;
-    place-content: center;
-    margin: 0;
-    border: 1px solid var(--txt-tertiary);
-    border-radius: .3rem;
-    background: var(--bg-surface-1);
-    color: var(--txt-on-color);
-    cursor: pointer;
-  }
-  :where(input[type="checkbox"]:checked) { border-color: var(--bg-accent-primary); background: var(--bg-accent-primary); }
-  :where(input[type="checkbox"]:checked)::before {
-    content: "";
-    width: .3rem;
-    height: .55rem;
-    margin-top: -.1rem;
-    border: solid currentColor;
-    border-width: 0 2px 2px 0;
-    transform: rotate(45deg);
-  }
-  :where(input[type="checkbox"]:indeterminate) { border-color: var(--bg-accent-primary); background: var(--bg-accent-primary); }
-  :where(input[type="checkbox"]:indeterminate)::before { content: ""; width: .5rem; height: 0; border-top: 2px solid currentColor; }
-  :where(input[type="checkbox"]:disabled) { cursor: not-allowed; opacity: .55; }
   /* Native selects keep their element but look like controls: our chevron (preflight removes the browser one), a quiet border (the shared look, see DESIGN.md), and clear hover, focus and disabled states. */
   :where(select) {
     appearance: none;
@@ -175,7 +144,7 @@
   :where(select:focus-visible) { border-color: var(--border-accent-strong); }
   :where(select:disabled) { cursor: not-allowed; border-color: var(--border-disabled); background-color: var(--bg-layer-disabled); color: var(--txt-disabled); }
   /* A label that wraps a text control puts its words above it, so forms read the same everywhere; any utility class on the label still wins. */
-  :where(label:has(> :where(input:not([type="checkbox"], [type="radio"], [type="color"], [type="range"], [type="file"]), select, textarea))) { @apply grid gap-1 text-13 font-medium text-secondary; }
+  :where(label:has(> :where(input:not([type="checkbox"], [type="radio"], [type="color"], [type="range"], [type="file"]), select, [data-slot="textarea"]))) { @apply grid gap-1 text-13 font-medium text-secondary; }
   :where(button:not([class])) { @apply rounded-lg border border-subtle bg-surface-1 px-3 py-1.5 text-14 font-medium text-primary hover:bg-layer-1-hover disabled:cursor-not-allowed disabled:bg-layer-disabled disabled:text-disabled; }
   .primary { @apply rounded-lg bg-accent-primary px-3 py-1.5 text-14 font-medium text-on-color hover:bg-accent-primary-hover disabled:cursor-not-allowed disabled:bg-layer-disabled disabled:text-disabled; }
   .secondary { @apply rounded-lg border border-subtle bg-surface-1 px-3 py-1.5 text-14 font-medium text-primary hover:bg-layer-1-hover disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-surface-1; }

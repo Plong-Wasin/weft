@@ -62,7 +62,7 @@ function ResultCard({ card, diff, project, selectable, selected, onSelect, onDec
   const pending = card.status === "pending";
   return <div data-status={card.status} data-action={card.action} className="card-surface rounded-xl px-4 py-4">
     <div className="flex items-start gap-3">
-      {pending && selectable && <input type="checkbox" className="mt-1" checked={selected} onChange={(event) => onSelect?.(event.target.checked)} aria-label={`${translate("ai.selectCard")}: ${title}`} />}
+      {pending && selectable && <Checkbox className="mt-1" checked={selected} onChange={(event) => onSelect?.(event.target.checked)} aria-label={`${translate("ai.selectCard")}: ${title}`} />}
       <div className="min-w-0 flex-1">
         <p className="m-0 text-13 font-medium text-secondary">{heading}</p>
         {summary.title && <p className="m-0 mt-0.5 break-words text-16 text-primary">{summary.title}</p>}
@@ -265,6 +265,9 @@ function Sources({ sources }: { sources: { url: string; title: string }[] }) {
 
 import { shouldDowngradeAutopilot } from "./autopilot-mode";
 
+import { Checkbox } from "@/ui/checkbox";
+import { Input } from "@/ui/input";
+import { Textarea } from "@/ui/textarea";
 export function Conversation({ workspace, chatId, initial, initialMode = "build", onSent, context }: { workspace: Workspace; chatId: string; initial: UIMessage[]; initialMode?: ChatMode; onSent: () => void; context?: SidecarContext }) {
   const [input, setInput] = React.useState("");
   const [selectedSkill, setSelectedSkill] = React.useState<SkillSummary | null>(null);
@@ -362,7 +365,7 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
         <label className="sr-only" htmlFor={`composer-${chatId}`}>{translate("ai.message")}</label>
         {selectedSkill && <Button type="button" onClick={() => setSelectedSkill(null)} className="mb-2 inline-flex rounded-md border border-subtle px-2 py-1 text-13 text-primary">/{selectedSkill.name} · {translate(selectedSkill.scope === "personal" ? "skills.personal" : "skills.workspace")} ×</Button>}
         {skillPickerOpen && <div role="listbox" aria-label={translate("skills.picker")} className="mb-2 max-h-44 overflow-auto rounded-md border border-subtle bg-surface-1">{matchingSkills.map((skill) => <Button key={skill.id} type="button" role="option" onClick={() => pickSkill(skill)} className="flex w-full items-center justify-between px-3 py-2 text-left text-14 hover:bg-layer-1"><span>/{skill.name}</span><span className="text-12 text-tertiary">{translate(skill.scope === "personal" ? "skills.personal" : "skills.workspace")}</span></Button>)}{matchingSkills.length === 0 && <p className="px-3 py-2 text-13 text-tertiary">{translate("skills.empty")}</p>}</div>}
-        <textarea ref={composerRef} id={`composer-${chatId}`} value={input} placeholder={translate("ai.placeholder")} rows={2} onChange={(event) => setInput(event.target.value)}
+        <Textarea ref={composerRef} id={`composer-${chatId}`} value={input} placeholder={translate("ai.placeholder")} rows={2} onChange={(event) => setInput(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Escape" && skillPickerOpen) { event.preventDefault(); setDismissedSkillInput(input); return; }
             if (event.key === "Enter" && !event.shiftKey) {
@@ -418,7 +421,7 @@ export function AiSidebar({ workspace, activeId }: { workspace: Workspace; activ
       <Link to={paths.ai(workspace.slug)} className="flex flex-1 items-center gap-2 rounded-md border border-subtle bg-surface-1 px-3 py-1.5 text-14 text-primary hover:bg-layer-transparent-hover"><Pencil aria-hidden size={14} />{translate("ai.new")}</Link>
       <Button type="button" aria-label={translate("ai.search")} title={translate("ai.search")} aria-pressed={searching} onClick={() => { setSearching(!searching); setQuery(""); }} className="inline-flex size-8 items-center justify-center rounded-md border border-subtle bg-surface-1 p-0 text-secondary hover:bg-layer-transparent-hover"><SearchIcon /></Button>
     </div>
-    {searching && <input type="search" autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder={translate("ai.searchPlaceholder")} aria-label={translate("ai.search")} className="rounded-md border border-subtle bg-surface-1 px-2.5 py-1.5 text-14 text-primary" />}
+    {searching && <Input type="search" autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder={translate("ai.searchPlaceholder")} aria-label={translate("ai.search")} className="rounded-md border border-subtle bg-surface-1 px-2.5 py-1.5 text-14 text-primary" />}
     <nav aria-label={translate("ai.recents")} className="min-h-0 overflow-y-auto overflow-x-hidden">
       <p className="px-2.5 pb-1 pt-3 text-12 font-medium text-tertiary">{translate("ai.recentsHeading")}</p>
       {recents.length === 0 ? <p className="px-2.5 text-14 text-tertiary">{translate("ai.noRecents")}</p>
@@ -426,7 +429,7 @@ export function AiSidebar({ workspace, activeId }: { workspace: Workspace; activ
         : <ul className="m-0 grid list-none grid-cols-[minmax(0,1fr)] gap-0.5 p-0">{shown.map((chat) => <li key={chat.id} className={`group min-w-0 rounded-md ${chat.id === activeId ? "bg-layer-1-selected" : "hover:bg-layer-transparent-hover"}`}>
           {renaming?.id === chat.id
             ? <form className="flex w-full min-w-0 items-center gap-1 p-1" onSubmit={(event) => { event.preventDefault(); void saveRename(); }}>
-              <input autoFocus value={renaming.title} onChange={(event) => setRenaming({ id: chat.id, title: event.target.value })} aria-label={translate("ai.rename")} className="min-w-0 flex-1 basis-0 rounded border border-subtle bg-surface-1 px-1.5 py-0.5 text-14" />
+              <Input autoFocus value={renaming.title} onChange={(event) => setRenaming({ id: chat.id, title: event.target.value })} aria-label={translate("ai.rename")} className="min-w-0 flex-1 basis-0 rounded border border-subtle bg-surface-1 px-1.5 py-0.5 text-14" />
               <Button type="submit" className="shrink-0 rounded !bg-transparent !px-1 !py-0.5 text-13 !text-accent-primary hover:!bg-layer-transparent-hover">{translate("ai.renameSave")}</Button>
               <Button type="button" onClick={() => setRenaming(null)} className="shrink-0 rounded !border-0 !bg-transparent !px-1 !py-0.5 text-13 !text-accent-primary hover:!bg-layer-transparent-hover">{translate("ai.cancel")}</Button>
             </form>

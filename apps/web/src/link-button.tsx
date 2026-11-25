@@ -6,6 +6,7 @@ import { translate } from "@weft/shared";
 import { normalizeLinkUrl } from "./link-url";
 import { OPEN_LINK_EVENT, withShortcut } from "./shortcuts";
 
+import { Input } from "@/ui/input";
 const DIALOG_WIDTH = 320;
 
 /** The editor Link action: an icon button that opens a small form (URL, Save, Remove, Cancel) instead of the browser prompt. */
@@ -58,7 +59,7 @@ export function LinkButton({ editor, disabled = false }: { editor: Editor | null
       <Link2 aria-hidden size={14} />
     </Button>
     {open && <form ref={form} role="dialog" aria-label={label} className="link-dialog m-0" style={place ? { position: "fixed", top: place.top, left: place.left, width: place.width } : undefined} onSubmit={save} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); close(); editor.commands.focus(); } }}>
-      <label>{translate("wiki.linkUrl")}<input autoFocus type="text" inputMode="url" autoCapitalize="off" autoCorrect="off" spellCheck={false} value={url} placeholder={translate("wiki.linkPlaceholder")} onChange={(event) => setUrl(event.target.value)} /></label>
+      <label>{translate("wiki.linkUrl")}<Input autoFocus type="text" inputMode="url" autoCapitalize="off" autoCorrect="off" spellCheck={false} value={url} placeholder={translate("wiki.linkPlaceholder")} onChange={(event) => setUrl(event.target.value)} /></label>
       <small className="text-12 text-tertiary">{translate("wiki.linkHelp")}</small>
       <div className="flex flex-wrap gap-2">
         <Button type="submit" className="primary">{translate("wiki.linkSave")}</Button>

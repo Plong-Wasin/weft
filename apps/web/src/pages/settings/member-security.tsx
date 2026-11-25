@@ -9,6 +9,7 @@ import { Popover, menuItemClass } from "../../shell/popover";
 import { Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 import { auditPageReducer, initialAuditPage, initialMemberTokens, isCurrentRequest, memberTokensReducer, nextRequest } from "./member-security-state";
 
+import { Input } from "@/ui/input";
 export type MemberAccount = {
   userId: string; name: string; email: string; role: string; status: "active" | "suspended"; suspendedAt: string | null;
   lastActiveAt: string | null; forcePasswordReset: boolean;
@@ -163,8 +164,8 @@ export function AuditLogPage({ workspaceId, members }: { workspaceId: string; me
         <option value="">{translate("account.anyKind")}</option>
         {auditKindKeys.map((key) => <option key={key} value={key}>{translate(`account.kind.${key}` as MessageKey)}</option>)}
       </select></label>
-      <label className={field}>{translate("account.filterFrom")}<input type="date" value={from} max={to || undefined} onChange={(event) => setFrom(event.target.value)} /></label>
-      <label className={field}>{translate("account.filterTo")}<input type="date" value={to} min={from || undefined} onChange={(event) => setTo(event.target.value)} /></label>
+      <label className={field}>{translate("account.filterFrom")}<Input type="date" value={from} max={to || undefined} onChange={(event) => setFrom(event.target.value)} /></label>
+      <label className={field}>{translate("account.filterTo")}<Input type="date" value={to} min={from || undefined} onChange={(event) => setTo(event.target.value)} /></label>
     </div>
     {loaded && rows.length === 0 && !failed ? <p className="text-secondary">{translate("account.auditNone")}</p> : null}
     {page.failed && <p role="status" className="text-secondary">{translate("account.loadFailed")}<Button type="button" className="secondary ml-2" onClick={() => void load(rows.length)}>{translate("account.retry")}</Button></p>}

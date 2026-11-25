@@ -17,6 +17,8 @@ import { actionResult, api } from "./api";
 import { paths } from "./routes";
 import { useInboxNotificationOpen } from "./inbox";
 
+import { Input } from "@/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/ui/tabs";
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 const outcomes = ["pending", "snoozed", "accepted", "rejected", "duplicate"] as const;
 type Outcome = (typeof outcomes)[number];
@@ -152,7 +154,7 @@ function SubmitModal({ action, workspaceId, projectId, onClose, onSubmitted }: {
       } finally { submittingRef.current = false; setSubmitting(false); }
     }}>
       <fieldset disabled={submitting} className="m-0 grid min-w-0 gap-3 border-0 p-0">
-      <input autoFocus required maxLength={500} aria-label={t("intake.titleField")} placeholder={t("intake.titleField")} value={title} className={`${field} text-16`} onChange={(event) => setTitle(event.target.value)} />
+      <Input autoFocus required maxLength={500} aria-label={t("intake.titleField")} placeholder={t("intake.titleField")} value={title} className={`${field} text-16`} onChange={(event) => setTitle(event.target.value)} />
       <div aria-label={t("intake.descriptionField")}><DescriptionEditor workspaceId={workspaceId} workItemId={null} initial={description} editable={!submitting} imageUploads={false} onChange={setDescription} /></div>
       <label className="grid gap-1 text-13 text-secondary">{t("intake.priority")}
         <select value={priority} className="w-full text-14 text-primary" onChange={(event) => setPriority(event.target.value)}>
@@ -161,7 +163,7 @@ function SubmitModal({ action, workspaceId, projectId, onClose, onSubmitted }: {
       </label>
       <label className="grid gap-1 text-13 text-secondary">{t("workItems.assignees")}<select multiple value={assigneeIds} className={`${field} min-h-20`} onChange={(event) => setAssigneeIds([...event.currentTarget.selectedOptions].map((option) => option.value))}>{people.map((person) => <option key={person.userId} value={person.userId} disabled={person.isAgent && person.hasAccess === false}>{person.name}{person.isAgent && person.hasAccess === false ? " (no access)" : ""}</option>)}</select></label>
       <div className="grid gap-1 text-13 text-secondary"><span>{t("workItems.labels")}</span><MultiSelect label={t("workItems.labels")} searchAlways selected={labelIds} summary={<span>{labelIds.length ? labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ") : t("workItems.noLabels")}</span>} options={labels.map((label) => ({ id: label.id, name: label.name }))} onToggle={(id, on) => setLabelIds(on ? [...labelIds, id] : labelIds.filter((value) => value !== id))} /></div>
-      <label className="grid gap-1 text-13 text-secondary">{t("workItems.dueDate")}<input type="date" value={dueDate} className={field} onChange={(event) => setDueDate(event.target.value)} /></label>
+      <label className="grid gap-1 text-13 text-secondary">{t("workItems.dueDate")}<Input type="date" value={dueDate} className={field} onChange={(event) => setDueDate(event.target.value)} /></label>
       <input ref={picker} hidden type="file" multiple data-testid="intake-attach-input" onChange={(event) => { const selected = Array.from(event.currentTarget.files ?? []); setFiles((current) => [...current, ...selected]); event.currentTarget.value = ""; }} />
       <div className="grid gap-1"><Button type="button" className={quietButton} onClick={() => picker.current?.click()}>{t("assets.attach")}</Button>{files.map((file, index) => <span key={`${file.name}-${index}`} className="text-13 text-secondary">{file.name}</span>)}</div>
       <input ref={imagePicker} hidden type="file" multiple accept="image/png,image/jpeg,image/gif,image/webp" data-testid="intake-inline-image-input" onChange={(event) => { const selected = Array.from(event.currentTarget.files ?? []); setInlineImages((current) => [...current, ...selected]); event.currentTarget.value = ""; }} />
@@ -181,7 +183,7 @@ function SnoozeModal({ onClose, onSnooze }: { onClose: () => void; onSnooze: (ti
   return <Modal title={t("intake.snoozeTitle")} onClose={onClose}>
     <form className="my-0 grid gap-3" onSubmit={(event) => { event.preventDefault(); onSnooze(new Date(till).toISOString()); }}>
       <label className="grid gap-1 text-13 text-secondary">{t("intake.snoozeTill")}
-        <input autoFocus required type="datetime-local" value={till} className={field} onChange={(event) => setTill(event.target.value)} />
+        <Input autoFocus required type="datetime-local" value={till} className={field} onChange={(event) => setTill(event.target.value)} />
       </label>
       <div className="flex justify-end gap-2">
         <Button type="button" className={quietButton} onClick={onClose}>{t("intake.cancel")}</Button>
@@ -236,7 +238,7 @@ function DuplicateModal({ action, workspaceId, item, onClose, onPick }: { action
       if (match) onPick(match.id);
     }}>
       <label className="grid gap-1 text-13 text-secondary">{t("intake.duplicateTo")}
-        <input autoFocus value={value} placeholder={t("intake.duplicateHint")} className={field} onChange={(event) => setValue(event.target.value)} />
+        <Input autoFocus value={value} placeholder={t("intake.duplicateHint")} className={field} onChange={(event) => setValue(event.target.value)} />
       </label>
       {failed && <p role="alert" className="m-0 text-13 text-danger-text">{t("intake.failed")}</p>}
       <div className="flex justify-end gap-2">
@@ -375,12 +377,12 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
     </header>
     <div className="grid gap-6 overflow-auto px-6 py-6">
       {editable ? <div className="grid gap-3">
-        <label className="grid gap-1 text-13 text-secondary">{t("intake.titleField")}<input ref={titleInputRef} name="title" aria-label={t("intake.titleField")} required maxLength={500} value={title} className={`${field} text-18 font-semibold sm:text-24`} onInput={(event) => { titleValueRef.current = event.currentTarget.value; setTitle(event.currentTarget.value); sessionStorage.setItem(titleDraftKey(item.id), event.currentTarget.value); changeDraft({ title: event.currentTarget.value }); }} /></label>
+        <label className="grid gap-1 text-13 text-secondary">{t("intake.titleField")}<Input ref={titleInputRef} name="title" aria-label={t("intake.titleField")} required maxLength={500} value={title} className={`${field} text-18 font-semibold sm:text-24`} onInput={(event) => { titleValueRef.current = event.currentTarget.value; setTitle(event.currentTarget.value); sessionStorage.setItem(titleDraftKey(item.id), event.currentTarget.value); changeDraft({ title: event.currentTarget.value }); }} /></label>
         <div><p className="mb-1 text-13 text-secondary">{t("intake.descriptionField")}</p><DescriptionEditor key={editorRevision} workspaceId={workspaceId} workItemId={item.workItemId} initial={description} editable onChange={(doc) => changeDraft({ description: doc })} /></div>
         <label className="grid gap-1 text-13 text-secondary">{t("intake.priority")}<select name="priority" aria-label={t("intake.priority")} value={priority} className={field} onChange={(event) => changeDraft({ priority: event.target.value })}>{["none", "urgent", "high", "medium", "low"].map((value) => <option key={value} value={value}>{t(`workItems.priority.${value}`)}</option>)}</select></label>
         <label className="grid gap-1 text-13 text-secondary">{t("workItems.assignees")}<select multiple aria-label={t("workItems.assignees")} value={assigneeIds} className={`${field} min-h-20`} onChange={(event) => changeDraft({ assigneeIds: [...event.currentTarget.selectedOptions].map((option) => option.value) })}>{people.map((person) => <option key={person.userId} value={person.userId} disabled={person.isAgent && person.hasAccess === false}>{person.name}{person.isAgent && person.hasAccess === false ? " (no access)" : ""}</option>)}</select></label>
         <div className="grid gap-1 text-13 text-secondary"><span>{t("workItems.labels")}</span><MultiSelect label={t("workItems.labels")} searchAlways selected={labelIds} summary={<span>{labelIds.length ? labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ") : t("workItems.noLabels")}</span>} options={labels.map((label) => ({ id: label.id, name: label.name }))} onToggle={(id, on) => changeDraft({ labelIds: on ? [...labelIds, id] : labelIds.filter((value) => value !== id) })} /></div>
-        <label className="grid gap-1 text-13 text-secondary">{t("workItems.dueDate")}<input type="date" aria-label={t("workItems.dueDate")} value={dueDate} className={field} onChange={(event) => changeDraft({ dueDate: event.target.value || null })} /></label>
+        <label className="grid gap-1 text-13 text-secondary">{t("workItems.dueDate")}<Input type="date" aria-label={t("workItems.dueDate")} value={dueDate} className={field} onChange={(event) => changeDraft({ dueDate: event.target.value || null })} /></label>
         <div className="flex gap-2"><Button type="button" className={primaryButton} disabled={saving || retryingImages || !title.trim()} onClick={() => void save()}>{saving ? t("intake.saving") : t("intake.save")}</Button></div>
       </div> : <><h2 className="m-0 text-24 font-semibold text-primary">{item.title}</h2>
       {item.descriptionMarkdown ? <DescriptionEditor workspaceId={workspaceId} workItemId={item.workItemId} initial={markdownToDoc(item.descriptionMarkdown)} editable={false} onChange={() => undefined} /> : <p className="m-0 text-14 text-tertiary">{t("intake.noDescription")}</p>}</>}
@@ -502,17 +504,21 @@ export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, 
     </div>
     <div className="flex min-h-[28rem] min-w-0 flex-col rounded-xl border border-subtle bg-surface-1 xl:h-[calc(100dvh-14rem)] xl:flex-row">
       <div className="flex w-full shrink-0 flex-col border-b border-subtle p-2 xl:w-[26rem] xl:border-b-0 xl:border-r">
-        <div role="tablist" className="flex gap-2 border-b border-subtle px-2">
-          {(["open", "closed"] as const).map((value) => <Button key={value} role="tab" type="button" aria-selected={tab === value} onClick={() => { if (value !== tab) select(null, value); }}
+        <Tabs value={tab} onValueChange={(value) => { if (value !== tab) select(null, value as "open" | "closed"); }}>
+          <TabsList className="flex h-auto gap-2 border-b border-subtle bg-transparent px-2">
+          {(["open", "closed"] as const).map((value) => <TabsTrigger key={value} value={value}
             className={`flex items-center gap-1.5 rounded-md border-0 px-3 py-2.5 text-14 font-medium ${tab === value ? "bg-layer-1 text-accent-primary" : "bg-transparent text-secondary hover:bg-layer-transparent-hover hover:text-primary"}`}>
             {t(`intake.tab.${value}`)}
             {value === "open" && tab === "open" && items && <span data-testid="intake-open-count" className="rounded-full bg-accent-primary/20 px-1.5 py-0.5 text-11 font-semibold text-accent-primary">{items.length}</span>}
-          </Button>)}
-        </div>
+          </TabsTrigger>)}
+          </TabsList>
+          <TabsContent value={tab} className="mt-0 flex min-h-0 flex-1 flex-col">
         {loadFailed && <div role="alert" className="flex flex-wrap items-center gap-2 px-4 py-3 text-13 text-danger-text"><span>{t("intake.loadFailed")}</span><Button type="button" className={quietButton} onClick={() => void load()}>{t("intake.retry")}</Button></div>}
         <ul aria-label={t("intake.list")} className="m-0 min-h-0 flex-1 list-none overflow-auto p-0">
           {(items ?? []).map((item) => <ListRow key={item.id} item={item} selected={item.id === selectedId} onSelect={() => select(item.id)} />)}
         </ul>
+          </TabsContent>
+        </Tabs>
       </div>
       {current ? <Detail key={current.id} action={action} workspaceId={workspaceId} workspaceSlug={workspaceSlug ?? ""} projectKey={projectKey ?? ""} projectId={projectId} selfId={selfId} item={current} index={index} count={items!.length} canDecide={canDecide} canEdit={canAdmin || workspaceAdmin || current.createdBy === selfId} draft={draftsRef.current[current.id] ?? drafts[current.id]} onDraftChange={(patch) => updateDraft(current, patch)} failedFiles={failedUploads[current.id] ?? []} onFailedFilesChange={(files) => setFailedUploads((previous) => ({ ...previous, [current.id]: files }))} pendingImages={pendingImages[current.id] ?? { files: [], assetIds: [] }} onPendingImagesChange={(value) => setPendingImages((previous) => ({ ...previous, [current.id]: value }))}
         onMove={(delta) => select(items![index + delta]!.id)} onDecided={afterDecision} onChanged={afterChange} onUpdated={() => { const { [current.id]: _removed, ...rest } = draftsRef.current; draftsRef.current = rest; setDrafts(rest); void load(); }} />

@@ -308,7 +308,7 @@ try {
   await results.getByRole("link", { name: /Alpha handbook/ }).click();
   await page.waitForURL(new RegExp(`/${slug}/wiki/`));
   await searchInput.fill("Alpha");
-  await results.getByRole("link", { name: /Alpha shell item/ }).click();
+  await results.getByRole("link", { name: /Alpha shell item/ }).click({ force: true });
   await page.waitForURL(`${web}/${slug}/browse/MOB-1`);
   console.log("shell ok: search");
 

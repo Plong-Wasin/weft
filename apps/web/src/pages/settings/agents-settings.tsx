@@ -12,6 +12,9 @@ import { runFailureText } from "../../run-failure";
 import type { Member, Project } from "../../types";
 import { dangerOutline, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 
+import { Checkbox } from "@/ui/checkbox";
+import { Input } from "@/ui/input";
+import { Textarea } from "@/ui/textarea";
 export type AgentRecord = {
   id: string; userId: string; name: string; instructions: string; model: string; enabled: boolean; allProjects: boolean; projectIds: string[]; accessUserIds: string[];
   runtimeId: string | null; runtimeName: string | null; runtimeHostname?: string | null; runtimeCli?: string | null; runtimeOwnerName: string | null; runtimeShared: boolean; runtimeOnline: boolean; runtimeProfileId: string | null; runtimeProfileName: string | null; runtimeProfileSandbox: string | null; cliModel: string | null; maxConcurrentRuns: number; autopilot: boolean; canWakeAgents: boolean;
@@ -37,20 +40,20 @@ function AgentForm({ draft, onChange, onSubmit, onCancel, runtimes, allowAutopil
   const { workspace } = useWorkspace();
   const set = (key: keyof Draft) => (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => onChange({ ...draft, [key]: event.target.value });
   const number = (key: "maxToolCalls" | "maxTokens" | "timeoutSeconds" | "monthlyTokenBudget", label: Parameters<typeof translate>[0]) =>
-    <label>{translate(label)}<input type="number" min={1} value={draft[key]} onChange={set(key)} /></label>;
+    <label>{translate(label)}<Input type="number" min={1} value={draft[key]} onChange={set(key)} /></label>;
   const selectable = runtimes.filter((runtime) => runtime.shared);
   return <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
-    <label>{translate("agents.name")}<input required maxLength={100} value={draft.name} onChange={set("name")} /></label>
-    <label>{translate("agents.instructions")}<textarea rows={4} value={draft.instructions} onChange={set("instructions")} /></label>
-    <label>{translate("agents.model")}<input required value={draft.model} onChange={set("model")} /></label>
-    <fieldset className="grid gap-1 border-0 p-0"><label className="flex items-center gap-2"><input type="checkbox" checked={draft.autopilot || !!draft.runtimeId} disabled={!!draft.runtimeId || !allowAutopilot} onChange={(event) => onChange({ ...draft, autopilot: event.target.checked })} />{translate("agents.autopilot")}</label><small className="text-12 text-secondary">{translate(draft.runtimeId ? "agents.runtimeAutopilot" : "agents.autopilotRisk")}</small></fieldset>
+    <label>{translate("agents.name")}<Input required maxLength={100} value={draft.name} onChange={set("name")} /></label>
+    <label>{translate("agents.instructions")}<Textarea rows={4} value={draft.instructions} onChange={set("instructions")} /></label>
+    <label>{translate("agents.model")}<Input required value={draft.model} onChange={set("model")} /></label>
+    <fieldset className="grid gap-1 border-0 p-0"><label className="flex items-center gap-2"><Checkbox checked={draft.autopilot || !!draft.runtimeId} disabled={!!draft.runtimeId || !allowAutopilot} onChange={(event) => onChange({ ...draft, autopilot: event.target.checked })} />{translate("agents.autopilot")}</label><small className="text-12 text-secondary">{translate(draft.runtimeId ? "agents.runtimeAutopilot" : "agents.autopilotRisk")}</small></fieldset>
     <label>{translate("agents.runsOn")}<select value={draft.runtimeId} onChange={(event) => { const next = event.target.value; onChange({ ...draft, runtimeId: next, autopilot: next ? true : (allowAutopilot ? draft.autopilot : false) }); }}><option value="">{translate("agents.server")}</option>{selectable.map((runtime) => <option key={runtime.id} value={runtime.id}>{runtime.hostname} · {runtime.agentCli} · {translate(runtime.online ? "runtimes.online" : "runtimes.offline")}</option>)}</select></label>
     {selectable.length === 0 && (runtimes.length > 0
       ? <Link to={paths.workspaceRuntimes(workspace.slug)} className="text-13 text-accent-text underline">{translate("agents.shareRuntimeLink")}</Link>
       : <Link to={paths.workspaceConnectAi(workspace.slug)} className="text-13 text-accent-text underline">{translate("runtimes.connectLink")}</Link>)}
     {draft.runtimeId && <small className="text-12 text-secondary">{translate("agents.runtimeProfileHelp")}</small>}
-    <fieldset className="grid gap-1 border-0 p-0"><label className="flex items-center gap-2"><input type="checkbox" checked={draft.canWakeAgents} onChange={(event) => onChange({ ...draft, canWakeAgents: event.target.checked })} />{translate("agents.canWakeAgents")}</label><small className="text-12 text-secondary">{translate("agents.canWakeAgentsHelp")}</small></fieldset>
-    {draft.runtimeId && <div className="grid gap-3 sm:grid-cols-2"><label>{translate("agents.cliModel")}<input value={draft.cliModel} onChange={set("cliModel")} /></label><label>{translate("agents.concurrency")}<input type="number" min={1} max={20} value={draft.maxConcurrentRuns} onChange={set("maxConcurrentRuns")} /></label></div>}
+    <fieldset className="grid gap-1 border-0 p-0"><label className="flex items-center gap-2"><Checkbox checked={draft.canWakeAgents} onChange={(event) => onChange({ ...draft, canWakeAgents: event.target.checked })} />{translate("agents.canWakeAgents")}</label><small className="text-12 text-secondary">{translate("agents.canWakeAgentsHelp")}</small></fieldset>
+    {draft.runtimeId && <div className="grid gap-3 sm:grid-cols-2"><label>{translate("agents.cliModel")}<Input value={draft.cliModel} onChange={set("cliModel")} /></label><label>{translate("agents.concurrency")}<Input type="number" min={1} max={20} value={draft.maxConcurrentRuns} onChange={set("maxConcurrentRuns")} /></label></div>}
     <details className="grid gap-3">
       <summary className="cursor-pointer text-13 font-medium text-secondary">{translate("agents.limits")}</summary>
       <div className="grid gap-3 sm:grid-cols-2">
@@ -87,13 +90,13 @@ function AccessEditor({ agent, projects, onSaved, onFailed, canSetAllProjects = 
   };
   return <fieldset className="grid gap-1 border-0 p-0"><legend className="text-13 font-medium text-secondary">{translate("agents.access")}</legend>
     {!canSetAllProjects && projectsLoaded && (agent.allProjects || agent.projectIds.some((projectId) => !projects.some((project) => project.id === projectId))) && <p role="status" className="text-12 text-secondary">{translate("agents.revokedProjectAccess")}</p>}
-    {canSetAllProjects && <label className="flex items-center gap-2"><input type="checkbox" checked={draft.allProjects} onChange={(event) => setDraft({ ...draft, allProjects: event.target.checked, projectIds: event.target.checked ? [] : draft.projectIds })} />{translate("agents.allProjects")}</label>}
+    {canSetAllProjects && <label className="flex items-center gap-2"><Checkbox checked={draft.allProjects} onChange={(event) => setDraft({ ...draft, allProjects: event.target.checked, projectIds: event.target.checked ? [] : draft.projectIds })} />{translate("agents.allProjects")}</label>}
     {!draft.allProjects && <>
       <label className="grid gap-1 text-12 font-medium text-secondary">{translate("projects.find")}
-        <input type="search" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder={translate("projects.searchPlaceholder")} className="px-2 py-1 text-13" />
+        <Input type="search" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder={translate("projects.searchPlaceholder")} className="px-2 py-1 text-13" />
       </label>
       {visibleProjects.map((project) => <label key={project.id} className="flex items-center gap-2">
-        <input type="checkbox" checked={draft.projectIds.includes(project.id)} onChange={(event) => setDraft({ ...draft, projectIds: event.target.checked ? [...draft.projectIds, project.id] : draft.projectIds.filter((entry) => entry !== project.id) })} />{project.key} · {project.name}</label>)}
+        <Checkbox checked={draft.projectIds.includes(project.id)} onChange={(event) => setDraft({ ...draft, projectIds: event.target.checked ? [...draft.projectIds, project.id] : draft.projectIds.filter((entry) => entry !== project.id) })} />{project.key} · {project.name}</label>)}
       {visibleProjects.length === 0 && projectQuery.trim() && <p role="status" className="m-0 text-12 text-secondary">{translate("projects.noSearchResults")}</p>}
     </>}
     <Button type="button" disabled={!dirty || saving} onClick={() => void save()}>{translate("agents.save")}</Button>
@@ -114,16 +117,16 @@ function MemberAgentSettings({ agent, onSaved, onFailed }: { agent: ManagedAgent
   };
   return <form className="grid gap-3 border-y border-subtle py-3" onSubmit={(event) => void save(event)}>
     <strong>{translate("agents.myAgentSettings")}</strong>
-    <label>{translate("agents.name")}<input required maxLength={100} value={draft.name} onChange={set("name")} /></label>
-    <label>{translate("agents.instructions")}<textarea rows={4} value={draft.instructions} onChange={set("instructions")} /></label>
-    <label>{translate("agents.model")}<input required value={draft.model} onChange={set("model")} /></label>
+    <label>{translate("agents.name")}<Input required maxLength={100} value={draft.name} onChange={set("name")} /></label>
+    <label>{translate("agents.instructions")}<Textarea rows={4} value={draft.instructions} onChange={set("instructions")} /></label>
+    <label>{translate("agents.model")}<Input required value={draft.model} onChange={set("model")} /></label>
     <div className="grid gap-3 sm:grid-cols-2">
-      <label>{translate("agents.cliModel")}<input value={draft.cliModel} onChange={set("cliModel")} /></label>
-      <label>{translate("agents.concurrency")}<input type="number" min={1} max={20} value={draft.maxConcurrentRuns} onChange={set("maxConcurrentRuns")} /></label>
-      <label>{translate("agents.maxToolCalls")}<input type="number" min={1} max={100} value={draft.maxToolCalls} onChange={set("maxToolCalls")} /></label>
-      <label>{translate("agents.maxTokens")}<input type="number" min={1} max={1000000} value={draft.maxTokens} onChange={set("maxTokens")} /></label>
-      <label>{translate("agents.timeoutSeconds")}<input type="number" min={1} max={3600} value={draft.timeoutSeconds} onChange={set("timeoutSeconds")} /></label>
-      <label>{translate("agents.monthlyBudget")}<input type="number" min={1} value={draft.monthlyTokenBudget} onChange={set("monthlyTokenBudget")} /></label>
+      <label>{translate("agents.cliModel")}<Input value={draft.cliModel} onChange={set("cliModel")} /></label>
+      <label>{translate("agents.concurrency")}<Input type="number" min={1} max={20} value={draft.maxConcurrentRuns} onChange={set("maxConcurrentRuns")} /></label>
+      <label>{translate("agents.maxToolCalls")}<Input type="number" min={1} max={100} value={draft.maxToolCalls} onChange={set("maxToolCalls")} /></label>
+      <label>{translate("agents.maxTokens")}<Input type="number" min={1} max={1000000} value={draft.maxTokens} onChange={set("maxTokens")} /></label>
+      <label>{translate("agents.timeoutSeconds")}<Input type="number" min={1} max={3600} value={draft.timeoutSeconds} onChange={set("timeoutSeconds")} /></label>
+      <label>{translate("agents.monthlyBudget")}<Input type="number" min={1} value={draft.monthlyTokenBudget} onChange={set("monthlyTokenBudget")} /></label>
     </div>
     <div className="flex flex-wrap gap-2"><Button type="submit" disabled={saving}>{translate("agents.save")}</Button><Button type="button" className="secondary" onClick={async () => {
       const result = await action(agent.enabled ? "disable_agent" : "enable_agent", { agentId: agent.id });
@@ -162,7 +165,7 @@ function AgentPeopleAccess({ agent, members, onSaved, onFailed }: { agent: Pick<
   return <fieldset className="grid gap-1 border-0 p-0"><legend className="text-13 font-medium text-secondary">{translate("agents.peopleAccess")}</legend>
     <p className="text-12 text-secondary">{translate(agent.runtimeId ? "agents.runtimeOwnerAccess" : "agents.adminAccess")}</p>
     {members.filter((member) => !member.isAgent).map((member) => <label key={member.userId} className="flex items-center gap-2">
-      <input type="checkbox" aria-label={`${translate("agents.mayUse")} ${member.name}`} checked={draft.includes(member.userId)} onChange={(event) => setDraft(event.target.checked ? [...draft, member.userId] : draft.filter((id) => id !== member.userId))} />
+      <Checkbox aria-label={`${translate("agents.mayUse")} ${member.name}`} checked={draft.includes(member.userId)} onChange={(event) => setDraft(event.target.checked ? [...draft, member.userId] : draft.filter((id) => id !== member.userId))} />
       <Avatar name={member.name} id={member.userId} />{member.name}
     </label>)}
     <Button type="button" disabled={!dirty || saving} onClick={() => void save()}>{translate("agents.save")}</Button>
@@ -226,7 +229,7 @@ function AgentRuntimeEnvironment({ agent, onFailed }: { agent: Pick<AgentRecord,
             </select>
           </label>
           {editing === name ? <>
-            <label className="min-w-[12rem] flex-1 text-12">{translate("agents.environmentValue")}<input id={`environment-value-${agent.id}`} type="password" autoComplete="new-password" aria-describedby={`environment-value-help-${agent.id}`} value={value} onChange={(event) => setValue(event.target.value)} /></label>
+            <label className="min-w-[12rem] flex-1 text-12">{translate("agents.environmentValue")}<Input id={`environment-value-${agent.id}`} type="password" autoComplete="new-password" aria-describedby={`environment-value-help-${agent.id}`} value={value} onChange={(event) => setValue(event.target.value)} /></label>
             <small id={`environment-value-help-${agent.id}`} className="text-secondary">{translate("agents.environmentUnchanged")}</small>
             <Button type="button" onClick={() => void apply({ [name]: value })}>{translate("agents.environmentUpdate")}</Button>
             <Button type="button" className="secondary" onClick={() => { setEditing(null); setValue(""); }}>{translate("agents.cancel")}</Button>
@@ -244,8 +247,8 @@ function AgentRuntimeEnvironment({ agent, onFailed }: { agent: Pick<AgentRecord,
       }}>{translate("agents.environmentSaveClassifications")}</Button>
     </div>}
     <form method="post" className="grid min-w-0 gap-2 rounded-md border border-subtle p-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end" onSubmit={(event) => { event.preventDefault(); void apply({ [newName.trim()]: newValue }); }}>
-      <label>{translate("agents.environmentName")}<input name="variable-name" required value={newName} autoComplete="off" autoCapitalize="none" spellCheck={false} onChange={(event) => setNewName(event.target.value)} /></label>
-      <label>{translate("agents.environmentValue")}<input name="variable-value" type="password" autoComplete="new-password" required value={newValue} onChange={(event) => setNewValue(event.target.value)} /></label>
+      <label>{translate("agents.environmentName")}<Input name="variable-name" required value={newName} autoComplete="off" autoCapitalize="none" spellCheck={false} onChange={(event) => setNewName(event.target.value)} /></label>
+      <label>{translate("agents.environmentValue")}<Input name="variable-value" type="password" autoComplete="new-password" required value={newValue} onChange={(event) => setNewValue(event.target.value)} /></label>
       <Button type="submit" disabled={classificationDirty}>{translate("agents.environmentAdd")}</Button>
     </form>
     {saved && <p role="status" className="text-12 text-secondary">{translate("agents.environmentSaved")}</p>}
@@ -340,9 +343,9 @@ export function WorkspaceAgents() {
           if (result !== null) setMemberAgent({ name: "", instructions: "", model: "default", runtimeId: "" });
           await guard(result);
         }}>
-          <label>{translate("agents.name")}<input required maxLength={100} value={memberAgent.name} onChange={(event) => setMemberAgent({ ...memberAgent, name: event.target.value })} /></label>
-          <label>{translate("agents.instructions")}<textarea rows={4} value={memberAgent.instructions} onChange={(event) => setMemberAgent({ ...memberAgent, instructions: event.target.value })} /></label>
-          <label>{translate("agents.model")}<input required value={memberAgent.model} onChange={(event) => setMemberAgent({ ...memberAgent, model: event.target.value })} /></label>
+          <label>{translate("agents.name")}<Input required maxLength={100} value={memberAgent.name} onChange={(event) => setMemberAgent({ ...memberAgent, name: event.target.value })} /></label>
+          <label>{translate("agents.instructions")}<Textarea rows={4} value={memberAgent.instructions} onChange={(event) => setMemberAgent({ ...memberAgent, instructions: event.target.value })} /></label>
+          <label>{translate("agents.model")}<Input required value={memberAgent.model} onChange={(event) => setMemberAgent({ ...memberAgent, model: event.target.value })} /></label>
           <label>{translate("agents.runsOn")}<select required value={memberAgent.runtimeId} onChange={(event) => setMemberAgent({ ...memberAgent, runtimeId: event.target.value })}><option value="">{translate("agents.selectOwnRuntime")}</option>{runtimes.filter((runtime) => runtime.ownerId === selfId && runtime.shared).map((runtime) => <option key={runtime.id} value={runtime.id}>{runtime.hostname} · {runtime.agentCli} · {translate(runtime.online ? "runtimes.online" : "runtimes.offline")}</option>)}</select></label>
           <Button type="submit">{translate("agents.create")}</Button>
         </form>}
@@ -393,7 +396,7 @@ export function WorkspaceAgents() {
           {manageableAgentIds.includes(agent.id) && agent.runtimeId && <AgentRuntimeEnvironment agent={agent} onFailed={() => setNote(translate("agents.failed"))} />}
           <fieldset className="grid gap-1 border-0 p-0"><legend className="text-13 font-medium text-secondary">{translate("agents.skills")}</legend>
             {workspaceSkills.length === 0 ? <span className="text-13 text-secondary">{translate("agents.noSkills")}</span> : workspaceSkills.map((skill) => <label key={skill.id} className="flex items-center gap-2" title={skill.description}>
-              <input type="checkbox" checked={agent.skills.some((attached) => attached.id === skill.id)} onChange={async (event) => {
+              <Checkbox checked={agent.skills.some((attached) => attached.id === skill.id)} onChange={async (event) => {
                 const ids = event.target.checked ? [...agent.skills.map((entry) => entry.id), skill.id] : agent.skills.filter((entry) => entry.id !== skill.id).map((entry) => entry.id);
                 await guard(await action("set_agent_skills", { agentId: agent.id, skillIds: ids }));
               }} />{skill.name}</label>)}
@@ -448,7 +451,7 @@ function TriggerSection({ agent, projects, projectsLoaded }: { agent: AgentRecor
         {availableProjects.map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}</option>)}
       </select></label>
       <label className="grid gap-1 text-12 text-secondary">{translate("triggers.kind")}<select aria-label={translate("triggers.kind")} value={kind} onChange={(e) => setKind(e.target.value)}><option value="event">{translate("triggers.eventKind")}</option><option value="schedule">{translate("triggers.scheduleKind")}</option></select></label>
-      {kind === "event" ? <label className="grid gap-1 text-12 text-secondary">{translate("triggers.event")}<select aria-label={translate("triggers.event")} value={eventType} onChange={(e) => setEventType(e.target.value)}>{(["work_item_created", "work_item_updated", "state_changed", "assignee_changed", "comment_added", "sub_items_closed"] as TriggerEvent[]).map((event) => <option key={event} value={event}>{translate(`triggers.${event}`)}</option>)}</select></label> : <><label className="grid gap-1 text-12 text-secondary">{translate("triggers.schedule")}<select aria-label={translate("triggers.schedule")} value={schedule} onChange={(e) => setSchedule(e.target.value)}>{(["daily", "weekly", "monthly", "cron"] as const).map((entry) => <option key={entry} value={entry}>{translate(`triggers.${entry}`)}</option>)}</select></label>{schedule === "cron" && <label className="grid gap-1 text-12 text-secondary">{translate("triggers.cron")}<input aria-label={translate("triggers.cron")} value={expression} onChange={(e) => setExpression(e.target.value)} /></label>}</>}
+      {kind === "event" ? <label className="grid gap-1 text-12 text-secondary">{translate("triggers.event")}<select aria-label={translate("triggers.event")} value={eventType} onChange={(e) => setEventType(e.target.value)}>{(["work_item_created", "work_item_updated", "state_changed", "assignee_changed", "comment_added", "sub_items_closed"] as TriggerEvent[]).map((event) => <option key={event} value={event}>{translate(`triggers.${event}`)}</option>)}</select></label> : <><label className="grid gap-1 text-12 text-secondary">{translate("triggers.schedule")}<select aria-label={translate("triggers.schedule")} value={schedule} onChange={(e) => setSchedule(e.target.value)}>{(["daily", "weekly", "monthly", "cron"] as const).map((entry) => <option key={entry} value={entry}>{translate(`triggers.${entry}`)}</option>)}</select></label>{schedule === "cron" && <label className="grid gap-1 text-12 text-secondary">{translate("triggers.cron")}<Input aria-label={translate("triggers.cron")} value={expression} onChange={(e) => setExpression(e.target.value)} /></label>}</>}
       <Button type="button" onClick={() => void create()} disabled={!projectsLoaded || !availableProjects.some((project) => project.id === projectId)}>{translate("triggers.add")}</Button>
     </div>
     {!projectsLoaded ? <p role="status" className="m-0 text-12 text-secondary">{translate("triggers.projectsLoading")}</p>

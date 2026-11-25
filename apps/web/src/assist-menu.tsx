@@ -9,6 +9,7 @@ import { suggestionOpen } from "./editor-extensions";
 import { useShowAiSelectionMenu } from "./ai-preferences";
 import { ASSIST_OPEN_EVENT, ASSIST_TASKS, createAssistSession, hasNonTextContent, insertBelow, markAssistRange, replaceSelection, getAssistRange, type AssistTask, type AssistView } from "./editor-assist";
 
+import { Input } from "@/ui/input";
 const buttonClass = "secondary !px-2 !py-1 !text-12";
 
 /** The six tasks; Translate asks for a target language first. Used by the menu and, to rerun, by the preview. When `unavailable` is set the tasks stay visible: pressing one calls `onUnavailable` instead of running, and the text shows as its tooltip. */
@@ -25,7 +26,7 @@ function TaskPicker({ current, initialLanguage, onRun, unavailable, onUnavailabl
       {ASSIST_TASKS.map((task) => <Button key={task} type="button" className={buttonClass} title={unavailable} aria-pressed={task === current} onClick={() => press(task)}>{label(task)}</Button>)}
     </div>
     {asking && <form className="flex gap-1" onSubmit={(event) => { event.preventDefault(); if (language.trim()) onRun("translate", language.trim()); }}>
-      <input value={language} onChange={(event) => setLanguage(event.target.value)} maxLength={100} aria-label={translate("assist.targetLanguage")} placeholder={translate("assist.targetLanguage.placeholder")} className="!py-1 !text-12" />
+      <Input value={language} onChange={(event) => setLanguage(event.target.value)} maxLength={100} aria-label={translate("assist.targetLanguage")} placeholder={translate("assist.targetLanguage.placeholder")} className="!py-1 !text-12" />
       <Button type="submit" className={buttonClass} disabled={!language.trim()}>{translate("assist.translateRun")}</Button>
     </form>}
   </div>;

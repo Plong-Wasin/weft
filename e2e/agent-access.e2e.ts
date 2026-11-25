@@ -78,7 +78,7 @@ try {
   const runtimeProfilesSummary = owner.page.getByText(new RegExp(`^${translate("runtimes.profiles")}`)).first();
   await runtimeProfilesSummary.waitFor();
   await runtimeProfilesSummary.click();
-  const enforcement = owner.page.getByLabel(translate("runtimes.enforceSandbox"));
+  const enforcement = owner.page.getByRole("checkbox", { name: translate("runtimes.enforceSandbox") });
   const requirements = owner.page.getByTestId("runtime-sandbox-requirements");
   await requirements.waitFor();
   const requirementsAtSettings = await requirements.innerText();
@@ -102,7 +102,7 @@ try {
   let cancelledConfirmation = "";
   owner.page.once("dialog", async (dialog) => { cancelledConfirmation = dialog.message(); await dialog.dismiss(); });
   await enforcement.click();
-  if (!cancelledConfirmation.includes("Full access") || !cancelledConfirmation.includes("claimed after this change") || !cancelledConfirmation.includes("already dispatched") || !cancelledConfirmation.includes("Wait for these Runs to finish or stop them") || await enforcement.isChecked()) {
+  if (!cancelledConfirmation.includes("Full access") || !cancelledConfirmation.includes("claimed after this change") || !cancelledConfirmation.includes("already dispatched") || !cancelledConfirmation.includes("Wait for these Runs to finish or stop them") || await enforcement.getAttribute("aria-checked") !== "false") {
     throw new Error(`Enforcement confirmation did not explain existing Runs or allowed an unconfirmed change: ${cancelledConfirmation}`);
   }
   let acceptedConfirmation = "";
@@ -162,15 +162,15 @@ try {
   if (await owner.page.getByText("Weakened", { exact: false }).count()) throw new Error("Admin's profile change reached the Runtime owner's page");
   // Ticket 22: every full profile carries the full-access warning; the warning sits inside the profile row text.
   await owner.page.getByText(translate("runtimes.fullAccessWarning"), { exact: false }).first().waitFor();
-  await owner.page.getByLabel(translate("runtimes.enforceSandbox")).waitFor();
-  const enforcementSetting = owner.page.getByLabel(translate("runtimes.enforceSandbox"));
+  await owner.page.getByRole("checkbox", { name: translate("runtimes.enforceSandbox") }).waitFor();
+  const enforcementSetting = owner.page.getByRole("checkbox", { name: translate("runtimes.enforceSandbox") });
   const settingsRequirements = owner.page.getByTestId("runtime-sandbox-requirements");
   await settingsRequirements.waitFor();
   const settingsRequirementsText = await settingsRequirements.innerText();
   if (!settingsRequirementsText.includes("SRT") || !settingsRequirementsText.includes("0.0.83") || !settingsRequirementsText.includes("npm install --global @anthropic-ai/sandbox-runtime") || !settingsRequirementsText.includes("On Linux") || !settingsRequirementsText.includes("bubblewrap (bwrap), socat, and ripgrep (rg)") || !settingsRequirementsText.includes("unprivileged user namespaces") || !settingsRequirementsText.includes("Settings do not verify these host requirements") || !settingsRequirementsText.includes("never falls back")) {
     throw new Error(`Sandbox requirements are not actionable or fail-closed: ${settingsRequirementsText}`);
   }
-  if (!await enforcementSetting.isChecked()) throw new Error("Confirmed sandbox enforcement is not shown as enabled");
+  if (await enforcementSetting.getAttribute("aria-checked") !== "true") throw new Error("Confirmed sandbox enforcement is not shown as enabled");
   await owner.page.setViewportSize({ width: 1440, height: 900 });
   await settingsRequirements.evaluate((element) => element.scrollIntoView({ block: "center" }));
   await Bun.write(`${evidenceDir}/runtime-profiles-settings.png`, await owner.page.screenshot());
@@ -191,17 +191,17 @@ try {
   const developerUnavailable = developer.page.getByRole("menuitemcheckbox", { name: /Code Helper Agent Can edit code Ask Runtime Owner for access/ });
   await developerUnavailable.waitFor();
   await developer.page.keyboard.press("Escape");
-  const developerGrant = codeAgentRow.getByLabel(`${translate("agents.mayUse")} Developer`);
+  const developerGrant = codeAgentRow.getByRole("checkbox", { name: `${translate("agents.mayUse")} Developer` });
   const accessSave = codeAgentRow.getByRole("button", { name: translate("agents.save"), exact: true }).first();
   if (await accessSave.isEnabled()) throw new Error("Unchanged Agent access unexpectedly enabled Save");
   const ownerGrants = async () => (await createAgentActions(db).listManageableAgentAccess.handler({ userId: owner.userId }, { workspaceId })).find((agent) => agent.id === codeAgent.id)?.accessUserIds ?? [];
   const pmId = memberIds.find((member) => member.name === "PM")!.userId;
   // The checkbox is controlled by the list the page reloads after each save: wait until the page shows the new state before the next click, or the click toggles from a stale list.
-  const settled = async (checked: boolean) => { for (let attempt = 0; attempt < 100 && await developerGrant.isChecked() !== checked; attempt += 1) await Bun.sleep(100); if (await developerGrant.isChecked() !== checked) throw new Error(`Runtime owner access checkbox did not show ${checked ? "checked" : "unchecked"}`); };
-  const pmGrant = codeAgentRow.getByLabel(`${translate("agents.mayUse")} PM`);
-  await pmGrant.check({ force: true });
-  await pmGrant.uncheck({ force: true });
-  await developerGrant.check({ force: true });
+  const settled = async (checked: boolean) => { for (let attempt = 0; attempt < 100 && await developerGrant.getAttribute("aria-checked") !== String(checked); attempt += 1) await Bun.sleep(100); if (await developerGrant.getAttribute("aria-checked") !== String(checked)) throw new Error(`Runtime owner access checkbox did not show ${checked ? "checked" : "unchecked"}`); };
+  const pmGrant = codeAgentRow.getByRole("checkbox", { name: `${translate("agents.mayUse")} PM` });
+  await pmGrant.click({ force: true });
+  await pmGrant.click({ force: true });
+  await developerGrant.click({ force: true });
   if ((await ownerGrants()).includes(developerId)) throw new Error("Agent access draft was saved before Save was clicked");
   if (await accessSave.isEnabled() !== true) throw new Error("Save did not become available for a changed access draft");
   const concurrentBase = await ownerGrants();
@@ -210,11 +210,11 @@ try {
   for (let attempt = 0; attempt < 50 && (!(await ownerGrants()).includes(developerId) || !(await ownerGrants()).includes(pmId)); attempt += 1) await Bun.sleep(100);
   if (!(await ownerGrants()).includes(developerId) || !(await ownerGrants()).includes(pmId)) throw new Error(`Concurrent access edit did not preserve both grants: ${await owner.page.locator('[role="status"]').allTextContents()}`);
   await settled(true);
-  if (!(await pmGrant.isChecked())) throw new Error("Agent access UI did not refresh the concurrent grant returned by Save");
+  if (await pmGrant.getAttribute("aria-checked") !== "true") throw new Error("Agent access UI did not refresh the concurrent grant returned by Save");
   await developerGrant.click({ force: true });
   await owner.page.route("**/actions/set_agent_access", (route) => route.fulfill({ status: 500, body: "save failed" }));
   await accessSave.click();
-  if (!(await ownerGrants()).includes(developerId) || await developerGrant.isChecked()) throw new Error("Failed save changed server access or discarded the visible draft");
+  if (!(await ownerGrants()).includes(developerId) || await developerGrant.getAttribute("aria-checked") !== "false") throw new Error("Failed save changed server access or discarded the visible draft");
   for (let attempt = 0; attempt < 20 && !(await accessSave.isEnabled()); attempt += 1) await Bun.sleep(100);
   if (!(await accessSave.isEnabled())) throw new Error("Failed save discarded the unsaved access draft");
   await owner.page.unroute("**/actions/set_agent_access");
@@ -299,11 +299,11 @@ try {
   await admin.goto(`${web}/${slug}/settings/agents`);
   const agentRow = admin.locator('[data-agent="Code Helper"]');
   if (await agentRow.getByLabel(translate("agents.runtimeProfile")).count()) throw new Error("Admin must not change another owner’s Runtime profile");
-  const mobileProject = agentRow.getByLabel("MOB · Mobile");
+  const mobileProject = agentRow.getByRole("checkbox", { name: "MOB · Mobile" });
   const projectSave = agentRow.getByRole("button", { name: translate("agents.save"), exact: true }).first();
   await mobileProject.waitFor();
   if (await projectSave.isEnabled()) throw new Error("Unchanged Agent project access unexpectedly enabled Save");
-  await mobileProject.check();
+  await mobileProject.click();
   if ((await createAgentActions(db).listAgents.handler({ userId: me.user.id }, { workspaceId })).find((agent) => agent.id === codeAgent.id)?.projectIds.length !== 0) throw new Error("Project access draft was saved before Save was clicked");
   const projectBase = (await createAgentActions(db).getAgent.handler({ userId: me.user.id }, { agentId: codeAgent.id })).projectIds;
   await createAgentActions(db).setAgentProjectAccess.handler({ userId: me.user.id }, { agentId: codeAgent.id, allProjects: false, baseAllProjects: false, baseProjectIds: projectBase, projectIds: [docsProject.id] });

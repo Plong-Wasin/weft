@@ -72,7 +72,7 @@ try {
   await page.getByLabel(translate("layout.group")).selectOption("priority");
   await page.getByLabel(translate("layout.sort")).selectOption("title");
   await page.getByLabel(translate("layout.direction")).selectOption("desc");
-  await page.getByLabel(translate("layout.property.labels"), { exact: true }).uncheck();
+  await page.getByRole("checkbox", { name: translate("layout.property.labels"), exact: true }).click();
   await page.keyboard.press("Escape");
   const shaped = new URL(page.url()).search;
   await page.getByRole("button", { name: translate("views.saveAs") }).click();

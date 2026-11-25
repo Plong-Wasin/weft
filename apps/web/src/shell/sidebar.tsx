@@ -21,6 +21,7 @@ import { workspaceMembersQuery } from "../workspace-role";
 import { WikiSidebar } from "./wiki-sidebar";
 import { dropWithinGroup, filterProjectGroups, matchesProjectSearch, moveWithinGroup, preferenceOf, sortProjects, useProjectPreferences, type ProjectPreference } from "./project-preferences";
 
+import { Input } from "@/ui/input";
 export const projectsKey = (workspaceId: string) => ["projects", workspaceId] as const;
 const favoritesKey = (workspaceId: string) => ["favorite-wiki-pages", workspaceId] as const;
 
@@ -225,7 +226,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       {favoritesBlock}
       <label className="grid gap-1 px-3 pt-2 text-12 font-medium text-secondary">
         {translate("projects.find")}
-        <input type="search" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder={translate("projects.searchPlaceholder")} className="min-h-9 min-w-0 rounded-lg px-3 py-2 text-13" />
+        <Input type="search" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder={translate("projects.searchPlaceholder")} className="min-h-9 min-w-0 rounded-lg px-3 py-2 text-13" />
       </label>
       <ProjectGroups workspace={workspace} projects={projectList} prefs={prefs} projectKey={projectKey} reorder={reorder} drag={drag} query={projectQuery} />
     </>}
@@ -258,7 +259,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       <p className={heading}>{translate("projects.title")}</p>
       <label className="grid gap-1 px-3 pt-2 text-12 font-medium text-secondary">
         {translate("projects.find")}
-        <input type="search" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder={translate("projects.searchPlaceholder")} className="min-h-9 min-w-0 rounded-lg px-3 py-2 text-13" />
+        <Input type="search" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder={translate("projects.searchPlaceholder")} className="min-h-9 min-w-0 rounded-lg px-3 py-2 text-13" />
       </label>
       <SettingsProjectList workspace={workspace} projects={[...projectSort.starred, ...projectSort.others]} query={projectQuery} />
     </>}

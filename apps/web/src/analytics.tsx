@@ -7,6 +7,8 @@ import { Popover } from "./shell/popover";
 import { paths } from "./routes";
 import type { Project } from "./types";
 
+import { Checkbox } from "@/ui/checkbox";
+import { Input } from "@/ui/input";
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
 const t = (key: string, values: Record<string, string | number> = {}) => Object.entries(values).reduce((text, [name, value]) => text.replace(`{${name}}`, String(value)), translate(key as MessageKey));
@@ -50,10 +52,10 @@ function ProjectFilter({ projects, selected, onChange }: { projects: Project[]; 
   return <Popover label={t("analytics.projects")} panelRole="dialog" panelClassName="w-72 max-w-[85vw] rounded-xl p-2" className="border border-subtle px-2.5 py-1.5 text-14"
     trigger={<><span className="truncate">{selected.length === 0 ? t("analytics.allProjects") : t("analytics.projectsSelected", { count: selected.length })}</span><ChevronDown aria-hidden size={14} /></>}>
     {() => <div className="grid gap-1">
-      <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("analytics.searchProjects")} aria-label={t("analytics.searchProjects")} className="rounded-lg border border-subtle px-3 py-1.5 text-14" />
+      <Input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("analytics.searchProjects")} aria-label={t("analytics.searchProjects")} className="rounded-lg border border-subtle px-3 py-1.5 text-14" />
       <ul className="m-0 grid max-h-64 list-none gap-0.5 overflow-y-auto p-0">
         {shown.map((project) => <li key={project.id}><label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-14 hover:bg-layer-transparent-hover">
-          <input type="checkbox" checked={selected.includes(project.id)} onChange={() => toggle(project.id)} />
+          <Checkbox checked={selected.includes(project.id)} onChange={() => toggle(project.id)} />
           <span className="rounded-md bg-layer-1 px-1.5 text-12 text-secondary">{project.key}</span><span className="truncate">{project.name}</span>
           {selected.includes(project.id) && <Check aria-hidden size={12} className="ml-auto shrink-0" />}
         </label></li>)}
@@ -114,10 +116,10 @@ function CreatedVsResolved({ months }: { months: Month[] }) {
 
 function Tabs({ workspaceSlug, active }: { workspaceSlug: string; active: "overview" | "workItems" }) {
   const tab = (isActive: boolean) => `border-b-2 px-3 py-1.5 text-14 font-medium no-underline ${isActive ? "border-accent-primary text-primary" : "border-transparent text-secondary"}`;
-  return <div role="tablist" className="flex gap-1 border-b border-subtle">
-    <NavLink to={paths.analyticsOverview(workspaceSlug)} role="tab" aria-selected={active === "overview"} className={tab(active === "overview")}>{t("analytics.tabOverview")}</NavLink>
-    <NavLink to={paths.analyticsWorkItems(workspaceSlug)} role="tab" aria-selected={active === "workItems"} className={tab(active === "workItems")}>{t("analytics.tabWorkItems")}</NavLink>
-  </div>;
+  return <nav aria-label={t("analytics.title")} className="flex gap-1 border-b border-subtle">
+    <NavLink to={paths.analyticsOverview(workspaceSlug)} aria-current={active === "overview" ? "page" : undefined} className={tab(active === "overview")}>{t("analytics.tabOverview")}</NavLink>
+    <NavLink to={paths.analyticsWorkItems(workspaceSlug)} aria-current={active === "workItems" ? "page" : undefined} className={tab(active === "workItems")}>{t("analytics.tabWorkItems")}</NavLink>
+  </nav>;
 }
 
 /** Workspace Analytics, Overview tab: summary cards and the caller's projects with their counts. */

@@ -12,6 +12,8 @@ import { useWorkspace } from "../layouts/workspace-layout";
 import { EmptyState } from "../empty-state";
 import type { Project } from "../types";
 
+import { Checkbox } from "@/ui/checkbox";
+import { Input } from "@/ui/input";
 type Visibility = Project["visibility"];
 type Shape = "simple" | "full";
 
@@ -43,12 +45,12 @@ export function ProjectsPanel() {
     }}>
       <h2 className="m-0 text-16 font-semibold text-primary">{translate("projects.createTitle")}</h2>
       <div className="grid gap-4 sm:grid-cols-2">
-        <label className="text-13 font-medium text-secondary">{translate("projects.name")}<input className="text-16 md:text-14" autoFocus required value={name} onChange={(event) => {
+        <label className="text-13 font-medium text-secondary">{translate("projects.name")}<Input className="text-16 md:text-14" autoFocus required value={name} onChange={(event) => {
           const value = event.target.value;
           setName(value);
           if (suggestKey) setKey(sanitizeProjectKey(value));
         }} /></label>
-        <label className="text-13 font-medium text-secondary">{translate("projects.key")}<input className="text-16 md:text-14" required pattern="[A-Z][A-Z0-9]{1,11}" title={translate("projects.keyHint")} aria-describedby="project-key-help" value={key} onChange={(event) => {
+        <label className="text-13 font-medium text-secondary">{translate("projects.key")}<Input className="text-16 md:text-14" required pattern="[A-Z][A-Z0-9]{1,11}" title={translate("projects.keyHint")} aria-describedby="project-key-help" value={key} onChange={(event) => {
           setSuggestKey(false);
           setKey(event.target.value.toUpperCase());
         }} /></label>
@@ -76,8 +78,8 @@ export function ProjectsPanel() {
   return <section className="grid gap-4">
     <header className="flex flex-wrap items-center gap-3">
       <h1 className="m-0 flex-1 text-20 font-semibold text-primary">{translate("projects.title")}</h1>
-      <label className="w-full max-w-sm text-13 font-medium text-secondary">{translate("projects.find")}<input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={translate("projects.searchPlaceholder")} /></label>
-      <label className="secondary flex items-center gap-2 text-13"><input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />{translate("projects.showArchived")}</label>
+      <label className="w-full max-w-sm text-13 font-medium text-secondary">{translate("projects.find")}<Input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={translate("projects.searchPlaceholder")} /></label>
+      <label className="secondary flex items-center gap-2 text-13"><Checkbox checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />{translate("projects.showArchived")}</label>
       {!creating && <Button type="button" className="flex items-center gap-1.5" onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{translate("projects.new")}</Button>}
     </header>
     {form}

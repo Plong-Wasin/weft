@@ -62,7 +62,7 @@ try {
   check(await page.getByText(t("features.typesDesc")).isVisible(), "the feature row explains what types are");
   await typesSwitch.click();
   // The switch is controlled: it turns on once the change is saved and the project reloads.
-  await page.waitForFunction((label: string) => (document.querySelector(`input[role="switch"][aria-label="${label}"]`) as HTMLInputElement | null)?.checked === true, t("features.types"));
+  await page.waitForFunction((label: string) => document.querySelector(`[role="switch"][aria-label="${label}"]`)?.getAttribute("aria-checked") === "true", t("features.types"));
   await page.getByText(t("types.explain")).waitFor();
   await page.getByRole("heading", { name: t("types.title") }).waitFor();
   // Only Task exists at first; the suggestion list adds Bug in one click, with its one-line explanation.
@@ -79,10 +79,12 @@ try {
   await properties.getByLabel(t("types.propertyName")).fill("Severity");
   await properties.getByLabel(t("types.propertyKind")).selectOption("dropdown");
   await properties.getByLabel(t("types.optionsOnePerLine")).fill("low\nhigh");
-  await properties.getByLabel(t("types.requiredToggle")).check();
+  await properties.getByRole("checkbox", { name: t("types.requiredToggle") }).click();
   // Severity belongs to Bug only: the form starts with the first type (Task) checked.
-  await properties.getByLabel("Bug", { exact: true }).check();
-  await properties.getByLabel("Task", { exact: true }).uncheck();
+  const bugTypeCheckbox = properties.getByRole("checkbox", { name: "Bug", exact: true });
+  const taskTypeCheckbox = properties.getByRole("checkbox", { name: "Task", exact: true });
+  if (await bugTypeCheckbox.getAttribute("aria-checked") !== "true") await bugTypeCheckbox.click();
+  if (await taskTypeCheckbox.getAttribute("aria-checked") !== "false") await taskTypeCheckbox.click();
   await properties.getByRole("button", { name: t("types.addProperty") }).click();
   await properties.getByText("Severity", { exact: true }).waitFor();
   await page.screenshot({ path: `${shots}/settings-light-1440-properties.png`, fullPage: true });
@@ -205,7 +207,7 @@ try {
   // Add property from Bug: the form opens with Bug ticked, and the new property appears in Bug's list when saved.
   await typeProps.getByRole("button", { name: t("types.addPropertyHere"), exact: true }).click();
   const addOnBug = typeProps.locator("[data-add-property]");
-  check(await addOnBug.getByLabel("Bug", { exact: true }).isChecked(), "add property from Bug ticks Bug");
+  check(await addOnBug.getByRole("checkbox", { name: "Bug", exact: true }).getAttribute("aria-checked") === "true", "add property from Bug ticks Bug");
   await addOnBug.getByLabel(t("types.propertyName")).fill("Owner");
   await addOnBug.getByRole("button", { name: t("types.addProperty"), exact: true }).click();
   await typeProps.locator("[data-type-property]").filter({ hasText: "Owner" }).waitFor();
@@ -213,8 +215,8 @@ try {
   // A property that only Task uses is attached to Bug from Use an existing property; the shared list then names both types.
   await properties.getByLabel(t("types.propertyName")).fill("Links");
   await properties.getByLabel(t("types.propertyKind")).selectOption("url");
-  await properties.getByLabel("Task", { exact: true }).check();
-  await properties.getByLabel("Bug", { exact: true }).uncheck();
+  if (await taskTypeCheckbox.getAttribute("aria-checked") !== "true") await taskTypeCheckbox.click();
+  if (await bugTypeCheckbox.getAttribute("aria-checked") !== "false") await bugTypeCheckbox.click();
   await properties.getByRole("button", { name: t("types.addProperty"), exact: true }).click();
   await properties.getByText("Links", { exact: true }).waitFor();
   check((await badgesOf(page, "Links")).join(",") === "Task", "the shared list names Task for Links");
@@ -226,7 +228,7 @@ try {
   await typeProps.getByRole("button", { name: t("types.addPropertyHere"), exact: true }).click();
   const addNameBox = await addOnBug.getByLabel(t("types.propertyName")).boundingBox();
   const addKindBox = await addOnBug.getByLabel(t("types.propertyKind")).boundingBox();
-  const addRequiredBox = await addOnBug.getByLabel(t("types.requiredToggle")).boundingBox();
+  const addRequiredBox = await addOnBug.getByRole("checkbox", { name: t("types.requiredToggle") }).boundingBox();
   const addUsedByBox = await addOnBug.getByRole("group", { name: t("types.belongsTo") }).boundingBox();
   check(addNameBox !== null && addKindBox !== null && Math.abs(addNameBox.y - addKindBox.y) < 2, "the add form labels sit on one line at 1440");
   check(addRequiredBox !== null && addUsedByBox !== null && Math.abs(addRequiredBox.y + addRequiredBox.height / 2 - (addUsedByBox.y + addUsedByBox.height / 2)) < 4, `Required and Used by types share one row at 1440 (${JSON.stringify({ addRequiredBox, addUsedByBox })})`);
@@ -339,7 +341,7 @@ try {
   await page.getByRole("link", { name: /SOL · Solo/ }).waitFor();
   await page.goto(`${web}/${slug}/settings/projects/SOL/features`);
   await page.getByRole("switch", { name: t("features.types") }).click();
-  await page.waitForFunction((label: string) => (document.querySelector(`input[role="switch"][aria-label="${label}"]`) as HTMLInputElement | null)?.checked === true, t("features.types"));
+  await page.waitForFunction((label: string) => document.querySelector(`[role="switch"][aria-label="${label}"]`)?.getAttribute("aria-checked") === "true", t("features.types"));
   await page.getByRole("heading", { name: t("types.title") }).waitFor();
   await page.getByRole("button", { name: t("types.editNamed").replace("{name}", "Task"), exact: true }).waitFor();
   const onlyDelete = page.getByRole("button", { name: t("types.deleteNamed").replace("{name}", "Task"), exact: true });

@@ -5,6 +5,7 @@ import { searchTypeIcons, translate, typeIconGroups, type MessageKey } from "@we
 import { TypeIconMark, themeColour, typeSwatches, type TypeIcon } from "../../work-item-types";
 import { handleImeSafeEnter } from "../../ime";
 
+import { Input } from "@/ui/input";
 const t = (key: string) => translate(key as MessageKey);
 const swatchNames = ["red", "orange", "yellow", "green", "cyan", "blue", "violet", "pink", "grey"] as const;
 const isSwatch = (color: string) => typeSwatches.includes(color.toLowerCase());
@@ -37,13 +38,13 @@ export function TypeForm({ idPrefix, initial, submitLabel, onSubmit, onCancel }:
     <div className="grid gap-4 md:grid-cols-2">
       <div className="grid content-start gap-1.5">
         <label htmlFor={nameId} className="text-13 font-medium text-primary">{t("types.name")}</label>
-        <input id={nameId} required value={name} maxLength={40} className="w-full" onChange={(event) => setName(event.target.value)} />
+        <Input id={nameId} required value={name} maxLength={40} className="w-full" onChange={(event) => setName(event.target.value)} />
       </div>
       <Field label={t("types.color")}>{(labelId) => <ColourChoice labelId={labelId} idPrefix={idPrefix} color={color} custom={custom} onPick={(next, nextCustom) => { setColor(next); setCustom(nextCustom); }} />}</Field>
       <Field label={t("types.icon")} className="md:col-span-2">{(labelId) => <IconChoice labelId={labelId} icon={icon} onPick={setIcon} />}</Field>
       <div className="grid content-start gap-1.5 md:col-span-2">
         <label htmlFor={descriptionId} className="text-13 font-medium text-primary">{t("types.description")}</label>
-        <input id={descriptionId} value={description} maxLength={200} placeholder={t("types.descriptionHint")} className="w-full" onChange={(event) => setDescription(event.target.value)} />
+        <Input id={descriptionId} value={description} maxLength={200} placeholder={t("types.descriptionHint")} className="w-full" onChange={(event) => setDescription(event.target.value)} />
       </div>
     </div>
     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -106,7 +107,7 @@ function IconChoice({ labelId, icon, onPick }: { labelId: string; icon: TypeIcon
     }
   };
   return <div className="grid min-w-0 gap-2">
-    <input type="search" aria-label={t("types.iconSearch")} placeholder={t("types.iconSearch")} autoComplete="off" value={query}
+    <Input type="search" aria-label={t("types.iconSearch")} placeholder={t("types.iconSearch")} autoComplete="off" value={query}
       onChange={(event) => setQuery(event.target.value)} onKeyDown={onSearchKeyDown}
       className="w-full rounded-md border border-subtle bg-surface-1 px-2.5 py-1.5 text-13 text-primary placeholder:text-tertiary" />
     <div role="radiogroup" aria-labelledby={labelId} data-icon-library className="max-h-56 overflow-y-auto overflow-x-hidden rounded-md border border-subtle bg-surface-1 p-2">

@@ -85,7 +85,7 @@ try {
   console.log("wiki comment reply ok: Escape closes");
 
   // A resolved thread offers no Reply.
-  await page.getByRole("checkbox", { name: translate("wiki.comments.showResolved") }).check();
+  await page.getByRole("checkbox", { name: translate("wiki.comments.showResolved") }).click();
   const resolvedItem = page.locator("li", { hasText: "Resolved thread text" });
   await resolvedItem.waitFor();
   check((await resolvedItem.getByRole("button", { name: translate("wiki.comments.reply"), exact: true }).count()) === 0, "a resolved thread must not offer Reply");

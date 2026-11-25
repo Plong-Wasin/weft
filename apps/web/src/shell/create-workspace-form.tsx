@@ -4,6 +4,7 @@ import { translate } from "@weft/shared";
 import { api } from "../api";
 import type { Workspace } from "../types";
 
+import { Input } from "@/ui/input";
 export function slugify(value: string) { return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
 
 /** Name and URL of a new workspace; `onCreated` receives the created workspace. Shared by the first-workspace screen and the switcher. */
@@ -23,11 +24,11 @@ export function CreateWorkspaceForm({ onCreated, onCancel }: { onCreated: (works
   }
 
   return <form onSubmit={createWorkspace} className="my-6 grid gap-4">
-    <label className="grid gap-1.5">{translate("workspace.name")}<input required value={workspaceName} onChange={(event) => {
+    <label className="grid gap-1.5">{translate("workspace.name")}<Input required value={workspaceName} onChange={(event) => {
       const value = event.target.value; setWorkspaceName(value);
       if (!slug || slug === slugify(workspaceName)) setSlug(slugify(value));
     }} /></label>
-    <label className="grid gap-1.5">{translate("workspace.slug")}<input required pattern="[a-z0-9]+(-[a-z0-9]+)*" value={slug} onChange={(event) => setSlug(event.target.value)} /></label>
+    <label className="grid gap-1.5">{translate("workspace.slug")}<Input required pattern="[a-z0-9]+(-[a-z0-9]+)*" value={slug} onChange={(event) => setSlug(event.target.value)} /></label>
     <div className="flex gap-2"><Button>{translate("workspace.create")}</Button>{onCancel && <Button type="button" className="secondary" onClick={onCancel}>{translate("workspace.close")}</Button>}</div>
     {error && <p role="alert" className="text-danger-text">{error}</p>}
   </form>;

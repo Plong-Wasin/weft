@@ -164,7 +164,7 @@ export function WorkspaceViewPage({ workspace, selfId, viewId }: { workspace: Wo
       </nav>
       <div data-testid="workspace-view-controls" className="flex min-w-0 flex-wrap items-center gap-2 sm:ml-auto">
       <FilterQueryToggle open={filterQueryOpen || queryError !== null} onToggle={() => setFilterQueryOpen(!filterQueryOpen)} />
-      <Popover label={t("layout.display")} className={ghost} panelRole="dialog" panelClassName="grid w-72 max-w-[calc(100vw-2rem)] max-h-[70vh] gap-3 overflow-auto p-3" trigger={<><SlidersHorizontal aria-hidden size={14} /><span>{t("layout.display")}</span></>}>
+      <Popover label={t("layout.display")} className={ghost} panelRole="dialog" panelClassName="grid w-72 max-w-[calc(100vw-2rem)] max-h-[70dvh] gap-3 overflow-auto p-3" trigger={<><SlidersHorizontal aria-hidden size={14} /><span>{t("layout.display")}</span></>}>
         {() => <>
           <label>{t("layout.sort")}<select value={params.sort} onChange={(event) => update({ sort: event.target.value as LayoutParams["sort"] })}>
             {sortFields.map((value) => <option key={value} value={value}>{value === "manual" ? t("workspaceViews.sort.manual") : t(`layout.sort.${value}`)}</option>)}</select></label>

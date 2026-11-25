@@ -95,7 +95,7 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
     if (!first || !last) { event.preventDefault(); dialog.focus(); }
     else if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
     else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
-  }} className="fixed left-0 right-0 top-[10vh] z-50 mx-auto max-h-[80vh] w-[calc(100vw-1.5rem)] max-w-lg overflow-auto rounded-2xl border border-subtle bg-surface-1 p-6 text-primary shadow-xl backdrop:bg-backdrop">
+  }} className="fixed left-0 right-0 top-[10dvh] z-50 mx-auto max-h-[80dvh] w-[calc(100vw-1.5rem)] max-w-lg overflow-auto rounded-2xl border border-subtle bg-surface-1 p-6 text-primary shadow-xl backdrop:bg-backdrop">
       <div className="mb-4 flex items-center gap-2">
         <h2 id={titleId} className="m-0 flex-1 text-18 font-semibold text-primary">{title}</h2>
         <button type="button" className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={t("intake.cancel")} onClick={onClose}><X aria-hidden size={16} /></button>
@@ -493,14 +493,14 @@ export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, 
     setDrafts(draftsRef.current);
   };
   const afterChange = () => { void load(); };
-  return <section className="flex flex-col gap-4" aria-label={t("intake.title")}>
+  return <section className="flex min-w-0 flex-col gap-4" aria-label={t("intake.title")}>
     <div className="flex items-center gap-2">
       <Inbox aria-hidden size={18} className="text-secondary" />
       <h2 className="m-0 flex-1 text-16 font-semibold text-primary">{t("intake.title")}</h2>
       {!emptyOpen && <button type="button" className={`${primaryButton} flex items-center gap-1.5`} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("intake.add")}</button>}
     </div>
-    <div className="flex min-h-[28rem] flex-col rounded-xl border border-subtle bg-surface-1 md:h-[calc(100vh-14rem)] md:flex-row">
-      <div className="flex w-full shrink-0 flex-col border-b border-subtle p-2 md:w-[26rem] md:border-b-0 md:border-r">
+    <div className="flex min-h-[28rem] min-w-0 flex-col rounded-xl border border-subtle bg-surface-1 xl:h-[calc(100dvh-14rem)] xl:flex-row">
+      <div className="flex w-full shrink-0 flex-col border-b border-subtle p-2 xl:w-[26rem] xl:border-b-0 xl:border-r">
         <div role="tablist" className="flex gap-2 border-b border-subtle px-2">
           {(["open", "closed"] as const).map((value) => <button key={value} role="tab" type="button" aria-selected={tab === value} onClick={() => { if (value !== tab) select(null, value); }}
             className={`flex items-center gap-1.5 rounded-md border-0 px-3 py-2.5 text-14 font-medium ${tab === value ? "bg-layer-1 text-accent-primary" : "bg-transparent text-secondary hover:bg-layer-transparent-hover hover:text-primary"}`}>

@@ -37,8 +37,8 @@ export function ProjectLayout() {
   const onPage = useMatch("/:workspaceSlug/projects/:projectKey/pages/:pageId") !== null;
   if (project === undefined) return null;
   if (project === null) return <section><p role="alert">{translate("projects.notFound")}</p><Link to={paths.home(workspace.slug)}>{translate("projects.back")}</Link></section>;
-  if (onPage) return <section className="grid gap-4"><Outlet context={{ project, reload } satisfies ProjectContext} /></section>;
-  return <section className="grid gap-4">
+  if (onPage) return <section className="grid min-w-0 gap-4"><Outlet context={{ project, reload } satisfies ProjectContext} /></section>;
+  return <section className="grid min-w-0 gap-4">
     <header className="flex flex-wrap items-center gap-x-3 gap-y-1">
       <Link to={paths.home(workspace.slug)} className="text-13 text-secondary hover:text-primary max-sm:w-full">{translate("projects.back")}</Link>
       <span aria-hidden className="text-secondary max-sm:hidden">›</span>

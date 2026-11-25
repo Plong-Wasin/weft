@@ -131,7 +131,7 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
   const chipRow = "flex flex-wrap items-center gap-2";
   return <>
     <div aria-hidden className="fixed inset-0 z-40 bg-backdrop" onClick={() => { if (!unsaved) onClose(); }} />
-    <div ref={dialog} data-create-modal role="dialog" aria-modal="true" aria-label={t("workItems.modal.title")} className="fixed left-1/2 top-[6vh] z-50 max-h-[88vh] w-[calc(100vw-1.5rem)] max-w-2xl -translate-x-1/2 overflow-auto rounded-2xl border border-subtle bg-surface-1 shadow-xl">
+    <div ref={dialog} data-create-modal role="dialog" aria-modal="true" aria-label={t("workItems.modal.title")} className="fixed left-1/2 top-[6dvh] z-50 max-h-[88dvh] w-[calc(100vw-1.5rem)] max-w-2xl -translate-x-1/2 overflow-auto rounded-2xl border border-subtle bg-surface-1 shadow-xl">
       <form className="my-0 grid gap-5 p-6 max-sm:gap-4 max-sm:p-4" onSubmit={submit}>
         <div className="flex items-center gap-2">
           <h2 className="m-0 flex-1 text-18 font-semibold text-primary">{t("workItems.modal.title")}</h2>

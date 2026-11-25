@@ -14,6 +14,6 @@ export function EditorShortcutsDialog() {
   }, []);
   if (!open) return null;
   return <Dialog title={translate("shortcuts.title")} onClose={() => setOpen(false)}>
-    <div className="-mx-1 max-h-[65vh] overflow-y-auto px-1"><ShortcutTable /></div>
+    <div className="-mx-1 max-h-[65dvh] overflow-y-auto px-1"><ShortcutTable /></div>
   </Dialog>;
 }

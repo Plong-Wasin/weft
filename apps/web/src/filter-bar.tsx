@@ -31,7 +31,7 @@ export function FilterPicker({ sections, filters, count, onChange, onClear }: { 
   });
   const hasMatches = matchingSections.length > 0 || matchingDates.length > 0;
   const toggle = (key: NamedFilter, id: string, on: boolean) => onChange({ ...filters, [key]: on ? [...filters[key], id] : filters[key].filter((other) => other !== id) });
-  return <Popover label={label} className={ghost} panelRole="dialog" panelClassName="grid w-72 max-w-[calc(100vw-2rem)] max-h-[70vh] gap-1 overflow-auto p-2" trigger={<><Filter aria-hidden size={14} /><span>{label}</span></>}>
+  return <Popover label={label} className={ghost} panelRole="dialog" panelClassName="grid w-72 max-w-[calc(100vw-2rem)] max-h-[70dvh] gap-1 overflow-auto p-2" trigger={<><Filter aria-hidden size={14} /><span>{label}</span></>}>
     {() => <>
       <label className="relative my-0 block"><span className="sr-only">{t("layout.filter.search")}</span>
         <Search aria-hidden size={14} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-tertiary" />

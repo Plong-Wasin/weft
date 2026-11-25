@@ -10,6 +10,7 @@ import { StateIcon, formatDay } from "./property-dropdowns";
 import { stateGroups, type StateGroup } from "./types";
 import { DescriptionEditor } from "./description-editor";
 import { EntityDescription } from "./entity-description";
+import { DetailsPanelToggle, useDetailsPanel } from "./details-panel";
 
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
@@ -277,6 +278,7 @@ export function BurndownChart({ action, name, body, projectId, refreshKey, testI
 }
 
 export function CycleDetailPage({ workspaceId, workspaceSlug, projectKey, projectId, cycleId, canWrite, canAdmin = false, enabled, action, run: runQuery }: { workspaceId: string; workspaceSlug: string; projectKey: string; projectId: string; cycleId: string; canWrite: boolean; canAdmin?: boolean; enabled: boolean; action: Call; run?: Run }) {
+  const detailsPanel = useDetailsPanel("cycle");
   const navigate = useNavigate();
   const [cycle, setCycle] = React.useState<CycleDetail | null | undefined>(undefined);
   const [everyone, setEveryone] = React.useState<Item[]>([]);
@@ -332,6 +334,7 @@ export function CycleDetailPage({ workspaceId, workspaceSlug, projectKey, projec
     <header className="flex flex-wrap items-center gap-3 rounded-xl bg-layer-1 p-3">
       <Link to={paths.cycles(workspaceSlug, projectKey)} className="text-13">{t("cycles.back")}</Link>
       <h2 title={cycle.name} className="m-0 min-w-32 flex-1 truncate text-20 font-semibold">{cycle.name}</h2>
+      <DetailsPanelToggle open={detailsPanel.open} onToggle={detailsPanel.toggle} panelId="cycle-details-panel" />
       {canWrite && !ended && !cycle.archived && <button type="button" className={primaryButton} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("cycles.addItems")}</button>}
       <CycleMenu cycle={cycle} canWrite={canWrite} canAdmin={canAdmin} onEdit={() => setEditing(true)} onArchive={() => void (cycle.archived ? commands.restore(cycle) : commands.archive(cycle))} onDelete={() => void commands.destroy(cycle).then((gone) => { if (gone) navigate(paths.cycles(workspaceSlug, projectKey)); })} />
     </header>
@@ -342,7 +345,7 @@ export function CycleDetailPage({ workspaceId, workspaceSlug, projectKey, projec
         <WorkItemLayouts projectId={projectId} workspaceSlug={workspaceSlug} action={action} run={runQuery} refreshKey={refreshKey} cycleId={cycleId}
           rowAction={canWrite && !cycle.archived ? (item) => <button className="secondary whitespace-nowrap px-2 py-1 text-12" onClick={() => void remove(item.id)}>{t("cycles.remove")}</button> : undefined} />
       </div>
-      <aside aria-label={t("cycles.details")} className="grid h-fit gap-4 rounded-xl bg-layer-1 p-4 lg:w-80 lg:shrink-0">
+      <aside id="cycle-details-panel" aria-label={t("cycles.details")} className={`grid h-fit gap-4 rounded-xl bg-layer-1 p-4 lg:w-80 lg:shrink-0 ${detailsPanel.open ? "" : "lg:hidden"}`}>
         <section className="grid gap-2" aria-label={t("workItems.description")}><h3 className="m-0 text-14 font-semibold">{t("workItems.description")}</h3><EntityDescription key={cycle.id} action={action} workspaceId={workspaceId} owner={{ ownerType: "cycle", ownerId: cycle.id }} mentionPeople={mentionPeople} initial={cycle.description ?? null} editable={canWrite && !cycle.archived} /></section>
         <div className="flex items-center gap-2">{statusPill(cycle.status)}{cycle.archived && <span role="status" className="text-12 text-secondary">{t("cycles.archived")}</span>}</div>
         <p className="m-0 flex items-center gap-1.5 text-13 text-secondary"><CalendarDays aria-hidden size={14} />{range(cycle)}</p>

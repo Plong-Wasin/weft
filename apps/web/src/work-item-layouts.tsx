@@ -484,7 +484,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
         <span className="flex size-4 shrink-0 items-center justify-center">{checkbox ? React.cloneElement(checkbox, { className: `${checkbox.props.className ?? ""} rounded-sm` }) : <span aria-hidden />}</span>
         {shows("id") ? <span title={item.displayId} className="min-w-0 truncate whitespace-nowrap text-12 tabular-nums text-tertiary">{item.displayId}</span> : <span aria-hidden />}
         <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="min-w-0 flex-1 truncate text-14 font-medium text-primary">{item.title}</Link>
-        {oneLine ? <>{shownProperties.map((property) => propertyCell(item, property))}{rowActionCell}</> : <div data-testid="list-property-wrap" className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 sm:col-start-3 sm:col-span-full">{shownProperties.filter((property) => property === "state" || !isEmptyProperty(item, property)).map((property) => propertyCell(item, property))}{rowActionCell}</div>}
+        {oneLine ? <>{shownProperties.map((property) => propertyCell(item, property))}{rowActionCell}</> : <div data-testid="list-property-wrap" className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 sm:col-start-3 sm:col-span-full">{shownProperties.map((property) => propertyCell(item, property))}{rowActionCell}</div>}
       </div>
     </li>;
   };

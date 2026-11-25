@@ -60,6 +60,7 @@ try {
   await call("create_label", { projectId: project!.id, name: "Bug" });
   await call("create_cycle", { projectId: project!.id, name: "Sprint 1", startDate: day(-1), endDate: day(6) });
   await call("create_module", { projectId: project!.id, name: "Auth" });
+  await call("create_estimate", { projectId: project!.id, type: "points", values: ["1", "2"] });
 
   await page.getByRole("link", { name: /MOB · Mobile/ }).click();
   const selectAll = page.getByRole("checkbox", { name: translate("bulk.selectAll") });
@@ -99,18 +100,6 @@ try {
   check(await done.getAttribute("aria-expanded") === "true", "an empty group did not expand through its toggle");
   await done.click();
   check(await done.getAttribute("aria-expanded") === "false", "an empty group did not collapse again");
-  await mkdir(evidenceShots, { recursive: true });
-  for (const width of [1920, 1440, 1100, 390] as const) {
-    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
-    for (const theme of ["light", "dark"] as const) {
-      await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
-      await page.screenshot({ path: `${evidenceShots}/work-items-list-${width}-${theme}.png`, fullPage: true });
-    }
-  }
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
-  await page.screenshot({ path: `${shots}/list-1440-light.png` });
-
   // Named acceptance check: the 1440 px list row is icon-first, quiet, and fits on one line.
   const firstRow = page.getByTestId("row-MOB-1");
   const priorityControl = firstRow.getByRole("button", { name: `${translate("workItems.priority")}: ${translate("workItems.priority.none")}` });
@@ -119,7 +108,7 @@ try {
     const title = row.querySelector("a")!.getBoundingClientRect();
     const props = [...row.querySelectorAll<HTMLButtonElement>('button[aria-label^="Estimate:"], button[aria-label^="Labels:"], button[aria-label^="Cycle:"], button[aria-label^="Modules:"], button[aria-label^="Dates:"], button[aria-label^="Assignees:"]')];
     const titleCenter = title.y + title.height / 2;
-    return { id: row.getAttribute("data-testid"), height: row.getBoundingClientRect().height, titleHeight: title.height, propertyCenters: props.map((property) => { const box = property.getBoundingClientRect(); return box.y + box.height / 2; }), titleCenter };
+    return { id: row.getAttribute("data-testid"), listWidth: row.parentElement?.parentElement?.parentElement?.clientWidth, height: row.getBoundingClientRect().height, titleHeight: title.height, propertyCenters: props.map((property) => { const box = property.getBoundingClientRect(); return box.y + box.height / 2; }), titleCenter };
   }));
   check(desktopRowMetrics.length > 0 && desktopRowMetrics.every((row) => row.height <= 44 && row.height >= 36 && row.titleHeight <= row.height && row.propertyCenters.every((center) => Math.abs(center - row.titleCenter) < 1)), `1440px list rows stay on one line and at most 44px tall (QuietListRowsOneLineAt1440): ${JSON.stringify(desktopRowMetrics)}`);
   for (const control of [priorityControl, stateControl]) {
@@ -129,7 +118,6 @@ try {
   for (const [property, label] of [["Estimate", translate("workItems.estimate")], ["Labels", translate("workItems.labels")], ["Cycle", translate("workItems.cycle")], ["Modules", translate("workItems.modules")], ["Dates", translate("layout.property.dates")], ["Assignees", translate("workItems.assignees")]] as const) {
     const triggers = ["MOB-1", "MOB-2", "MOB-3"].map((id) => page.getByTestId(`row-${id}`).getByRole("button", { name: new RegExp(`^${label}:`) }));
     const counts = await Promise.all(triggers.map((trigger) => trigger.count()));
-    if (counts.every((count) => count === 0)) continue; // Estimate is optional and disabled in this seed.
     check(counts.every((count) => count === 1), `${property} is present in every list row (Quiet${property}SlotsAlign): ${counts.join(", ")}`);
     const slots = await Promise.all(triggers.map((trigger) => trigger.evaluate((element) => element.getBoundingClientRect().x)));
     check(Math.max(...slots) - Math.min(...slots) < 1, `${property} slots share an x across list rows (Quiet${property}SlotsAlign): ${slots.join(", ")}`);
@@ -151,7 +139,7 @@ try {
   await page.mouse.move(0, 0);
   await row.getByRole("link", { name: "Alpha" }).focus();
   await page.keyboard.press("Tab");
-  check(await row.getByRole("button", { name: new RegExp(`^${translate("workItems.labels")}:`) }).evaluate((element) => document.activeElement === element), "keyboard focus should remain on the next row control");
+  check(await row.getByRole("button", { name: new RegExp(`^${translate("workItems.estimate")}:`) }).evaluate((element) => document.activeElement === element), "keyboard focus should remain on the next row control, Estimate");
   const cycleAfterKeyboardFocus = await emptyCycleTrigger.boundingBox();
   check(Boolean(cycleAfterHover && cycleAfterKeyboardFocus) && Math.abs(cycleAfterHover!.x - cycleAfterKeyboardFocus!.x) < 1 && Math.abs(cycleAfterHover!.y - cycleAfterKeyboardFocus!.y) < 1, "keyboard focus should reveal row controls in stable positions");
   check(await emptyCycleTrigger.evaluate((element) => getComputedStyle(element.parentElement!.parentElement!).opacity === "1"), "keyboard focus should reveal the row's empty property controls");
@@ -214,6 +202,18 @@ try {
   await page.getByRole("menuitemcheckbox", { name: "Auth" }).click();
   await row.getByRole("button", { name: `${translate("workItems.modules")}: Auth` }).waitFor();
   await page.keyboard.press("Escape");
+  await page.mouse.move(0, 0);
+  await mkdir(evidenceShots, { recursive: true });
+  for (const width of [1920, 1440, 1100, 390] as const) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    for (const theme of ["light", "dark"] as const) {
+      await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+      await page.screenshot({ path: `${evidenceShots}/work-items-list-${width}-${theme}.png`, fullPage: true });
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+  await page.screenshot({ path: `${shots}/list-1440-light.png` });
   check(await page.evaluate(() => (window as unknown as { __noReload?: boolean }).__noReload === true), "the page reloaded");
 
   // Enough rows and Cycle options to exercise both the list's scroll container and the picker's own scroll area.

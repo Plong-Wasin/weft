@@ -461,13 +461,14 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
    * The slots of the shown properties add up to the width of the property block. When the row is wide enough for the checkbox, ID, a readable title and that block, they share one line;
    * otherwise the block sits on a second line under the title, in the same columns. Phones keep the wrapping row.
    */
-  const slotRem: Record<string, number> = { estimate: 5.5, labels: 8, cycle: 6.5, modules: 7, dates: 8.5, assignee: 6 };
+  const slotRem: Record<string, number> = { estimate: 5, labels: 7.5, cycle: 6, modules: 6.5, dates: 8, assignee: 5.5 };
   const shownProperties = (["estimate", "labels", "cycle", "modules", "dates", "assignee"] as const).filter((property) => listShows(property));
   const gapPx = 8;
   const rowActionPx = 88;
-  /** Row padding, checkbox and icon controls, ID, title floor, and the gaps between the six columns. */
-  const rowFixedPx = 40 + 16 + 32 + 88 + 32 + 192 + 40;
-  const propertyBlockPx = shownProperties.reduce((sum, property) => sum + (slotRem[property] ?? 0) * 16 + gapPx, 0) + (rowAction ? rowActionPx : 0);
+  /** Row padding, checkbox and icon controls, ID, the actual 8rem title floor, and five 12px grid gaps. */
+  const rowFixedPx = 40 + 16 + 32 + 88 + 32 + 128 + 60;
+  const propertyGaps = Math.max(0, shownProperties.length - 1 + Number(!!rowAction)) * gapPx;
+  const propertyBlockPx = shownProperties.reduce((sum, property) => sum + (slotRem[property] ?? 0) * 16, 0) + propertyGaps + (rowAction ? rowActionPx : 0);
   const oneLine = listWidth >= rowFixedPx + propertyBlockPx;
   const rowOf = (item: Item) => {
     const checkbox = pickBox(item);

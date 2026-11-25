@@ -9,7 +9,14 @@ import { filterPickerOptions, groupPickerOptions, isPickable, isSearchable, move
 import type { Estimate, StateGroup } from "./types";
 
 const t = (key: string) => translate(key as MessageKey);
-const chip = "border border-subtle bg-surface-1 px-2 py-1 text-12 font-medium text-primary hover:bg-layer-transparent-hover";
+const outlinedChip = "border border-subtle bg-surface-1 px-2 py-1 text-12 font-medium text-primary hover:bg-layer-transparent-hover";
+const quietChip = "bg-transparent px-2 py-1 text-12 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary";
+const outlinedIconChip = "border border-subtle bg-surface-1 px-2 py-1 text-12 font-medium text-primary hover:bg-layer-transparent-hover min-h-7 min-w-7 max-sm:min-h-9 max-sm:min-w-9";
+const quietIconChip = "bg-transparent px-2 py-1 text-12 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary min-h-7 min-w-7 max-sm:min-h-9 max-sm:min-w-9";
+export function chipClass(quiet = false, iconOnly = false) {
+  if (quiet) return iconOnly ? quietIconChip : quietChip;
+  return iconOnly ? outlinedIconChip : outlinedChip;
+}
 const optionClass = "flex w-full items-center gap-2 rounded-md bg-transparent px-2.5 py-1.5 text-left text-13 text-primary hover:bg-layer-transparent-hover";
 
 export type Option = { id: string; name: string; icon?: React.ReactNode; isAgent?: boolean; codeCapable?: boolean; hasAccess?: boolean; accessReason?: string | null };
@@ -40,11 +47,11 @@ export function formatDay(value: string) {
 function Trigger({ label, children }: { label: string; children: React.ReactNode }) { return <span title={label} className="flex items-center gap-1.5">{children}</span>; }
 
 /** A read-only property chip that can reveal its full value without requiring hover. */
-function Static({ label, children }: { label: string; children: React.ReactNode }) {
+function Static({ label, children, quiet, className }: { label: string; children: React.ReactNode; quiet?: boolean; className?: string }) {
   const content = <span aria-hidden="true" className="flex min-w-0 items-center gap-1.5">{children}</span>;
   // The same read-only value can fit or clip depending on font metrics, zoom, and viewport width.
   // Always provide a reveal action so touch and keyboard users never depend on hover or guessed text lengths.
-  return <Popover label={label} className={`flex items-center gap-1.5 rounded-md ${chip}`} panelRole="dialog" panelClassName="w-72 max-w-[calc(100vw-2rem)] p-3" trigger={content}>
+  return <Popover label={label} className={`flex items-center gap-1.5 rounded-md ${className ?? chipClass(quiet)}`} panelRole="dialog" panelClassName="w-72 max-w-[calc(100vw-2rem)] p-3" trigger={content}>
     {() => <p tabIndex={0} className="m-0 whitespace-normal break-words text-13 text-primary">{label}</p>}
   </Popover>;
 }
@@ -82,10 +89,11 @@ function PickerBody({ options, onPick, searchAlways, children }: { options: Opti
 }
 
 /** Inline dropdown that picks one option (state, priority, cycle). */
-export function SingleSelect({ label, summary, options, value, onSelect, readOnly, icon, iconOnly }: { label: string; summary: string; options: Option[]; value: string; onSelect: (id: string) => void; readOnly?: boolean; icon?: React.ReactNode; iconOnly?: boolean }) {
+export function SingleSelect({ label, summary, options, value, onSelect, readOnly, icon, iconOnly, quiet }: { label: string; summary: string; options: Option[]; value: string; onSelect: (id: string) => void; readOnly?: boolean; icon?: React.ReactNode; iconOnly?: boolean; quiet?: boolean }) {
   const name = `${label}: ${summary}`;
-  if (readOnly) return <Static label={name}>{icon}{!iconOnly && <span className="max-w-32 truncate" title={summary}>{summary}</span>}</Static>;
-  return <Popover label={name} className={chip} panelClassName="max-h-72 w-52 overflow-auto" trigger={<Trigger label={name}>{icon}<span className={iconOnly ? "hidden text-11 max-sm:inline" : "max-w-32 truncate"}>{summary}</span></Trigger>}>
+  const className = chipClass(quiet, iconOnly);
+  if (readOnly) return <Static label={name} quiet={quiet} className={className}>{icon}{!iconOnly && <span className="max-w-32 truncate" title={summary}>{summary}</span>}</Static>;
+  return <Popover label={name} className={className} panelClassName="max-h-72 w-52 overflow-auto" trigger={<Trigger label={name}>{icon}<span className={iconOnly ? "hidden text-11 max-sm:inline" : "max-w-32 truncate"}>{summary}</span></Trigger>}>
     {(close) => <PickerBody options={options} onPick={(option) => { close(); if (option.id !== value) onSelect(option.id); }}>
       {(visible, activeId, optionId) => visible.map((option) => <button key={option.id} id={optionId(option)} type="button" role="menuitemradio" aria-checked={option.id === value} data-active={option.id === activeId || undefined} className={`${optionClass} data-[active=true]:bg-layer-transparent-hover`}
         onClick={() => { close(); if (option.id !== value) onSelect(option.id); }}>
@@ -96,19 +104,19 @@ export function SingleSelect({ label, summary, options, value, onSelect, readOnl
 }
 
 /** Picks, changes or clears the Estimate point of a work item. Renders nothing while the project has no turned-on Estimate. */
-export function EstimateSelect({ estimate, pointId, onSelect, readOnly, iconOnlyWhenEmpty }: { estimate: Estimate | null; pointId: string | null; onSelect: (pointId: string | null) => void; readOnly?: boolean; iconOnlyWhenEmpty?: boolean }) {
+export function EstimateSelect({ estimate, pointId, onSelect, readOnly, iconOnlyWhenEmpty, quiet }: { estimate: Estimate | null; pointId: string | null; onSelect: (pointId: string | null) => void; readOnly?: boolean; iconOnlyWhenEmpty?: boolean; quiet?: boolean }) {
   if (!estimate?.enabled) return null;
   const summary = estimate.points.find((point) => point.id === pointId)?.value ?? t("workItems.noEstimate");
   const icon = <Sigma aria-hidden size={14} className="text-secondary" />;
-  return <SingleSelect label={t("workItems.estimate")} summary={summary} value={pointId ?? ""} readOnly={readOnly} icon={icon} iconOnly={iconOnlyWhenEmpty && !pointId}
+  return <SingleSelect label={t("workItems.estimate")} summary={summary} value={pointId ?? ""} readOnly={readOnly} quiet={quiet} icon={icon} iconOnly={iconOnlyWhenEmpty && !pointId}
     options={[{ id: "", name: t("workItems.noEstimate") }, ...estimate.points.map((point) => ({ id: point.id, name: point.value }))]} onSelect={(id) => onSelect(id || null)} />;
 }
 
 /** Inline dropdown that toggles any number of options (assignees, labels, modules); it stays open while picking. */
-export function MultiSelect({ label, summary, options, selected, onToggle, readOnly, icon, onOpen, searchAlways }: { label: string; summary: React.ReactNode; options: Option[]; selected: string[]; onToggle: (id: string, on: boolean) => void; readOnly?: boolean; icon?: React.ReactNode; onOpen?: () => void; /** Shows the search field whatever the number of options (the Assignee picker). */ searchAlways?: boolean }) {
+export function MultiSelect({ label, summary, options, selected, onToggle, readOnly, icon, onOpen, searchAlways, quiet }: { label: string; summary: React.ReactNode; options: Option[]; selected: string[]; onToggle: (id: string, on: boolean) => void; readOnly?: boolean; icon?: React.ReactNode; onOpen?: () => void; /** Shows the search field whatever the number of options (the Assignee picker). */ searchAlways?: boolean; quiet?: boolean }) {
   const name = `${label}: ${selected.map((id) => options.find((option) => option.id === id)?.name ?? "").filter(Boolean).join(", ") || "—"}`;
-  if (readOnly) return <Static label={name}>{icon}{summary}</Static>;
-  return <Popover label={name} className={chip} panelClassName="max-h-72 w-52 !min-w-0 overflow-auto" onOpen={onOpen} trigger={<Trigger label={name}>{icon}{summary}</Trigger>}>
+  if (readOnly) return <Static label={name} quiet={quiet}>{icon}{summary}</Static>;
+  return <Popover label={name} className={chipClass(quiet)} panelClassName="max-h-72 w-52 !min-w-0 overflow-auto" onOpen={onOpen} trigger={<Trigger label={name}>{icon}{summary}</Trigger>}>
     {() => options.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-tertiary">—</p> : <PickerBody options={options} searchAlways={searchAlways} onPick={(option) => { if (isPickable(option)) onToggle(option.id, !selected.includes(option.id)); }}>
       {(visible, activeId, optionId) => <>{[false, true].map((agents) => {
       const group = visible.filter((option) => !!option.isAgent === agents);
@@ -127,31 +135,32 @@ export function MultiSelect({ label, summary, options, selected, onToggle, readO
 }
 
 /** A calendar popover for the Start and Due dates of a work item; it opens on `field` and picks both dates in one calendar. */
-export function DatePopover({ label, trigger, range, field, onChange, className = chip, clearable }: { label: string; trigger: React.ReactNode; range: DateRange; field: DateField; onChange: (change: Partial<DateRange>) => void; className?: string; clearable?: boolean }) {
+export function DatePopover({ label, trigger, range, field, onChange, className = outlinedChip, clearable }: { label: string; trigger: React.ReactNode; range: DateRange; field: DateField; onChange: (change: Partial<DateRange>) => void; className?: string; clearable?: boolean }) {
   return <Popover label={label} className={className} panelRole="dialog" panelClassName="grid w-64 gap-2 p-3" trigger={trigger}>
     {() => <DatePanel range={range} field={field} onChange={onChange} clearable={clearable} />}
   </Popover>;
 }
 
 /** One date (Start or Due) of a work item as text, such as "Nov 20"; it opens the calendar on that field. Overdue Due dates show red. */
-export function DateChip({ label, field, range, onChange, readOnly, stateGroup, icon }: { label: string; field: DateField; range: DateRange; onChange: (change: Partial<DateRange>) => void; readOnly?: boolean; stateGroup?: StateGroup; icon?: React.ReactNode }) {
+export function DateChip({ label, field, range, onChange, readOnly, stateGroup, icon, quiet }: { label: string; field: DateField; range: DateRange; onChange: (change: Partial<DateRange>) => void; readOnly?: boolean; stateGroup?: StateGroup; icon?: React.ReactNode; quiet?: boolean }) {
   const value = field === "start" ? range.startDate : range.dueDate;
   const text = value ? shortDay(value) : t("datePicker.noDate");
   const late = field === "due" && isOverdue(value, todayKey(), stateGroup);
   // The overdue word is part of the accessible name: the trigger's aria-label replaces its visible text for screen readers.
   const name = late ? `${label}: ${text}, ${t("datePicker.overdue")}` : `${label}: ${text}`;
   const body = <>{icon}<span className={`min-w-0 max-w-32 truncate ${late ? "text-danger-text" : ""}`} title={late ? t("datePicker.overdue") : undefined}>{text}</span>{late && <span className="sr-only">{t("datePicker.overdue")}</span>}</>;
-  if (readOnly) return <Static label={name}>{body}</Static>;
-  return <DatePopover label={name} range={range} field={field} onChange={onChange} trigger={<Trigger label={name}>{body}</Trigger>} />;
+  if (readOnly) return <Static label={name} quiet={quiet}>{body}</Static>;
+  return <DatePopover label={name} range={range} field={field} onChange={onChange} className={chipClass(quiet)} trigger={<Trigger label={name}>{body}</Trigger>} />;
 }
 
 /** Inline dropdown with the start and due date of a work item: one calendar popover for both. `clearable={false}` hides "No date" where clearing is not offered (the bulk bar). */
-export function DatesMenu({ startDate, dueDate, onChange, readOnly, iconOnlyWhenEmpty, stateGroup, clearable }: { startDate: string | null; dueDate: string | null; onChange: (change: Partial<DateRange>) => void; readOnly?: boolean; iconOnlyWhenEmpty?: boolean; stateGroup?: StateGroup; clearable?: boolean }) {
+export function DatesMenu({ startDate, dueDate, onChange, readOnly, iconOnlyWhenEmpty, stateGroup, clearable, quiet }: { startDate: string | null; dueDate: string | null; onChange: (change: Partial<DateRange>) => void; readOnly?: boolean; iconOnlyWhenEmpty?: boolean; stateGroup?: StateGroup; clearable?: boolean; quiet?: boolean }) {
   const text = startDate && dueDate ? `${shortDay(startDate)} – ${shortDay(dueDate)}` : startDate ? shortDay(startDate) : dueDate ? shortDay(dueDate) : t("workItems.noDates");
   const iconOnly = iconOnlyWhenEmpty && !startDate && !dueDate;
   const late = isOverdue(dueDate, todayKey(), stateGroup);
   const name = `${t("layout.property.dates")}: ${text}${late ? `, ${t("datePicker.overdue")}` : ""}`;
   const body = <><CalendarDays aria-hidden size={14} className="text-secondary" /><span className={`min-w-0 max-w-32 truncate ${iconOnly ? "hidden text-11 max-sm:inline" : ""} ${late ? "text-danger-text" : ""}`} title={late ? t("datePicker.overdue") : undefined}>{text}</span>{late && <span className="sr-only">{t("datePicker.overdue")}</span>}</>;
-  if (readOnly) return <Static label={name}>{body}</Static>;
-  return <DatePopover label={name} trigger={<Trigger label={name}>{body}</Trigger>} range={{ startDate, dueDate }} field={startDate || !dueDate ? "start" : "due"} onChange={onChange} clearable={clearable} />;
+  const className = chipClass(quiet, iconOnly);
+  if (readOnly) return <Static label={name} quiet={quiet} className={className}>{body}</Static>;
+  return <DatePopover label={name} className={className} trigger={<Trigger label={name}>{body}</Trigger>} range={{ startDate, dueDate }} field={startDate || !dueDate ? "start" : "due"} onChange={onChange} clearable={clearable} />;
 }

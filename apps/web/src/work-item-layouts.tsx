@@ -411,34 +411,37 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const listShows = (property: DisplayProperty) => property === "estimate" ? showEstimate : property === "cycle" ? showCycle : property === "modules" ? showModules : shows(property);
 
   /** `compact` (board cards) shows an empty property as its icon alone. */
-  const cellOf = (item: Item, property: DisplayProperty, compact = false): React.ReactNode => {
+  const cellOf = (item: Item, property: DisplayProperty, compact = false, rowQuiet = false): React.ReactNode => {
     const assignees = item.assigneeIds;
     const mine = modulesOf[item.id] ?? [];
     switch (property) {
-      case "state": return <SingleSelect label={t("workItems.state")} summary={states.find((state) => state.id === item.stateId)?.name ?? ""} value={item.stateId} readOnly={readOnly}
+      case "state": return <SingleSelect label={t("workItems.state")} summary={states.find((state) => state.id === item.stateId)?.name ?? ""} value={item.stateId} readOnly={readOnly} quiet={rowQuiet} iconOnly={rowQuiet}
           icon={<StateIcon group={states.find((state) => state.id === item.stateId)?.group ?? "unstarted"} />}
           options={states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> }))} onSelect={(stateId) => void change(item, { stateId })} />;
-      case "priority": return <SingleSelect label={t("workItems.priority")} iconOnly={compact && item.priority === "none"} summary={t(`workItems.priority.${item.priority}`)} value={item.priority} readOnly={readOnly} icon={<PriorityIcon priority={item.priority} />}
+      case "priority": return <SingleSelect label={t("workItems.priority")} iconOnly={rowQuiet || compact && item.priority === "none"} quiet={rowQuiet} summary={t(`workItems.priority.${item.priority}`)} value={item.priority} readOnly={readOnly} icon={<PriorityIcon priority={item.priority} />}
           options={priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> }))} onSelect={(priority) => void change(item, { priority })} />;
-      case "assignee": return <MultiSelect label={t("workItems.assignees")} readOnly={readOnly} selected={assignees} searchAlways onOpen={() => { void action<Person[]>("list_project_members", { projectId }).then((rows) => rows && setPeople(rows)); }} icon={assignees.length === 0 ? <Users aria-hidden size={14} className="text-secondary" /> : undefined}
+      case "assignee": return <MultiSelect label={t("workItems.assignees")} readOnly={readOnly} selected={assignees} quiet={rowQuiet} searchAlways onOpen={() => { void action<Person[]>("list_project_members", { projectId }).then((rows) => rows && setPeople(rows)); }} icon={assignees.length === 0 ? <Users aria-hidden size={14} className="text-secondary" /> : undefined}
           summary={assignees.length === 0 ? compact ? <span className="hidden text-11 max-sm:inline">{t("workItems.noAssignee")}</span> : <span className="text-secondary">{t("workItems.noAssignee")}</span> : <span className="flex items-center -space-x-1">{assignees.slice(0, 3).map((id) => <Avatar key={id} name={personName(id)} id={id} agent={isAgentId(id)} />)}{assignees.length > 3 && <span className="pl-2 text-12">+{formatNumber(assignees.length - 3)}</span>}</span>}
           options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: accessReasonText(person) }))}
           onToggle={(id, on) => void change(item, { assigneeIds: on ? [...assignees, id] : assignees.filter((other) => other !== id) })} />;
       case "labels": {
         const labelNames = item.labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ");
-        return <MultiSelect label={t("workItems.labels")} readOnly={readOnly} selected={item.labelIds} icon={<Tag aria-hidden size={14} className="text-secondary" />}
-          summary={item.labelIds.length === 0 ? compact ? <span className="hidden text-11 max-sm:inline">{t("layout.noLabel")}</span> : <span className="text-secondary">{t("layout.noLabel")}</span> : <span className="block max-w-28 truncate" title={labelNames}>{labelNames}</span>}
+        const labelSummary = rowQuiet && item.labelIds.length > 0
+          ? <span className="flex max-w-24 min-w-0 items-center gap-1.5">{item.labelIds.slice(0, 2).map((id) => { const label = labels.find((candidate) => candidate.id === id); return label && <span key={id} className="inline-flex min-w-0 items-center gap-1"><span aria-hidden className="size-2 rounded-full shrink-0" style={{ backgroundColor: label.color }} /><span className="truncate" title={label.name}>{label.name}</span></span>; })}{item.labelIds.length > 2 && <span className="shrink-0">+{item.labelIds.length - 2}</span>}</span>
+          : item.labelIds.length === 0 ? compact ? <span className="hidden text-11 max-sm:inline">{t("layout.noLabel")}</span> : <span className="text-secondary">{t("layout.noLabel")}</span> : <span className="block max-w-28 truncate" title={labelNames}>{labelNames}</span>;
+        return <MultiSelect label={t("workItems.labels")} readOnly={readOnly} selected={item.labelIds} quiet={rowQuiet} icon={<Tag aria-hidden size={14} className="text-secondary" />}
+          summary={labelSummary}
           options={labels.map((label) => ({ id: label.id, name: label.name, icon: <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: label.color }} /> }))}
           onToggle={(id, on) => void change(item, { labelIds: on ? [...item.labelIds, id] : item.labelIds.filter((other) => other !== id) })} />;
       }
-      case "estimate": return <EstimateSelect estimate={estimate} pointId={item.estimatePointId ?? null} readOnly={readOnly} iconOnlyWhenEmpty={compact} onSelect={(estimatePointId) => void change(item, { estimatePointId })} />;
-      case "dates": return <DatesMenu iconOnlyWhenEmpty={compact} startDate={item.startDate} dueDate={item.dueDate} stateGroup={states.find((state) => state.id === item.stateId)?.group} readOnly={readOnly} onChange={(dates) => void change(item, dates)} />;
-      case "cycle": return <SingleSelect iconOnly={compact && !cycleOf[item.id]} label={t("workItems.cycle")} readOnly={readOnly} value={cycleOf[item.id] ?? ""} icon={<RefreshCw aria-hidden size={14} className="text-secondary" />}
+      case "estimate": return <EstimateSelect estimate={estimate} pointId={item.estimatePointId ?? null} readOnly={readOnly} iconOnlyWhenEmpty={compact} quiet={rowQuiet} onSelect={(estimatePointId) => void change(item, { estimatePointId })} />;
+      case "dates": return <DatesMenu iconOnlyWhenEmpty={compact} startDate={item.startDate} dueDate={item.dueDate} stateGroup={states.find((state) => state.id === item.stateId)?.group} readOnly={readOnly} quiet={rowQuiet} onChange={(dates) => void change(item, dates)} />;
+      case "cycle": return <SingleSelect iconOnly={compact && !cycleOf[item.id]} label={t("workItems.cycle")} readOnly={readOnly} quiet={rowQuiet} value={cycleOf[item.id] ?? ""} icon={<RefreshCw aria-hidden size={14} className="text-secondary" />}
           summary={cycleOptions.find((cycle) => cycle.id === cycleOf[item.id])?.name ?? t("workItems.noCycle")}
           options={[{ id: "", name: t("workItems.noCycle") }, ...cycleOptions.filter((cycle) => cycle.status !== "completed" || cycle.id === cycleOf[item.id]).map((cycle) => ({ id: cycle.id, name: cycle.name }))]} onSelect={(id) => void setCycle(item, id)} />;
       case "modules": {
         const moduleNames = mine.map((id) => moduleOptions.find((module) => module.id === id)?.name).filter(Boolean).join(", ");
-        return <MultiSelect label={t("workItems.modules")} readOnly={readOnly} selected={mine} icon={<Package aria-hidden size={14} className="text-secondary" />}
+        return <MultiSelect label={t("workItems.modules")} readOnly={readOnly} selected={mine} quiet={rowQuiet} icon={<Package aria-hidden size={14} className="text-secondary" />}
           summary={mine.length === 0 ? compact ? <span className="hidden text-11 max-sm:inline">{t("workItems.noModules")}</span> : <span className="text-secondary">{t("workItems.noModules")}</span> : <span className="block max-w-28 truncate" title={moduleNames}>{moduleNames}</span>}
           options={moduleOptions.map((module) => ({ id: module.id, name: module.name }))} onToggle={(id, on) => void setModule(item, id, on)} />;
       }
@@ -458,29 +461,36 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
    * The slots of the shown properties add up to the width of the property block. When the row is wide enough for the checkbox, ID, a readable title and that block, they share one line;
    * otherwise the block sits on a second line under the title, in the same columns. Phones keep the wrapping row.
    */
-  const slotRem: Record<string, number> = { state: 6.75, priority: 6.5, estimate: 5.5, assignee: 6, labels: 7, dates: 8.5, cycle: 6.5, modules: 7 };
-  const shownProperties = (["state", "priority", "estimate", "assignee", "labels", "dates", "cycle", "modules"] as const).filter((property) => listShows(property));
+  const slotRem: Record<string, number> = { estimate: 5.5, labels: 8, cycle: 6.5, modules: 7, dates: 8.5, assignee: 6 };
+  const shownProperties = (["estimate", "labels", "cycle", "modules", "dates", "assignee"] as const).filter((property) => listShows(property));
   const gapPx = 8;
   const rowActionPx = 88;
-  /** Row padding (40) + checkbox (16) + ID (88) + title floor (192) + the three gaps between the four columns (36). */
-  const rowFixedPx = 40 + 16 + 88 + 192 + 36;
+  /** Row padding, checkbox and icon controls, ID, title floor, and the gaps between the six columns. */
+  const rowFixedPx = 40 + 16 + 32 + 88 + 32 + 192 + 40;
   const propertyBlockPx = shownProperties.reduce((sum, property) => sum + (slotRem[property] ?? 0) * 16 + gapPx, 0) + (rowAction ? rowActionPx : 0);
   const oneLine = listWidth >= rowFixedPx + propertyBlockPx;
-  const rowOf = (item: Item) => (
-    <li key={item.id} data-testid={`row-${item.displayId}`} className={`group/row border-b border-subtle px-5 py-2.5 hover:bg-layer-transparent-hover ${selected.includes(item.id) ? "bg-layer-1" : "bg-surface-1"}`}>
-      <div className={`flex flex-wrap items-center gap-x-3 gap-y-2 sm:grid sm:gap-y-1.5 ${oneLine ? "sm:grid-cols-[1rem_5.5rem_minmax(8rem,1fr)_auto]" : "sm:grid-cols-[1rem_5.5rem_minmax(8rem,1fr)]"}`}>
-        {pickBox(item) || <span aria-hidden className="max-sm:hidden" />}
-        {shows("id") ? <span title={item.displayId} className="min-w-[5.5rem] shrink-0 whitespace-nowrap text-12 tabular-nums text-tertiary sm:min-w-0 sm:truncate">{item.displayId}</span> : <span aria-hidden className="max-sm:hidden" />}
-        <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="min-w-40 flex-1 truncate text-14 font-medium text-primary sm:min-w-0">{item.title}</Link>
-        <div className={`flex flex-wrap items-center gap-2 ${oneLine ? "sm:col-start-4 sm:flex-nowrap" : "sm:col-start-3"}`}>
+  const rowOf = (item: Item) => {
+    const checkbox = pickBox(item);
+    return (
+    <li key={item.id} data-testid={`row-${item.displayId}`} className={`group/row border-b border-subtle px-5 py-1.5 hover:bg-layer-transparent-hover ${selected.includes(item.id) ? "bg-layer-1" : "bg-surface-1"}`}>
+      <div className={`flex flex-wrap items-center gap-x-3 gap-y-2 sm:grid sm:gap-y-1.5 ${oneLine ? "sm:grid-cols-[1rem_2rem_5.5rem_2rem_minmax(8rem,1fr)_auto]" : "sm:grid-cols-[1rem_2rem_5.5rem_2rem_minmax(8rem,1fr)]"}`}>
+        <div className="flex shrink-0 items-center gap-1 sm:contents">
+          <span className="flex size-4 shrink-0 items-center justify-center sm:size-4">{checkbox || <span aria-hidden />}</span>
+          {listShows("priority") ? <span className={`flex size-7 shrink-0 items-center justify-center ${isEmptyProperty(item, "priority") ? "[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-hover/row:pointer-events-auto [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:pointer-events-auto [@media(hover:hover)]:group-has-[[aria-expanded=true]]/row:opacity-100 [@media(hover:hover)]:group-has-[[aria-expanded=true]]/row:pointer-events-auto" : ""}`}>{cellOf(item, "priority", false, true)}</span> : <span aria-hidden className="size-7 shrink-0" />}
+          {shows("id") ? <span title={item.displayId} className="min-w-[5.5rem] shrink-0 whitespace-nowrap text-12 tabular-nums text-tertiary sm:min-w-0 sm:truncate">{item.displayId}</span> : <span aria-hidden className="w-[5.5rem] shrink-0 sm:w-auto" />}
+          {listShows("state") ? <span className="flex size-7 shrink-0 items-center justify-center">{cellOf(item, "state", false, true)}</span> : <span aria-hidden className="size-7 shrink-0" />}
+        </div>
+        <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="min-w-40 flex-1 truncate text-14 font-medium text-primary sm:col-start-5 sm:min-w-0">{item.title}</Link>
+        <div className={`flex w-full flex-wrap items-center gap-2 pl-8 sm:w-auto sm:pl-0 ${oneLine ? "sm:col-start-6 sm:flex-nowrap" : "sm:col-start-5 sm:row-start-2 sm:flex-nowrap"}`}>
           {shownProperties.map((property) => isEmptyProperty(item, property)
-            ? <span key={property} style={{ "--slot": `${slotRem[property]}rem` } as React.CSSProperties} className="sm:-mx-1 sm:-my-[5px] sm:box-content sm:flex sm:w-[var(--slot)] sm:shrink-0 sm:overflow-hidden sm:whitespace-nowrap sm:px-1 sm:py-[5px] sm:[&>*]:max-w-full sm:[&_*]:min-w-0 sm:[&_svg]:shrink-0 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-hover/row:pointer-events-auto [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:pointer-events-auto [@media(hover:hover)]:group-has-[[aria-expanded=true]]/row:opacity-100 [@media(hover:hover)]:group-has-[[aria-expanded=true]]/row:pointer-events-auto">{cellOf(item, property)}</span>
-            : <span key={property} style={{ "--slot": `${slotRem[property]}rem` } as React.CSSProperties} className="sm:-mx-1 sm:-my-[5px] sm:box-content sm:flex sm:w-[var(--slot)] sm:shrink-0 sm:overflow-hidden sm:whitespace-nowrap sm:px-1 sm:py-[5px] sm:[&>*]:max-w-full sm:[&_*]:min-w-0 sm:[&_svg]:shrink-0">{cellOf(item, property)}</span>)}
+            ? <span key={property} style={{ "--slot": `${slotRem[property]}rem` } as React.CSSProperties} className="sm:-mx-1 sm:-my-[5px] sm:box-content sm:flex sm:w-[var(--slot)] sm:shrink-0 sm:overflow-hidden sm:whitespace-nowrap sm:px-1 sm:py-[5px] sm:[&>*]:max-w-full sm:[&_*]:min-w-0 sm:[&_svg]:shrink-0 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-hover/row:pointer-events-auto [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:pointer-events-auto [@media(hover:hover)]:group-has-[[aria-expanded=true]]/row:opacity-100 [@media(hover:hover)]:group-has-[[aria-expanded=true]]/row:pointer-events-auto">{cellOf(item, property, false, true)}</span>
+            : <span key={property} style={{ "--slot": `${slotRem[property]}rem` } as React.CSSProperties} className="sm:-mx-1 sm:-my-[5px] sm:box-content sm:flex sm:w-[var(--slot)] sm:shrink-0 sm:overflow-hidden sm:whitespace-nowrap sm:px-1 sm:py-[5px] sm:[&>*]:max-w-full sm:[&_*]:min-w-0 sm:[&_svg]:shrink-0">{cellOf(item, property, false, true)}</span>)}
           {rowAction?.(item)}
         </div>
       </div>
     </li>
-  );
+    );
+  };
 
   const quickForm = (groupKey: string) => <form className="my-0 flex items-center gap-2 border-b border-subtle bg-surface-1 px-5 py-2" onSubmit={(event) => { event.preventDefault(); void create(groupKey); }}>
     <input autoFocus aria-label={t("workItems.titleField")} placeholder={t("workItems.quickTitle")} value={quickTitle} maxLength={500} className="flex-1" onChange={(event) => setQuickTitle(event.target.value)}
@@ -522,7 +532,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     });
     anchor.current = id;
   };
-  const pickBox = (item: Item) => selectable && <input type="checkbox" data-no-drag className="size-4 shrink-0" aria-label={t("bulk.selectItem").replace("{id}", item.displayId)} checked={selected.includes(item.id)}
+  const pickBox = (item: Item) => selectable && <input type="checkbox" data-no-drag className={`relative z-10 size-4 shrink-0 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100 ${selected.includes(item.id) ? "opacity-100" : ""}`} aria-label={t("bulk.selectItem").replace("{id}", item.displayId)} checked={selected.includes(item.id)}
     onChange={() => undefined} onClick={(event) => pick(item.id, event.shiftKey)} />;
   // Collapsing a group hides its work items, so they leave the selection too: the bar never acts on what the user cannot see.
   const visibleKey = orderedIds.join(",");

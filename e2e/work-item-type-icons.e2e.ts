@@ -173,6 +173,8 @@ try {
   await propertiesToggle.waitFor();
   if (await propertiesToggle.getAttribute("aria-pressed") !== "true") await propertiesToggle.click();
   const detail = page.getByRole("complementary", { name: t("workItems.properties") });
+  const detailStateChip = detail.getByRole("button", { name: new RegExp(`^${t("workItems.state")}:`) });
+  check(await detailStateChip.evaluate((element) => getComputedStyle(element).borderTopWidth === "1px"), "work item detail State chip should retain its outlined border");
   const notes = detail.locator("[data-property-fields] input");
   await notes.waitFor({ state: "visible" });
   const detailState = await detail.evaluate((element) => ({ viewport: innerWidth, className: element.className, display: getComputedStyle(element).display, rect: element.getBoundingClientRect().toJSON() }));

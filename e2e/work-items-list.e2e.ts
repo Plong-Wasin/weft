@@ -98,6 +98,19 @@ try {
   check(await done.getAttribute("aria-expanded") === "false", "an empty group did not collapse again");
   await page.screenshot({ path: `${shots}/list-1440-light.png` });
 
+  // Named acceptance check: the 1440 px list row is icon-first, quiet, and fits on one line.
+  const firstRow = page.getByTestId("row-MOB-1");
+  const priorityControl = firstRow.getByRole("button", { name: `${translate("workItems.priority")}: ${translate("workItems.priority.none")}` });
+  const stateControl = firstRow.getByRole("button", { name: `${translate("workItems.state")}: Backlog` });
+  const desktopRowMetrics = await page.locator('[data-testid^="row-"]').evaluateAll((rows) => rows.map((row) => ({ id: row.getAttribute("data-testid"), height: row.getBoundingClientRect().height, title: row.querySelector("a")?.getBoundingClientRect().toJSON() })));
+  check(desktopRowMetrics.length > 0 && desktopRowMetrics.every((row) => row.height <= 44 && row.height >= 36), `every 1440 px list row should be one line and at most 44 px tall: ${JSON.stringify(desktopRowMetrics)}`);
+  for (const control of [priorityControl, stateControl]) {
+    check(await control.evaluate((element) => getComputedStyle(element).borderTopWidth === "0px" && getComputedStyle(element.querySelector(".hidden.text-11")!).display === "none"), "row State and Priority controls should be icon-only with no border");
+    check(await control.evaluate((element) => { const box = element.getBoundingClientRect(); return box.width >= 28 && box.height >= 28; }), "row State and Priority hit areas should be at least 28 px square");
+  }
+  const cycleSlots = await Promise.all(["MOB-1", "MOB-2"].map(async (id) => page.getByTestId(`row-${id}`).getByRole("button", { name: new RegExp(`^${translate("workItems.cycle")}:`) }).evaluate((element) => element.getBoundingClientRect().x)));
+  check(Math.abs(cycleSlots[0]! - cycleSlots[1]!) < 1, `the same property slot should start at a fixed x: ${cycleSlots.join(", ")}`);
+
   // Each inline dropdown changes the work item without a reload (a marker on window survives only without navigation).
   await page.evaluate(() => { (window as unknown as { __noReload: boolean }).__noReload = true; });
   await page.getByRole("button", { name: translate("layout.display") }).click();
@@ -114,7 +127,7 @@ try {
   await page.mouse.move(0, 0);
   await row.getByRole("link", { name: "Alpha" }).focus();
   await page.keyboard.press("Tab");
-  check(await row.getByRole("button", { name: new RegExp(`^${translate("workItems.state")}:`) }).evaluate((element) => document.activeElement === element), "keyboard focus should remain on the next row control");
+  check(await row.getByRole("button", { name: new RegExp(`^${translate("workItems.labels")}:`) }).evaluate((element) => document.activeElement === element), "keyboard focus should remain on the next row control");
   const cycleAfterKeyboardFocus = await emptyCycleTrigger.boundingBox();
   check(Boolean(cycleAfterHover && cycleAfterKeyboardFocus) && Math.abs(cycleAfterHover!.x - cycleAfterKeyboardFocus!.x) < 1 && Math.abs(cycleAfterHover!.y - cycleAfterKeyboardFocus!.y) < 1, "keyboard focus should reveal row controls in stable positions");
   check(await emptyCycleTrigger.evaluate((element) => getComputedStyle(element.parentElement!.parentElement!).opacity === "1"), "keyboard focus should reveal the row's empty property controls");
@@ -261,6 +274,13 @@ try {
   const mobileContext = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, isMobile: true, hasTouch: true, storageState: await context.storageState() });
   const mobilePage = await mobileContext.newPage();
   await mobilePage.goto(mobileListUrl);
+  const mobileRow = mobilePage.getByTestId("row-MOB-1");
+  const mobileRowLines = await mobileRow.evaluate((row) => {
+    const title = row.querySelector("a")!.getBoundingClientRect();
+    const rightBlock = [...row.children[0]!.children].find((element) => element.tagName === "DIV" && element.querySelector('[aria-label^="Cycle:"]'))!.getBoundingClientRect();
+    return { titleY: title.y, rightY: rightBlock.y, viewport: document.documentElement.clientWidth, page: document.documentElement.scrollWidth };
+  });
+  check(mobileRowLines.rightY > mobileRowLines.titleY && mobileRowLines.page <= mobileRowLines.viewport, `390 px rows should wrap properties under the title without horizontal page scroll: ${JSON.stringify(mobileRowLines)}`);
   const mobileCycleTrigger = mobilePage.getByTestId("row-MOB-1").getByRole("button", { name: `${translate("workItems.cycle")}: Sprint 17` });
   await mobileCycleTrigger.click();
   const mobileCycleMenu = mobilePage.locator("[data-popover-panel]");
@@ -288,6 +308,8 @@ try {
   await phoneCard.getByText(translate("workItems.noModules"), { exact: true }).waitFor();
   await phoneCard.getByText(translate("workItems.noCycle"), { exact: true }).waitFor();
   await phoneCard.getByText(translate("workItems.noDates"), { exact: true }).waitFor();
+  const boardPriority = phoneCard.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}:`) });
+  check(await boardPriority.evaluate((element) => getComputedStyle(element).borderTopWidth === "1px"), "board card Priority chip should retain its outlined border");
   await page.screenshot({ path: `${shots}/board-390-light.png` });
   await page.getByRole("button", { name: translate("layout.addToGroup").replace("{group}", translate("workItems.priority.none")) }).getByText(translate("layout.addShort")).waitFor();
   await page.getByRole("button", { name: translate("layout.gantt") }).click();

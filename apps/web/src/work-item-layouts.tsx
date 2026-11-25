@@ -445,7 +445,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const rowOf = (item: Item) => (
     <li key={item.id} data-testid={`row-${item.displayId}`} className={`group/row flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-subtle px-5 py-2.5 hover:bg-layer-transparent-hover ${selected.includes(item.id) ? "bg-layer-1" : "bg-surface-1"}`}>
       {pickBox(item)}
-      {shows("id") && <span className="w-16 shrink-0 text-12 text-tertiary">{item.displayId}</span>}
+      {shows("id") && <span className="min-w-[5.5rem] shrink-0 whitespace-nowrap text-12 tabular-nums text-tertiary">{item.displayId}</span>}
       <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="min-w-40 flex-1 truncate text-14 font-medium text-primary">{item.title}</Link>
       <div className="flex flex-wrap items-center gap-2">
         {(["state", "priority", "estimate", "assignee", "labels", "dates", "cycle", "modules"] as const).filter((property) => listShows(property)).map((property) => isEmptyProperty(item, property)

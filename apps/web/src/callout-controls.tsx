@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { translate } from "@weft/shared";
 import { editorPalette } from "../../../packages/actions/src/wiki-editor-extensions";
@@ -12,15 +13,15 @@ export function CalloutControls({ editor, editable }: { editor: Editor | null; e
   const active = useEditorState({ editor, selector: ({ editor: current }) => !!current?.isActive("callout") });
   if (!editable || !editor || !active) return null;
   return <div className="callout-controls">
-    <button type="button" aria-label={translate("callout.options")} aria-expanded={open} onMouseDown={(event) => event.preventDefault()} onClick={() => setOpen((value) => !value)}>{translate("callout.options")}</button>
+    <Button type="button" aria-label={translate("callout.options")} aria-expanded={open} onMouseDown={(event) => event.preventDefault()} onClick={() => setOpen((value) => !value)}>{translate("callout.options")}</Button>
     {open && <div className="callout-picker" role="group" aria-label={translate("callout.options")}>
       <div className="callout-picker-colors" aria-label={translate("callout.color")}>
-        {editorPalette.map((color) => <button key={color} type="button" aria-label={`${translate("callout.color")} ${color}`} title={color} style={{ backgroundColor: color }} onMouseDown={(event) => event.preventDefault()} onClick={() => editor.chain().focus().updateAttributes("callout", { color }).run()} />)}
+        {editorPalette.map((color) => <Button key={color} type="button" aria-label={`${translate("callout.color")} ${color}`} title={color} style={{ backgroundColor: color }} onMouseDown={(event) => event.preventDefault()} onClick={() => editor.chain().focus().updateAttributes("callout", { color }).run()} />)}
       </div>
       <div className="callout-picker-icons" aria-label={translate("callout.icon")}>
-        {writtenFormCalloutIcons.map((icon) => <button key={icon} type="button" aria-label={`${translate("callout.icon")} ${icon}`} onMouseDown={(event) => event.preventDefault()} onClick={() => editor.chain().focus().updateAttributes("callout", { icon }).run()}>{icon}</button>)}
+        {writtenFormCalloutIcons.map((icon) => <Button key={icon} type="button" aria-label={`${translate("callout.icon")} ${icon}`} onMouseDown={(event) => event.preventDefault()} onClick={() => editor.chain().focus().updateAttributes("callout", { icon }).run()}>{icon}</Button>)}
       </div>
-      <button type="button" onClick={() => setOpen(false)}>{translate("callout.done")}</button>
+      <Button type="button" onClick={() => setOpen(false)}>{translate("callout.done")}</Button>
     </div>}
   </div>;
 }

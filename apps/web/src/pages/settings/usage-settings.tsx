@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { formatNumber, translate } from "@weft/shared";
 import { action, actionResult } from "../../api";
@@ -109,7 +110,7 @@ export function WorkspaceUsage() {
     <div className="mb-5 flex flex-wrap items-end gap-3">
       <label>{translate("usage.from")}<input type="date" value={from} onChange={(event) => setFrom(event.target.value)} /></label>
       <label>{translate("usage.to")}<input type="date" value={to} onChange={(event) => setTo(event.target.value)} /></label>
-      <button type="button" className="secondary" disabled={!summary || rows.length === 0} onClick={() => download(`usage-${from}-${to}.csv`, usageCsv(rows, agentLabel, (row) => row.personName))}>{translate("usage.exportCsv")}</button>
+      <Button type="button" className="secondary" disabled={!summary || rows.length === 0} onClick={() => download(`usage-${from}-${to}.csv`, usageCsv(rows, agentLabel, (row) => row.personName))}>{translate("usage.exportCsv")}</Button>
     </div>
     <Note note={!range ? translate("usage.invalidRange") : failed ? translate("usage.loadFailed") : null} error />
     {totals && <>
@@ -132,8 +133,8 @@ export function WorkspaceUsage() {
         {prices.map((price) => <Row key={price.id}>
           <span className="min-w-40 flex-1 font-medium text-primary">{price.model}</span>
           <span className="text-13 text-secondary">{formatUsd(price.inputUsdPerMillion)} / {formatUsd(price.outputUsdPerMillion)}{price.cachedInputUsdPerMillion !== null && ` · ${fill(translate("usage.priceCachedShown"), { price: formatUsd(price.cachedInputUsdPerMillion) ?? "" })}`}</span>
-          <button type="button" className="secondary" onClick={() => setDraft({ model: price.model, input: String(price.inputUsdPerMillion), output: String(price.outputUsdPerMillion), cached: price.cachedInputUsdPerMillion === null ? "" : String(price.cachedInputUsdPerMillion) })}>{translate("agents.edit")}</button>
-          <button type="button" className="secondary" onClick={() => void removePrice(price)}>{translate("usage.priceRemove")}</button>
+          <Button type="button" className="secondary" onClick={() => setDraft({ model: price.model, input: String(price.inputUsdPerMillion), output: String(price.outputUsdPerMillion), cached: price.cachedInputUsdPerMillion === null ? "" : String(price.cachedInputUsdPerMillion) })}>{translate("agents.edit")}</Button>
+          <Button type="button" className="secondary" onClick={() => void removePrice(price)}>{translate("usage.priceRemove")}</Button>
         </Row>)}
       </RowList>}
       <div className="grid gap-3 md:grid-cols-4">
@@ -142,7 +143,7 @@ export function WorkspaceUsage() {
         <label>{translate("usage.priceOutput")}<input type="number" min={0} step="0.0001" value={draft.output} onChange={(event) => setDraft({ ...draft, output: event.target.value })} /></label>
         <label title={translate("usage.priceCachedHint")}>{translate("usage.priceCached")}<input type="number" min={0} step="0.0001" value={draft.cached} onChange={(event) => setDraft({ ...draft, cached: event.target.value })} /></label>
       </div>
-      <button type="button" className="w-fit" disabled={!draft.model.trim() || draft.input === "" || draft.output === ""} onClick={() => void savePrice()}>{translate("usage.priceSave")}</button>
+      <Button type="button" className="w-fit" disabled={!draft.model.trim() || draft.input === "" || draft.output === ""} onClick={() => void savePrice()}>{translate("usage.priceSave")}</Button>
       <Note note={note} error={noteFailed} />
     </SettingsBlock>
     {(summary?.unpricedModels.length ?? 0) > 0 && <SettingsBlock title={translate("usage.unpricedTitle")} description={translate("usage.unpricedDesc")}>

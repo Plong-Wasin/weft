@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { translate } from "@weft/shared";
 import { action, actionResult } from "../../api";
@@ -16,7 +17,7 @@ function SkillEditor({ draft, onChange, onSubmit, onCancel }: { draft: SkillDraf
     <p id="skill-name-hint" className="text-13 text-secondary">{translate("skills.nameHint")}</p>
     <label>{translate("skills.descriptionField")}<textarea maxLength={1024} rows={2} value={draft.description} onChange={set("description")} /></label>
     <label>{translate("skills.instructions")}<textarea maxLength={8000} rows={5} value={draft.instructions} onChange={set("instructions")} /></label>
-    <div className="flex gap-2"><button type="submit">{translate("skills.save")}</button>{onCancel && <button type="button" className="secondary" onClick={onCancel}>{translate("agents.cancel")}</button>}</div>
+    <div className="flex gap-2"><Button type="submit">{translate("skills.save")}</Button>{onCancel && <Button type="button" className="secondary" onClick={onCancel}>{translate("agents.cancel")}</Button>}</div>
   </form>;
 }
 
@@ -73,12 +74,12 @@ export function WorkspaceSkills() {
   return <section>
     <SettingsHeader title={translate("skills.title")} description={translate("skills.description")} />
     <div role="tablist" aria-label={translate("skills.title")} className="mb-4 flex gap-2">
-      {(["personal", "workspace"] as const).map((scope) => <button type="button" role="tab" aria-selected={tab === scope} key={scope} className={tab === scope ? "" : "secondary"} onClick={() => { setTab(scope); setEditor(null); setNote(null); }}>{translate(`skills.${scope}`)}</button>)}
+      {(["personal", "workspace"] as const).map((scope) => <Button type="button" role="tab" aria-selected={tab === scope} key={scope} className={tab === scope ? "" : "secondary"} onClick={() => { setTab(scope); setEditor(null); setNote(null); }}>{translate(`skills.${scope}`)}</Button>)}
     </div>
     {tab === "workspace" && !isAdmin && <p className="mb-3 text-13 text-secondary">{translate("skills.readOnly")}</p>}
     {role === "Guest" && tab === "personal" && <p className="mb-3 text-13 text-secondary">{translate("skills.guestReadOnly")}</p>}
     {!editor && ((tab === "personal" && canPersonal) || (tab === "workspace" && isAdmin)) && <SettingsBlock title={translate("skills.create")}>
-      <button type="button" onClick={() => { setNote(null); setEditor({ draft: blank }); }}>{translate("skills.create")}</button>
+      <Button type="button" onClick={() => { setNote(null); setEditor({ draft: blank }); }}>{translate("skills.create")}</Button>
     </SettingsBlock>}
     {editor && <SettingsBlock title={editor.id ? translate("skills.edit") : translate("skills.create")}>
       <SkillEditor draft={editor.draft} onChange={(draft) => setEditor({ ...editor, draft })} onSubmit={() => void save()} onCancel={() => setEditor(null)} />
@@ -86,7 +87,7 @@ export function WorkspaceSkills() {
     <SettingsBlock>
       {visible.length === 0 ? <p className="text-secondary">{translate("skills.none")}</p> : <RowList>{visible.map((skill) => <Row key={skill.id}>
         <div className="grid min-w-0 flex-1 gap-1"><span className="font-medium">{skill.name}</span><span className="text-13 text-secondary">{skill.description}</span></div>
-        {(tab === "personal" || isAdmin) && <div className="flex gap-2"><button type="button" className="secondary" onClick={() => void edit(skill)}>{translate("skills.edit")}</button><button type="button" className="secondary" onClick={() => void remove(skill)}>{translate("skills.delete")}</button></div>}
+        {(tab === "personal" || isAdmin) && <div className="flex gap-2"><Button type="button" className="secondary" onClick={() => void edit(skill)}>{translate("skills.edit")}</Button><Button type="button" className="secondary" onClick={() => void remove(skill)}>{translate("skills.delete")}</Button></div>}
       </Row>)}</RowList>}
     </SettingsBlock>
     <Note note={note} error={error} />

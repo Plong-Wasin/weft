@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { Link } from "react-router";
 import { formatDate, formatNumber, translate } from "@weft/shared";
@@ -57,7 +58,7 @@ function AgentForm({ draft, onChange, onSubmit, onCancel, runtimes, allowAutopil
         {number("timeoutSeconds", "agents.timeoutSeconds")}{number("monthlyTokenBudget", "agents.monthlyBudget")}
       </div>
     </details>
-    <div className="flex gap-2"><button type="submit">{translate("agents.save")}</button>{onCancel && <button type="button" className="secondary" onClick={onCancel}>{translate("agents.cancel")}</button>}</div>
+    <div className="flex gap-2"><Button type="submit">{translate("agents.save")}</Button>{onCancel && <Button type="button" className="secondary" onClick={onCancel}>{translate("agents.cancel")}</Button>}</div>
   </form>;
 }
 
@@ -95,7 +96,7 @@ function AccessEditor({ agent, projects, onSaved, onFailed, canSetAllProjects = 
         <input type="checkbox" checked={draft.projectIds.includes(project.id)} onChange={(event) => setDraft({ ...draft, projectIds: event.target.checked ? [...draft.projectIds, project.id] : draft.projectIds.filter((entry) => entry !== project.id) })} />{project.key} · {project.name}</label>)}
       {visibleProjects.length === 0 && projectQuery.trim() && <p role="status" className="m-0 text-12 text-secondary">{translate("projects.noSearchResults")}</p>}
     </>}
-    <button type="button" disabled={!dirty || saving} onClick={() => void save()}>{translate("agents.save")}</button>
+    <Button type="button" disabled={!dirty || saving} onClick={() => void save()}>{translate("agents.save")}</Button>
   </fieldset>;
 }
 
@@ -124,10 +125,10 @@ function MemberAgentSettings({ agent, onSaved, onFailed }: { agent: ManagedAgent
       <label>{translate("agents.timeoutSeconds")}<input type="number" min={1} max={3600} value={draft.timeoutSeconds} onChange={set("timeoutSeconds")} /></label>
       <label>{translate("agents.monthlyBudget")}<input type="number" min={1} value={draft.monthlyTokenBudget} onChange={set("monthlyTokenBudget")} /></label>
     </div>
-    <div className="flex flex-wrap gap-2"><button type="submit" disabled={saving}>{translate("agents.save")}</button><button type="button" className="secondary" onClick={async () => {
+    <div className="flex flex-wrap gap-2"><Button type="submit" disabled={saving}>{translate("agents.save")}</Button><Button type="button" className="secondary" onClick={async () => {
       const result = await action(agent.enabled ? "disable_agent" : "enable_agent", { agentId: agent.id });
       result === null ? onFailed() : onSaved();
-    }}>{translate(agent.enabled ? "agents.disable" : "agents.enable")}</button><button type="button" className={dangerOutline} data-retire-trigger={agent.id} onClick={async () => {
+    }}>{translate(agent.enabled ? "agents.disable" : "agents.enable")}</Button><Button type="button" className={dangerOutline} data-retire-trigger={agent.id} onClick={async () => {
       const counts = await action<{ blocked: boolean; counts: Record<string, number> }>("get_agent_content_counts", { agentId: agent.id });
       if (!counts) { onFailed(); return; }
       if (counts.blocked) { setRetiring(counts.counts); return; }
@@ -135,7 +136,7 @@ function MemberAgentSettings({ agent, onSaved, onFailed }: { agent: ManagedAgent
         const result = await action("delete_agent", { agentId: agent.id });
         result === null ? onFailed() : onSaved();
       }
-    }}>{translate("agents.delete")}</button></div>
+    }}>{translate("agents.delete")}</Button></div>
     {retiring && <RetirePanel agent={agent} counts={retiring} onClose={() => setRetiring(null)} onDisable={async () => {
       setRetiring(null);
       const result = await action("disable_agent", { agentId: agent.id });
@@ -164,7 +165,7 @@ function AgentPeopleAccess({ agent, members, onSaved, onFailed }: { agent: Pick<
       <input type="checkbox" aria-label={`${translate("agents.mayUse")} ${member.name}`} checked={draft.includes(member.userId)} onChange={(event) => setDraft(event.target.checked ? [...draft, member.userId] : draft.filter((id) => id !== member.userId))} />
       <Avatar name={member.name} id={member.userId} />{member.name}
     </label>)}
-    <button type="button" disabled={!dirty || saving} onClick={() => void save()}>{translate("agents.save")}</button>
+    <Button type="button" disabled={!dirty || saving} onClick={() => void save()}>{translate("agents.save")}</Button>
   </fieldset>;
 }
 
@@ -179,7 +180,7 @@ function AgentRuntimeProfile({ agent, onSaved, onFailed }: { agent: Pick<AgentRe
   return <fieldset className="grid min-w-0 gap-1 border-0 p-0"><legend className="text-13 font-medium text-secondary">{translate("agents.runtimeProfile")}</legend>
     <p className="text-12 text-secondary">{translate("agents.runtimeProfileHelp")}</p>
     <div className="flex min-w-0 flex-wrap items-center gap-2"><select className="max-w-full min-w-0" aria-label={translate("agents.runtimeProfile")} value={selected} onChange={(event) => setSelected(event.target.value)}>{!agent.runtimeProfileId && <option value="">{translate("agents.profileDefault")}</option>}{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {translate(`runtimes.sandbox.${profile.sandbox}` as never)}{profile.sandbox === "full" ? ` · ${translate("runtimes.fullAccessWarning")}` : ""}</option>)}</select>
-      <button type="button" className="secondary" disabled={!selected || selected === agent.runtimeProfileId} onClick={async () => { const result = await action("set_agent_runtime_profile", { agentId: agent.id, profileId: selected }); result === null ? onFailed() : onSaved(); }}>{translate("agents.saveProfile")}</button></div>
+      <Button type="button" className="secondary" disabled={!selected || selected === agent.runtimeProfileId} onClick={async () => { const result = await action("set_agent_runtime_profile", { agentId: agent.id, profileId: selected }); result === null ? onFailed() : onSaved(); }}>{translate("agents.saveProfile")}</Button></div>
   </fieldset>;
 }
 
@@ -227,25 +228,25 @@ function AgentRuntimeEnvironment({ agent, onFailed }: { agent: Pick<AgentRecord,
           {editing === name ? <>
             <label className="min-w-[12rem] flex-1 text-12">{translate("agents.environmentValue")}<input id={`environment-value-${agent.id}`} type="password" autoComplete="new-password" aria-describedby={`environment-value-help-${agent.id}`} value={value} onChange={(event) => setValue(event.target.value)} /></label>
             <small id={`environment-value-help-${agent.id}`} className="text-secondary">{translate("agents.environmentUnchanged")}</small>
-            <button type="button" onClick={() => void apply({ [name]: value })}>{translate("agents.environmentUpdate")}</button>
-            <button type="button" className="secondary" onClick={() => { setEditing(null); setValue(""); }}>{translate("agents.cancel")}</button>
-          </> : <button type="button" className="secondary" disabled={classificationDirty} onClick={() => { setEditing(name); setValue(""); }}>{translate("agents.environmentChangeValue")}</button>}
-          <button type="button" className="secondary" disabled={classificationDirty} onClick={() => void apply({}, [name])}>{translate("agents.environmentRemove")}</button>
+            <Button type="button" onClick={() => void apply({ [name]: value })}>{translate("agents.environmentUpdate")}</Button>
+            <Button type="button" className="secondary" onClick={() => { setEditing(null); setValue(""); }}>{translate("agents.cancel")}</Button>
+          </> : <Button type="button" className="secondary" disabled={classificationDirty} onClick={() => { setEditing(name); setValue(""); }}>{translate("agents.environmentChangeValue")}</Button>}
+          <Button type="button" className="secondary" disabled={classificationDirty} onClick={() => void apply({}, [name])}>{translate("agents.environmentRemove")}</Button>
         </div>
       </div>)}
-      <button type="button" className="secondary justify-self-start" disabled={!classificationDirty} onClick={async () => {
+      <Button type="button" className="secondary justify-self-start" disabled={!classificationDirty} onClick={async () => {
         const result = await action<{ variables: typeof classifications }>("classify_agent_runtime_environment", { agentId: agent.id, classifications: Object.fromEntries(classifications.map(({ name, classification }) => [name, classification])) });
         if (!result) { onFailed(); return; }
         setClassifications(result.variables); setSavedClassifications(result.variables);
         const latest = await action<{ revision: string }>("get_agent_runtime_environment_editor", { agentId: agent.id });
         if (latest) setRevision(latest.revision);
         setSaved(true);
-      }}>{translate("agents.environmentSaveClassifications")}</button>
+      }}>{translate("agents.environmentSaveClassifications")}</Button>
     </div>}
     <form method="post" className="grid min-w-0 gap-2 rounded-md border border-subtle p-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end" onSubmit={(event) => { event.preventDefault(); void apply({ [newName.trim()]: newValue }); }}>
       <label>{translate("agents.environmentName")}<input name="variable-name" required value={newName} autoComplete="off" autoCapitalize="none" spellCheck={false} onChange={(event) => setNewName(event.target.value)} /></label>
       <label>{translate("agents.environmentValue")}<input name="variable-value" type="password" autoComplete="new-password" required value={newValue} onChange={(event) => setNewValue(event.target.value)} /></label>
-      <button type="submit" disabled={classificationDirty}>{translate("agents.environmentAdd")}</button>
+      <Button type="submit" disabled={classificationDirty}>{translate("agents.environmentAdd")}</Button>
     </form>
     {saved && <p role="status" className="text-12 text-secondary">{translate("agents.environmentSaved")}</p>}
   </fieldset>;
@@ -267,8 +268,8 @@ function RetirePanel({ agent, counts, onClose, onDisable }: { agent: { id: strin
     </ul>
     <p className="m-0 text-13 text-secondary">{translate(agent.enabled ? "agents.retire.help" : "agents.retire.helpDisabled")}</p>
     <div className="flex flex-wrap gap-2">
-      {agent.enabled && <button type="button" onClick={() => { onDisable(); document.querySelector<HTMLElement>(`[data-retire-trigger="${agent.id}"]`)?.focus(); }}>{translate("agents.disable")}</button>}
-      <button type="button" className="secondary" onClick={close}>{translate("agents.retire.close")}</button>
+      {agent.enabled && <Button type="button" onClick={() => { onDisable(); document.querySelector<HTMLElement>(`[data-retire-trigger="${agent.id}"]`)?.focus(); }}>{translate("agents.disable")}</Button>}
+      <Button type="button" className="secondary" onClick={close}>{translate("agents.retire.close")}</Button>
     </div>
   </div>;
 }
@@ -343,7 +344,7 @@ export function WorkspaceAgents() {
           <label>{translate("agents.instructions")}<textarea rows={4} value={memberAgent.instructions} onChange={(event) => setMemberAgent({ ...memberAgent, instructions: event.target.value })} /></label>
           <label>{translate("agents.model")}<input required value={memberAgent.model} onChange={(event) => setMemberAgent({ ...memberAgent, model: event.target.value })} /></label>
           <label>{translate("agents.runsOn")}<select required value={memberAgent.runtimeId} onChange={(event) => setMemberAgent({ ...memberAgent, runtimeId: event.target.value })}><option value="">{translate("agents.selectOwnRuntime")}</option>{runtimes.filter((runtime) => runtime.ownerId === selfId && runtime.shared).map((runtime) => <option key={runtime.id} value={runtime.id}>{runtime.hostname} · {runtime.agentCli} · {translate(runtime.online ? "runtimes.online" : "runtimes.offline")}</option>)}</select></label>
-          <button type="submit">{translate("agents.create")}</button>
+          <Button type="submit">{translate("agents.create")}</Button>
         </form>}
     </SettingsBlock>}
     <SettingsBlock title={translate("agents.askableTitle")}>
@@ -364,7 +365,7 @@ export function WorkspaceAgents() {
   </section>;
   return <section>
     <SettingsHeader title={translate("agents.title")} description={translate("agents.desc")}>
-      {!creatingOpen && <button type="button" onClick={() => setCreatingOpen(true)}>{translate("agents.newAgent")}</button>}
+      {!creatingOpen && <Button type="button" onClick={() => setCreatingOpen(true)}>{translate("agents.newAgent")}</Button>}
     </SettingsHeader>
     {creatingOpen && <SettingsBlock title={translate("agents.create")}>
       <AgentForm draft={creating} runtimes={runtimes} allowAutopilot={allowAutopilot} onChange={setCreating} onCancel={() => { setCreating(emptyDraft); setCreatingOpen(false); }} onSubmit={async () => {
@@ -401,16 +402,16 @@ export function WorkspaceAgents() {
           <AgentRuns agent={agent} />
           <p className="text-13 text-secondary">{translate("agents.retire.hint")}</p>
           <div className="flex flex-wrap gap-2">
-            {editing?.id !== agent.id && <button type="button" className="secondary" onClick={() => setEditing({ id: agent.id, draft: toDraft(agent) })}>{translate("agents.edit")}</button>}
-            <button type="button" className="secondary" onClick={async () => { setRetiring(null); await guard(await action(agent.enabled ? "disable_agent" : "enable_agent", { agentId: agent.id })); }}>{translate(agent.enabled ? "agents.disable" : "agents.enable")}</button>
-            <button type="button" className={dangerOutline} data-retire-trigger={agent.id} onClick={async () => {
+            {editing?.id !== agent.id && <Button type="button" className="secondary" onClick={() => setEditing({ id: agent.id, draft: toDraft(agent) })}>{translate("agents.edit")}</Button>}
+            <Button type="button" className="secondary" onClick={async () => { setRetiring(null); await guard(await action(agent.enabled ? "disable_agent" : "enable_agent", { agentId: agent.id })); }}>{translate(agent.enabled ? "agents.disable" : "agents.enable")}</Button>
+            <Button type="button" className={dangerOutline} data-retire-trigger={agent.id} onClick={async () => {
               // The same counts the server refuses with: a refused Agent gets the dialog instead of a failed request.
               const check = await action<{ blocked: boolean; counts: Record<string, number> }>("get_agent_content_counts", { agentId: agent.id });
               if (check === null) { setNote(translate("agents.failed")); return; }
               if (check.blocked) { setRetiring({ id: agent.id, counts: check.counts }); return; }
               setRetiring(null);
               if (window.confirm(translate("agents.deleteConfirm"))) await guard(await action("delete_agent", { agentId: agent.id }));
-            }}>{translate("agents.delete")}</button>
+            }}>{translate("agents.delete")}</Button>
           </div>
           {retiring?.id === agent.id && <RetirePanel agent={agent} counts={retiring.counts} onClose={() => setRetiring(null)} onDisable={async () => { setRetiring(null); await guard(await action("disable_agent", { agentId: agent.id })); }} />}
         </div>
@@ -448,14 +449,14 @@ function TriggerSection({ agent, projects, projectsLoaded }: { agent: AgentRecor
       </select></label>
       <label className="grid gap-1 text-12 text-secondary">{translate("triggers.kind")}<select aria-label={translate("triggers.kind")} value={kind} onChange={(e) => setKind(e.target.value)}><option value="event">{translate("triggers.eventKind")}</option><option value="schedule">{translate("triggers.scheduleKind")}</option></select></label>
       {kind === "event" ? <label className="grid gap-1 text-12 text-secondary">{translate("triggers.event")}<select aria-label={translate("triggers.event")} value={eventType} onChange={(e) => setEventType(e.target.value)}>{(["work_item_created", "work_item_updated", "state_changed", "assignee_changed", "comment_added", "sub_items_closed"] as TriggerEvent[]).map((event) => <option key={event} value={event}>{translate(`triggers.${event}`)}</option>)}</select></label> : <><label className="grid gap-1 text-12 text-secondary">{translate("triggers.schedule")}<select aria-label={translate("triggers.schedule")} value={schedule} onChange={(e) => setSchedule(e.target.value)}>{(["daily", "weekly", "monthly", "cron"] as const).map((entry) => <option key={entry} value={entry}>{translate(`triggers.${entry}`)}</option>)}</select></label>{schedule === "cron" && <label className="grid gap-1 text-12 text-secondary">{translate("triggers.cron")}<input aria-label={translate("triggers.cron")} value={expression} onChange={(e) => setExpression(e.target.value)} /></label>}</>}
-      <button type="button" onClick={() => void create()} disabled={!projectsLoaded || !availableProjects.some((project) => project.id === projectId)}>{translate("triggers.add")}</button>
+      <Button type="button" onClick={() => void create()} disabled={!projectsLoaded || !availableProjects.some((project) => project.id === projectId)}>{translate("triggers.add")}</Button>
     </div>
     {!projectsLoaded ? <p role="status" className="m-0 text-12 text-secondary">{translate("triggers.projectsLoading")}</p>
       : availableProjects.length === 0 ? <p role="status" className="m-0 text-12 text-secondary">{translate(projects.length === 0 ? "triggers.noProjects" : "triggers.noAccessibleProjectsHelp")}</p> : null}
     {error && <p role="alert" className="text-13 text-danger-text">{error}</p>}
     {rows.map((trigger) => <div key={trigger.id} className="flex gap-2 text-13"><span>{projects.find((p) => p.id === trigger.projectId)?.key} · {trigger.schedule ? `${translate(`triggers.${trigger.schedule}`)}${trigger.expression ? ` (${trigger.expression})` : ""}` : translate(`triggers.${trigger.eventType ?? "work_item_created"}`)}</span>
-      <button type="button" className="secondary" onClick={async () => { await action("pause_trigger", { triggerId: trigger.id, paused: !trigger.paused }); await reload(); }}>{translate(trigger.paused ? "triggers.resume" : "triggers.pause")}</button>
-      <button type="button" className="secondary" onClick={async () => { await action("delete_trigger", { triggerId: trigger.id }); await reload(); }}>{translate("triggers.delete")}</button></div>)}
+      <Button type="button" className="secondary" onClick={async () => { await action("pause_trigger", { triggerId: trigger.id, paused: !trigger.paused }); await reload(); }}>{translate(trigger.paused ? "triggers.resume" : "triggers.pause")}</Button>
+      <Button type="button" className="secondary" onClick={async () => { await action("delete_trigger", { triggerId: trigger.id }); await reload(); }}>{translate("triggers.delete")}</Button></div>)}
   </fieldset>;
 }
 
@@ -495,7 +496,7 @@ function AgentRuns({ agent }: { agent: AgentRecord }) {
   return <fieldset data-testid="agent-log" aria-busy={rows === null && !loadFailed} className="grid gap-2 border-0 p-0">
     <legend className="text-13 font-medium text-secondary">{translate("agents.logTitle")}</legend>
     {rows === null && !loadFailed && <p role="status" className="m-0 text-13 text-secondary">{translate("agents.logLoading")}</p>}
-    {loadFailed && <p role="alert" className="m-0 text-13 text-danger-text">{translate("agents.logFailed")} <button type="button" className="secondary" onClick={() => void reload()}>{translate("agents.logRetry")}</button></p>}
+    {loadFailed && <p role="alert" className="m-0 text-13 text-danger-text">{translate("agents.logFailed")} <Button type="button" className="secondary" onClick={() => void reload()}>{translate("agents.logRetry")}</Button></p>}
     {rows?.length === 0 && <p role="status" className="m-0 text-13 text-secondary">{translate("agents.runsEmpty")}</p>}
     {rows?.map((run) => <details key={run.id} data-agent-log-run className="min-w-0 rounded-md border border-subtle bg-surface-1 px-3 py-2" onToggle={(event) => { if ((event.currentTarget as HTMLDetailsElement).open && !transcript[run.id] && !transcriptLoading[run.id]) void loadTranscript(run.id); }}>
       <summary className="flex min-w-0 cursor-pointer flex-wrap items-center gap-x-2 gap-y-1 text-13">
@@ -505,7 +506,7 @@ function AgentRuns({ agent }: { agent: AgentRecord }) {
       </summary>
       <div className="mt-2 border-t border-subtle pt-2 text-13">
         {transcriptLoading[run.id] && <p role="status" className="m-0 text-secondary">{translate("agents.logTranscriptLoading")}</p>}
-        {transcriptFailed[run.id] && <p role="alert" className="m-0 text-danger-text">{translate("agents.logTranscriptFailed")} <button type="button" className="secondary" onClick={() => void loadTranscript(run.id)}>{translate("agents.logRetry")}</button></p>}
+        {transcriptFailed[run.id] && <p role="alert" className="m-0 text-danger-text">{translate("agents.logTranscriptFailed")} <Button type="button" className="secondary" onClick={() => void loadTranscript(run.id)}>{translate("agents.logRetry")}</Button></p>}
         {transcript[run.id]?.runtimeProfile && <p className="m-0 text-12 text-secondary"><strong>{translate("agents.logRuntimeProfile")}:</strong> {transcript[run.id]!.runtimeProfile!.name} · {translate(transcript[run.id]!.runtimeProfile!.sandbox === "full" ? "runtimes.fullAccessWarning" : "runtimes.sandboxEnabled")} · {translate(transcript[run.id]!.runtimeProfile!.enforceSandbox ? "agents.logSandboxEnforced" : "agents.logSandboxNotEnforced")}</p>}
         {transcript[run.id]?.failureReason && <div role="alert" className="text-danger-text"><strong>{translate("agents.logFailure")}:</strong> {runFailureText(transcript[run.id]!.failureReason) ?? translate("runs.failed")}{transcript[run.id]!.failureMessage && <p className="m-0 text-secondary">{translate("runs.failureDetail").replace("{detail}", () => transcript[run.id]!.failureMessage!)}</p>}</div>}
         {transcript[run.id]?.steps.length === 0 && <p className="m-0 text-secondary">{translate("runs.noSteps")}</p>}

@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { Ban, CalendarDays, Check, Circle, CircleAlert, CircleCheck, CircleDashed, CircleDot, CircleX, Code2, SignalHigh, SignalLow, SignalMedium, Sigma } from "lucide-react";
 import { getLocale, translate, type MessageKey } from "@weft/shared";
@@ -109,10 +110,10 @@ export function SingleSelect({ label, summary, display, options, value, onSelect
   if (readOnly) return <Static label={name} quiet={quiet} className={className}>{icon}{!iconOnly && <span className={`max-w-32 truncate ${display ? "text-tertiary" : ""}`} title={summary}>{display ?? summary}</span>}</Static>;
   return <Popover label={name} className={className} panelRole="dialog" panelClassName="max-h-72 w-52 overflow-auto" trigger={<Trigger label={name}>{icon}<span className={`${iconOnly ? hideIconOnlyTextOnPhone ? "hidden" : "hidden text-11 max-sm:inline" : "max-w-32 truncate"} ${display ? "text-tertiary" : ""}`}>{display ?? summary}</span></Trigger>}>
     {(close) => <PickerBody label={label} options={options} onPick={(option) => { close(); if (option.id !== value) onSelect(option.id); }}>
-      {(visible, activeId, optionId) => visible.map((option) => <button key={option.id} id={optionId(option)} type="button" role="menuitemradio" aria-checked={option.id === value} data-active={option.id === activeId || undefined} className={cn(optionClass, "data-[active=true]:bg-accent")}
+      {(visible, activeId, optionId) => visible.map((option) => <Button key={option.id} id={optionId(option)} type="button" role="menuitemradio" aria-checked={option.id === value} data-active={option.id === activeId || undefined} className={cn(optionClass, "data-[active=true]:bg-accent")}
         onClick={() => { close(); if (option.id !== value) onSelect(option.id); }}>
         {option.icon}<span className="min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]">{option.name}</span>{option.id === value && <Check aria-hidden size={14} className="text-secondary" />}
-      </button>)}
+      </Button>)}
     </PickerBody>}
   </Popover>;
 }
@@ -141,10 +142,10 @@ export function MultiSelect({ label, summary, options, selected, onToggle, readO
       const rows = group.map((option) => {
       const on = selected.includes(option.id);
       const unavailable = option.isAgent && option.hasAccess === false;
-      return <button key={option.id} id={optionId(option)} type="button" role="menuitemcheckbox" aria-checked={on} aria-disabled={unavailable || undefined} data-active={option.id === activeId || undefined} title={unavailable ? option.accessReason ?? undefined : undefined} className={cn(optionClass, "data-[active=true]:bg-accent", option.codeCapable && "flex-wrap gap-1 text-xs", unavailable && "flex-wrap cursor-not-allowed")} onClick={() => { if (!unavailable) onToggle(option.id, !on); }}>
+      return <Button key={option.id} id={optionId(option)} type="button" role="menuitemcheckbox" aria-checked={on} aria-disabled={unavailable || undefined} data-active={option.id === activeId || undefined} title={unavailable ? option.accessReason ?? undefined : undefined} className={cn(optionClass, "data-[active=true]:bg-accent", option.codeCapable && "flex-wrap gap-1 text-xs", unavailable && "flex-wrap cursor-not-allowed")} onClick={() => { if (!unavailable) onToggle(option.id, !on); }}>
         {option.icon}<span className={cn("min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]", unavailable && "text-muted-foreground")}>{option.name}{option.isAgent && <> <AgentLabel /></>}</span>{option.codeCapable && <span className="ml-5 inline-flex shrink-0 basis-[calc(100%_-_1.25rem)] items-center gap-1 whitespace-nowrap rounded bg-muted px-2 py-1 text-xs text-muted-foreground" title={t("agents.codeCapable")}><Code2 aria-hidden size={13} className="text-warning-primary" />{t("agents.canEditCode")}</span>}{on && <Check aria-hidden size={14} className="text-secondary" />}
         {unavailable && <span className="w-full basis-full min-w-0 whitespace-normal pl-5 text-xs text-muted-foreground">{option.accessReason}</span>}
-      </button>;
+      </Button>;
       });
       return hasAgentGroup ? <div key={String(agents)} role="group" aria-label={groupName}><p aria-hidden="true" className="px-2.5 pb-1 pt-2 text-xs font-medium text-muted-foreground">{groupName}</p>{rows}</div> : <React.Fragment key={String(agents)}>{rows}</React.Fragment>;
     })}</>}

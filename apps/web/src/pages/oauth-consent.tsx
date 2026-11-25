@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { translate } from "@weft/shared";
 import { authClient } from "../auth-client";
@@ -35,8 +36,8 @@ export function OAuthConsentPage() {
     {error ? <p role="alert" className="mt-4 text-14 text-danger-text">{error}</p> : !info ? <p role="status" className="mt-4 text-14 text-secondary">{translate("oauth.loading")}</p> : <>
       <p className="mt-4 text-14 text-secondary">{translate("oauth.request").replace("{app}", info.clientName).replace("{host}", info.redirectHost)}</p>
       <div className="mt-6 grid gap-3">
-        <button className={primaryButton} disabled={submitting} onClick={() => void respond(true)}>{translate("oauth.allow")}</button>
-        <button type="button" className="!h-10 rounded-md border border-subtle bg-transparent px-3 text-14 font-medium text-primary hover:bg-layer-1-hover" disabled={submitting} onClick={() => void respond(false)}>{translate("oauth.deny")}</button>
+        <Button className={primaryButton} disabled={submitting} onClick={() => void respond(true)}>{translate("oauth.allow")}</Button>
+        <Button type="button" className="!h-10 rounded-md border border-subtle bg-transparent px-3 text-14 font-medium text-primary hover:bg-layer-1-hover" disabled={submitting} onClick={() => void respond(false)}>{translate("oauth.deny")}</Button>
       </div>
     </>}
   </AuthShell>;

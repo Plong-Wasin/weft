@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { flushSync } from "react-dom";
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
@@ -214,8 +215,8 @@ export function CommandPalette({ current, signOut }: { current: Current; signOut
 /** Top-bar button for the palette. Its title shows the shortcut, so the key is discoverable. */
 export function CommandPaletteButton({ shortcut }: { shortcut: string }) {
   const label = `${translate("palette.button")} (${shortcut})`;
-  return <button type="button" aria-label={label} title={label} onClick={() => window.dispatchEvent(new Event(openPaletteEvent))}
+  return <Button type="button" aria-label={label} title={label} onClick={() => window.dispatchEvent(new Event(openPaletteEvent))}
     className="flex items-center rounded-lg bg-transparent p-2 text-secondary hover:bg-layer-transparent-hover hover:text-primary pointer-coarse:min-h-11 pointer-coarse:min-w-11">
     <CommandIcon aria-hidden size={18} />
-  </button>;
+  </Button>;
 }

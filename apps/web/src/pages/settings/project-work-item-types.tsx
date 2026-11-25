@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { translate, type MessageKey } from "@weft/shared";
 import { actionResult } from "../../api";
@@ -58,9 +59,9 @@ export function WorkItemTypesSettings({ project }: { project: Project }) {
             <span className="mt-0.5"><TypeIconMark icon={suggestion.icon} color={suggestion.color} /></span>
             <span className="grid gap-0.5"><span className="font-medium">{suggestion.name}</span><span className="text-13 text-secondary">{typeDescriptionText(suggestion)}</span></span>
           </span>
-          <button type="button" className="secondary" onClick={() => void run("create_work_item_type", { name: suggestion.name, icon: suggestion.icon, color: suggestion.color, description: suggestion.description }, "types.failed")}>
+          <Button type="button" className="secondary" onClick={() => void run("create_work_item_type", { name: suggestion.name, icon: suggestion.icon, color: suggestion.color, description: suggestion.description }, "types.failed")}>
             {replaceAll(t("types.addSuggestion"), { name: suggestion.name })}
-          </button>
+          </Button>
         </Row>)}</RowList>
       </div>}
       <PropertiesBlock types={types} properties={properties} onRun={run} canReorder={canReorder} />
@@ -94,10 +95,10 @@ function TypeRow({ type, types, properties, onRun, grip, canUp, canDown, onMove 
           </span>
         </span>
         <span className="flex flex-wrap items-center gap-2">
-          <button type="button" className="secondary" aria-expanded={editing} aria-label={replaceAll(t("types.editNamed"), { name: type.name })} onClick={() => { setEditing((value) => !value); setDeleting(false); }}>{t("types.edit")}</button>
-          <button type="button" className="secondary aria-disabled:cursor-not-allowed aria-disabled:opacity-50" aria-disabled={cannotDelete || undefined} aria-label={replaceAll(t("types.deleteNamed"), { name: type.name })}
+          <Button type="button" className="secondary" aria-expanded={editing} aria-label={replaceAll(t("types.editNamed"), { name: type.name })} onClick={() => { setEditing((value) => !value); setDeleting(false); }}>{t("types.edit")}</Button>
+          <Button type="button" className="secondary aria-disabled:cursor-not-allowed aria-disabled:opacity-50" aria-disabled={cannotDelete || undefined} aria-label={replaceAll(t("types.deleteNamed"), { name: type.name })}
             title={cannotDelete ? t("types.deleteLast") : undefined} aria-describedby={cannotDelete ? reasonId : undefined}
-            onClick={() => { if (cannotDelete) return; setDeleting((value) => !value); setEditing(false); }}>{t("types.delete")}</button>
+            onClick={() => { if (cannotDelete) return; setDeleting((value) => !value); setEditing(false); }}>{t("types.delete")}</Button>
           {cannotDelete && <span id={reasonId} className="sr-only">{t("types.deleteLast")}</span>}
           {grip && <SortMenu name={type.name} canUp={canUp} canDown={canDown} onMove={onMove} />}
         </span>
@@ -117,8 +118,8 @@ function TypeRow({ type, types, properties, onRun, grip, canUp, canDown, onMove 
           <label className="flex items-center gap-2 text-13"><input type="checkbox" checked={dropValues} onChange={(event) => setDropValues(event.target.checked)} />{t("types.dropValuesOnMove")}</label>
         </> : <span className="text-13 text-secondary">{t("types.deleteUnused")}</span>}
         <span className="flex flex-wrap gap-2">
-          <button type="button" disabled={type.workItems > 0 && !moveTo} onClick={() => void onRun("delete_work_item_type", { typeId: type.id, ...(moveTo ? { moveToTypeId: moveTo } : {}), ...(dropValues ? { dropPropertyValues: true } : {}) }, "types.failed").then((ok) => ok && setDeleting(false))}>{t("types.confirmDelete")}</button>
-          <button type="button" className="secondary" onClick={() => setDeleting(false)}>{t("types.cancel")}</button>
+          <Button type="button" disabled={type.workItems > 0 && !moveTo} onClick={() => void onRun("delete_work_item_type", { typeId: type.id, ...(moveTo ? { moveToTypeId: moveTo } : {}), ...(dropValues ? { dropPropertyValues: true } : {}) }, "types.failed").then((ok) => ok && setDeleting(false))}>{t("types.confirmDelete")}</Button>
+          <Button type="button" className="secondary" onClick={() => setDeleting(false)}>{t("types.cancel")}</Button>
         </span>
       </span>}
     </span>
@@ -178,16 +179,16 @@ function TypeProperties({ type, types, properties, onRun }: { type: WorkItemType
             </span>
             <span className="flex flex-wrap items-center gap-2">
               {onlyType && <span className="text-12 text-tertiary">{t("types.removeOnlyType")}</span>}
-              <button type="button" className="secondary" aria-label={replaceAll(t("types.removeNamed"), { name: property.name })} disabled={onlyType}
-                onClick={() => void askRemove(property)}>{t("types.removeFromType")}</button>
+              <Button type="button" className="secondary" aria-label={replaceAll(t("types.removeNamed"), { name: property.name })} disabled={onlyType}
+                onClick={() => void askRemove(property)}>{t("types.removeFromType")}</Button>
             </span>
           </span>
           {askingThis && <span className="grid gap-2 rounded-md border border-subtle bg-layer-1 p-3" role="group" aria-label={replaceAll(t("types.removeHeading"), { name: property.name, type: typeName })} data-type-property-remove>
             <span className="font-medium">{replaceAll(t("types.removeHeading"), { name: property.name, type: typeName })}</span>
             <span className="text-13 text-secondary">{removeText(property, removing.count)}</span>
             <span className="flex flex-wrap gap-2">
-              <button type="button" onClick={() => void confirmRemove()}>{t("types.removeConfirm")}</button>
-              <button type="button" className="secondary" onClick={() => setRemoving(null)}>{t("types.cancel")}</button>
+              <Button type="button" onClick={() => void confirmRemove()}>{t("types.removeConfirm")}</Button>
+              <Button type="button" className="secondary" onClick={() => setRemoving(null)}>{t("types.cancel")}</Button>
             </span>
           </span>}
         </li>;
@@ -205,14 +206,14 @@ function TypeProperties({ type, types, properties, onRun }: { type: WorkItemType
               <span className="font-medium">{property.name}</span>
               <span className="rounded bg-layer-1 px-1.5 py-0.5 text-11 text-secondary">{t(`types.kind.${property.kind}`)}</span>
             </span>
-            <button type="button" className="secondary" onClick={() => void onRun("attach_custom_property_type", { propertyId: property.id, typeId: type.id }, "types.failed")}>{replaceAll(t("types.useNamed"), { name: property.name })}</button>
+            <Button type="button" className="secondary" onClick={() => void onRun("attach_custom_property_type", { propertyId: property.id, typeId: type.id }, "types.failed")}>{replaceAll(t("types.useNamed"), { name: property.name })}</Button>
           </li>)}
         </ul>}
       </>}
     </div>}
     <span className="flex flex-wrap gap-2">
-      <button type="button" className="secondary" aria-expanded={adding} onClick={() => { setAdding((value) => !value); setUsing(false); }}>{t("types.addPropertyHere")}</button>
-      <button type="button" className="secondary" aria-expanded={using} onClick={() => { setUsing((value) => !value); setAdding(false); setQuery(""); }}>{t("types.useExisting")}</button>
+      <Button type="button" className="secondary" aria-expanded={adding} onClick={() => { setAdding((value) => !value); setUsing(false); }}>{t("types.addPropertyHere")}</Button>
+      <Button type="button" className="secondary" aria-expanded={using} onClick={() => { setUsing((value) => !value); setAdding(false); setQuery(""); }}>{t("types.useExisting")}</Button>
     </span>
   </div>;
 }
@@ -288,22 +289,22 @@ function PropertyRow({ property, types, typeName, onRun, grip, canUp, canDown, o
           {types.map((type) => <label key={type.id} className="flex items-center gap-2"><input type="checkbox" checked={typeIds.includes(type.id)} onChange={(event) => setTypeIds(event.target.checked ? [...typeIds, type.id] : typeIds.filter((id) => id !== type.id))} />{type.name}</label>)}
         </fieldset>
         <span className="flex flex-wrap gap-2">
-          <button type="button" disabled={typeIds.length === 0} onClick={() => void save()}>{t("types.save")}</button>
-          <button type="button" className="secondary" onClick={() => setEditing(false)}>{t("types.cancel")}</button>
+          <Button type="button" disabled={typeIds.length === 0} onClick={() => void save()}>{t("types.save")}</Button>
+          <Button type="button" className="secondary" onClick={() => setEditing(false)}>{t("types.cancel")}</Button>
         </span>
       </span>}
       {deleting && <span className="mt-2 grid gap-2 rounded-md border border-subtle bg-layer-1 p-3" role="group" aria-label={replaceAll(t("types.deletePropertyHeading"), { name: property.name })} data-property-delete>
         <span className="font-medium">{replaceAll(t("types.deletePropertyHeading"), { name: property.name })}</span>
         <span className="text-13 text-secondary">{t("types.deletePropertyBody")}</span>
         <span className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => void onRun("delete_custom_property", { propertyId: property.id }, "types.failed").then((ok) => ok && setDeleting(false))}>{t("types.confirmDelete")}</button>
-          <button type="button" className="secondary" onClick={() => setDeleting(false)}>{t("types.cancel")}</button>
+          <Button type="button" onClick={() => void onRun("delete_custom_property", { propertyId: property.id }, "types.failed").then((ok) => ok && setDeleting(false))}>{t("types.confirmDelete")}</Button>
+          <Button type="button" className="secondary" onClick={() => setDeleting(false)}>{t("types.cancel")}</Button>
         </span>
       </span>}
     </span>
     <span className="flex flex-wrap items-center gap-2">
-      <button type="button" className="secondary" aria-label={replaceAll(t("types.editNamed"), { name: property.name })} onClick={() => { setEditing((value) => !value); setDeleting(false); }}>{t("types.edit")}</button>
-      <button type="button" className="secondary" aria-label={replaceAll(t("types.deleteNamed"), { name: property.name })} onClick={() => { setDeleting((value) => !value); setEditing(false); }}>{t("types.delete")}</button>
+      <Button type="button" className="secondary" aria-label={replaceAll(t("types.editNamed"), { name: property.name })} onClick={() => { setEditing((value) => !value); setDeleting(false); }}>{t("types.edit")}</Button>
+      <Button type="button" className="secondary" aria-label={replaceAll(t("types.deleteNamed"), { name: property.name })} onClick={() => { setDeleting((value) => !value); setEditing(false); }}>{t("types.delete")}</Button>
       {grip && <SortMenu name={property.name} canUp={canUp} canDown={canDown} onMove={onMove} />}
     </span>
   </>;
@@ -341,8 +342,8 @@ function AddProperty({ types, initialTypeIds, onAdd, onCancel }: { types: WorkIt
       </div>
     </div>
     <div className="flex flex-wrap gap-2">
-      <button type="submit" disabled={!ready}>{t("types.addProperty")}</button>
-      {onCancel && <button type="button" className="secondary" onClick={onCancel}>{t("types.cancel")}</button>}
+      <Button type="submit" disabled={!ready}>{t("types.addProperty")}</Button>
+      {onCancel && <Button type="button" className="secondary" onClick={onCancel}>{t("types.cancel")}</Button>}
     </div>
   </form>;
 }

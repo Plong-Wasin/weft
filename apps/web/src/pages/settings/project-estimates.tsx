@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { translate, type MessageKey } from "@weft/shared";
 import { action, actionResult } from "../../api";
@@ -33,11 +34,11 @@ function ValueList({ values, onChange, disabled, numeric }: { values: Draft[]; o
         return <>
           {!disabled && grip}
           <input className="min-w-0 flex-1" required inputMode={numeric ? "decimal" : "text"} maxLength={20} disabled={disabled} aria-label={`${translate("estimates.value")} ${index + 1}`} value={entry.value} onChange={(event) => set(index, event.target.value)} />
-          {!disabled && <button type="button" className="secondary hover:!text-danger-text" disabled={values.length <= estimateLimits.min} onClick={() => onChange(values.filter((_, at) => at !== index))}>{translate("estimates.removeValue")}</button>}
+          {!disabled && <Button type="button" className="secondary hover:!text-danger-text" disabled={values.length <= estimateLimits.min} onClick={() => onChange(values.filter((_, at) => at !== index))}>{translate("estimates.removeValue")}</Button>}
         </>;
       }} />
     {!disabled && <div className="flex flex-wrap items-center gap-3">
-      <button type="button" className="secondary" disabled={values.length >= estimateLimits.max} onClick={() => onChange([...values, { value: "" }])}>{translate("estimates.addValue")}</button>
+      <Button type="button" className="secondary" disabled={values.length >= estimateLimits.max} onClick={() => onChange([...values, { value: "" }])}>{translate("estimates.addValue")}</Button>
       <span className="text-13 text-secondary">{translate("estimates.rangeHint")}</span>
     </div>}
   </div>;
@@ -90,7 +91,7 @@ export function ProjectEstimates() {
           </div>
           <ValueList values={values} onChange={setValues} disabled={false} numeric={type === "points"} />
         </SettingsBlock>
-        <div><button>{translate("estimates.createButton")}</button></div>
+        <div><Button>{translate("estimates.createButton")}</Button></div>
       </form>
       <Note note={note} error />
     </section>;
@@ -119,17 +120,17 @@ export function ProjectEstimates() {
         <label className="max-w-[420px]">{translate("estimates.name")}<input required maxLength={100} disabled={readOnly} value={name} onChange={(event) => setName(event.target.value)} /></label>
         <ValueList values={values} onChange={setValues} disabled={readOnly} numeric={estimate.type === "points"} />
       </SettingsBlock>
-      {!readOnly && <div><button>{translate("labels.save")}</button></div>}
+      {!readOnly && <div><Button>{translate("labels.save")}</Button></div>}
     </form>
     {canAdmin && <SettingsBlock title={translate("estimates.danger")} description={translate("estimates.dangerDesc")}>
       <div className="flex flex-wrap gap-3">
-        {estimate.enabled && <button type="button" className="secondary" onClick={() => void clearing("estimates.switchConfirm", () => send("switch_estimate_type", { type: other, values: other === "points" ? estimateTemplates.fibonacci : categoryStarter }), translate(`estimates.type.${other}` as MessageKey))}>{translate(`estimates.switchTo.${other}` as MessageKey)}</button>}
-        <button type="button" className={dangerButton} onClick={() => void clearing("estimates.deleteConfirm", async () => {
+        {estimate.enabled && <Button type="button" className="secondary" onClick={() => void clearing("estimates.switchConfirm", () => send("switch_estimate_type", { type: other, values: other === "points" ? estimateTemplates.fibonacci : categoryStarter }), translate(`estimates.type.${other}` as MessageKey))}>{translate(`estimates.switchTo.${other}` as MessageKey)}</Button>}
+        <Button type="button" className={dangerButton} onClick={() => void clearing("estimates.deleteConfirm", async () => {
           const result = await actionResult("delete_estimate", { projectId: project.id });
           if ("error" in result) { setNote(`${translate("estimates.failed")} ${result.error}`); return false; }
           setNote(null); adopt(null); setEstimate(null);
           return true;
-        })}>{translate("estimates.delete")}</button>
+        })}>{translate("estimates.delete")}</Button>
       </div>
     </SettingsBlock>}
     <Note note={note} error />

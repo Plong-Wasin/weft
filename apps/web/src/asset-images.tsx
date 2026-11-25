@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import { api } from "./api";
 import { Download, Eye, Paperclip, Trash2 } from "lucide-react";
 import React from "react";
@@ -220,9 +221,9 @@ export function AttachmentsPanel({ workItemId, ownerType = "work_item", canWrite
       {row.unverified && <small role="status" className="shrink-0 text-12 text-warning-text">{translate("assets.unverified")}</small>}
       <small className="shrink-0 text-12 text-tertiary">{formatSize(row.size)}</small>
       <span className="ml-auto flex shrink-0 gap-0.5">
-        {row.previewable && <button type="button" className="attachment-action-button grid place-items-center rounded-md !bg-transparent !p-0 text-secondary hover:!bg-layer-transparent-hover hover:text-primary" aria-label={`${translate("assets.preview")} ${row.filename}`} title={translate("assets.preview")} aria-busy={previewingId === row.id} disabled={previewingId === row.id} onClick={() => void openPreview(row)}><Eye aria-hidden size={13} /></button>}
-        <button type="button" className="attachment-action-button grid place-items-center rounded-md !bg-transparent !p-0 text-secondary hover:!bg-layer-transparent-hover hover:text-primary" aria-label={`${translate("assets.download")} ${row.filename}`} title={translate("assets.download")} onClick={() => void download(row)}><Download aria-hidden size={13} /></button>
-        {canWrite && <button type="button" className="attachment-action-button grid place-items-center rounded-md !bg-transparent !p-0 text-secondary hover:!bg-layer-transparent-hover hover:!text-danger-text" aria-label={`${translate("assets.delete")} ${row.filename}`} title={translate("assets.delete")} onClick={() => void remove(row)}><Trash2 aria-hidden size={13} /></button>}
+        {row.previewable && <Button type="button" className="attachment-action-button grid place-items-center rounded-md !bg-transparent !p-0 text-secondary hover:!bg-layer-transparent-hover hover:text-primary" aria-label={`${translate("assets.preview")} ${row.filename}`} title={translate("assets.preview")} aria-busy={previewingId === row.id} disabled={previewingId === row.id} onClick={() => void openPreview(row)}><Eye aria-hidden size={13} /></Button>}
+        <Button type="button" className="attachment-action-button grid place-items-center rounded-md !bg-transparent !p-0 text-secondary hover:!bg-layer-transparent-hover hover:text-primary" aria-label={`${translate("assets.download")} ${row.filename}`} title={translate("assets.download")} onClick={() => void download(row)}><Download aria-hidden size={13} /></Button>
+        {canWrite && <Button type="button" className="attachment-action-button grid place-items-center rounded-md !bg-transparent !p-0 text-secondary hover:!bg-layer-transparent-hover hover:!text-danger-text" aria-label={`${translate("assets.delete")} ${row.filename}`} title={translate("assets.delete")} onClick={() => void remove(row)}><Trash2 aria-hidden size={13} /></Button>}
       </span>
     </li>)}</ul>
     {canWrite && <input ref={filePickerRef} hidden type="file" multiple data-testid="attach-input" onChange={(event) => { void attach([...(event.target.files ?? [])]); event.target.value = ""; }} />}
@@ -234,7 +235,7 @@ export function AttachmentsPanel({ workItemId, ownerType = "work_item", canWrite
       {translate("assets.dropHint")}
     </div>}
     {busy && <p role="status">{translate("assets.uploading")}</p>}
-    {canWrite && retryFiles.length > 0 && <div role="alert" className="grid gap-1 text-13 text-danger-text"><p className="m-0">{translate("assets.uploadFailed")}</p><ul className="m-0 list-disc pl-5">{retryFiles.map((file, index) => <li key={`${file.name}-${index}`}>{file.name}</li>)}</ul><button type="button" className="w-fit rounded-md border border-subtle bg-surface-1 px-2 py-1 text-primary" disabled={busy} onClick={() => void attach([])}>{translate("assets.retryFailed")}</button></div>}
+    {canWrite && retryFiles.length > 0 && <div role="alert" className="grid gap-1 text-13 text-danger-text"><p className="m-0">{translate("assets.uploadFailed")}</p><ul className="m-0 list-disc pl-5">{retryFiles.map((file, index) => <li key={`${file.name}-${index}`}>{file.name}</li>)}</ul><Button type="button" className="w-fit rounded-md border border-subtle bg-surface-1 px-2 py-1 text-primary" disabled={busy} onClick={() => void attach([])}>{translate("assets.retryFailed")}</Button></div>}
     {error && <p role="alert">{error}</p>}
     {preview && <AttachmentPreviewDialog preview={preview} onClose={() => setPreview(null)} />}
   </section>;
@@ -270,7 +271,7 @@ function AttachmentPreviewDialog({ preview, onClose }: { preview: { row: AssetRo
     onClose={() => { if (dialog.current?.returnValue !== "unmount") onClose(); }} onClick={(event) => { if (event.target === event.currentTarget) dialog.current?.close(); }}>
     <header className="flex items-center gap-3 border-b border-subtle px-4 py-3">
       <h2 id={titleId} className="m-0 min-w-0 flex-1 truncate text-16 font-semibold text-primary">{row.filename}</h2>
-      <button type="button" autoFocus className="rounded-md border border-subtle bg-surface-1 px-3 py-2 text-primary" aria-label={translate("assets.closePreview")} onClick={() => dialog.current?.close()}>{translate("assets.closePreview")}</button>
+      <Button type="button" autoFocus className="rounded-md border border-subtle bg-surface-1 px-3 py-2 text-primary" aria-label={translate("assets.closePreview")} onClick={() => dialog.current?.close()}>{translate("assets.closePreview")}</Button>
     </header>
     <div className="asset-preview-content p-3 sm:p-5">{media}</div>
   </dialog>;

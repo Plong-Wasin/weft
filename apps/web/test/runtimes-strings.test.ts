@@ -45,6 +45,6 @@ test("deleting a profile asks first, and editing one offers Cancel", async () =>
   const source = (await import("node:fs")).readFileSync(new URL("../src/pages/settings/runtimes-settings.tsx", import.meta.url), "utf8");
   expect(source.indexOf("runtimes.deleteProfileConfirm")).toBeGreaterThan(-1);
   expect(source.indexOf("runtimes.deleteProfileConfirm")).toBeLessThan(source.indexOf('"delete_runtime_profile"'));
-  expect(source).toMatch(/editingId && <button[\s\S]{0,300}translate\("comments\.cancel"\)/);
+  expect(source).toMatch(/editingId && <Button[\s\S]{0,300}translate\("comments\.cancel"\)/);
   expect(resources.en["runtimes.deleteProfileConfirm"]).toContain("{name}");
 });

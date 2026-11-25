@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { Bot, Code2, Filter, Search, Sparkles, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -42,8 +43,8 @@ export function FilterPicker({ sections, filters, count, onChange, onClear }: { 
         const expanded = needle !== "" || open === section.key;
         const selected = filters[section.key].length;
         return <div key={section.key} className="grid gap-1">
-          <button type="button" aria-expanded={expanded} className="flex min-h-9 w-full items-center justify-between rounded-md bg-transparent px-2.5 py-2 text-sm font-medium text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11" onClick={() => setOpen(open === section.key ? null : section.key)}>
-            <span>{t(`layout.filter.${section.key}`)}</span>{selected > 0 && <span className="rounded bg-muted px-1.5 text-xs text-muted-foreground">{selected}</span>}</button>
+          <Button type="button" aria-expanded={expanded} className="flex min-h-9 w-full items-center justify-between rounded-md bg-transparent px-2.5 py-2 text-sm font-medium text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11" onClick={() => setOpen(open === section.key ? null : section.key)}>
+            <span>{t(`layout.filter.${section.key}`)}</span>{selected > 0 && <span className="rounded bg-muted px-1.5 text-xs text-muted-foreground">{selected}</span>}</Button>
           {expanded && <fieldset className="m-0 grid gap-0.5 border-0 p-0 px-1" aria-label={t(`layout.filter.${section.key}`)}>
             <legend className="sr-only">{t(`layout.filter.${section.key}`)}</legend>
             {shown.map((option) => <label key={option.id} className="my-0 flex min-h-9 items-center gap-2 rounded-md px-1.5 py-1 text-sm text-foreground hover:bg-accent pointer-coarse:min-h-11">
@@ -55,8 +56,8 @@ export function FilterPicker({ sections, filters, count, onChange, onClear }: { 
         const expanded = needle !== "" || open === key;
         const range = filters[key];
         return <div key={key} className="grid gap-1">
-          <button type="button" aria-expanded={expanded} className="flex min-h-9 w-full items-center justify-between rounded-md bg-transparent px-2.5 py-2 text-sm font-medium text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11" onClick={() => setOpen(open === key ? null : key)}>
-            <span>{t(`layout.filter.${key}`)}</span>{(range.from || range.to) && <span className="rounded bg-muted px-1.5 text-xs text-muted-foreground">1</span>}</button>
+          <Button type="button" aria-expanded={expanded} className="flex min-h-9 w-full items-center justify-between rounded-md bg-transparent px-2.5 py-2 text-sm font-medium text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11" onClick={() => setOpen(open === key ? null : key)}>
+            <span>{t(`layout.filter.${key}`)}</span>{(range.from || range.to) && <span className="rounded bg-muted px-1.5 text-xs text-muted-foreground">1</span>}</Button>
           {expanded && <fieldset className="m-0 grid gap-1 border-0 p-0 px-2" aria-label={t(`layout.filter.${key}`)}>
             <legend className="sr-only">{t(`layout.filter.${key}`)}</legend>
             <label className="my-0 grid gap-1 text-xs text-muted-foreground">{t("layout.filter.from")}<input type="date" value={range.from} className="min-h-9 rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring" onChange={(event) => onChange({ ...filters, [key]: { ...range, from: event.target.value } })} /></label>
@@ -65,7 +66,7 @@ export function FilterPicker({ sections, filters, count, onChange, onClear }: { 
         </div>;
       })}
       {needle && !hasMatches && <p role="status" className="m-0 px-2 py-2 text-sm text-muted-foreground">{t("layout.filter.noMatches")}</p>}
-      {count > 0 && <button type="button" className="mt-1 min-h-9 rounded-md border border-input bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11" onClick={onClear}>{t("layout.clear")}</button>}
+      {count > 0 && <Button type="button" className="mt-1 min-h-9 rounded-md border border-input bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11" onClick={onClear}>{t("layout.clear")}</Button>}
     </>}
   </Popover>;
 }
@@ -87,8 +88,8 @@ export function FilterChips({ filters, sections, custom, onChange, onClear }: { 
   if (chips.length === 0) return null;
   return <ul aria-label={t("layout.filter.active")} className="m-0 flex list-none flex-wrap items-center gap-1.5 p-0">
     {chips.map((chip) => <li key={chip.id} data-testid={`chip-${chip.id}`} className={chipClass}><span>{chip.text}</span>
-      <button type="button" aria-label={t("layout.filter.remove").replace("{filter}", chip.text)} className="rounded bg-transparent p-0.5 text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={chip.remove}><X aria-hidden size={12} /></button></li>)}
-    {(hasFilters(filters) || custom) && <li><button type="button" className="rounded-md bg-transparent px-1.5 py-0.5 text-12 text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={onClear}>{t("layout.clearAll")}</button></li>}
+      <Button type="button" aria-label={t("layout.filter.remove").replace("{filter}", chip.text)} className="rounded bg-transparent p-0.5 text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={chip.remove}><X aria-hidden size={12} /></Button></li>)}
+    {(hasFilters(filters) || custom) && <li><Button type="button" className="rounded-md bg-transparent px-1.5 py-0.5 text-12 text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={onClear}>{t("layout.clearAll")}</Button></li>}
   </ul>;
 }
 
@@ -101,7 +102,7 @@ export function FilterQueryEditor({ text, error, onApply, generate }: { text: st
     <label className="my-0 grid gap-1 text-12 font-medium text-tertiary">{t("layout.filterQuery.label")}
       <textarea value={draft} rows={2} maxLength={2000} spellCheck={false} aria-invalid={error !== null} placeholder={t("layout.filterQuery.placeholder")} className="font-mono text-13"
         onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); onApply(draft); } }} /></label>
-    <div className="flex items-center gap-2"><button type="submit">{t("layout.filterQuery.apply")}</button>
+    <div className="flex items-center gap-2"><Button type="submit">{t("layout.filterQuery.apply")}</Button>
       {error && <p role="alert" data-testid="filter-query-error" className="my-0 text-13 text-danger-text">{error}</p>}</div>
   </form>;
 }
@@ -126,12 +127,12 @@ function FilterQueryGenerate({ scope, onQuery }: { scope: FilterQueryScope; onQu
       <span className="flex items-center gap-2">
         <input type="text" value={request} maxLength={1000} placeholder={t("layout.filterQuery.generate.placeholder")} className="min-w-0 flex-1 text-13" onChange={(event) => setRequest(event.target.value)}
           onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); void run(); } }} />
-        <button type="button" disabled={busy || request.trim() === ""} className={ghost} onClick={() => void run()}><Sparkles aria-hidden size={14} /><span>{busy ? t("layout.filterQuery.generate.busy") : t("layout.filterQuery.generate.button")}</span></button>
+        <Button type="button" disabled={busy || request.trim() === ""} className={ghost} onClick={() => void run()}><Sparkles aria-hidden size={14} /><span>{busy ? t("layout.filterQuery.generate.busy") : t("layout.filterQuery.generate.button")}</span></Button>
       </span></label>
     {failure && <p role="alert" data-testid="filter-query-generate-error" className="my-0 text-13 text-danger-text">{failure}</p>}
   </div>;
 }
 
 export function FilterQueryToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
-  return <button type="button" aria-pressed={open} aria-label={t("layout.filterQuery.toggle")} title={t("layout.filterQuery.toggle")} className={`${ghost} ${open ? "bg-layer-1" : ""}`} onClick={onToggle}><Code2 aria-hidden size={14} /><span className="max-sm:sr-only">{t("layout.filterQuery.button")}</span></button>;
+  return <Button type="button" aria-pressed={open} aria-label={t("layout.filterQuery.toggle")} title={t("layout.filterQuery.toggle")} className={`${ghost} ${open ? "bg-layer-1" : ""}`} onClick={onToggle}><Code2 aria-hidden size={14} /><span className="max-sm:sr-only">{t("layout.filterQuery.button")}</span></Button>;
 }

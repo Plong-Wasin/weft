@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { Palette } from "lucide-react";
 import { searchTypeIcons, translate, typeIconGroups, type MessageKey } from "@weft/shared";
@@ -51,8 +52,8 @@ export function TypeForm({ idPrefix, initial, submitLabel, onSubmit, onCancel }:
         <span className={`truncate font-medium ${name.trim() ? "text-primary" : "text-tertiary"}`}>{name.trim() || t("types.previewEmpty")}</span>
       </span>
       <span className="flex flex-wrap gap-2">
-        <button type="submit" disabled={saving}>{submitLabel}</button>
-        {onCancel && <button type="button" className="secondary" onClick={onCancel}>{t("types.cancel")}</button>}
+        <Button type="submit" disabled={saving}>{submitLabel}</Button>
+        {onCancel && <Button type="button" className="secondary" onClick={onCancel}>{t("types.cancel")}</Button>}
       </span>
     </div>
   </form>;
@@ -117,11 +118,11 @@ function IconChoice({ labelId, icon, onPick }: { labelId: string; icon: TypeIcon
             const index = matches.findIndex((entry) => entry.key === value);
             const checked = value === icon;
             const name = t(`types.icon.${value}`);
-            return <button key={value} ref={(element) => { keys.refs.current[index] = element; }} type="button" role="radio" aria-checked={checked} aria-label={name} title={name}
+            return <Button key={value} ref={(element) => { keys.refs.current[index] = element; }} type="button" role="radio" aria-checked={checked} aria-label={name} title={name}
               tabIndex={index === selected ? 0 : -1} onKeyDown={keys.onKeyDown(index)} onClick={() => onPick(value)}
               className={`${choiceBase} size-9 ${checked ? choiceChecked : ""}`}>
               <TypeIconMark icon={value} color="currentColor" size={16} />
-            </button>;
+            </Button>;
           })}
         </div>
       </section>)}
@@ -140,17 +141,17 @@ function ColourChoice({ labelId, idPrefix, color, custom, onPick }: { labelId: s
       {typeSwatches.map((hex, index) => {
         const checked = !custom && hex === color.toLowerCase();
         const name = t(`types.colour.${swatchNames[index]}`);
-        return <button key={hex} ref={(element) => { keys.refs.current[index] = element; }} type="button" role="radio" aria-checked={checked} aria-label={name} title={name}
+        return <Button key={hex} ref={(element) => { keys.refs.current[index] = element; }} type="button" role="radio" aria-checked={checked} aria-label={name} title={name}
           tabIndex={index === selected ? 0 : -1} onKeyDown={keys.onKeyDown(index)} onClick={() => onPick(hex, false)}
           className={`${choiceBase} size-8 rounded-full ${checked ? choiceChecked : ""}`}>
           <span aria-hidden className="block size-5 rounded-full" style={{ background: themeColour(hex) }} />
-        </button>;
+        </Button>;
       })}
-      <button ref={(element) => { keys.refs.current[customIndex] = element; }} type="button" role="radio" aria-checked={custom || !isSwatch(color)} aria-label={t("types.colour.custom")} title={t("types.colour.custom")}
+      <Button ref={(element) => { keys.refs.current[customIndex] = element; }} type="button" role="radio" aria-checked={custom || !isSwatch(color)} aria-label={t("types.colour.custom")} title={t("types.colour.custom")}
         tabIndex={selected === customIndex ? 0 : -1} onKeyDown={keys.onKeyDown(customIndex)} onClick={() => onPick(color, true)}
         className={`${choiceBase} size-8 rounded-full ${custom || !isSwatch(color) ? choiceChecked : ""}`}>
         <Palette aria-hidden size={16} />
-      </button>
+      </Button>
     </div>
     {(custom || !isSwatch(color)) && <label htmlFor={customId} className="flex items-center gap-2 text-13 text-secondary">
       {t("types.colour.custom")}

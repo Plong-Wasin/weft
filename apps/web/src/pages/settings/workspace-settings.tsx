@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { copyText } from "../../toast";
 import { Outlet, useNavigate } from "react-router";
@@ -61,14 +62,14 @@ export function WorkspaceGeneral() {
       <p className="text-13 text-secondary">{translate("settings.runtimeRunLimitsDesc")}</p>
       <label className="max-w-xs">{translate("settings.runsPerPersonPerHour")}<input type="number" min={1} max={10000} disabled={!isAdmin} value={(runLimitDraft ?? runLimits)?.runsPerPersonPerHour ?? 30} onChange={(event) => setRunLimitDraft({ ...(runLimitDraft ?? runLimits ?? { runsPerPersonPerHour: 30, runsPerAgentPerHour: 30 }), runsPerPersonPerHour: Number(event.target.value) })} /></label>
       <label className="max-w-xs">{translate("settings.runsPerAgentPerHour")}<input type="number" min={1} max={10000} disabled={!isAdmin} value={(runLimitDraft ?? runLimits)?.runsPerAgentPerHour ?? 30} onChange={(event) => setRunLimitDraft({ ...(runLimitDraft ?? runLimits ?? { runsPerPersonPerHour: 30, runsPerAgentPerHour: 30 }), runsPerAgentPerHour: Number(event.target.value) })} /></label>
-      {isAdmin && <button type="button" className="secondary w-fit" disabled={!runLimitDraft || runLimitDraft.runsPerPersonPerHour < 1 || runLimitDraft.runsPerAgentPerHour < 1} onClick={async () => {
+      {isAdmin && <Button type="button" className="secondary w-fit" disabled={!runLimitDraft || runLimitDraft.runsPerPersonPerHour < 1 || runLimitDraft.runsPerAgentPerHour < 1} onClick={async () => {
         if (!runLimitDraft) return;
         const updated = await action("set_runtime_run_limits", { workspaceId: workspace.id, ...runLimitDraft });
         if (updated === null) setNote(translate("members.failed")); else { setNote(null); setRunLimitDraft(null); await reloadRunLimits(); }
-      }}>{translate("settings.saveRunLimits")}</button>}
+      }}>{translate("settings.saveRunLimits")}</Button>}
     </SettingsBlock>
     <DangerZone heading="settings.leaveWorkspace" description={translate(isAdmin ? "settings.leaveWorkspaceAdminDesc" : "settings.leaveWorkspaceDesc")}>
-      <button type="button" className={dangerButton} onClick={leave}>{translate("settings.leave")}</button>
+      <Button type="button" className={dangerButton} onClick={leave}>{translate("settings.leave")}</Button>
     </DangerZone>
     <Note note={note} error />
   </section>;
@@ -85,7 +86,7 @@ export function WorkspaceMembers() {
       {isAdmin && !member.isAgent ? <select aria-label={`${translate("settings.roleOf")} ${member.name}`} value={member.role} onChange={async (event) => guard(await action("change_member_role", { workspaceId: workspace.id, userId: member.userId, role: event.target.value }))}>
         {roles.map((role) => <option key={role} value={role}>{translate(`members.role.${role}`)}</option>)}
       </select> : <span className="text-secondary">{translate(`members.role.${member.role}`)}</span>}
-      {isAdmin && !member.isAgent && <button type="button" className="secondary hover:!text-danger-text" aria-label={fillMessage(translate("members.removeNamed"), { name: member.name })} onClick={async () => { if (!window.confirm(translate("members.removeConfirm"))) return; await guard(await action("remove_member", { workspaceId: workspace.id, userId: member.userId })); }}>{translate("members.remove")}</button>}
+      {isAdmin && !member.isAgent && <Button type="button" className="secondary hover:!text-danger-text" aria-label={fillMessage(translate("members.removeNamed"), { name: member.name })} onClick={async () => { if (!window.confirm(translate("members.removeConfirm"))) return; await guard(await action("remove_member", { workspaceId: workspace.id, userId: member.userId })); }}>{translate("members.remove")}</Button>}
     </Row>)}</RowList>}
     <Note note={note} error />
     {isAdmin && <div className="mt-8"><MemberSecurityList workspaceId={workspace.id} selfId={selfId} onChanged={load} /></div>}
@@ -132,25 +133,25 @@ export function WorkspaceInvites() {
         <label>{translate("invite.role")}<select value={role} onChange={(event) => setRole(event.target.value as Member["role"])}>
           {roles.map((item) => <option key={item} value={item}>{translate(`members.role.${item}`)}</option>)}
         </select></label>
-        <button type="button" onClick={async () => {
+        <Button type="button" onClick={async () => {
           const invite = await action<{ token: string }>("create_invite", { workspaceId: workspace.id, role });
           setLink(invite ? `${window.location.origin}/invite/${invite.token}` : null);
           if (invite) { say(translate("invite.expires")); await load(); } else say(translate("members.failed"), true);
-        }}>{translate("invite.create")}</button>
+        }}>{translate("invite.create")}</Button>
       </div>
       {link && <div className="flex flex-wrap items-center gap-2"><input readOnly value={link} aria-label={translate("settings.inviteLink")} onFocus={(event) => event.target.select()} className="min-w-0 flex-1" />
-        <button type="button" className="secondary" onClick={async () => { if (await copyText(link, translate("invite.copied"), translate("comments.copyFailed"))) say(translate("invite.copied")); }}>{translate("invite.copy")}</button></div>}
+        <Button type="button" className="secondary" onClick={async () => { if (await copyText(link, translate("invite.copied"), translate("comments.copyFailed"))) say(translate("invite.copied")); }}>{translate("invite.copy")}</Button></div>}
     </SettingsBlock>
     <SettingsBlock title={translate("settings.openInvites")}>
       {invites.length === 0 ? <p className="text-secondary">{translate("settings.invitesNone")}</p> : <RowList>{invites.map((invite) => <Row key={invite.id}>
         <span className="grid min-w-0 flex-1"><span className="flex flex-wrap items-center gap-2 font-medium">{translate(`members.role.${invite.role}`)}{inviteInstances.has(invite.id) && <span className="text-12 font-normal text-secondary">{inviteInstances.get(invite.id)}</span>}</span>
           <span className="text-13 text-secondary">{translate("settings.invitedBy")} {members.find((member) => member.userId === invite.createdBy)?.name ?? "—"} · {translate("settings.expires")} {formatDate(invite.expiresAt)}</span></span>
-        <button type="button" className="secondary hover:!text-danger-text" onClick={async () => {
+        <Button type="button" className="secondary hover:!text-danger-text" onClick={async () => {
           const result = await action("revoke_invite", { workspaceId: workspace.id, inviteId: invite.id });
           // Refresh first so the "revoked" note never shows while the revoked invite is still listed.
           await load();
           say(result === null ? translate("members.failed") : translate("settings.revoked"), result === null);
-        }} aria-label={`${fillMessage(translate("settings.revokeInviteNamed"), { role: translate(`members.role.${invite.role}`), creator: members.find((member) => member.userId === invite.createdBy)?.name ?? "—", date: formatDate(invite.createdAt) })}${inviteInstances.has(invite.id) ? `, ${inviteInstances.get(invite.id)}` : ""}`}>{translate("settings.revoke")}</button>
+        }} aria-label={`${fillMessage(translate("settings.revokeInviteNamed"), { role: translate(`members.role.${invite.role}`), creator: members.find((member) => member.userId === invite.createdBy)?.name ?? "—", date: formatDate(invite.createdAt) })}${inviteInstances.has(invite.id) ? `, ${inviteInstances.get(invite.id)}` : ""}`}>{translate("settings.revoke")}</Button>
       </Row>)}</RowList>}
     </SettingsBlock>
     <Note note={note} error={failed} />

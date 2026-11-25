@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import { accessReasonText } from "./access-reason";
 import React from "react";
 import { Archive, Bot, Code2, Package, RefreshCw, Sigma, Tag, Trash2, Users, X } from "lucide-react";
@@ -27,15 +28,15 @@ function SetMenu({ label, icon, options, present, onApply }: { label: string; ic
   return <Popover label={label} className={chip} panelRole="dialog" panelClassName="grid w-60 max-h-80 gap-1 overflow-auto p-2" trigger={<span className="flex items-center gap-1.5">{icon}<span>{label}</span></span>}>
     {(close) => <>
       <div role="group" aria-label={label} className="grid grid-cols-2 gap-1 pb-1">
-        {(["add", "remove"] as const).map((value) => <button key={value} type="button" aria-pressed={mode === value} className={`rounded-md px-2 py-1 text-13 ${mode === value ? "bg-layer-1 font-medium text-primary" : "bg-transparent text-secondary hover:bg-layer-transparent-hover"}`} onClick={() => setMode(value)}>{t(`bulk.${value}`)}</button>)}
+        {(["add", "remove"] as const).map((value) => <Button key={value} type="button" aria-pressed={mode === value} className={`rounded-md px-2 py-1 text-13 ${mode === value ? "bg-layer-1 font-medium text-primary" : "bg-transparent text-secondary hover:bg-layer-transparent-hover"}`} onClick={() => setMode(value)}>{t(`bulk.${value}`)}</Button>)}
       </div>
       <label className="grid gap-1 text-13 text-secondary">{t("picker.search")}<input type="search" autoComplete="off" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
       {available.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-tertiary">{mode === "remove" ? t("bulk.nothingToRemove") : "—"}</p> : shown.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-tertiary">{t("picker.noMatches")}</p> : <>{[false, true].map((agents) => {
         const group = shown.filter((option) => !!option.isAgent === agents);
         if (!group.length) return null;
-        return <React.Fragment key={String(agents)}>{shown.some((option) => option.isAgent) && <p className="px-2.5 pb-1 pt-2 text-11 font-semibold uppercase tracking-wide text-tertiary">{agents ? t("agents.group") : t("members.group")}</p>}{group.map((option) => { const unavailable = option.isAgent && option.hasAccess === false; return <button key={option.id} type="button" aria-disabled={unavailable || undefined} title={unavailable ? option.accessReason ?? undefined : undefined} className={`${optionClass} ${option.codeCapable ? "flex-wrap" : ""} ${unavailable ? "cursor-not-allowed opacity-45" : ""}`} onClick={() => !unavailable && void onApply(mode, option.id).then((ok) => ok && close())}>
+        return <React.Fragment key={String(agents)}>{shown.some((option) => option.isAgent) && <p className="px-2.5 pb-1 pt-2 text-11 font-semibold uppercase tracking-wide text-tertiary">{agents ? t("agents.group") : t("members.group")}</p>}{group.map((option) => { const unavailable = option.isAgent && option.hasAccess === false; return <Button key={option.id} type="button" aria-disabled={unavailable || undefined} title={unavailable ? option.accessReason ?? undefined : undefined} className={`${optionClass} ${option.codeCapable ? "flex-wrap" : ""} ${unavailable ? "cursor-not-allowed opacity-45" : ""}`} onClick={() => !unavailable && void onApply(mode, option.id).then((ok) => ok && close())}>
           {option.isAgent ? <span title={t("comments.agent")}><Bot aria-hidden size={14} className="text-secondary" /></span> : option.icon}<span className={option.codeCapable ? "min-w-0" : "flex-1 truncate"}>{option.name}{option.isAgent && <> <span className="ml-1.5 text-11 text-tertiary">{t("comments.agent")}</span></>}</span>{option.codeCapable && <span className="inline-flex items-center gap-1 whitespace-nowrap rounded bg-layer-1 px-1.5 py-0.5 text-10 text-secondary" title={t("agents.codeCapable")}><Code2 aria-hidden size={13} className="text-warning-primary" />{t("agents.canEditCode")}</span>}
-        {unavailable && <span className="w-full pl-5 text-11 text-tertiary">{option.accessReason}</span>}</button>; })}</React.Fragment>;
+        {unavailable && <span className="w-full pl-5 text-11 text-tertiary">{option.accessReason}</span>}</Button>; })}</React.Fragment>;
       })}</>}
     </>}
   </Popover>;
@@ -97,15 +98,15 @@ export function BulkBar({ projectId, selected, states, people, labels, estimate,
         options={[{ id: "", name: t("workItems.noCycle") }, ...cycleOptions.filter((cycle) => cycle.status !== "completed").map((cycle) => ({ id: cycle.id, name: cycle.name }))]} onSelect={(id) => void setCycle(id)} />}
       {moduleOptions && <SetMenu label={t("workItems.modules")} icon={<Package aria-hidden size={14} className="text-secondary" />} options={moduleOptions.map((module) => ({ id: module.id, name: module.name }))} present={new Set(moduleOptions.map((module) => module.id))}
         onApply={(mode, id) => apply(mode === "add" ? "add_module_items" : "remove_module_items", { moduleId: id, workItemIds: ids }, "bulk.updated")} />}
-      <button type="button" className={`${chip} disabled:opacity-50`} disabled={!archivable} title={archivable ? undefined : t("bulk.archiveBlocked")} onClick={() => void apply("bulk_archive_work_items", { projectId, workItemIds: ids }, "bulk.archived").then((ok) => ok && onClear())}><Archive aria-hidden size={14} className="text-secondary" />{t("bulk.archive")}</button>
-      <button type="button" className={`${chip} text-danger-text`} onClick={() => setConfirmDelete(true)}><Trash2 aria-hidden size={14} />{t("bulk.delete")}</button>
-      <button type="button" aria-label={t("bulk.clear")} title={t("bulk.clear")} className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={onClear}><X aria-hidden size={16} /></button>
+      <Button type="button" className={`${chip} disabled:opacity-50`} disabled={!archivable} title={archivable ? undefined : t("bulk.archiveBlocked")} onClick={() => void apply("bulk_archive_work_items", { projectId, workItemIds: ids }, "bulk.archived").then((ok) => ok && onClear())}><Archive aria-hidden size={14} className="text-secondary" />{t("bulk.archive")}</Button>
+      <Button type="button" className={`${chip} text-danger-text`} onClick={() => setConfirmDelete(true)}><Trash2 aria-hidden size={14} />{t("bulk.delete")}</Button>
+      <Button type="button" aria-label={t("bulk.clear")} title={t("bulk.clear")} className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={onClear}><X aria-hidden size={16} /></Button>
     </div>
     {error && <p role="alert" className="m-0 px-1 text-13 text-danger-text">{error}</p>}
     {confirmDelete && <Dialog title={fill("bulk.deleteTitle", count)} onClose={() => setConfirmDelete(false)}>
       <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); void apply("delete_work_items", { projectId, workItemIds: ids }, "bulk.deleted").then((ok) => { setConfirmDelete(false); if (ok) onClear(); }); }}>
         <p className="m-0 text-14 text-secondary">{t("bulk.deleteBody")}</p>
-        <div className="flex justify-end gap-2"><button type="button" className="secondary" onClick={() => setConfirmDelete(false)}>{t("comments.cancel")}</button><button type="submit">{t("bulk.delete")}</button></div>
+        <div className="flex justify-end gap-2"><Button type="button" className="secondary" onClick={() => setConfirmDelete(false)}>{t("comments.cancel")}</Button><Button type="submit">{t("bulk.delete")}</Button></div>
       </form>
     </Dialog>}
   </div>;

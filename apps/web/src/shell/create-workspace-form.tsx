@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { translate } from "@weft/shared";
 import { api } from "../api";
@@ -27,7 +28,7 @@ export function CreateWorkspaceForm({ onCreated, onCancel }: { onCreated: (works
       if (!slug || slug === slugify(workspaceName)) setSlug(slugify(value));
     }} /></label>
     <label className="grid gap-1.5">{translate("workspace.slug")}<input required pattern="[a-z0-9]+(-[a-z0-9]+)*" value={slug} onChange={(event) => setSlug(event.target.value)} /></label>
-    <div className="flex gap-2"><button>{translate("workspace.create")}</button>{onCancel && <button type="button" className="secondary" onClick={onCancel}>{translate("workspace.close")}</button>}</div>
+    <div className="flex gap-2"><Button>{translate("workspace.create")}</Button>{onCancel && <Button type="button" className="secondary" onClick={onCancel}>{translate("workspace.close")}</Button>}</div>
     {error && <p role="alert" className="text-danger-text">{error}</p>}
   </form>;
 }

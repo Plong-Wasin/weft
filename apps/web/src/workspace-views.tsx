@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import { copyText } from "./toast";
 import React from "react";
 import { Link, useNavigate } from "react-router";
@@ -156,9 +157,9 @@ export function WorkspaceViewPage({ workspace, selfId, viewId }: { workspace: Wo
         {/* The h1 sits beside the trigger: a heading inside a button is not exposed as a heading. */}
         <h1 className="sr-only">{title}</h1>
         <Popover label={t("workspaceViews.switch")} className="max-w-full whitespace-nowrap text-14 font-medium text-primary" panelClassName="max-h-80 w-64 overflow-auto" trigger={<><span aria-hidden className="max-w-[min(60vw,20rem)] truncate">{title}</span><ChevronDown aria-hidden size={14} /></>}>
-          {(close) => entries.map((entry) => <button key={entry.slug} type="button" role="menuitemradio" aria-checked={entry.slug === viewId} className={menuItemClass}
+          {(close) => entries.map((entry) => <Button key={entry.slug} type="button" role="menuitemradio" aria-checked={entry.slug === viewId} className={menuItemClass}
             onClick={() => { close(); navigate(paths.workspaceView(workspace.slug, entry.slug)); }}>
-            <Layers aria-hidden size={14} className="text-secondary" /><span className="flex-1 truncate">{entry.name}</span>{entry.isPrivate && <Lock aria-hidden size={12} className="text-tertiary" />}{entry.slug === viewId && <Check aria-hidden size={14} />}</button>)}
+            <Layers aria-hidden size={14} className="text-secondary" /><span className="flex-1 truncate">{entry.name}</span>{entry.isPrivate && <Lock aria-hidden size={12} className="text-tertiary" />}{entry.slug === viewId && <Check aria-hidden size={14} />}</Button>)}
         </Popover>
         {view && <span title={t(`views.access.${view.access}`)} className="text-12 text-tertiary">{t(`views.access.${view.access}`)}</span>}
       </nav>
@@ -175,17 +176,17 @@ export function WorkspaceViewPage({ workspace, selfId, viewId }: { workspace: Wo
               onChange={(event) => update({ props: columnProperties.filter((other) => other === property ? event.target.checked : params.props.includes(other)) })} />{t(`layout.property.${property}`)}</label>)}</fieldset>
         </>}
       </Popover>
-      {canWrite && <button type="button" className={ghost} onClick={() => setForm("save")}><BookmarkPlus aria-hidden size={14} />{t("views.saveAs")}</button>}
-      {view && canChange && differsFromView(view, params) && <button type="button" className={primary} onClick={async () => {
+      {canWrite && <Button type="button" variant="ghost" className="flex items-center gap-1.5" onClick={() => setForm("save")}><BookmarkPlus aria-hidden size={14} />{t("views.saveAs")}</Button>}
+      {view && canChange && differsFromView(view, params) && <Button type="button" variant="primary" onClick={async () => {
         const next = await action<SavedView>("update_view", { viewId: view.id, ...paramsToSettings(params) });
         if (next) { setView(next); setStatus(t("views.updated")); void reloadList(); } else setStatus(t("views.failed"));
-      }}>{t("views.update")}</button>}
+      }}>{t("views.update")}</Button>}
       <Popover label={t("views.menu")} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-44">
         {(close) => <>
-          <button type="button" role="menuitem" className={menuItemClass} onClick={() => { void copyText(link, t("views.linkCopied"), t("comments.copyFailed")); close(); }}>{t("views.copyLink")}</button>
+          <Button type="button" role="menuitem" className={menuItemClass} onClick={() => { void copyText(link, t("views.linkCopied"), t("comments.copyFailed")); close(); }}>{t("views.copyLink")}</Button>
           {view && canChange && <>
-            <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setForm("edit"); }}>{t("views.edit")}</button>
-            <button type="button" role="menuitem" className={`${menuItemClass} text-destructive`} onClick={() => { close(); setForm("delete"); }}>{t("views.delete")}</button>
+            <Button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setForm("edit"); }}>{t("views.edit")}</Button>
+            <Button type="button" role="menuitem" className={`${menuItemClass} text-destructive`} onClick={() => { close(); setForm("delete"); }}>{t("views.delete")}</Button>
           </>}
         </>}
       </Popover>

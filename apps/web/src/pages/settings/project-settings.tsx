@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { Link, Outlet, useNavigate } from "react-router";
 import { MoreHorizontal } from "lucide-react";
@@ -12,7 +13,7 @@ import { SortableList, SortMenu } from "../../sortable-list";
 import { Popover, menuItemClass } from "../../shell/popover";
 import { roles, stateGroups, type Label, type Member, type Project, type WorkState } from "../../types";
 import { ProjectMergeSetting } from "./project-merge-setting";
-import { dangerButton, DangerZone, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
+import { DangerZone, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 import { WorkItemTypesSettings } from "./project-work-item-types";
 
 /** Loads the project of `/settings/projects/:projectKey` and renders the routed section; the project name heads every section. */
@@ -53,7 +54,7 @@ export function ProjectGeneral() {
           <option value="public">{translate("projects.visibility.public")}</option>
           <option value="private">{translate("projects.visibility.private")}</option>
         </select></label>
-        {canAdmin && <div><button>{translate("projects.save")}</button></div>}
+        {canAdmin && <div><Button>{translate("projects.save")}</Button></div>}
       </form>
     </SettingsBlock>
     <SettingsBlock title={translate("projects.key")} description={translate("projects.aliasNote")}>
@@ -63,16 +64,16 @@ export function ProjectGeneral() {
         if (result) { setRenaming(false); navigate(paths.projectSettings(workspace.slug, result.key), { replace: true }); } else await done(null);
       }}>
         <label>{translate("projects.key")}<input required autoFocus pattern="[A-Z][A-Z0-9]{1,11}" title={translate("projects.keyHint")} value={newKey} onChange={(event) => setNewKey(event.target.value.toUpperCase())} /></label>
-        <div className="mt-3 flex flex-wrap gap-2"><button>{translate("projects.renameConfirm")}</button><button type="button" className="secondary" onClick={cancelRename}>{translate("settings.cancel")}</button></div>
+        <div className="mt-3 flex flex-wrap gap-2"><Button>{translate("projects.renameConfirm")}</Button><Button type="button" className="secondary" onClick={cancelRename}>{translate("settings.cancel")}</Button></div>
       </form> : <div className="flex flex-wrap items-center gap-3">
         <span className="font-mono text-14 text-primary">{project.key}</span>
-        {canAdmin && <button type="button" className="secondary" onClick={() => setRenaming(true)}>{translate("projects.renameKey")}</button>}
+        {canAdmin && <Button type="button" className="secondary" onClick={() => setRenaming(true)}>{translate("projects.renameKey")}</Button>}
       </div>}
     </SettingsBlock>
     <Note note={note} error={failed} />
     {canAdmin && <DangerZone heading={project.archived ? "projects.unarchive" : "projects.archive"} description={translate(project.archived ? "settings.unarchiveDesc" : "settings.archiveDesc")}>
-      <button type="button" className={project.archived ? "secondary" : dangerButton} onClick={async () => done(await action(project.archived ? "unarchive_project" : "archive_project", { projectId: project.id }))}>
-        {translate(project.archived ? "projects.unarchive" : "projects.archive")}</button>
+      <Button type="button" variant={project.archived ? "secondary" : "danger"} onClick={async () => done(await action(project.archived ? "unarchive_project" : "archive_project", { projectId: project.id }))}>
+        {translate(project.archived ? "projects.unarchive" : "projects.archive")}</Button>
     </DangerZone>}
   </section>;
 }
@@ -100,7 +101,7 @@ export function ProjectMembers() {
       {canAdmin && !member.isAgent ? <select aria-label={`${translate("settings.roleOf")} ${member.name}`} value={member.role} onChange={async (event) => guard(await action("change_project_member_role", { projectId: project.id, userId: member.userId, role: event.target.value }))}>
         {roles.map((role) => <option key={role} value={role}>{translate(`projects.role.${role}`)}</option>)}
       </select> : <span className="text-secondary">{translate(`projects.role.${member.role}`)}</span>}
-      {canAdmin && !member.isAgent && <button type="button" className="secondary hover:!text-danger-text" onClick={async () => guard(await action("remove_project_member", { projectId: project.id, userId: member.userId }))}>{translate("members.remove")}</button>}
+      {canAdmin && !member.isAgent && <Button type="button" className="secondary hover:!text-danger-text" onClick={async () => guard(await action("remove_project_member", { projectId: project.id, userId: member.userId }))}>{translate("members.remove")}</Button>}
     </Row>)}</RowList>
     {canAdmin && <SettingsBlock title={translate("projects.addMember")} description={translate("projects.addMemberDesc")}>
       <div className="flex flex-wrap items-center gap-3">
@@ -111,7 +112,7 @@ export function ProjectMembers() {
         <select aria-label={translate("projects.newMemberRole")} value={addRole} onChange={(event) => setAddRole(event.target.value as typeof addRole)}>
           {roles.map((role) => <option key={role} value={role}>{translate(`projects.role.${role}`)}</option>)}
         </select>
-        <button type="button" disabled={!addUser} onClick={async () => { await guard(await action("add_project_member", { projectId: project.id, userId: addUser, role: addRole })); setAddUser(""); }}>{translate("projects.addMember")}</button>
+        <Button type="button" disabled={!addUser} onClick={async () => { await guard(await action("add_project_member", { projectId: project.id, userId: addUser, role: addRole })); setAddUser(""); }}>{translate("projects.addMember")}</Button>
       </div>
     </SettingsBlock>}
     <Note note={note} error />
@@ -142,7 +143,7 @@ export function ProjectLabels() {
     {canAdmin && <form className="mb-5 mt-0 flex flex-wrap items-end gap-3" onSubmit={async (event) => { event.preventDefault(); if (await guard(await action("create_label", { projectId: project.id, name, color }))) setName(""); }}>
       <label>{translate("labels.name")}<input required value={name} onChange={(event) => setName(event.target.value)} /></label>
       <input type="color" aria-label={translate("labels.color")} value={color} onChange={(event) => setColor(event.target.value)} className="h-8 w-10 rounded-md border border-strong bg-surface-1 p-0.5" />
-      <button>{translate("labels.create")}</button>
+      <Button>{translate("labels.create")}</Button>
     </form>}
     {labels.length === 0 ? <p className="text-secondary">{translate("labels.empty")}</p> : <>
     <search className="mb-3 block"><label className="grid max-w-sm gap-1 text-13 text-secondary">{translate("picker.search")}<input type="search" autoComplete="off" value={labelQuery} onChange={(event) => setLabelQuery(event.target.value)} /></label></search>
@@ -161,13 +162,13 @@ export function ProjectLabels() {
         {editing?.id === label.id ? <form className="my-0 flex flex-1 flex-wrap items-center gap-2" onSubmit={async (event) => { event.preventDefault(); if (await guard(await action("update_label", { labelId: label.id, name: editing.name, color: editing.color }))) setEditing(null); }}>
           <input required aria-label={translate("labels.name")} value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} />
           <input type="color" aria-label={translate("labels.color")} value={editing.color} onChange={(event) => setEditing({ ...editing, color: event.target.value })} className="h-8 w-10 rounded-md border border-strong bg-surface-1 p-0.5" />
-          <button>{translate("labels.save")}</button>
-          <button type="button" className="secondary" onClick={() => setEditing(null)}>{translate("settings.cancel")}</button>
+          <Button>{translate("labels.save")}</Button>
+          <Button type="button" className="secondary" onClick={() => setEditing(null)}>{translate("settings.cancel")}</Button>
         </form> : <>
           <span aria-hidden className="size-3 shrink-0 rounded-full" style={{ background: label.color }} /><span className="flex-1 truncate">{label.name}</span>
           {canAdmin && <>
-            <button type="button" className="secondary" onClick={() => setEditing({ id: label.id, name: label.name, color: label.color })}>{translate("labels.edit")}</button>
-            <button type="button" className="secondary" onClick={async () => guard(await action("delete_label", { labelId: label.id }))}>{translate("labels.delete")}</button>
+            <Button type="button" className="secondary" onClick={() => setEditing({ id: label.id, name: label.name, color: label.color })}>{translate("labels.edit")}</Button>
+            <Button type="button" className="secondary" onClick={async () => guard(await action("delete_label", { labelId: label.id }))}>{translate("labels.delete")}</Button>
             <SortMenu name={label.name} canUp={reorderable && index > 0} canDown={reorderable && index < labels.length - 1} onMove={moveLabel} />
           </>}
         </>}
@@ -211,30 +212,30 @@ export function ProjectStates() {
               {canAdmin && grip}
               {editing?.id === state.id ? <form className="my-0 flex flex-1 flex-wrap items-center gap-2" onSubmit={async (event) => { event.preventDefault(); if (await guard(await action("update_state", { stateId: state.id, name: editing.name }))) setEditing(null); }}>
                 <input required aria-label={translate("states.name")} value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} />
-                <button>{translate("labels.save")}</button>
-                <button type="button" className="secondary" onClick={() => setEditing(null)}>{translate("settings.cancel")}</button>
+                <Button>{translate("labels.save")}</Button>
+                <Button type="button" className="secondary" onClick={() => setEditing(null)}>{translate("settings.cancel")}</Button>
               </form> : <>
                 <span className="min-w-0 flex-1 truncate">{state.name}</span>
                 {canAdmin && <Popover label={`${translate("sortable.actions")}: ${state.name}`} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-44">
                   {(close) => <>
-                    <button type="button" role="menuitem" className={menuItemClass} disabled={index === 0} onClick={async () => { close(); await guard(await move(index, -1)); }}>{translate("states.moveUp")}</button>
-                    <button type="button" role="menuitem" className={menuItemClass} disabled={index === inGroup.length - 1} onClick={async () => { close(); await guard(await move(index, 1)); }}>{translate("states.moveDown")}</button>
-                    <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setEditing({ id: state.id, name: state.name }); }}>{translate("states.rename")}</button>
-                    <button type="button" role="menuitem" className={`${menuItemClass} text-destructive`} onClick={async () => { close(); await guard(await action("delete_state", { stateId: state.id })); }}>{translate("states.remove")}</button>
+                    <Button type="button" role="menuitem" className={menuItemClass} disabled={index === 0} onClick={async () => { close(); await guard(await move(index, -1)); }}>{translate("states.moveUp")}</Button>
+                    <Button type="button" role="menuitem" className={menuItemClass} disabled={index === inGroup.length - 1} onClick={async () => { close(); await guard(await move(index, 1)); }}>{translate("states.moveDown")}</Button>
+                    <Button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setEditing({ id: state.id, name: state.name }); }}>{translate("states.rename")}</Button>
+                    <Button type="button" role="menuitem" className={`${menuItemClass} text-destructive`} onClick={async () => { close(); await guard(await action("delete_state", { stateId: state.id })); }}>{translate("states.remove")}</Button>
                   </>}
                 </Popover>}
               </>}
             </>;
           }} />}
         {canAdmin && <div className="grid justify-items-start gap-3">
-          <button type="button" className="secondary" aria-expanded={adding[group] === true} onClick={() => setAdding({ ...adding, [group]: !adding[group] })}>{translate("states.add")}</button>
+          <Button type="button" className="secondary" aria-expanded={adding[group] === true} onClick={() => setAdding({ ...adding, [group]: !adding[group] })}>{translate("states.add")}</Button>
           {adding[group] && <form className="my-0 flex flex-wrap items-end gap-3" onSubmit={async (event) => {
             event.preventDefault();
             if (await guard(await action("create_state", { projectId: project.id, group, name: newName[group] ?? "" }))) { setNewName({ ...newName, [group]: "" }); setAdding({ ...adding, [group]: false }); }
           }}>
             <label>{translate("states.name")}<input required autoFocus value={newName[group] ?? ""} onChange={(event) => setNewName({ ...newName, [group]: event.target.value })} /></label>
-            <button>{translate("states.create")}</button>
-            <button type="button" className="secondary" onClick={() => setAdding({ ...adding, [group]: false })}>{translate("settings.cancel")}</button>
+            <Button>{translate("states.create")}</Button>
+            <Button type="button" className="secondary" onClick={() => setAdding({ ...adding, [group]: false })}>{translate("settings.cancel")}</Button>
           </form>}
         </div>}
       </SettingsBlock>;
@@ -277,8 +278,8 @@ export function ProjectFeatures() {
           <span className="text-13 text-secondary">{translate("features.confirmOffBody")}</span>
           <span className="text-13 text-secondary">{translate("features.confirmOffInUse")} {pending.names.join(", ")}</span>
           <span className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => void save(feature, false).then(() => setPending(null))}>{translate("features.confirmTurnOff")}</button>
-            <button type="button" className="secondary" onClick={() => setPending(null)}>{translate("features.confirmKeep")}</button>
+            <Button type="button" onClick={() => void save(feature, false).then(() => setPending(null))}>{translate("features.confirmTurnOff")}</Button>
+            <Button type="button" className="secondary" onClick={() => setPending(null)}>{translate("features.confirmKeep")}</Button>
           </span>
         </span>}
       </span>
@@ -360,13 +361,13 @@ export function ProjectAutomation() {
       </SettingsBlock>
       {preview && <p role="status" className="text-14 text-primary">{translate("autoRules.previewResult").replace("{close}", String(preview.toClose)).replace("{archive}", String(preview.toArchive))}</p>}
       {canAdmin && <div className="flex flex-wrap gap-3">
-        <button type="button" className="secondary" onClick={async () => {
+        <Button type="button" className="secondary" onClick={async () => {
           const result = await action<{ toClose: number; toArchive: number }>("preview_auto_rules", payload());
           setPreview(result);
           setFailed(result === null);
           setNote(result === null ? translate("autoRules.previewFailed") : null);
-        }}>{translate("autoRules.preview")}</button>
-        <button>{translate("autoRules.save")}</button>
+        }}>{translate("autoRules.preview")}</Button>
+        <Button>{translate("autoRules.save")}</Button>
       </div>}
     </form>
     <Note note={note} error={failed} />

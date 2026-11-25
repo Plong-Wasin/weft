@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { formatDate, translate } from "@weft/shared";
 import { Copy, ExternalLink, Pencil, Trash2 } from "lucide-react";
@@ -43,10 +44,10 @@ export function WebLinksPanel({ personName, workItemId, canWrite, action, onChan
       {row.title && <span className="min-w-0 shrink truncate text-tertiary">{host(row.url)}</span>}
       {row.createdAt && <span className="hidden shrink-0 text-12 text-tertiary sm:inline">{row.createdBy && personName ? `${personName(row.createdBy)} · ` : ""}{formatDate(row.createdAt)}</span>}
       <span className="ml-auto flex shrink-0 gap-0.5">
-        <button type="button" className={rowButton} aria-label={t("webLinks.copy")} title={t("webLinks.copy")} onClick={() => void copyText(row.url, t("webLinks.copied"), t("comments.copyFailed"))}><Copy aria-hidden size={13} /></button>
+        <Button type="button" className={rowButton} aria-label={t("webLinks.copy")} title={t("webLinks.copy")} onClick={() => void copyText(row.url, t("webLinks.copied"), t("comments.copyFailed"))}><Copy aria-hidden size={13} /></Button>
         {canWrite && <>
-          <button type="button" className={rowButton} aria-label={t("webLinks.edit")} title={t("webLinks.edit")} onClick={() => setEditing(row)}><Pencil aria-hidden size={13} /></button>
-          <button type="button" className={`${rowButton} hover:!text-danger-text`} aria-label={t("webLinks.remove")} title={t("webLinks.remove")} onClick={async () => { await done(await action("delete_web_link", { webLinkId: row.id })); }}><Trash2 aria-hidden size={13} /></button>
+          <Button type="button" className={rowButton} aria-label={t("webLinks.edit")} title={t("webLinks.edit")} onClick={() => setEditing(row)}><Pencil aria-hidden size={13} /></Button>
+          <Button type="button" className={`${rowButton} hover:!text-danger-text`} aria-label={t("webLinks.remove")} title={t("webLinks.remove")} onClick={async () => { await done(await action("delete_web_link", { webLinkId: row.id })); }}><Trash2 aria-hidden size={13} /></Button>
         </>}
       </span>
     </li>)}</ul>}

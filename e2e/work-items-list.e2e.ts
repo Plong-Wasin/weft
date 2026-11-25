@@ -13,7 +13,12 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5207);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const shots = reviewShots("05-work-items-list-layout");
-const evidenceShots = join(import.meta.dir, "../.local/shots/03");
+const screenshotPhase = Bun.env.E2E_SCREENSHOT_PHASE === "before" ? "before" : "after";
+const evidenceShots = Bun.env.E2E_SCREENSHOT_DIR ?? join(import.meta.dir, `../.local/shots/shadcn-06/${screenshotPhase}`);
+const screenshotViewports = [
+  { width: 1440, height: 900 }, { width: 1024, height: 768 }, { width: 820, height: 1180 },
+  { width: 768, height: 1024 }, { width: 844, height: 390 }, { width: 667, height: 375 }, { width: 390, height: 844 },
+] as const;
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
   Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
@@ -120,13 +125,13 @@ try {
   check(await done.getAttribute("aria-expanded") === "true", "an empty group did not expand through its toggle");
   await done.click();
   check(await done.getAttribute("aria-expanded") === "false", "an empty group did not collapse again");
-  // Named acceptance checks for the compact issue rows and their quiet property slots.
+  // Named acceptance checks for airy shadcn rows and their quiet property slots.
   const firstRow = page.getByTestId("row-MOB-1");
   const desktopRowMetrics = await page.locator('[data-testid^="row-"]').evaluateAll((rows) => rows.map((row) => {
     const rect = row.getBoundingClientRect();
     return { id: row.getAttribute("data-testid"), height: rect.height };
   }));
-  check(desktopRowMetrics.length > 0 && desktopRowMetrics.every((row) => row.height <= 40), `1440px list rows are at most 40px tall (TableRowsAtMost40px): ${JSON.stringify(desktopRowMetrics)}`);
+  check(desktopRowMetrics.length > 0 && desktopRowMetrics.every((row) => row.height <= 44), `1440px list rows stay within the 44px shadcn control size (TableRowsAtMost44px): ${JSON.stringify(desktopRowMetrics)}`);
   check(await page.getByTestId("list-column-header").count() === 0, "Linear Issues list has no header row (ListHasNoHeader)");
   for (const [property, label] of [["Estimate", translate("workItems.estimate")], ["Labels", translate("workItems.labels")], ["Cycle", translate("workItems.cycle")], ["Modules", translate("workItems.modules")], ["Dates", translate("layout.property.dates")], ["Assignees", translate("workItems.assignees")]] as const) {
     const trigger = firstRow.getByRole("button", { name: new RegExp(`^${label}:`) });
@@ -252,14 +257,15 @@ try {
   await page.getByTestId("row-MOB-1").waitFor();
   await page.mouse.move(0, 0);
   await mkdir(evidenceShots, { recursive: true });
-  for (const width of [1920, 1440, 1100, 390] as const) {
-    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+  for (const { width, height } of screenshotViewports) {
+    await page.setViewportSize({ width, height });
     const columnHeader = page.getByTestId("list-column-header");
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${width}px list has no horizontal page scroll (ListNoHorizontalScrollAt${width})`);
     check(await columnHeader.count() === 0, `${width}px Linear Issues list has no header row (ListNoHeaderAt${width})`);
     if (width >= 768) {
       const heights = await page.locator('[data-testid^="row-"]').evaluateAll((rows) => rows.map((item) => item.getBoundingClientRect().height));
-      check(heights.length > 0 && heights.every((height) => height <= 40), `${width}px list rows stay at most 40px tall (ListRowsAtMost40pxAt${width}): ${JSON.stringify(heights)}`);
+      check(heights.length > 0 && heights.every((height) => height <= 44), `${width}px list rows stay within the 44px shadcn control size (ListRowsAtMost44pxAt${width}): ${JSON.stringify(heights)}`);
       check(Math.max(...heights) - Math.min(...heights) <= 1, `${width}px list rows have equal heights (ListRowsEqualHeightAt${width}): ${JSON.stringify(heights)}`);
       check(await page.getByTestId("list-property-wrap").count() === 0, `${width}px keeps the property block on the title row (ListNoPropertyWrapAt${width})`);
     }
@@ -297,7 +303,7 @@ try {
           const row = element.getBoundingClientRect();
           return { height: row.height, titleWidth: element.querySelector("a")?.getBoundingClientRect().width ?? 0 };
         }));
-        if (width >= 768) check(metrics.length > 0 && metrics.every((row) => row.height <= 40) && Math.max(...metrics.map((row) => row.height)) - Math.min(...metrics.map((row) => row.height)) <= 1, `${group} grouping keeps equal rows at ${width}px: ${JSON.stringify(metrics)}`);
+        if (width >= 768) check(metrics.length > 0 && metrics.every((row) => row.height <= 44) && Math.max(...metrics.map((row) => row.height)) - Math.min(...metrics.map((row) => row.height)) <= 1, `${group} grouping keeps equal rows at ${width}px within the 44px shadcn control size: ${JSON.stringify(metrics)}`);
         if (width === 390) check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth) && (metrics[0]?.titleWidth ?? 0) >= 140, `${group} grouping keeps a readable 390px title without horizontal page scroll: ${JSON.stringify(metrics[0])}`);
         await page.screenshot({ path: `${evidenceShots}/list-${group}-${theme}-${width}.png`, fullPage: true });
       }

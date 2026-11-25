@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { GripVertical, MoreHorizontal } from "lucide-react";
 import { translate } from "@weft/shared";
@@ -12,8 +13,8 @@ export function SortMenu({ name, canUp, canDown, onMove }: { name: string; canUp
   const move = (delta: -1 | 1) => { onMove(delta); requestAnimationFrame(() => requestAnimationFrame(() => wrap.current?.querySelector<HTMLElement>("button[aria-haspopup]")?.focus())); };
   return <span ref={wrap} className="contents"><Popover label={`${translate("sortable.actions")}: ${name}`} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-44">
     {(close) => <>
-      <button type="button" role="menuitem" className={menuItemClass} disabled={!canUp} onClick={() => { close(); move(-1); }}>{translate("sortable.moveUp")}</button>
-      <button type="button" role="menuitem" className={menuItemClass} disabled={!canDown} onClick={() => { close(); move(1); }}>{translate("sortable.moveDown")}</button>
+      <Button type="button" role="menuitem" className={menuItemClass} disabled={!canUp} onClick={() => { close(); move(-1); }}>{translate("sortable.moveUp")}</Button>
+      <Button type="button" role="menuitem" className={menuItemClass} disabled={!canDown} onClick={() => { close(); move(1); }}>{translate("sortable.moveDown")}</Button>
     </>}
   </Popover></span>;
 }
@@ -45,7 +46,7 @@ export function SortableList({ ids, onReorder, disabled = false, label, renderRo
     if (hit >= 0) return hit;
     return rows.length > 0 && y < rows[0]!.getBoundingClientRect().top ? 0 : rows.length - 1;
   };
-  const grip = (id: string) => <button type="button" data-grip={id} disabled={disabled} aria-label={`${translate("sortable.reorder")}: ${label(id)}`} title={translate("sortable.hint")}
+  const grip = (id: string) => <Button type="button" data-grip={id} disabled={disabled} aria-label={`${translate("sortable.reorder")}: ${label(id)}`} title={translate("sortable.hint")}
     className={`grid size-7 shrink-0 touch-none place-items-center rounded-md !bg-transparent !p-0 text-tertiary hover:!bg-layer-transparent-hover hover:text-primary ${drag?.id === id ? "cursor-grabbing" : "cursor-grab"}`}
     onPointerDown={(event) => {
       if (disabled || (event.pointerType === "mouse" && event.button !== 0)) return;
@@ -62,7 +63,7 @@ export function SortableList({ ids, onReorder, disabled = false, label, renderRo
       if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
       event.preventDefault();
       place(id, ids.indexOf(id) + (event.key === "ArrowUp" ? -1 : 1));
-    }}><GripVertical aria-hidden size={14} /></button>;
+    }}><GripVertical aria-hidden size={14} /></Button>;
   const from = drag ? ids.indexOf(drag.id) : -1;
   return <>
   <span role="status" aria-live="polite" className="sr-only">{announce}</span>

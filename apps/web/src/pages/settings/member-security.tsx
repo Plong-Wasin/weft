@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { formatDate, translate, type MessageKey } from "@weft/shared";
 import { action } from "../../api";
@@ -67,7 +68,7 @@ export function MemberSecurityList({ workspaceId, selfId, onChanged }: { workspa
     if (current) await loadTokens(current);
   };
 
-  if (accounts === null) return <p role="status" className="text-secondary">{translate(accountsFailed ? "account.loadFailed" : "account.loading")}{accountsFailed && <button type="button" className="secondary ml-2" onClick={() => void load()}>{translate("account.retry")}</button>}</p>;
+  if (accounts === null) return <p role="status" className="text-secondary">{translate(accountsFailed ? "account.loadFailed" : "account.loading")}{accountsFailed && <Button type="button" className="secondary ml-2" onClick={() => void load()}>{translate("account.retry")}</Button>}</p>;
   return <SettingsBlock title={translate("account.adminTitle")} description={translate("account.adminDesc")}>
     <RowList>{accounts.map((account) => {
       const self = account.userId === selfId;
@@ -83,18 +84,18 @@ export function MemberSecurityList({ workspaceId, selfId, onChanged }: { workspa
         <Popover label={`${translate("sortable.actions")}: ${account.name}`} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-56">
           {(close) => <>
             {!self && (account.status === "suspended"
-              ? <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void run("reactivate_member", { userId: account.userId }, translate("account.reactivated")); }}>{translate("account.reactivate")}</button>
-              : <button type="button" role="menuitem" className={`${menuItemClass} text-destructive`} onClick={() => { close(); void run("suspend_member", { userId: account.userId }, translate("account.suspended"), translate("account.suspendConfirm")); }}>{translate("account.suspend")}</button>)}
-            {!self && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void run("sign_out_member", { userId: account.userId }, translate("account.signedOutEverywhere"), translate("account.signOutConfirm")); }}>{translate("account.signOutEverywhereShort")}</button>}
-            {!self && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void run("force_password_reset", { userId: account.userId }, translate("account.resetForced"), translate("account.resetConfirm")); }}>{translate("account.forceReset")}</button>}
-            {!self && account.forcePasswordReset && <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void run("cancel_forced_password_reset", { userId: account.userId }, translate("account.resetCancelled"), translate("account.cancelResetConfirm")); }}>{translate("account.cancelReset")}</button>}
-            <button type="button" role="menuitem" aria-expanded={openTokens === account.userId} className={menuItemClass} onClick={() => { close(); void toggleTokens(account); }}>{translate("account.tokens")}</button>
+              ? <Button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void run("reactivate_member", { userId: account.userId }, translate("account.reactivated")); }}>{translate("account.reactivate")}</Button>
+              : <Button type="button" role="menuitem" className={`${menuItemClass} text-destructive`} onClick={() => { close(); void run("suspend_member", { userId: account.userId }, translate("account.suspended"), translate("account.suspendConfirm")); }}>{translate("account.suspend")}</Button>)}
+            {!self && <Button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void run("sign_out_member", { userId: account.userId }, translate("account.signedOutEverywhere"), translate("account.signOutConfirm")); }}>{translate("account.signOutEverywhereShort")}</Button>}
+            {!self && <Button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void run("force_password_reset", { userId: account.userId }, translate("account.resetForced"), translate("account.resetConfirm")); }}>{translate("account.forceReset")}</Button>}
+            {!self && account.forcePasswordReset && <Button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void run("cancel_forced_password_reset", { userId: account.userId }, translate("account.resetCancelled"), translate("account.cancelResetConfirm")); }}>{translate("account.cancelReset")}</Button>}
+            <Button type="button" role="menuitem" aria-expanded={openTokens === account.userId} className={menuItemClass} onClick={() => { close(); void toggleTokens(account); }}>{translate("account.tokens")}</Button>
           </>}
         </Popover>
         {openTokens === account.userId && <div className="w-full pl-0 pt-2">
-          {tokens === null ? <p role="status" className="text-13 text-secondary">{translate(tokensFailed ? "account.loadFailed" : "account.loading")}{tokensFailed && <button type="button" className="secondary ml-2" onClick={() => void loadTokens(account.userId)}>{translate("account.retry")}</button>}</p> : tokens.length === 0 ? <p className="text-13 text-secondary">{translate("account.tokensNone")}</p> : <ul className="m-0 grid list-none gap-1.5 p-0">{tokens.map((token) => <li key={token.id} className="flex flex-wrap items-center gap-3 text-13">
+          {tokens === null ? <p role="status" className="text-13 text-secondary">{translate(tokensFailed ? "account.loadFailed" : "account.loading")}{tokensFailed && <Button type="button" className="secondary ml-2" onClick={() => void loadTokens(account.userId)}>{translate("account.retry")}</Button>}</p> : tokens.length === 0 ? <p className="text-13 text-secondary">{translate("account.tokensNone")}</p> : <ul className="m-0 grid list-none gap-1.5 p-0">{tokens.map((token) => <li key={token.id} className="flex flex-wrap items-center gap-3 text-13">
             <span className="min-w-0 flex-1"><span className="font-medium">{token.name}</span> <span className="text-secondary">· {translate(token.kind === "daemon" ? "account.tokenKindDaemon" : "account.tokenKindPersonal")} · {token.prefix}… · {translate(`account.tokenStatus.${token.status}` as MessageKey)}{token.lastUsedAt ? ` · ${translate("account.lastUsed")} ${formatDate(token.lastUsedAt)}` : ""}</span></span>
-            {token.status === "active" && <button type="button" className="secondary hover:!text-danger-text" onClick={() => void revokeToken(token, account)}>{translate("account.revokeToken")}</button>}
+            {token.status === "active" && <Button type="button" className="secondary hover:!text-danger-text" onClick={() => void revokeToken(token, account)}>{translate("account.revokeToken")}</Button>}
           </li>)}</ul>}
         </div>}
       </Row>;
@@ -151,7 +152,7 @@ export function AuditLogPage({ workspaceId, members }: { workspaceId: string; me
   const field = "grid gap-1 text-13 font-medium text-secondary";
   return <section>
     <SettingsHeader title={translate("account.auditTitle")} description={translate("account.auditDesc")}>
-      <button type="button" className="secondary" onClick={() => void exportCsv()}>{translate("account.exportCsv")}</button>
+      <Button type="button" className="secondary" onClick={() => void exportCsv()}>{translate("account.exportCsv")}</Button>
     </SettingsHeader>
     <div className="mb-4 flex flex-wrap items-end gap-3">
       <label className={field}>{translate("account.filterPerson")}<select value={person} onChange={(event) => setPerson(event.target.value)}>
@@ -166,7 +167,7 @@ export function AuditLogPage({ workspaceId, members }: { workspaceId: string; me
       <label className={field}>{translate("account.filterTo")}<input type="date" value={to} min={from || undefined} onChange={(event) => setTo(event.target.value)} /></label>
     </div>
     {loaded && rows.length === 0 && !failed ? <p className="text-secondary">{translate("account.auditNone")}</p> : null}
-    {page.failed && <p role="status" className="text-secondary">{translate("account.loadFailed")}<button type="button" className="secondary ml-2" onClick={() => void load(rows.length)}>{translate("account.retry")}</button></p>}
+    {page.failed && <p role="status" className="text-secondary">{translate("account.loadFailed")}<Button type="button" className="secondary ml-2" onClick={() => void load(rows.length)}>{translate("account.retry")}</Button></p>}
     {rows.length > 0 && <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-left text-13">
       <thead><tr className="text-secondary"><th className="py-2 pr-3 font-medium">{translate("account.colTime")}</th><th className="py-2 pr-3 font-medium">{translate("account.colPerson")}</th><th className="py-2 pr-3 font-medium">{translate("account.colKind")}</th><th className="py-2 pr-3 font-medium">{translate("account.colChange")}</th><th className="py-2 font-medium">{translate("account.colDetail")}</th></tr></thead>
       <tbody>{rows.map((row) => <tr key={row.id} className="border-t border-subtle align-top">
@@ -177,7 +178,7 @@ export function AuditLogPage({ workspaceId, members }: { workspaceId: string; me
         <td className="py-2 break-all text-secondary">{describeAuditValue(row.newValue ?? row.oldValue)}</td>
       </tr>)}</tbody>
     </table></div>}
-    {hasMore && <button type="button" className="secondary mt-3 w-fit" onClick={() => void load(rows.length)}>{translate("account.loadMore")}</button>}
+    {hasMore && <Button type="button" className="secondary mt-3 w-fit" onClick={() => void load(rows.length)}>{translate("account.loadMore")}</Button>}
     <Note note={note} error={exportFailed} />
   </section>;
 }

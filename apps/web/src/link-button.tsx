@@ -1,3 +1,4 @@
+import { Button } from "@/ui/button";
 import React from "react";
 import { Link2 } from "lucide-react";
 import type { Editor } from "@tiptap/react";
@@ -50,19 +51,19 @@ export function LinkButton({ editor, disabled = false }: { editor: Editor | null
     close();
   };
   return <div ref={root} className="relative inline-flex">
-    <button type="button" aria-label={label} title={withShortcut(label, "K")} aria-haspopup="dialog" aria-expanded={open} aria-pressed={active} disabled={disabled}
+    <Button type="button" aria-label={label} title={withShortcut(label, "K")} aria-haspopup="dialog" aria-expanded={open} aria-pressed={active} disabled={disabled}
       className={`editor-tool${active ? " bg-layer-1-selected text-primary" : ""}`}
       onMouseDown={(event) => event.preventDefault()}
       onClick={() => { if (open) setOpen(false); else openForm(); }}>
       <Link2 aria-hidden size={14} />
-    </button>
+    </Button>
     {open && <form ref={form} role="dialog" aria-label={label} className="link-dialog m-0" style={place ? { position: "fixed", top: place.top, left: place.left, width: place.width } : undefined} onSubmit={save} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); close(); editor.commands.focus(); } }}>
       <label>{translate("wiki.linkUrl")}<input autoFocus type="text" inputMode="url" autoCapitalize="off" autoCorrect="off" spellCheck={false} value={url} placeholder={translate("wiki.linkPlaceholder")} onChange={(event) => setUrl(event.target.value)} /></label>
       <small className="text-12 text-tertiary">{translate("wiki.linkHelp")}</small>
       <div className="flex flex-wrap gap-2">
-        <button type="submit" className="primary">{translate("wiki.linkSave")}</button>
-        {active && <button type="button" className="secondary" onClick={() => { editor.chain().focus().unsetLink().run(); close(); }}>{translate("wiki.linkRemove")}</button>}
-        <button type="button" className="secondary" onClick={() => { close(); editor.commands.focus(); }}>{translate("comments.cancel")}</button>
+        <Button type="submit" className="primary">{translate("wiki.linkSave")}</Button>
+        {active && <Button type="button" className="secondary" onClick={() => { editor.chain().focus().unsetLink().run(); close(); }}>{translate("wiki.linkRemove")}</Button>}
+        <Button type="button" className="secondary" onClick={() => { close(); editor.commands.focus(); }}>{translate("comments.cancel")}</Button>
       </div>
     </form>}
   </div>;

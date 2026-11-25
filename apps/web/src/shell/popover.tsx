@@ -4,6 +4,24 @@ import { Check, type LucideIcon } from "lucide-react";
 
 type Rect = Pick<DOMRect, "left" | "right" | "top" | "bottom">;
 
+function intersects(start: number, end: number, clipStart: number, clipEnd: number) {
+  return end > clipStart && start < clipEnd;
+}
+
+function isVisibleInScrollContainers(element: HTMLElement) {
+  const bounds = element.getBoundingClientRect();
+  if (!intersects(bounds.left, bounds.right, 0, window.innerWidth) || !intersects(bounds.top, bounds.bottom, 0, window.innerHeight)) return false;
+  for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    const style = getComputedStyle(ancestor);
+    const clip = ancestor.getBoundingClientRect();
+    const left = clip.left + ancestor.clientLeft;
+    const top = clip.top + ancestor.clientTop;
+    if (style.overflowX !== "visible" && !intersects(bounds.left, bounds.right, left, left + ancestor.clientWidth)) return false;
+    if (style.overflowY !== "visible" && !intersects(bounds.top, bounds.bottom, top, top + ancestor.clientHeight)) return false;
+  }
+  return true;
+}
+
 export function getPopoverPosition(anchor: Rect, panel: Pick<DOMRect, "width" | "height">, viewport: { width: number; height: number }, align: "left" | "right") {
   const margin = 16;
   const gap = 4;
@@ -46,14 +64,32 @@ export function Popover({ label, panelLabel = label, trigger, align = "left", cl
   const [open, setOpen] = React.useState(false);
   const root = React.useRef<HTMLDivElement>(null);
   const panel = React.useRef<HTMLDivElement>(null);
+  const skipFocusRestore = React.useRef(false);
   const [position, setPosition] = React.useState<{ left: number; top: number; maxHeight: string }>();
   const positionPanel = React.useCallback(() => {
     const anchor = root.current?.querySelector("button");
-    if (!anchor || !panel.current) return;
+    if (!anchor || !panel.current) {
+      skipFocusRestore.current = true;
+      setOpen(false);
+      return;
+    }
+    if (!isVisibleInScrollContainers(anchor)) {
+      skipFocusRestore.current = true;
+      setOpen(false);
+      return;
+    }
     const bounds = anchor.getBoundingClientRect();
     const rect = panel.current.getBoundingClientRect();
-    const size = { width: rect.width, height: panel.current.scrollHeight };
-    setPosition(getPopoverPosition(bounds, size, { width: window.innerWidth, height: window.innerHeight }, align));
+    const inlineMaxHeight = panel.current.style.maxHeight;
+    panel.current.style.removeProperty("max-height");
+    const authoredMaxHeight = getComputedStyle(panel.current).maxHeight;
+    if (inlineMaxHeight) panel.current.style.maxHeight = inlineMaxHeight;
+    const parsedMaxHeight = Number.parseFloat(authoredMaxHeight);
+    const authoredHeightLimit = Number.isFinite(parsedMaxHeight) ? parsedMaxHeight : Number.POSITIVE_INFINITY;
+    const size = { width: rect.width, height: Math.min(panel.current.scrollHeight, authoredHeightLimit) };
+    const next = getPopoverPosition(bounds, size, { width: window.innerWidth, height: window.innerHeight }, align);
+    const maxHeight = Math.min(Number.parseFloat(next.maxHeight), authoredHeightLimit);
+    setPosition({ ...next, maxHeight: `${maxHeight}px` });
   }, [align]);
   React.useEffect(() => {
     if (!open) return;
@@ -98,14 +134,18 @@ export function Popover({ label, panelLabel = label, trigger, align = "left", cl
   React.useEffect(() => {
     // Closing from inside the portal panel would drop focus to <body>; hand it back to the trigger.
     if (open) { wasOpen.current = true; return; }
-    if (wasOpen.current) { wasOpen.current = false; if (document.activeElement === document.body) root.current?.querySelector("button")?.focus(); }
+    if (wasOpen.current) {
+      wasOpen.current = false;
+      if (!skipFocusRestore.current && document.activeElement === document.body) root.current?.querySelector("button")?.focus();
+      skipFocusRestore.current = false;
+    }
   }, [open]);
   const portalRoot = root.current?.closest("dialog") ?? (typeof document !== "undefined" ? document.body : null);
   const floatingPanel = open && portalRoot ? createPortal(
     <div ref={panel} data-popover-panel role={panelRole} aria-label={panelLabel} className={`fixed z-50 min-w-56 rounded-lg border border-subtle bg-surface-1 p-1 shadow-lg ${panelClassName}`}
       onClick={(event) => event.stopPropagation()}
       onKeyDown={(event) => { if (panelRole === "menu") moveMenuFocus(event, panel.current); }}
-      style={{ left: position?.left ?? 0, top: position?.top ?? 0, maxWidth: "calc(100vw - 1rem)", maxHeight: position?.maxHeight ?? "calc(100vh - 1rem)", overflowX: "hidden", overflowY: "auto", visibility: position ? "visible" : "hidden" }}>
+      style={{ left: position?.left ?? 0, top: position?.top ?? 0, maxWidth: "calc(100vw - 1rem)", ...(position ? { maxHeight: position.maxHeight } : {}), overflowX: "hidden", overflowY: "auto", visibility: position ? "visible" : "hidden" }}>
       {children(() => setOpen(false))}
     </div>, portalRoot) : null;
   return <div ref={root} className="relative">

@@ -101,6 +101,20 @@ try {
   // Each inline dropdown changes the work item without a reload (a marker on window survives only without navigation).
   await page.evaluate(() => { (window as unknown as { __noReload: boolean }).__noReload = true; });
   const row = page.getByTestId("row-MOB-1");
+  const emptyCycleTrigger = row.getByRole("button", { name: `${translate("workItems.cycle")}: ${translate("workItems.noCycle")}` });
+  const cycleBeforeReveal = await emptyCycleTrigger.boundingBox();
+  await row.screenshot({ path: "/tmp/popover-scroll-row-before.png" });
+  await row.hover();
+  const cycleAfterHover = await emptyCycleTrigger.boundingBox();
+  check(Boolean(cycleBeforeReveal && cycleAfterHover) && Math.abs(cycleBeforeReveal!.x - cycleAfterHover!.x) < 1 && Math.abs(cycleBeforeReveal!.y - cycleAfterHover!.y) < 1, `hovering a row should reveal its Cycle control without moving it: ${JSON.stringify({ before: cycleBeforeReveal, after: cycleAfterHover })}`);
+  await row.screenshot({ path: "/tmp/popover-scroll-row-after-hover.png" });
+  await page.mouse.move(0, 0);
+  await row.getByRole("link", { name: "Alpha" }).focus();
+  await page.keyboard.press("Tab");
+  check(await row.getByRole("button", { name: new RegExp(`^${translate("workItems.state")}:`) }).evaluate((element) => document.activeElement === element), "keyboard focus should remain on the next row control");
+  const cycleAfterKeyboardFocus = await emptyCycleTrigger.boundingBox();
+  check(Boolean(cycleAfterHover && cycleAfterKeyboardFocus) && Math.abs(cycleAfterHover!.x - cycleAfterKeyboardFocus!.x) < 1 && Math.abs(cycleAfterHover!.y - cycleAfterKeyboardFocus!.y) < 1, "keyboard focus should reveal row controls in stable positions");
+  check(await emptyCycleTrigger.evaluate((element) => getComputedStyle(element.parentElement!).opacity === "1"), "keyboard focus should reveal the row's empty property controls");
   await row.getByRole("button", { name: new RegExp(`^${translate("workItems.state")}:`) }).click();
   await page.getByRole("menuitemradio", { name: "In Progress" }).click();
   await page.getByRole("region", { name: "In Progress" }).getByRole("link", { name: "Alpha" }).waitFor();
@@ -143,13 +157,60 @@ try {
   await row.getByRole("button", { name: `${translate("workItems.modules")}: Auth` }).waitFor();
   await page.keyboard.press("Escape");
   check(await page.evaluate(() => (window as unknown as { __noReload?: boolean }).__noReload === true), "the page reloaded");
+
+  // Enough rows and Cycle options to exercise both the list's scroll container and the picker's own scroll area.
+  for (let index = 0; index < 16; index += 1) {
+    await call("create_work_item", { projectId: project!.id, title: `Scroll row ${index + 1}` });
+    if (index > 0) await call("create_cycle", { projectId: project!.id, name: `Sprint ${index + 2}`, startDate: day(-1), endDate: day(6) });
+  }
+  await page.reload();
+  const main = page.locator("#main-content");
+  await main.evaluate((element) => { element.scrollTop = 0; });
+  await page.getByTestId("row-MOB-1").waitFor();
+  const cycleTrigger = page.getByTestId("row-MOB-1").getByRole("button", { name: new RegExp(`^${translate("workItems.cycle")}:`) });
+  await cycleTrigger.click();
+  const cycleMenu = page.locator("[data-popover-panel]");
+  await cycleMenu.waitFor();
+  await cycleMenu.getByRole("menuitemradio", { name: "Sprint 17" }).waitFor();
+  const cycleMenuMetrics = await cycleMenu.evaluate((element) => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, optionCount: element.querySelectorAll("[role=menuitemradio]").length, maxHeight: getComputedStyle(element).maxHeight }));
+  await cycleMenu.evaluate((element) => { element.scrollTop = 160; });
+  check(await cycleMenu.evaluate((element) => element.scrollTop > 0), `Cycle options should scroll inside the menu: ${JSON.stringify(cycleMenuMetrics)}`);
+  await page.screenshot({ path: "/tmp/popover-scroll-desktop-open.png" });
+  await main.evaluate((element) => { element.scrollTop += 40; });
+  await page.waitForFunction(() => {
+    const trigger = document.querySelector<HTMLButtonElement>('[data-testid="row-MOB-1"] button[aria-label^="Cycle:"]');
+    const menu = document.querySelector<HTMLElement>("[data-popover-panel]");
+    if (!trigger || !menu) return false;
+    const anchor = trigger.getBoundingClientRect();
+    const panel = menu.getBoundingClientRect();
+    const overlapsHorizontally = panel.left < anchor.right && panel.right > anchor.left;
+    return overlapsHorizontally && (Math.abs(panel.top - anchor.bottom - 4) < 1 || Math.abs(anchor.top - panel.bottom - 4) < 1);
+  });
+  check(await cycleMenu.isVisible(), "Cycle picker should remain open while its trigger is visible");
+  await page.keyboard.press("Escape");
+  await cycleMenu.waitFor({ state: "detached" });
+  check(await cycleTrigger.evaluate((element) => document.activeElement === element), "Escape should return focus to the Cycle trigger");
+
+  await cycleTrigger.click();
+  await cycleMenu.getByRole("menuitemradio", { name: "Sprint 17" }).waitFor();
+  await cycleMenu.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await cycleMenu.getByRole("menuitemradio", { name: "Sprint 17" }).click();
+  await row.getByRole("button", { name: `${translate("workItems.cycle")}: Sprint 17` }).waitFor();
+  check(await cycleTrigger.getAttribute("aria-label") === `${translate("workItems.cycle")}: Sprint 17`, "selection should work after scrolling the long Cycle menu");
+  await cycleTrigger.click();
+  await cycleMenu.waitFor();
+  await main.evaluate((element) => { element.scrollTop = 0; });
+  await cycleMenu.waitFor({ state: "detached" });
+  check(await main.evaluate((element) => element.scrollTop === 0), "dismissing an offscreen picker should not scroll its trigger back into view");
+  await main.evaluate((element) => { element.scrollTop = 0; });
   await page.screenshot({ path: `${shots}/list-1440-edited.png` });
 
   // The edits are real: the Actions stored them (reload and read back through the API).
   await page.reload();
   const stored = await call<{ priority: string; assigneeIds: string[]; labelIds: string[]; dueDate: string | null; stateId: string }>("get_work_item", { workspaceId: me.workspaces[0]!.id, displayId: "MOB-1" });
   check(stored.priority === "urgent" && stored.assigneeIds.length === 1 && stored.labelIds.length === 1 && stored.dueDate === day(3), "an inline edit was not stored");
-  const inCycle = await call<Array<{ displayId: string }>>("list_work_items", { projectId: project!.id, cycleId: (await call<Array<{ id: string }>>("list_cycles", { projectId: project!.id }))[0]!.id });
+  const selectedCycle = (await call<Array<{ id: string; name: string }>>("list_cycles", { projectId: project!.id })).find((cycle) => cycle.name === "Sprint 17");
+  const inCycle = await call<Array<{ displayId: string }>>("list_work_items", { projectId: project!.id, cycleId: selectedCycle!.id });
   check(inCycle.map((item) => item.displayId).join() === "MOB-1", "the Cycle dropdown did not store");
   await page.getByTestId("row-MOB-1").getByRole("button", { name: `${translate("workItems.cycle")}: Sprint 1` }).waitFor();
 
@@ -175,6 +236,22 @@ try {
   await page.keyboard.press("Escape");
 
   await page.setViewportSize({ width: 390, height: 844 });
+  const mobileListUrl = page.url();
+  const mobileContext = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, isMobile: true, hasTouch: true, storageState: await context.storageState() });
+  const mobilePage = await mobileContext.newPage();
+  await mobilePage.goto(mobileListUrl);
+  const mobileCycleTrigger = mobilePage.getByTestId("row-MOB-1").getByRole("button", { name: `${translate("workItems.cycle")}: Sprint 17` });
+  await mobileCycleTrigger.click();
+  const mobileCycleMenu = mobilePage.locator("[data-popover-panel]");
+  await mobileCycleMenu.getByRole("menuitemradio", { name: "Sprint 17" }).waitFor();
+  const mobileMenuBounds = await mobileCycleMenu.boundingBox();
+  check(Boolean(mobileMenuBounds && mobileMenuBounds.x >= 0 && mobileMenuBounds.x + mobileMenuBounds.width <= 390), "Cycle picker should stay within the phone viewport");
+  await mobilePage.screenshot({ path: "/tmp/popover-scroll-mobile-open.png" });
+  const mobileMain = mobilePage.locator("#main-content");
+  await mobileMain.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await mobileCycleMenu.waitFor({ state: "detached" });
+  check(await mobileMain.evaluate((element) => element.scrollTop > 0), "phone scrolling should dismiss the picker without restoring its offscreen trigger");
+  await mobileContext.close();
   await page.screenshot({ path: `${shots}/list-390-light.png` });
   for (const layout of ["list", "board", "spreadsheet", "calendar", "gantt"] as const) {
     check(await page.getByRole("button", { name: translate(`layout.${layout}`) }).getByText(translate(`layout.${layout}`)).isVisible(), `${layout} is icon-only on a phone`);

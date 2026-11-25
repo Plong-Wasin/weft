@@ -38,7 +38,7 @@ function Connection({ provider, row, secret, onChanged, onSecret, say }: { provi
     </label>
     <p className="m-0 text-13 text-secondary">{translate("integrations.webhookUrlHelp")}</p>
     <p className="m-0 text-13 text-secondary">{setup}</p>
-    {secret && <div className="grid gap-2 rounded-lg border border-subtle p-3">
+    {secret && <div className="grid gap-2 rounded-lg bg-layer-1 p-3">
       <span className="text-14 font-medium">{translate("integrations.secretTitle")}</span>
       <p className="m-0 text-13 text-secondary">{translate("integrations.secretHelp")}</p>
       <p className="m-0 text-13 text-secondary">{translate("integrations.secretOnce")}</p>

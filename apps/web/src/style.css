@@ -83,6 +83,30 @@
   --color-danger-strong: var(--border-danger-strong);
 }
 
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+/* Keep Weft's existing text-primary utility; shadcn's primary surface is a dedicated utility. */
+@utility bg-primary { background-color: var(--primary); }
+@utility bg-secondary { background-color: var(--secondary); }
+
 @layer base {
   body { @apply bg-canvas text-primary font-body text-14; margin: 0; -webkit-font-smoothing: antialiased; font-variant-ligatures: none; }
   button:not(:disabled), [role="button"]:not(:disabled) { cursor: pointer; }

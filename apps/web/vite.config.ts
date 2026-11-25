@@ -2,6 +2,7 @@ import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
+import { fileURLToPath } from "node:url";
 // A relative path, not "@weft/shared": Vite bundles relative imports into its config, but loads a workspace package through Node, which cannot resolve its extensionless TypeScript imports.
 import { translate } from "../../packages/shared/src/index";
 
@@ -17,6 +18,9 @@ function offlinePage(): Plugin {
 }
 
 export default defineConfig({
+  resolve: {
+    alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
+  },
   plugins: [
     react(),
     tailwindcss(),

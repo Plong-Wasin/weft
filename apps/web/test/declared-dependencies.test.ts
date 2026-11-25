@@ -11,6 +11,7 @@ test("every package the web app imports is declared in apps/web/package.json", (
   const missing = new Set<string>();
   for (const file of (readdirSync(join(root, "src"), { recursive: true }) as string[]).filter((name) => /\.tsx?$/.test(name))) {
     for (const match of readFileSync(join(root, "src", file), "utf8").matchAll(/from\s+"([^."/][^"]*)"/g)) {
+      if (match[1]!.startsWith("@/")) continue;
       const name = match[1]!.startsWith("@") ? match[1]!.split("/").slice(0, 2).join("/") : match[1]!.split("/")[0]!;
       if (!name.startsWith("node:") && !name.startsWith("virtual:") && !declared.has(name)) missing.add(`${name} (${file})`);
     }

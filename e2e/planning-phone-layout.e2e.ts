@@ -98,8 +98,8 @@ try {
     const row = page.getByTestId("row-REF-1");
     await row.waitFor();
     const remove = await box(page, row.getByRole("button", { name: translate("cycles.remove") }), "Remove from Cycle");
-    const stateChip = await box(page, row.getByText("Backlog", { exact: true }), "state chip");
-    check(Math.abs(remove.y - stateChip.y) < 6, `Remove from Cycle is on its own line at ${width}px`);
+    const stateChip = await box(page, row.getByRole("button", { name: `${translate("workItems.state")}: Backlog` }), "State control");
+    check(width < 640 ? remove.y > stateChip.y : remove.y >= stateChip.y - 1, `Remove from Cycle should follow the State control and wrap onto the phone's second line at ${width}px`);
 
     // Intake: Accept and Reject share a line; the title shows whole in its field.
     await open(`/${slug}/projects/REF/intake`);

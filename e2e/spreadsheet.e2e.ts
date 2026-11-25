@@ -98,6 +98,7 @@ try {
   const longLabelButton = longRow.getByRole("button", { name: `${translate("workItems.labels")}: ${longLabelName}` });
   const longModuleButton = longRow.getByRole("button", { name: `${translate("workItems.modules")}: ${longModuleName}` });
   const longStateButton = longRow.getByRole("button", { name: `${translate("workItems.state")}: ${longStateName}` });
+  check(await longStateButton.evaluate((element) => getComputedStyle(element).borderTopWidth === "1px"), "spreadsheet State chip should retain its outlined border");
   const longCycleButton = longRow.getByRole("button", { name: `${translate("workItems.cycle")}: ${longCycleName}` });
   const overdueDate = longRow.getByTitle(translate("datePicker.overdue"), { exact: true });
   check(await overdueDate.count() === 1, "overdue DatesMenu should keep the Overdue hover tooltip");
@@ -269,6 +270,18 @@ try {
   await touchPage.keyboard.press("Enter");
   await touchPage.getByRole("dialog", { name: `${translate("workItems.state")}: ${longStateName}` }).getByText(`${translate("workItems.state")}: ${longStateName}`, { exact: true }).waitFor();
   await touchPage.keyboard.press("Escape");
+  // Named acceptance check: a Guest list reserves the same ID/title columns as an editable list despite having no checkbox.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(projectUrl);
+  const writableRow = page.getByTestId(`row-${longItem.displayId}`);
+  await writableRow.waitFor();
+  const writableColumns = await writableRow.evaluate((row, displayId) => [row.querySelector(`span[title="${displayId}"]`)!.getBoundingClientRect().x, row.querySelector("a")!.getBoundingClientRect().x], longItem.displayId);
+  await touchPage.setViewportSize({ width: 1440, height: 900 });
+  await touchPage.goto(projectUrl);
+  const readOnlyRow = touchPage.getByTestId(`row-${longItem.displayId}`);
+  await readOnlyRow.waitFor();
+  const readOnlyColumns = await readOnlyRow.evaluate((row, displayId) => [row.querySelector(`span[title="${displayId}"]`)!.getBoundingClientRect().x, row.querySelector("a")!.getBoundingClientRect().x], longItem.displayId);
+  check(writableColumns.every((x, index) => Math.abs(x - readOnlyColumns[index]!) < 1), `read-only list columns shifted: ${writableColumns} vs ${readOnlyColumns}`);
   await touchContext.close();
   console.log("spreadsheet e2e passed");
   await browser.close();

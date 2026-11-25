@@ -85,7 +85,7 @@ function PickerBody({ options, onPick, searchAlways, children }: { options: Opti
 export function SingleSelect({ label, summary, options, value, onSelect, readOnly, icon, iconOnly }: { label: string; summary: string; options: Option[]; value: string; onSelect: (id: string) => void; readOnly?: boolean; icon?: React.ReactNode; iconOnly?: boolean }) {
   const name = `${label}: ${summary}`;
   if (readOnly) return <Static label={name}>{icon}{!iconOnly && <span className="max-w-32 truncate" title={summary}>{summary}</span>}</Static>;
-  return <Popover label={name} className={chip} panelClassName="max-h-72 w-52 overflow-auto" trigger={<Trigger label={label}>{icon}<span className={iconOnly ? "hidden text-11 max-sm:inline" : "max-w-32 truncate"}>{summary}</span></Trigger>}>
+  return <Popover label={name} className={chip} panelClassName="max-h-72 w-52 overflow-auto" trigger={<Trigger label={name}>{icon}<span className={iconOnly ? "hidden text-11 max-sm:inline" : "max-w-32 truncate"}>{summary}</span></Trigger>}>
     {(close) => <PickerBody options={options} onPick={(option) => { close(); if (option.id !== value) onSelect(option.id); }}>
       {(visible, activeId, optionId) => visible.map((option) => <button key={option.id} id={optionId(option)} type="button" role="menuitemradio" aria-checked={option.id === value} data-active={option.id === activeId || undefined} className={`${optionClass} data-[active=true]:bg-layer-transparent-hover`}
         onClick={() => { close(); if (option.id !== value) onSelect(option.id); }}>
@@ -108,7 +108,7 @@ export function EstimateSelect({ estimate, pointId, onSelect, readOnly, iconOnly
 export function MultiSelect({ label, summary, options, selected, onToggle, readOnly, icon, onOpen, searchAlways }: { label: string; summary: React.ReactNode; options: Option[]; selected: string[]; onToggle: (id: string, on: boolean) => void; readOnly?: boolean; icon?: React.ReactNode; onOpen?: () => void; /** Shows the search field whatever the number of options (the Assignee picker). */ searchAlways?: boolean }) {
   const name = `${label}: ${selected.map((id) => options.find((option) => option.id === id)?.name ?? "").filter(Boolean).join(", ") || "—"}`;
   if (readOnly) return <Static label={name}>{icon}{summary}</Static>;
-  return <Popover label={name} className={chip} panelClassName="max-h-72 w-52 !min-w-0 overflow-auto" onOpen={onOpen} trigger={<Trigger label={label}>{icon}{summary}</Trigger>}>
+  return <Popover label={name} className={chip} panelClassName="max-h-72 w-52 !min-w-0 overflow-auto" onOpen={onOpen} trigger={<Trigger label={name}>{icon}{summary}</Trigger>}>
     {() => options.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-tertiary">—</p> : <PickerBody options={options} searchAlways={searchAlways} onPick={(option) => { if (isPickable(option)) onToggle(option.id, !selected.includes(option.id)); }}>
       {(visible, activeId, optionId) => <>{[false, true].map((agents) => {
       const group = visible.filter((option) => !!option.isAgent === agents);
@@ -142,7 +142,7 @@ export function DateChip({ label, field, range, onChange, readOnly, stateGroup, 
   const name = late ? `${label}: ${text}, ${t("datePicker.overdue")}` : `${label}: ${text}`;
   const body = <>{icon}<span className={`min-w-0 max-w-32 truncate ${late ? "text-danger-text" : ""}`} title={late ? t("datePicker.overdue") : undefined}>{text}</span>{late && <span className="sr-only">{t("datePicker.overdue")}</span>}</>;
   if (readOnly) return <Static label={name}>{body}</Static>;
-  return <DatePopover label={name} range={range} field={field} onChange={onChange} trigger={<Trigger label={label}>{body}</Trigger>} />;
+  return <DatePopover label={name} range={range} field={field} onChange={onChange} trigger={<Trigger label={name}>{body}</Trigger>} />;
 }
 
 /** Inline dropdown with the start and due date of a work item: one calendar popover for both. `clearable={false}` hides "No date" where clearing is not offered (the bulk bar). */
@@ -153,5 +153,5 @@ export function DatesMenu({ startDate, dueDate, onChange, readOnly, iconOnlyWhen
   const name = `${t("layout.property.dates")}: ${text}${late ? `, ${t("datePicker.overdue")}` : ""}`;
   const body = <><CalendarDays aria-hidden size={14} className="text-secondary" /><span className={`min-w-0 max-w-32 truncate ${iconOnly ? "hidden text-11 max-sm:inline" : ""} ${late ? "text-danger-text" : ""}`} title={late ? t("datePicker.overdue") : undefined}>{text}</span>{late && <span className="sr-only">{t("datePicker.overdue")}</span>}</>;
   if (readOnly) return <Static label={name}>{body}</Static>;
-  return <DatePopover label={name} trigger={<Trigger label={t("layout.property.dates")}>{body}</Trigger>} range={{ startDate, dueDate }} field={startDate || !dueDate ? "start" : "due"} onChange={onChange} clearable={clearable} />;
+  return <DatePopover label={name} trigger={<Trigger label={name}>{body}</Trigger>} range={{ startDate, dueDate }} field={startDate || !dueDate ? "start" : "due"} onChange={onChange} clearable={clearable} />;
 }

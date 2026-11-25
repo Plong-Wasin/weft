@@ -1,6 +1,8 @@
 import { accessReasonText } from "./access-reason";
 import React from "react";
 import { CalendarCheck, CalendarClock, Layers, Package, RefreshCw, Tag, Users, X } from "lucide-react";
+import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
+import { DialogOverlay, DialogPortal, DialogTitle } from "./ui/dialog";
 import { translate, type MessageKey } from "@weft/shared";
 import { action, actionResult } from "./api";
 import { EstimateSelect, MultiSelect, PriorityIcon, SingleSelect, StateIcon } from "./property-dropdowns";
@@ -41,7 +43,8 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
   const [parentId, setParentId] = React.useState("");
   const [note, setNote] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
-  const dialog = React.useRef<HTMLDivElement>(null);
+  // The modal is mounted open, so Base UI never sees an open transition: return focus to the opener it was mounted from.
+  const [opener] = React.useState(() => document.activeElement as HTMLElement | null);
   const { types, properties, ready: typesReady } = useWorkItemTypes(project);
   const typesOn = project.features.types === true;
   const [typeId, setTypeId] = React.useState("");
@@ -78,29 +81,6 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
   }, [project.id]);
   // Typed title or description is unsaved input: a stray backdrop click must not discard it. Escape, Cancel and the close button still close.
   const unsaved = title.trim() !== "" || description.trim() !== "";
-  React.useEffect(() => {
-    // Escape closes the modal, unless it is closing an open dropdown first.
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && !document.querySelector('[data-create-modal] [role="menu"], [data-create-modal] [role="dialog"]')) onClose(); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
-  React.useEffect(() => {
-    // Keep Tab inside the dialog, and return focus to the opener on close, as the Dialog helper does.
-    const opener = document.activeElement as HTMLElement | null;
-    const focusable = () => [...(dialog.current?.querySelectorAll<HTMLElement>("input, select, textarea, button, a[href], [tabindex]:not([tabindex='-1'])") ?? [])].filter((element) => !element.hasAttribute("disabled"));
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Tab" || !dialog.current) return;
-      if ((document.activeElement as HTMLElement | null)?.closest("[data-popover-panel]")) return;
-      const items = focusable();
-      const first = items[0]; const last = items[items.length - 1];
-      if (!first || !last) { event.preventDefault(); return; }
-      const active = document.activeElement;
-      if (event.shiftKey && (active === first || !dialog.current.contains(active))) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && (active === last || !dialog.current.contains(active))) { event.preventDefault(); first.focus(); }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => { document.removeEventListener("keydown", onKey); if (opener?.isConnected) opener.focus(); };
-  }, []);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -129,13 +109,14 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
 
   const stateOf = states.find((state) => state.id === stateId);
   const chipRow = "flex flex-wrap items-center gap-2";
-  return <>
-    <div aria-hidden className="fixed inset-0 z-40 bg-backdrop" onClick={() => { if (!unsaved) onClose(); }} />
-    <div ref={dialog} data-create-modal role="dialog" aria-modal="true" aria-label={t("workItems.modal.title")} className="fixed left-1/2 top-[6vh] z-50 max-h-[88vh] w-[calc(100vw-1.5rem)] max-w-2xl -translate-x-1/2 overflow-auto rounded-2xl border border-subtle bg-surface-1 shadow-xl">
-      <form className="my-0 grid gap-5 p-6 max-sm:gap-4 max-sm:p-4" onSubmit={submit}>
+  return <DialogPrimitive.Root open disablePointerDismissal={unsaved} onOpenChange={(open) => { if (!open) onClose(); }}>
+    <DialogPortal>
+      <DialogOverlay />
+      <DialogPrimitive.Popup data-create-modal aria-label={t("workItems.modal.title")} finalFocus={() => (opener?.isConnected ? opener : true)} className="fixed left-1/2 top-[6dvh] z-50 max-h-[calc(100dvh-2rem)] w-[calc(100vw-1.5rem)] max-w-2xl -translate-x-1/2 overflow-y-auto rounded-2xl border bg-background text-foreground shadow-lg outline-none">
+      <form className="my-0 grid gap-5 p-6 max-sm:gap-4 max-sm:p-4 pointer-coarse:[&_button]:min-h-11 pointer-coarse:[&_input]:min-h-11" onSubmit={submit}>
         <div className="flex items-center gap-2">
-          <h2 className="m-0 flex-1 text-18 font-semibold text-primary">{t("workItems.modal.title")}</h2>
-          <button type="button" className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={t("workItems.modal.cancel")} onClick={onClose}><X aria-hidden size={16} /></button>
+          <DialogTitle className="m-0 flex-1">{t("workItems.modal.title")}</DialogTitle>
+          <button type="button" className="size-11 rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent hover:text-accent-foreground" aria-label={t("workItems.modal.cancel")} onClick={onClose}><X aria-hidden size={16} /></button>
         </div>
         <input autoFocus required aria-label={t("workItems.titleField")} placeholder={t("workItems.titleField")} value={title} maxLength={500} className="w-full text-16" onChange={(event) => setTitle(event.target.value)} />
         <textarea aria-label={t("workItems.description")} placeholder={t("workItems.descriptionHint")} rows={4} value={description} className="w-full text-14" onChange={(event) => setDescription(event.target.value)} />
@@ -174,11 +155,12 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
             <input type="date" value={dueDate} min={startDate || undefined} className="w-auto" onChange={(event) => setDueDate(event.target.value)} /></label>
         </div>
         {note && <p role="alert" className="m-0 text-danger-text">{note}</p>}
-        <div className="sticky bottom-0 z-10 flex justify-end gap-2 border-t border-subtle bg-surface-1 -mb-6 pb-6 pt-4 max-sm:-mb-4 max-sm:pb-4">
+        <div className="sticky bottom-0 z-10 flex justify-end gap-2 border-t border-border bg-background -mb-6 pb-6 pt-4 max-sm:-mb-4 max-sm:pb-4">
           <button type="button" className="secondary" onClick={onClose}>{t("workItems.modal.cancel")}</button>
           <button type="submit" disabled={busy}>{t("workItems.modal.submit")}</button>
         </div>
       </form>
-    </div>
-  </>;
+      </DialogPrimitive.Popup>
+    </DialogPortal>
+  </DialogPrimitive.Root>;
 }

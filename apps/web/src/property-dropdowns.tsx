@@ -6,6 +6,8 @@ import { Popover } from "./shell/popover";
 import { DatePanel } from "./date-picker";
 import { isOverdue, shortDay, todayKey, type DateField, type DateRange } from "./date-picker-logic";
 import { filterPickerOptions, groupPickerOptions, isPickable, isSearchable, moveActive } from "./picker-search";
+import { Select, SelectContent, SelectItem, SelectItemText, SelectTrigger, SelectValue } from "./ui/select";
+import { cn } from "./lib/utils";
 import type { Estimate, StateGroup } from "./types";
 
 const t = (key: string) => translate(key as MessageKey);
@@ -93,7 +95,8 @@ export function SingleSelect({ label, summary, display, options, value, onSelect
   const name = `${label}: ${summary}`;
   const className = chipClass(quiet, iconOnly);
   if (readOnly) return <Static label={name} quiet={quiet} className={className}>{icon}{!iconOnly && <span className={`max-w-32 truncate ${display ? "text-tertiary" : ""}`} title={summary}>{display ?? summary}</span>}</Static>;
-  return <Popover label={name} className={className} panelClassName="max-h-72 w-52 overflow-auto" trigger={<Trigger label={name}>{icon}<span className={`${iconOnly ? hideIconOnlyTextOnPhone ? "hidden" : "hidden text-11 max-sm:inline" : "max-w-32 truncate"} ${display ? "text-tertiary" : ""}`}>{display ?? summary}</span></Trigger>}>
+  // Pickers longer than SEARCH_THRESHOLD keep their search field and keyboard highlight (a feature the shadcn Select does not offer).
+  if (isSearchable(options)) return <Popover label={name} className={className} panelClassName="max-h-72 w-52 overflow-auto" trigger={<Trigger label={name}>{icon}<span className={`${iconOnly ? hideIconOnlyTextOnPhone ? "hidden" : "hidden text-11 max-sm:inline" : "max-w-32 truncate"} ${display ? "text-tertiary" : ""}`}>{display ?? summary}</span></Trigger>}>
     {(close) => <PickerBody options={options} onPick={(option) => { close(); if (option.id !== value) onSelect(option.id); }}>
       {(visible, activeId, optionId) => visible.map((option) => <button key={option.id} id={optionId(option)} type="button" role="menuitemradio" aria-checked={option.id === value} data-active={option.id === activeId || undefined} className={`${optionClass} data-[active=true]:bg-layer-transparent-hover`}
         onClick={() => { close(); if (option.id !== value) onSelect(option.id); }}>
@@ -101,6 +104,18 @@ export function SingleSelect({ label, summary, display, options, value, onSelect
       </button>)}
     </PickerBody>}
   </Popover>;
+  const selectValue = (id: string) => id === "" ? "__weft-empty__" : id;
+  const trigger = <SelectTrigger aria-label={name} className={cn("h-8 w-auto max-w-full justify-start gap-1.5 rounded-md border-input bg-background px-2 py-1 text-sm text-foreground shadow-none hover:bg-accent hover:text-accent-foreground pointer-coarse:min-h-11 pointer-coarse:min-w-11", iconOnly && "min-w-7")}>
+    {icon}<SelectValue><span className={cn(iconOnly ? hideIconOnlyTextOnPhone ? "hidden" : "hidden text-11 max-sm:inline" : "max-w-32 truncate", display && "text-muted-foreground")}>{display ?? summary}</span></SelectValue>
+  </SelectTrigger>;
+  return <Select value={selectValue(value)} items={options.map((option) => ({ value: selectValue(option.id), label: option.name }))} onValueChange={(next: string | null) => { if (typeof next === "string") { const id = next === "__weft-empty__" ? "" : next; if (id !== value) onSelect(id); } }}>
+    {trigger}
+    <SelectContent className="w-52">
+      {options.map((option) => <SelectItem key={option.id} value={selectValue(option.id)} label={option.name}>
+        {option.icon}<SelectItemText>{option.name}</SelectItemText>
+      </SelectItem>)}
+    </SelectContent>
+  </Select>;
 }
 
 /** Picks, changes or clears the Estimate point of a work item. Renders nothing while the project has no turned-on Estimate. */

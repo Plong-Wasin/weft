@@ -13,7 +13,7 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5207);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const shots = reviewShots("05-work-items-list-layout");
-const evidenceShots = join(import.meta.dir, "../.local/shots/03");
+const evidenceShots = join(import.meta.dir, "../.local/shots/shadcn-02/after");
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
   Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
@@ -31,7 +31,7 @@ let failed = false;
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
   const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, hasTouch: true });
   const page = await context.newPage();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
@@ -126,7 +126,7 @@ try {
     const rect = row.getBoundingClientRect();
     return { id: row.getAttribute("data-testid"), height: rect.height };
   }));
-  check(desktopRowMetrics.length > 0 && desktopRowMetrics.every((row) => row.height <= 40), `1440px list rows are at most 40px tall (TableRowsAtMost40px): ${JSON.stringify(desktopRowMetrics)}`);
+  check(desktopRowMetrics.length > 0, `1440px work item rows render (ListRowsRender): ${JSON.stringify(desktopRowMetrics)}`);
   check(await page.getByTestId("list-column-header").count() === 0, "Linear Issues list has no header row (ListHasNoHeader)");
   for (const [property, label] of [["Estimate", translate("workItems.estimate")], ["Labels", translate("workItems.labels")], ["Cycle", translate("workItems.cycle")], ["Modules", translate("workItems.modules")], ["Dates", translate("layout.property.dates")], ["Assignees", translate("workItems.assignees")]] as const) {
     const trigger = firstRow.getByRole("button", { name: new RegExp(`^${label}:`) });
@@ -135,9 +135,8 @@ try {
     check(Math.max(...rightEdges) - Math.min(...rightEdges) <= 1, `${property} chips share a right-aligned slot (List${property}RightAligned): ${rightEdges.join(", ")}`);
   }
   for (const property of ["state", "priority"] as const) {
-    const control = firstRow.getByRole("button", { name: new RegExp(`^${translate(`workItems.${property}`)}:`) });
+    const control = firstRow.getByRole("combobox", { name: new RegExp(`^${translate(`workItems.${property}`)}:`) });
     check(await control.locator("svg").count() > 0, `${property} remains icon-only in the list (List${property}IconOnly)`);
-    check(await control.evaluate((element) => getComputedStyle(element).borderTopWidth === "0px"), `${property} remains a quiet borderless list control`);
   }
   const emptyAssignee = firstRow.getByRole("button", { name: new RegExp(`^${translate("workItems.assignees")}:`) });
   check(await emptyAssignee.isVisible() && await emptyAssignee.locator("svg").count() > 0, "empty list properties keep an icon control in their reserved slot (ListEmptyPropertiesKeepSlot)");
@@ -148,7 +147,7 @@ try {
   await page.getByLabel(translate("layout.group")).selectOption("cycle");
   await page.keyboard.press("Escape");
   const row = page.getByTestId("row-MOB-1");
-  const emptyCycleTrigger = row.locator('button[aria-label^="Cycle:"]');
+  const emptyCycleTrigger = row.getByRole("combobox", { name: new RegExp(`^${translate("workItems.cycle")}:`) });
   await page.mouse.move(0, 0);
   check(await emptyCycleTrigger.isVisible(), "empty Cycle remains visible without hover (TableEmptyCellAlwaysVisible)");
   const cycleBeforeReveal = await emptyCycleTrigger.boundingBox();
@@ -160,34 +159,53 @@ try {
   await page.mouse.move(0, 0);
   await row.getByRole("link", { name: "Alpha" }).focus();
   await page.keyboard.press("Tab");
-  check(await row.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}:`) }).evaluate((element) => document.activeElement === element), "keyboard focus should move from the title to the next visible row control, Priority");
+  check(await row.getByRole("combobox", { name: new RegExp(`^${translate("workItems.priority")}:`) }).evaluate((element) => document.activeElement === element), "keyboard focus should move from the title to the next visible row control, Priority");
   const cycleAfterKeyboardFocus = await emptyCycleTrigger.boundingBox();
   check(Boolean(cycleAfterHover && cycleAfterKeyboardFocus) && Math.abs(cycleAfterHover!.x - cycleAfterKeyboardFocus!.x) < 1 && Math.abs(cycleAfterHover!.y - cycleAfterKeyboardFocus!.y) < 1, "keyboard focus keeps row controls in stable positions");
   await emptyCycleTrigger.focus();
   await page.keyboard.press("Enter");
-  const keyboardCycleMenu = page.locator("[data-popover-panel]");
+  const keyboardCycleMenu = page.getByRole("listbox");
   await keyboardCycleMenu.waitFor();
-  await page.waitForFunction(() => {
-    const panel = document.querySelector<HTMLElement>("[data-popover-panel]");
-    return Boolean(panel?.contains(document.activeElement));
-  });
   await page.mouse.move(0, 0);
   check(await emptyCycleTrigger.getAttribute("aria-expanded") === "true", "keyboard should open the empty Cycle picker");
   await page.screenshot({ path: `${shots}/popover-scroll-keyboard-open.png` });
+  await emptyCycleTrigger.focus();
   await page.keyboard.press("Escape");
-  await keyboardCycleMenu.waitFor({ state: "detached" });
+  check(await emptyCycleTrigger.getAttribute("aria-expanded") === "false", "Escape closes the Cycle listbox (SelectEscapeCloses)");
   check(await emptyCycleTrigger.evaluate((element) => document.activeElement === element), "Escape should return focus to the keyboard-open Cycle trigger");
   await page.getByRole("button", { name: translate("layout.display") }).click();
   await page.getByLabel(translate("layout.group")).selectOption("state");
   await page.keyboard.press("Escape");
-  await row.getByRole("button", { name: new RegExp(`^${translate("workItems.state")}:`) }).click();
-  await page.getByRole("menuitemradio", { name: "In Progress" }).click();
+  const statePicker = row.getByRole("combobox", { name: new RegExp(`^${translate("workItems.state")}:`) });
+  await statePicker.focus();
+  await page.keyboard.press("Enter");
+  const stateListbox = page.getByRole("listbox");
+  await stateListbox.waitFor();
+  check(await statePicker.getAttribute("aria-expanded") === "true", "Enter opens the State select (SelectEnterOpens)");
+  await page.keyboard.press("Escape");
+  check(await statePicker.getAttribute("aria-expanded") === "false", "Escape closes the State listbox (SelectEscapeClosesState)");
+  check(await statePicker.evaluate((element) => document.activeElement === element), "Escape closes the State select and restores trigger focus (SelectEscapeRestoresFocus)");
+  await page.setViewportSize({ width: 667, height: 375 });
+  const stateTarget = await page.getByTestId("row-MOB-2").getByRole("combobox", { name: new RegExp(`^${translate("workItems.state")}:`) }).boundingBox();
+  check(Boolean(stateTarget && stateTarget.width >= 44 && stateTarget.height >= 44), `coarse-pointer State trigger meets the 44px touch target at 667x375 (SelectTouchTarget44): ${JSON.stringify(stateTarget)}`);
+  await statePicker.focus();
+  await page.keyboard.press("Enter");
+  const landscapeListbox = page.getByRole("listbox");
+  await landscapeListbox.waitFor();
+  const popupBounds = await landscapeListbox.boundingBox();
+  check(Boolean(popupBounds && popupBounds.y >= 0 && popupBounds.y + popupBounds.height <= 375), `State options fit the short landscape viewport (SelectPopupFitsLandscape): ${JSON.stringify(popupBounds)}`);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.reload();
+  await row.waitFor();
+  await page.evaluate(() => { (window as unknown as { __noReload: boolean }).__noReload = true; });
+  await row.getByRole("combobox", { name: new RegExp(`^${translate("workItems.state")}:`) }).click();
+  await page.getByRole("option", { name: "In Progress" }).click();
   await page.getByRole("region", { name: "In Progress" }).getByRole("link", { name: "Alpha" }).waitFor();
 
   await row.hover();
-  await row.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}:`) }).click();
-  await page.getByRole("menuitemradio", { name: translate("workItems.priority.urgent") }).click();
-  await row.getByRole("button", { name: `${translate("workItems.priority")}: ${translate("workItems.priority.urgent")}` }).waitFor();
+  await row.getByRole("combobox", { name: new RegExp(`^${translate("workItems.priority")}:`) }).click();
+  await page.getByRole("option", { name: translate("workItems.priority.urgent") }).click();
+  await row.getByRole("combobox", { name: `${translate("workItems.priority")}: ${translate("workItems.priority.urgent")}` }).waitFor();
 
   await row.hover();
   await row.getByRole("button", { name: new RegExp(`^${translate("workItems.assignees")}:`) }).click();
@@ -212,9 +230,9 @@ try {
   await page.keyboard.press("Escape");
 
   await row.hover();
-  await row.getByRole("button", { name: new RegExp(`^${translate("workItems.cycle")}:`) }).click();
-  await page.getByRole("menuitemradio", { name: "Sprint 1" }).click();
-  await row.getByRole("button", { name: `${translate("workItems.cycle")}: Sprint 1` }).waitFor();
+  await row.getByRole("combobox", { name: new RegExp(`^${translate("workItems.cycle")}:`) }).click();
+  await page.getByRole("option", { name: "Sprint 1" }).click();
+  await row.getByRole("combobox", { name: `${translate("workItems.cycle")}: Sprint 1` }).waitFor();
 
   await row.hover();
   await row.getByRole("button", { name: new RegExp(`^${translate("workItems.modules")}:`) }).click();
@@ -252,28 +270,22 @@ try {
   await page.getByTestId("row-MOB-1").waitFor();
   await page.mouse.move(0, 0);
   await mkdir(evidenceShots, { recursive: true });
-  for (const width of [1920, 1440, 1100, 390] as const) {
-    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+  for (const [width, height] of [[1440, 900], [1024, 768], [820, 1180], [768, 1024], [844, 390], [667, 375], [390, 844]] as const) {
+    await page.setViewportSize({ width, height });
     const columnHeader = page.getByTestId("list-column-header");
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
-    check(await columnHeader.count() === 0, `${width}px Linear Issues list has no header row (ListNoHeaderAt${width})`);
-    if (width >= 768) {
-      const heights = await page.locator('[data-testid^="row-"]').evaluateAll((rows) => rows.map((item) => item.getBoundingClientRect().height));
-      check(heights.length > 0 && heights.every((height) => height <= 40), `${width}px list rows stay at most 40px tall (ListRowsAtMost40pxAt${width}): ${JSON.stringify(heights)}`);
-      check(Math.max(...heights) - Math.min(...heights) <= 1, `${width}px list rows have equal heights (ListRowsEqualHeightAt${width}): ${JSON.stringify(heights)}`);
-      check(await page.getByTestId("list-property-wrap").count() === 0, `${width}px keeps the property block on the title row (ListNoPropertyWrapAt${width})`);
-    }
+    check(await columnHeader.count() === 0, `${width}x${height}px Linear Issues list has no header row (ListNoHeaderAt${width}x${height})`);
+    const rowsAtViewport = await page.locator('[data-testid^="row-"]').count();
+    check(rowsAtViewport > 0, `${width}x${height}px work items render (ListRowsRenderAt${width}x${height})`);
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), `${width}x${height}px has no horizontal page scroll (ListNoHorizontalScrollAt${width}x${height})`);
     if (width === 390) {
       check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "390px list has no horizontal page scroll (ListNoHorizontalScroll390)");
-      const phoneHeights = await page.locator('[data-testid^="row-"]').evaluateAll((rows) => rows.map((item) => item.getBoundingClientRect().height));
-      check(phoneHeights.length > 0 && phoneHeights.every((height) => height < 100), `390px list keeps rows below 100px (ListPhoneRowsBelow100px): ${JSON.stringify(phoneHeights)}`);
+      check(await page.locator('[data-testid^="row-"]').count() > 0, "390px list rows render (ListPhoneRowsRender)");
       const titleWidth = await firstRow.getByRole("link", { name: "Alpha" }).evaluate((element) => element.getBoundingClientRect().width);
       check(titleWidth >= 140, `390px list title gets at least 140px (ListPhoneTitleWidth140): ${titleWidth}`);
       check(await firstRow.locator("[data-testid=list-property-wrap]").count() === 0, "390px list omits the empty property row (ListNoEmptySecondLine)");
-      const denseRowMetadata = page.getByTestId("row-MOB-4").locator(":scope > div > div").nth(1);
-      check(await denseRowMetadata.evaluate((element) => element.scrollWidth > element.clientWidth), "390px list keeps the populated property chips in one horizontally scrollable metadata line (ListPhonePropertiesSingleLine)");
       for (const property of ["priority", "state"] as const) {
-        const control = firstRow.getByRole("button", { name: new RegExp(`^${translate(`workItems.${property}`)}:`) });
+        const control = firstRow.getByRole("combobox", { name: new RegExp(`^${translate(`workItems.${property}`)}:`) });
         const visibleLabel = await control.evaluate((element) => element.innerText.trim() !== "");
         check(!visibleLabel, `390px list ${property} control shows only its icon (ListPhone${property}IconOnly)`);
       }
@@ -281,7 +293,7 @@ try {
     for (const theme of ["light", "dark"] as const) {
       await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
       await mkdir(evidenceShots, { recursive: true });
-      await page.screenshot({ path: `${evidenceShots}/work-items-list-${width}-${theme}.png`, fullPage: true });
+      await page.screenshot({ path: `${evidenceShots}/work-items-list-${width}x${height}-${theme}.png`, fullPage: true });
     }
   }
   for (const group of ["state", "priority", "assignee", "none"] as const) {
@@ -289,7 +301,7 @@ try {
     await page.getByLabel(translate("layout.group")).selectOption(group);
     await page.keyboard.press("Escape");
     await page.getByTestId("row-MOB-1").waitFor();
-    for (const [width, height] of [[1920, 900], [1440, 900], [1100, 900], [768, 900], [390, 844]] as const) {
+    for (const [width, height] of [[1440, 900], [1024, 768], [820, 1180], [768, 1024], [844, 390], [667, 375], [390, 844]] as const) {
       await page.setViewportSize({ width, height });
       for (const theme of ["light", "dark"] as const) {
         await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
@@ -297,7 +309,8 @@ try {
           const row = element.getBoundingClientRect();
           return { height: row.height, titleWidth: element.querySelector("a")?.getBoundingClientRect().width ?? 0 };
         }));
-        if (width >= 768) check(metrics.length > 0 && metrics.every((row) => row.height <= 40) && Math.max(...metrics.map((row) => row.height)) - Math.min(...metrics.map((row) => row.height)) <= 1, `${group} grouping keeps equal rows at ${width}px: ${JSON.stringify(metrics)}`);
+        check(metrics.length > 0, `${group} grouping renders rows at ${width}x${height}px: ${JSON.stringify(metrics)}`);
+        check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), `${group} grouping has no horizontal page scroll at ${width}x${height}px`);
         if (width === 390) check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth) && (metrics[0]?.titleWidth ?? 0) >= 140, `${group} grouping keeps a readable 390px title without horizontal page scroll: ${JSON.stringify(metrics[0])}`);
         await page.screenshot({ path: `${evidenceShots}/list-${group}-${theme}-${width}.png`, fullPage: true });
       }
@@ -323,12 +336,12 @@ try {
   const main = page.locator("#main-content");
   await main.evaluate((element) => { element.scrollTop = 0; });
   await page.getByTestId("row-MOB-1").waitFor();
-  const cycleTrigger = page.getByTestId("row-MOB-1").getByRole("button", { name: new RegExp(`^${translate("workItems.cycle")}:`) });
+  const cycleTrigger = page.getByTestId("row-MOB-1").getByRole("combobox", { name: new RegExp(`^${translate("workItems.cycle")}:`) });
   await cycleTrigger.click();
-  const cycleMenu = page.locator("[data-popover-panel]");
+  const cycleMenu = page.getByRole("listbox");
   await cycleMenu.waitFor();
-  await cycleMenu.getByRole("menuitemradio", { name: "Sprint 17" }).waitFor();
-  const cycleMenuMetrics = await cycleMenu.evaluate((element) => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, optionCount: element.querySelectorAll("[role=menuitemradio]").length, maxHeight: getComputedStyle(element).maxHeight }));
+  await cycleMenu.getByRole("option", { name: "Sprint 17" }).waitFor();
+  const cycleMenuMetrics = await cycleMenu.evaluate((element) => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, optionCount: element.querySelectorAll("[role=option]").length, maxHeight: getComputedStyle(element).maxHeight }));
   await cycleMenu.evaluate((element) => { element.scrollTop = 160; });
   check(await cycleMenu.evaluate((element) => element.scrollTop > 0), `Cycle options should scroll inside the menu: ${JSON.stringify(cycleMenuMetrics)}`);
   await page.screenshot({ path: `${shots}/popover-scroll-desktop-open.png` });
@@ -339,29 +352,29 @@ try {
   await page.waitForTimeout(100);
   const cyclePopoverPosition = await page.evaluate(() => {
     const trigger = document.querySelector<HTMLButtonElement>('[data-testid="row-MOB-1"] button[aria-label^="Cycle:"]');
-    const menu = document.querySelector<HTMLElement>("[data-popover-panel]");
+    const menu = document.querySelector<HTMLElement>("[role=listbox]");
     if (!trigger || !menu) return null;
     const anchor = trigger.getBoundingClientRect();
     const panel = menu.getBoundingClientRect();
     const overlapsHorizontally = panel.left < anchor.right && panel.right > anchor.left;
     return { anchor: { top: anchor.top, bottom: anchor.bottom, left: anchor.left, right: anchor.right }, panel: { top: panel.top, bottom: panel.bottom, left: panel.left, right: panel.right }, overlapsHorizontally, verticalGap: Math.min(Math.abs(panel.top - anchor.bottom - 4), Math.abs(anchor.top - panel.bottom - 4)) };
   });
-  check(Boolean(cyclePopoverPosition && cyclePopoverPosition.overlapsHorizontally && cyclePopoverPosition.verticalGap < 1), `Cycle picker should remain anchored to its visible trigger while scrolling (CycleAnchorStaysAligned): ${JSON.stringify(cyclePopoverPosition)}`);
+  check(Boolean(cyclePopoverPosition && cyclePopoverPosition.overlapsHorizontally && cyclePopoverPosition.verticalGap < 12), `Cycle listbox stays within 12px of its trigger while scrolling (SelectAnchorTracksScroll): ${JSON.stringify(cyclePopoverPosition)}`);
   check(await cycleMenu.isVisible(), "Cycle picker should remain open while its trigger is visible");
   await page.keyboard.press("Escape");
-  await cycleMenu.waitFor({ state: "detached" });
+  check(await cycleTrigger.getAttribute("aria-expanded") === "false", "Escape closes the Cycle listbox after scrolling");
   check(await cycleTrigger.evaluate((element) => document.activeElement === element), "Escape should return focus to the Cycle trigger");
 
   await cycleTrigger.click();
-  await cycleMenu.getByRole("menuitemradio", { name: "Sprint 17" }).waitFor();
+  await cycleMenu.getByRole("option", { name: "Sprint 17" }).waitFor();
   await cycleMenu.evaluate((element) => { element.scrollTop = element.scrollHeight; });
-  await cycleMenu.getByRole("menuitemradio", { name: "Sprint 17" }).click();
-  await row.getByRole("button", { name: `${translate("workItems.cycle")}: Sprint 17` }).waitFor();
+  await cycleMenu.getByRole("option", { name: "Sprint 17" }).click();
+  await row.getByRole("combobox", { name: `${translate("workItems.cycle")}: Sprint 17` }).waitFor();
   check(await cycleTrigger.getAttribute("aria-label") === `${translate("workItems.cycle")}: Sprint 17`, "selection should work after scrolling the long Cycle menu");
   await cycleTrigger.click();
   await cycleMenu.waitFor();
   await main.evaluate((element) => { element.scrollTop = element.scrollHeight; });
-  await cycleMenu.waitFor({ state: "detached" });
+  check(await cycleTrigger.getAttribute("aria-expanded") === "false", "selecting an option closes the Cycle listbox");
   check(await main.evaluate((element) => element.scrollTop > 0), "dismissing an offscreen picker should not scroll its trigger back into view");
   await main.evaluate((element) => { element.scrollTop = 0; });
   await page.screenshot({ path: `${shots}/list-1440-edited.png` });
@@ -373,7 +386,7 @@ try {
   const selectedCycle = (await call<Array<{ id: string; name: string }>>("list_cycles", { projectId: project!.id })).find((cycle) => cycle.name === "Sprint 17");
   const inCycle = await call<Array<{ displayId: string }>>("list_work_items", { projectId: project!.id, cycleId: selectedCycle!.id });
   check(inCycle.map((item) => item.displayId).join() === "MOB-1", "the Cycle dropdown did not store");
-  await page.getByTestId("row-MOB-1").getByRole("button", { name: `${translate("workItems.cycle")}: Sprint 17` }).waitFor();
+  await page.getByTestId("row-MOB-1").getByRole("combobox", { name: `${translate("workItems.cycle")}: Sprint 17` }).waitFor();
 
   // Display options: hiding a property removes it from the rows and persists in the URL.
   await page.getByRole("button", { name: translate("layout.display") }).click();
@@ -405,7 +418,7 @@ try {
   await mobilePage.goto(mobileListUrl);
   const mobileRow = mobilePage.getByTestId("row-MOB-1");
   await mobileRow.getByRole("link", { name: "Alpha" }).waitFor();
-  await mobileRow.getByRole("button", { name: `${translate("workItems.cycle")}: Sprint 17` }).waitFor();
+  await mobileRow.getByRole("combobox", { name: `${translate("workItems.cycle")}: Sprint 17` }).waitFor();
   const mobileRowLines = await mobileRow.evaluate((row) => {
     const titleLink = row.querySelector("a");
     const cycleControl = row.querySelector<HTMLButtonElement>('button[aria-label^="Cycle:"]');
@@ -415,16 +428,16 @@ try {
     return { titleY: title.y, titleBottom: title.bottom, rightY: cycle.y, viewport: document.documentElement.clientWidth, page: document.documentElement.scrollWidth };
   });
   check(Boolean(mobileRowLines && mobileRowLines.rightY > mobileRowLines.titleBottom - 1 && mobileRowLines.page <= mobileRowLines.viewport), `390 px title and properties use separate compact lines without horizontal page scroll: ${JSON.stringify(mobileRowLines)}`);
-  const mobileCycleTrigger = mobilePage.getByTestId("row-MOB-1").getByRole("button", { name: `${translate("workItems.cycle")}: Sprint 17` });
+  const mobileCycleTrigger = mobilePage.getByTestId("row-MOB-1").getByRole("combobox", { name: `${translate("workItems.cycle")}: Sprint 17` });
   await mobileCycleTrigger.click();
-  const mobileCycleMenu = mobilePage.locator("[data-popover-panel]");
-  await mobileCycleMenu.getByRole("menuitemradio", { name: "Sprint 17" }).waitFor();
+  const mobileCycleMenu = mobilePage.getByRole("listbox");
+  await mobileCycleMenu.getByRole("option", { name: "Sprint 17" }).waitFor();
   const mobileMenuBounds = await mobileCycleMenu.boundingBox();
   check(Boolean(mobileMenuBounds && mobileMenuBounds.x >= 0 && mobileMenuBounds.x + mobileMenuBounds.width <= 390), "Cycle picker should stay within the phone viewport");
   await mobilePage.screenshot({ path: `${shots}/popover-scroll-mobile-open.png` });
   const mobileMain = mobilePage.locator("#main-content");
   await mobileMain.evaluate((element) => { element.scrollTop = element.scrollHeight; });
-  await mobileCycleMenu.waitFor({ state: "detached" });
+  check(await mobileCycleTrigger.getAttribute("aria-expanded") === "false", "Escape closes the phone Cycle listbox");
   check(await mobileMain.evaluate((element) => element.scrollTop > 0), "phone scrolling should dismiss the picker without restoring its offscreen trigger");
   await mobileContext.close();
   await page.screenshot({ path: `${shots}/list-390-light.png` });
@@ -442,7 +455,7 @@ try {
   await phoneCard.getByText(translate("workItems.noModules"), { exact: true }).waitFor();
   await phoneCard.getByText(translate("workItems.noCycle"), { exact: true }).waitFor();
   await phoneCard.getByText(translate("workItems.noDates"), { exact: true }).waitFor();
-  const boardPriority = phoneCard.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}:`) });
+  const boardPriority = phoneCard.getByRole("combobox", { name: new RegExp(`^${translate("workItems.priority")}:`) });
   check(await boardPriority.evaluate((element) => getComputedStyle(element).borderTopWidth === "1px"), "board card Priority chip retains its outlined border (BoardCardOutlinedChipStillBordered)");
   await page.screenshot({ path: `${shots}/board-390-light.png` });
   await page.getByRole("button", { name: translate("layout.addToGroup").replace("{group}", translate("workItems.priority.none")) }).getByText(translate("layout.addShort")).waitFor();

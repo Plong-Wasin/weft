@@ -50,7 +50,8 @@ try {
   await company.screenshot({ path: `${screenshotDir}/microsoft-en-390.png` });
   await company.goto(`${web}/?error=MICROSOFT_WRONG_TENANT`);
   await company.getByRole("alert").getByText(translate("auth.microsoftWrongTenant")).waitFor();
-  await company.getByLabel(translate("language.label")).selectOption("th");
+  await company.getByRole("combobox", { name: translate("language.label") }).click();
+  await company.getByRole("option", { name: translate("language.th", "th") }).click();
   await company.getByRole("button", { name: translate("auth.microsoftButton", "th"), exact: true }).waitFor();
   await company.goto(`${web}/?error=MICROSOFT_DOMAIN_NOT_ALLOWED`);
   await company.getByRole("alert").getByText(translate("auth.microsoftDomainNotAllowed", "th")).waitFor();

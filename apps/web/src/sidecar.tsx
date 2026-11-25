@@ -9,6 +9,7 @@ import { chatsKey, Conversation, post, type ChatMode, type Recent, type SidecarC
 import { paths } from "./routes";
 import { Popover, menuItemClass } from "./shell/popover";
 import { useAiEnabled } from "./ai-flag";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 export const SIDECAR_MIN = 320;
 export const SIDECAR_MAX = 720;
@@ -144,6 +145,7 @@ export function SidecarTrigger({ context }: { context: SidecarContext }) {
 /** Top bar button: opens or closes the Sidecar with whatever the current page offers as context. */
 export function SidecarToggle() {
   const { open, toggle } = useSidecar();
-  return <button type="button" aria-label={translate("sidecar.open")} title={translate("sidecar.open")} aria-expanded={open} onClick={toggle}
-    className={`rounded-md border-0 p-1.5 hover:bg-layer-transparent-hover hover:text-primary ${open ? "bg-layer-1-selected text-primary" : "bg-transparent text-secondary"}`}><Sparkles aria-hidden size={18} /></button>;
+  const label = translate("sidecar.open");
+  return <Tooltip><TooltipTrigger render={<button type="button" aria-label={label} aria-expanded={open} onClick={toggle}
+    className={`rounded-md border-0 p-1.5 hover:bg-layer-transparent-hover hover:text-primary pointer-coarse:min-h-11 pointer-coarse:min-w-11 ${open ? "bg-layer-1-selected text-primary" : "bg-transparent text-secondary"}`}><Sparkles aria-hidden size={18} /></button>} /><TooltipContent>{label}</TooltipContent></Tooltip>;
 }

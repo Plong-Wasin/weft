@@ -96,7 +96,8 @@ try {
   {
     const { context, page } = await freshPage(browser);
     await page.goto(web);
-    await page.getByLabel(translate("language.label")).selectOption("th");
+    await page.getByRole("combobox", { name: translate("language.label") }).click();
+    await page.getByRole("option", { name: translate("language.th", "th") }).click();
     await page.getByRole("button", { name: translate("auth.signUp", "th"), exact: true }).click();
     await page.getByRole("heading").getByText("สร้างบัญชี Weft ของคุณ").waitFor();
     check(await page.getByRole("button", { name: "สร้างบัญชี" }).isVisible(), "Thai submit button missing");

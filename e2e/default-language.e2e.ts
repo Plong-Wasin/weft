@@ -27,13 +27,15 @@ try {
   browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
   const page = await browser.newPage({ locale: "en-US" });
   await page.goto(web);
-  const language = page.locator("select").first();
+  // The language control is a shadcn Select (combobox trigger + listbox), not a native select.
+  const language = page.getByRole("combobox", { name: "Language" }).or(page.getByRole("combobox", { name: "ภาษา" }));
   await language.waitFor();
-  if (await language.inputValue() !== "th") throw new Error("the signed-out language must start with the configured Thai default");
+  if ((await language.textContent())?.trim() !== "ไทย") throw new Error("the signed-out language must start with the configured Thai default");
   await page.getByText("ภาษาเริ่มต้นขณะนี้: ไทย คุณเปลี่ยนได้").waitFor();
   await page.screenshot({ path: `${shots}/signed-out-thai-default.png` });
-  await language.selectOption("en");
-  if (await language.inputValue() !== "en") throw new Error("the signed-out user must be able to change the language");
+  await language.click();
+  await page.getByRole("option", { name: "English" }).click();
+  if ((await language.textContent())?.trim() !== "English") throw new Error("the signed-out user must be able to change the language");
   await page.getByText("Current default: ไทย. You can change it.").waitFor();
   console.log("e2e default-language: ok");
 } catch (error) {

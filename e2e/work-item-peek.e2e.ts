@@ -275,6 +275,30 @@ try {
   }
   await page.getByTestId("description-editor").waitFor();
   await page.getByRole("navigation", { name: translate("workItems.breadcrumb") }).waitFor();
+  const pageToggle = page.getByTestId("work-item-properties-toggle");
+  const pageProperties = page.getByRole("complementary", { name: translate("workItems.properties"), exact: true });
+  check(await pageToggle.getAttribute("aria-expanded") === "true", "work item details toggle must expose its expanded state");
+  check(await pageToggle.getAttribute("aria-controls") === await pageProperties.getAttribute("id"), "work item details toggle must control the page panel");
+  await pageToggle.click();
+  check(await page.getByRole("complementary", { name: translate("workItems.properties"), exact: true }).count() === 0, "a hidden work item panel must leave the accessibility tree");
+  await page.keyboard.press("Control+i");
+  await pageProperties.waitFor();
+  await page.getByRole("textbox", { name: translate("workItems.titleField") }).first().focus();
+  await page.keyboard.press("Control+i");
+  check(await pageProperties.isVisible(), "Ctrl+I must not toggle while focus is in a text field");
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press("Control+i");
+  await pageProperties.waitFor({ state: "hidden" });
+  await page.reload();
+  await page.getByTestId("work-item-properties-toggle").waitFor();
+  check(await page.getByRole("complementary", { name: translate("workItems.properties"), exact: true }).count() === 0, "a hidden work item panel must remain hidden after reload");
+  for (const width of [1440, 1100, 390]) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), `work item page scrolls horizontally at ${width}px with details collapsed`);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.keyboard.press("Control+i");
+  await pageProperties.waitFor();
   await page.screenshot({ path: `${shots}/page-1440-light.png` });
   for (const [theme, width, height] of [["light", 1440, 900], ["dark", 1440, 900], ["light", 768, 900], ["dark", 768, 900], ["light", 390, 844], ["dark", 390, 844]] as const) {
     await page.setViewportSize({ width, height });

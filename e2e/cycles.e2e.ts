@@ -119,6 +119,48 @@ try {
 
   // Detail: add a work item, see progress and the state breakdown.
   await page.getByRole("link", { name: "Sprint 1" }).click();
+  const detailsToggle = page.getByRole("button", { name: translate("detailsPanel.hide") });
+  const cycleDetails = page.getByRole("complementary", { name: translate("cycles.details"), exact: true });
+  check(await detailsToggle.getAttribute("aria-expanded") === "true", "Cycle details toggle must expose its expanded state");
+  check(await detailsToggle.getAttribute("aria-controls") === "cycle-details-panel", "Cycle details toggle must control its panel");
+  await detailsToggle.click();
+  await page.getByRole("button", { name: translate("detailsPanel.show") }).waitFor();
+  check(await page.getByRole("complementary", { name: translate("cycles.details"), exact: true }).count() === 0, "a hidden Cycle details panel must leave the accessibility tree");
+  await page.keyboard.press("Control+i");
+  await cycleDetails.waitFor();
+  await mkdir(".local/shots/09", { recursive: true });
+  await page.reload();
+  await page.getByRole("button", { name: translate("detailsPanel.hide") }).waitFor();
+  check(await cycleDetails.isVisible(), "Cycle details must reopen after reload when the stored state is open");
+  await page.getByRole("button", { name: translate("detailsPanel.hide") }).click();
+  await page.reload();
+  await page.getByRole("button", { name: translate("detailsPanel.show") }).waitFor();
+  check(await page.getByRole("complementary", { name: translate("cycles.details"), exact: true }).count() === 0, "the hidden Cycle details state must survive reload");
+  for (const width of [1440, 1100]) {
+    await page.setViewportSize({ width, height: 900 });
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), `hidden Cycle panel causes horizontal page scroll at ${width}px`);
+  }
+  await page.keyboard.press("Control+i");
+  await cycleDetails.waitFor();
+  await page.evaluate(() => { try { localStorage.setItem("weft.theme", "light"); document.documentElement.dataset.theme = "light"; } catch { /* screenshot still uses the active theme */ } });
+  await page.screenshot({ path: ".local/shots/09/cycle-details-1440-light-open.png" });
+  await page.getByRole("button", { name: translate("detailsPanel.hide") }).click();
+  await page.screenshot({ path: ".local/shots/09/cycle-details-1440-light-hidden.png" });
+  await page.evaluate(() => { try { localStorage.setItem("weft.theme", "dark"); document.documentElement.dataset.theme = "dark"; } catch { /* screenshot still uses the active theme */ } });
+  await page.getByRole("button", { name: translate("detailsPanel.show") }).click();
+  await page.screenshot({ path: ".local/shots/09/cycle-details-1440-dark-open.png" });
+  await page.getByRole("button", { name: translate("detailsPanel.hide") }).click();
+  await page.screenshot({ path: ".local/shots/09/cycle-details-1440-dark-hidden.png" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  check(await cycleDetails.isVisible(), "Cycle details remain stacked and visible on mobile");
+  await page.screenshot({ path: ".local/shots/09/cycle-details-390-dark-stacked.png" });
+  await page.evaluate(() => { try { localStorage.setItem("weft.theme", "light"); document.documentElement.dataset.theme = "light"; } catch { /* screenshot still uses the active theme */ } });
+  await page.screenshot({ path: ".local/shots/09/cycle-details-390-light-stacked.png" });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.setViewportSize({ width: 390, height: 844 });
+  check(await page.getByRole("button", { name: translate("detailsPanel.show") }).isVisible() === false, "the Details toggle is hidden below lg");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole("button", { name: translate("detailsPanel.show") }).click();
   const descriptionEditor = page.locator('[data-testid="description-editor"] [contenteditable="true"]');
   await page.context().route("**/actions/update_cycle", (route) => route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ error: "temporary save failure" }) }));
   const descriptionToolbar = page.getByRole("toolbar", { name: translate("wiki.toolbar") });

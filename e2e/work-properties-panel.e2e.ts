@@ -115,12 +115,12 @@ try {
   await page.evaluate(() => window.scrollTo(0, 0));
 
   // Show or hide the panel, and remember the choice across reloads.
-  check(await toggle().getAttribute("aria-pressed") === "true", "the toggle starts pressed while the panel is shown");
-  check(await toggle().getAttribute("title") === labelOf("workItems.properties.hide"), "the open toggle's tooltip must read Hide properties");
+  check(await toggle().getAttribute("aria-expanded") === "true", "the toggle starts expanded while the panel is shown");
+  check((await toggle().getAttribute("title"))?.startsWith(labelOf("detailsPanel.hide")), "the open toggle's tooltip must read Hide details and name the shortcut");
   await toggle().click();
   check(!(await sidebar().isVisible()), "the panel must hide when the toggle is pressed");
-  check(await toggle().getAttribute("aria-pressed") === "false", "the toggle must release when the panel is hidden");
-  check(await toggle().getAttribute("title") === labelOf("workItems.properties.show"), "the closed toggle's tooltip must read Show properties");
+  check(await toggle().getAttribute("aria-expanded") === "false", "the toggle must collapse when the panel is hidden");
+  check((await toggle().getAttribute("title"))?.startsWith(labelOf("detailsPanel.show")), "the closed toggle's tooltip must read Show details and name the shortcut");
   await page.reload();
   await toggle().waitFor();
   check(!(await sidebar().isVisible()), "a hidden panel must stay hidden after reload");

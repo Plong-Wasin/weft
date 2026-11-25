@@ -43,6 +43,8 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
   const [parentId, setParentId] = React.useState("");
   const [note, setNote] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
+  // The modal is mounted open, so Base UI never sees an open transition: return focus to the opener it was mounted from.
+  const [opener] = React.useState(() => document.activeElement as HTMLElement | null);
   const { types, properties, ready: typesReady } = useWorkItemTypes(project);
   const typesOn = project.features.types === true;
   const [typeId, setTypeId] = React.useState("");
@@ -110,11 +112,11 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
   return <DialogPrimitive.Root open disablePointerDismissal={unsaved} onOpenChange={(open) => { if (!open) onClose(); }}>
     <DialogPortal>
       <DialogOverlay />
-      <DialogPrimitive.Popup data-create-modal aria-label={t("workItems.modal.title")} className="fixed left-1/2 top-[6dvh] z-50 max-h-[calc(100dvh-2rem)] w-[calc(100vw-1.5rem)] max-w-2xl -translate-x-1/2 overflow-y-auto rounded-2xl border bg-background text-foreground shadow-lg outline-none">
+      <DialogPrimitive.Popup data-create-modal aria-label={t("workItems.modal.title")} finalFocus={() => (opener?.isConnected ? opener : true)} className="fixed left-1/2 top-[6dvh] z-50 max-h-[calc(100dvh-2rem)] w-[calc(100vw-1.5rem)] max-w-2xl -translate-x-1/2 overflow-y-auto rounded-2xl border bg-background text-foreground shadow-lg outline-none">
       <form className="my-0 grid gap-5 p-6 max-sm:gap-4 max-sm:p-4 pointer-coarse:[&_button]:min-h-11 pointer-coarse:[&_input]:min-h-11" onSubmit={submit}>
         <div className="flex items-center gap-2">
           <DialogTitle className="m-0 flex-1">{t("workItems.modal.title")}</DialogTitle>
-          <button type="button" className="size-11 rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={t("workItems.modal.cancel")} onClick={onClose}><X aria-hidden size={16} /></button>
+          <button type="button" className="size-11 rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent hover:text-accent-foreground" aria-label={t("workItems.modal.cancel")} onClick={onClose}><X aria-hidden size={16} /></button>
         </div>
         <input autoFocus required aria-label={t("workItems.titleField")} placeholder={t("workItems.titleField")} value={title} maxLength={500} className="w-full text-16" onChange={(event) => setTitle(event.target.value)} />
         <textarea aria-label={t("workItems.description")} placeholder={t("workItems.descriptionHint")} rows={4} value={description} className="w-full text-14" onChange={(event) => setDescription(event.target.value)} />
@@ -153,7 +155,7 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
             <input type="date" value={dueDate} min={startDate || undefined} className="w-auto" onChange={(event) => setDueDate(event.target.value)} /></label>
         </div>
         {note && <p role="alert" className="m-0 text-danger-text">{note}</p>}
-        <div className="sticky bottom-0 z-10 flex justify-end gap-2 border-t border-subtle bg-surface-1 -mb-6 pb-6 pt-4 max-sm:-mb-4 max-sm:pb-4">
+        <div className="sticky bottom-0 z-10 flex justify-end gap-2 border-t border-border bg-background -mb-6 pb-6 pt-4 max-sm:-mb-4 max-sm:pb-4">
           <button type="button" className="secondary" onClick={onClose}>{t("workItems.modal.cancel")}</button>
           <button type="submit" disabled={busy}>{t("workItems.modal.submit")}</button>
         </div>

@@ -9,6 +9,7 @@ import { initLocale } from "./locale";
 import { initTheme } from "./theme";
 import { paths } from "./routes";
 import { NotFound } from "./not-found";
+import { TooltipProvider } from "./ui/tooltip";
 import { useAiState } from "./ai-flag";
 import { HomeRedirect, RootLayout } from "./layouts/root-layout";
 import { WorkspaceLayout } from "./layouts/workspace-layout";
@@ -156,4 +157,4 @@ function AppRoutes() {
   </Routes>;
 }
 
-createRoot(document.getElementById("root")!).render(<QueryClientProvider client={queryClient}><BrowserRouter><AppRoutes /></BrowserRouter><Toaster /></QueryClientProvider>);
+createRoot(document.getElementById("root")!).render(<QueryClientProvider client={queryClient}><TooltipProvider><BrowserRouter><AppRoutes /></BrowserRouter><Toaster /></TooltipProvider></QueryClientProvider>);

@@ -7,6 +7,7 @@ import { Bell } from "lucide-react";
 import { paths } from "./routes";
 import { inboxNotificationIdFromSearch, notificationTarget, notificationTargetWithInboxId, withoutInboxNotificationId } from "./notification-target";
 import { autoRuleReasonText } from "./auto-rule-reason";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 
 type Workspace = { id: string; slug: string; name: string };
@@ -59,11 +60,11 @@ const fetchInbox = (workspaceId: string) => call<Inbox>("list_notifications", { 
 export function InboxLink({ workspace }: { workspace: Workspace }) {
   const { data } = useQuery({ queryKey: inboxKey(workspace.id), queryFn: () => fetchInbox(workspace.id) });
   const unread = data?.unreadCount ?? 0;
-  return <Link to={paths.notifications(workspace.slug)} aria-label={translate("topbar.notifications")} title={translate("topbar.notifications")}
-    className="relative rounded-lg p-2 text-secondary hover:bg-layer-transparent-hover hover:text-primary">
-    <Bell aria-hidden size={18} />
+  const label = translate("topbar.notifications");
+  return <Tooltip><TooltipTrigger render={<Link to={paths.notifications(workspace.slug)} aria-label={label}
+    className="relative rounded-lg p-2 text-secondary hover:bg-layer-transparent-hover hover:text-primary pointer-coarse:min-h-11 pointer-coarse:min-w-11"><Bell aria-hidden size={18} />
     {unread > 0 && <span aria-label={translate("inbox.unread").replace("{count}", formatNumber(unread))} className="absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-accent-primary px-1 text-10 font-semibold text-on-color">{formatNumber(unread)}</span>}
-  </Link>;
+  </Link>} /><TooltipContent>{label}</TooltipContent></Tooltip>;
 }
 
 /** A named destination in workspace navigation; the bell remains available as a shortcut. */

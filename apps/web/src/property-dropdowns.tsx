@@ -10,10 +10,10 @@ import type { Estimate, StateGroup } from "./types";
 import { cn } from "./lib/utils";
 
 const t = (key: string) => translate(key as MessageKey);
-const outlinedChip = "border border-border bg-background px-2 py-1 text-xs font-medium text-foreground hover:bg-accent";
-const quietChip = "rounded-md bg-transparent px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground";
-const outlinedIconChip = outlinedChip;
-const quietIconChip = "rounded-md bg-transparent px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground min-h-7 min-w-7 max-sm:min-h-9 max-sm:min-w-9";
+const outlinedChip = "border border-border bg-background px-2 py-1 text-xs font-medium text-foreground hover:bg-accent [@media(pointer:coarse)]:min-h-11";
+const quietChip = "rounded-md bg-transparent px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground [@media(pointer:coarse)]:min-h-11";
+const outlinedIconChip = "border border-border bg-background px-2 py-1 text-xs font-medium text-foreground hover:bg-accent [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11";
+const quietIconChip = "rounded-md bg-transparent px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground min-h-7 min-w-7 max-sm:min-h-9 max-sm:min-w-9 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11";
 export function chipClass(quiet = false, iconOnly = false) {
   if (quiet) return iconOnly ? quietIconChip : quietChip;
   return iconOnly ? outlinedIconChip : outlinedChip;

@@ -483,7 +483,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const gridColumns = columnTracks.join(" ");
   const oneLine = listWidth >= widthFor(shownProperties);
   const columnStyle = { "--cols": gridColumns } as React.CSSProperties;
-  const propertyCell = (item: Item, property: (typeof allListProperties)[number], mobile = false) => <span key={property} className={`flex min-w-0 items-center justify-end whitespace-nowrap sm:order-6 ${mobile ? "rounded-md bg-layer-1 px-1.5 py-0.5 text-11 text-secondary [&_button]:px-1 [&_button]:py-0 [&_button]:text-11" : ""} ${isEmptyProperty(item, property) ? "[&_button]:text-transparent [&_button_span]:!text-transparent sm:[&_svg]:hidden [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-hover/row:pointer-events-auto [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:pointer-events-auto" : ""} [&>*]:max-w-full [&_*]:min-w-0 [&_svg]:shrink-0`}>
+  const propertyCell = (item: Item, property: (typeof allListProperties)[number], mobile = false) => <span key={property} className={`flex min-w-0 items-center justify-end whitespace-nowrap sm:order-6 ${mobile ? "rounded-md bg-layer-1 px-1.5 py-0.5 text-11 text-secondary [&_button]:px-1 [&_button]:py-0 [&_button]:text-11" : ""} ${isEmptyProperty(item, property) ? "[@media(hover:none)]:pointer-events-none [&_button]:text-transparent [&_button_span]:!text-transparent sm:[&_svg]:hidden [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-hover/row:pointer-events-auto [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:pointer-events-auto" : ""} [&>*]:max-w-full [&_*]:min-w-0 [&_svg]:shrink-0`}>
     {cellOf(item, property, false, true)}
   </span>;
   const rowOf = (item: Item) => {
@@ -497,7 +497,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
           <span className="flex size-4 shrink-0 items-center justify-center sm:order-1">{checkbox ? React.cloneElement(checkbox, { className: `${checkbox.props.className ?? ""} rounded-sm` }) : <span aria-hidden />}</span>
           <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="line-clamp-2 min-w-0 flex-1 text-14 font-medium text-primary sm:order-5 sm:truncate">{item.title}</Link>
         </div>
-        <div className="flex min-w-0 flex-wrap items-center justify-end gap-1 sm:contents max-sm:flex-nowrap max-sm:justify-start max-sm:overflow-x-auto">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-1 [@media(pointer:coarse)]:gap-2 sm:contents max-sm:flex-nowrap max-sm:justify-start max-sm:overflow-x-auto">
           {leadingProperties.includes("priority") && <span className={`flex min-w-7 shrink-0 items-center justify-center sm:order-2 ${priorityEmpty ? "opacity-0 group-hover/row:opacity-100 group-has-[:focus-visible]/row:opacity-100" : ""}`}>{cellOf(item, "priority", false, true, true)}</span>}
           {shows("id") ? <span title={item.displayId} className="min-w-0 shrink-0 truncate whitespace-nowrap text-11 tabular-nums text-tertiary sm:order-3 sm:text-12">{item.displayId}</span> : <span aria-hidden className="sm:order-3" />}
           {leadingProperties.includes("state") && <span className="flex min-w-7 shrink-0 items-center justify-center sm:order-4">{cellOf(item, "state", false, true, true)}</span>}
@@ -653,7 +653,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     <aside aria-label={t("layout.gantt.undated")} className="mt-2 rounded-lg bg-layer-1 p-3"><h3 className="mb-2 text-13 font-medium">{t("layout.gantt.undated")}</h3>{gantt.undated.length ? <ul className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">{gantt.undated.map((item) => <li key={item.id}><Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="block rounded-md px-2 py-1.5 text-13 text-primary hover:bg-layer-transparent-hover">{item.title}</Link></li>)}</ul> : <p className="text-13 text-tertiary">{t("layout.gantt.noUndated")}</p>}</aside>
   </section>;
 
-  const toolbar = <div className="flex flex-wrap items-center gap-2">
+  const toolbar = <div className="flex flex-wrap items-center gap-2 [@media(max-height:480px)]:[&_span]:sr-only [@media(pointer:coarse)]:[&_button]:min-h-11 [@media(pointer:coarse)]:[&_label]:min-h-11">
     <div role="group" aria-label={t("layout.switch")} className="flex items-center gap-0.5 rounded-lg bg-layer-1 p-0.5">
       {(["list", "board", "spreadsheet", "calendar", "gantt"] as const).map((layout) => { const Icon = layout === "list" ? List : layout === "board" ? Columns3 : layout === "spreadsheet" ? Table2 : layout === "calendar" ? CalendarDays : BarChart3; return <button key={layout} type="button" aria-pressed={params.layout === layout} aria-label={t(`layout.${layout}`)} title={t(`layout.${layout}`)}
         className={`inline-flex items-center rounded-md p-1.5 max-sm:min-h-9 max-sm:min-w-9 max-sm:flex-col max-sm:justify-center max-sm:gap-0.5 ${params.layout === layout ? "bg-surface-1 text-primary shadow-sm" : "bg-transparent text-secondary hover:bg-layer-transparent-hover"} hover:text-primary`} onClick={() => update({ layout })}><Icon aria-hidden size={16} /><span className="hidden text-11 leading-none max-sm:inline">{t(`layout.${layout}`)}</span></button>; })}
@@ -661,7 +661,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     {selectable && <label className={`${ghost} cursor-pointer max-sm:min-h-9 max-sm:gap-1`} title={t("bulk.selectAll")}><input type="checkbox" className="size-4" checked={allPicked} onChange={() => setSelected(allPicked ? [] : orderedIds.slice(0, 500))} /><span className="sr-only">{t("bulk.selectAll")}</span><span aria-hidden className="text-12">{t("bulk.selectShown")}</span></label>}
     <FilterPicker sections={sections} filters={chips ?? emptyFilters()} count={filterCount} onChange={setFilters} onClear={() => update({ q: "" })} />
     <FilterQueryToggle open={filterQueryOpen || (queryError !== null)} onToggle={() => setFilterQueryOpen(!filterQueryOpen)} />
-    <Popover label={t("layout.display")} className={`${ghost} max-sm:min-h-9`} panelRole="dialog" panelClassName="grid w-72 max-w-[calc(100vw-2rem)] max-h-[70vh] gap-3 overflow-auto p-3" trigger={<><SlidersHorizontal aria-hidden size={14} /><span className="max-sm:sr-only">{t("layout.display")}</span></>}>
+    <Popover label={t("layout.display")} className={`${ghost} max-sm:min-h-9`} panelRole="dialog" panelClassName="grid w-72 max-w-[calc(100vw-2rem)] max-h-[70dvh] gap-3 overflow-auto p-3" trigger={<><SlidersHorizontal aria-hidden size={14} /><span className="max-sm:sr-only">{t("layout.display")}</span></>}>
       {() => <>
         {!sheet && <label>{t("layout.group")}<select value={board ? boardGroup : params.group} onChange={(event) => { const group = event.target.value as LayoutParams["group"]; update({ group, subGroup: params.subGroup === group ? "none" : params.subGroup }); }}>
           {(board ? groupings.filter((value) => value !== "none") : groupings).filter((value) => value !== "type" || typesEnabled).map((value) => <option key={value} value={value}>{t(`layout.group.${value}`)}</option>)}
@@ -700,7 +700,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
         {shows("id") && <span className="text-12 text-tertiary">{item.displayId}</span>}
         <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} draggable={false} data-testid="card-title" className="text-14 font-medium text-primary [overflow-wrap:anywhere]">{item.title}</Link></div>
         {reorderHandle}{rowAction && <span data-no-drag>{rowAction(item)}</span>}</div>
-      <div className="flex flex-wrap items-center gap-1.5">{propertiesOf(item, boardGroup === "state", true)}</div>
+      <div className="flex flex-wrap items-center gap-1.5 [@media(pointer:coarse)]:gap-2">{propertiesOf(item, boardGroup === "state", true)}</div>
     </div>}
     ghost={(item) => <div className="flex items-baseline gap-2"><span className="text-12 text-tertiary">{item.displayId}</span><span className="text-14 font-medium text-primary">{item.title}</span></div>} />;
 

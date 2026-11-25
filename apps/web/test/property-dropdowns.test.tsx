@@ -7,7 +7,7 @@ const options = [{ id: "todo", name: "Todo" }];
 const noop = () => {};
 
 test("chipClass uses the shadcn outlined chip and quiet variant", () => {
-  expect(chipClass(false)).toBe("border border-border bg-background px-2 py-1 text-xs font-medium text-foreground hover:bg-accent");
+  expect(chipClass(false)).toBe("border border-border bg-background px-2 py-1 text-xs font-medium text-foreground hover:bg-accent [@media(pointer:coarse)]:min-h-11");
   const quiet = chipClass(true);
   expect(quiet).not.toMatch(/(?:^| )border(?: |$)/);
   expect(quiet).not.toContain("bg-background");
@@ -16,8 +16,8 @@ test("chipClass uses the shadcn outlined chip and quiet variant", () => {
   expect(quiet).toContain("hover:text-accent-foreground");
 });
 
-test("the outlined icon-only chip is the same as the outlined chip, so board cards do not change", () => {
-  expect(chipClass(false, true)).toBe(chipClass(false, false));
+test("the outlined icon-only chip keeps the outlined chip and adds only the coarse-pointer hit area", () => {
+  expect(chipClass(false, true)).toBe(`${chipClass(false, false)} [@media(pointer:coarse)]:min-w-11`);
 });
 
 test("icon-only quiet SingleSelect keeps its accessible name, value title, and coarse-pointer hit area", () => {

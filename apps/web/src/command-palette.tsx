@@ -15,6 +15,7 @@ import { useAiEnabled } from "./ai-flag";
 import { isPaletteToggle, matchesQuery, modalDialogOpen, paletteToolAllowed, type PaletteTool, pageLocation } from "./command-palette-model";
 import { DialogClose, DialogContent } from "./ui/dialog";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "./ui/command";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 /** The top-bar button dispatches this event; the palette, mounted once for every signed-in screen, listens for it. */
 export const openPaletteEvent = "weft:open-command-palette";

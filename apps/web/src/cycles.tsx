@@ -64,7 +64,7 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
       const bounds = element.getBoundingClientRect();
       const onBackdrop = event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom;
       if (onBackdrop) onClose();
-    }} className="fixed left-1/2 top-[10vh] z-50 m-0 max-h-[80vh] w-[calc(100vw-1.5rem)] max-w-lg -translate-x-1/2 overflow-auto rounded-lg border border-subtle bg-surface-1 p-5 text-primary shadow-lg backdrop:bg-backdrop">
+    }} className="fixed left-1/2 top-[10dvh] z-50 m-0 max-h-[80dvh] w-[calc(100vw-1.5rem)] max-w-lg -translate-x-1/2 overflow-auto rounded-lg border border-subtle bg-surface-1 p-5 text-primary shadow-lg backdrop:bg-backdrop">
       <div className="mb-3 flex items-center gap-2">
         <h2 id={titleId} className="m-0 flex-1 text-18 font-semibold text-primary">{title}</h2>
         <button type="button" className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={t("cycles.close")} onClick={onClose}><X aria-hidden size={16} /></button>

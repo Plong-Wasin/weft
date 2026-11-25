@@ -30,7 +30,7 @@ try {
   const page = await context.newPage();
   await page.goto(web);
   await page.getByLabel(translate("auth.email", "th")).waitFor();
-  check(await page.locator("select").first().inputValue() === "th", "the signed-out screen must follow the Thai browser language");
+  check((await page.getByRole("combobox", { name: translate("language.label", "th") }).textContent())?.includes(translate("language.th", "th")), "the signed-out screen must follow the Thai browser language");
   await page.getByRole("button", { name: translate("auth.signUp", "th"), exact: true }).click();
   await page.getByLabel(translate("auth.name", "th")).fill("Thai Person");
   await page.getByLabel(translate("auth.email", "th")).fill(`th-${crypto.randomUUID().slice(0, 8)}@example.com`);
@@ -40,7 +40,7 @@ try {
   // Inside the app (past the auth form) the language must still be Thai.
   await page.getByLabel(translate("auth.email", "th")).waitFor({ state: "detached", timeout: 15000 });
   await page.waitForFunction(() => document.documentElement.lang === "th");
-  check(await page.locator("select").first().inputValue() === "th", "the signed-in language switch must still say Thai");
+  check((await page.getByRole("combobox", { name: translate("language.label", "th") }).textContent())?.includes(translate("language.th", "th")), "the signed-in language switch must still say Thai");
   // The choice was saved to the account, so another device sees Thai too.
   let saved = "";
   for (let attempt = 0; attempt < 25 && saved !== "th"; attempt += 1) {

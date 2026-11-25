@@ -98,7 +98,13 @@ try {
   const longLabelButton = longRow.getByRole("button", { name: `${translate("workItems.labels")}: ${longLabelName}` });
   const longModuleButton = longRow.getByRole("button", { name: `${translate("workItems.modules")}: ${longModuleName}` });
   const longStateButton = longRow.getByRole("button", { name: `${translate("workItems.state")}: ${longStateName}` });
-  check(await longStateButton.evaluate((element) => getComputedStyle(element).borderTopWidth === "1px"), "spreadsheet State chip should retain its outlined border");
+  check(await longStateButton.evaluate((element) => getComputedStyle(element).borderTopWidth === "0px"), "spreadsheet State cell should use a quiet borderless value");
+  for (const [index, property] of ["state", "priority", "assignee", "labels", "dates", "cycle", "modules"].entries()) {
+    const header = page.getByRole("columnheader", { name: translate(`layout.property.${property}`) });
+    const cell = longRow.getByRole("cell").nth(index);
+    const [headerX, cellX] = await Promise.all([header.evaluate((element) => element.getBoundingClientRect().x), cell.evaluate((element) => element.getBoundingClientRect().x)]);
+    check(Math.abs(headerX - cellX) <= 1, `spreadsheet ${property} header aligns with its cells (Spreadsheet${property}HeaderAligned): ${headerX} / ${cellX}`);
+  }
   const longCycleButton = longRow.getByRole("button", { name: `${translate("workItems.cycle")}: ${longCycleName}` });
   const overdueDate = longRow.getByTitle(translate("datePicker.overdue"), { exact: true });
   check(await overdueDate.count() === 1, "overdue DatesMenu should keep the Overdue hover tooltip");

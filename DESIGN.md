@@ -49,6 +49,10 @@ The product owner wants a tool that can do many things and still feels easy and 
 
 ## Components
 
+### shadcn/ui primitives
+
+New shared primitives live in `apps/web/src/ui/` and use Base UI for accessible interaction behavior. During the gradual migration, shadcn's default light and dark neutral theme variables sit beside Weft's legacy tokens in `apps/web/src/tokens.css`; screens adopt the shadcn tokens as they migrate. Keep Tailwind class names literal and combine conditional classes with `cn()` from `apps/web/src/lib/utils.ts`. Use shadcn's default component styling; override only for an explicit Weft behavior or a documented density decision.
+
 - Buttons: controls use an 8px radius with comfortable horizontal padding and compact vertical sizing; a primary (accent fill, white text) for the one main action of a screen; a secondary (surface fill, subtle border) for every other action; a ghost button in the top bar and toolbars; a danger variant (red fill) only inside a Danger zone section.
 - Text fields and selects: bordered with a subtle outline, 8px radius and roomier horizontal padding; placeholder in `--txt-placeholder`; labels sit above fields. Checkboxes keep native semantics with a compact rounded accent treatment. The quiet outline of text fields is a deliberate look choice and is below 3:1 against the surface (about 1.2:1); the field fill, placeholder, label and the focus ring carry recognition. Unchecked checkboxes use `--txt-tertiary` for their border to stay recognisable.
 - Cards and popups: cards use a flat surface with a subtle border and 12px radius; menus and popovers use an 8px radius, inset rounded row hover, and `--shadow-menu`; dialogs use a 16px radius. Shared classes `card-surface`, `inset-row-hover`, `group-band` and `quiet-divider` provide reusable surface, row, band and divider treatments.

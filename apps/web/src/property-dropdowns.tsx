@@ -10,9 +10,9 @@ import type { Estimate, StateGroup } from "./types";
 
 const t = (key: string) => translate(key as MessageKey);
 const outlinedChip = "border border-subtle bg-surface-1 px-2 py-1 text-12 font-medium text-primary hover:bg-layer-transparent-hover";
-const quietChip = "bg-transparent px-2 py-1 text-12 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary";
+const quietChip = "rounded-md bg-transparent px-2 py-1 text-12 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary";
 const outlinedIconChip = outlinedChip;
-const quietIconChip = "bg-transparent px-2 py-1 text-12 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary min-h-7 min-w-7 max-sm:min-h-9 max-sm:min-w-9";
+const quietIconChip = "rounded-md bg-transparent px-2 py-1 text-12 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary min-h-7 min-w-7 max-sm:min-h-9 max-sm:min-w-9";
 export function chipClass(quiet = false, iconOnly = false) {
   if (quiet) return iconOnly ? quietIconChip : quietChip;
   return iconOnly ? outlinedIconChip : outlinedChip;
@@ -104,9 +104,9 @@ export function SingleSelect({ label, summary, options, value, onSelect, readOnl
 }
 
 /** Picks, changes or clears the Estimate point of a work item. Renders nothing while the project has no turned-on Estimate. */
-export function EstimateSelect({ estimate, pointId, onSelect, readOnly, iconOnlyWhenEmpty, quiet }: { estimate: Estimate | null; pointId: string | null; onSelect: (pointId: string | null) => void; readOnly?: boolean; iconOnlyWhenEmpty?: boolean; quiet?: boolean }) {
+export function EstimateSelect({ estimate, pointId, onSelect, readOnly, iconOnlyWhenEmpty, quiet, emptyLabel }: { estimate: Estimate | null; pointId: string | null; onSelect: (pointId: string | null) => void; readOnly?: boolean; iconOnlyWhenEmpty?: boolean; quiet?: boolean; emptyLabel?: string }) {
   if (!estimate?.enabled) return null;
-  const summary = estimate.points.find((point) => point.id === pointId)?.value ?? t("workItems.noEstimate");
+  const summary = estimate.points.find((point) => point.id === pointId)?.value ?? emptyLabel ?? t("workItems.noEstimate");
   const icon = <Sigma aria-hidden size={14} className="text-secondary" />;
   return <SingleSelect label={t("workItems.estimate")} summary={summary} value={pointId ?? ""} readOnly={readOnly} quiet={quiet} icon={icon} iconOnly={iconOnlyWhenEmpty && !pointId}
     options={[{ id: "", name: t("workItems.noEstimate") }, ...estimate.points.map((point) => ({ id: point.id, name: point.value }))]} onSelect={(id) => onSelect(id || null)} />;
@@ -154,8 +154,8 @@ export function DateChip({ label, field, range, onChange, readOnly, stateGroup, 
 }
 
 /** Inline dropdown with the start and due date of a work item: one calendar popover for both. `clearable={false}` hides "No date" where clearing is not offered (the bulk bar). */
-export function DatesMenu({ startDate, dueDate, onChange, readOnly, iconOnlyWhenEmpty, stateGroup, clearable, quiet }: { startDate: string | null; dueDate: string | null; onChange: (change: Partial<DateRange>) => void; readOnly?: boolean; iconOnlyWhenEmpty?: boolean; stateGroup?: StateGroup; clearable?: boolean; quiet?: boolean }) {
-  const text = startDate && dueDate ? `${shortDay(startDate)} – ${shortDay(dueDate)}` : startDate ? shortDay(startDate) : dueDate ? shortDay(dueDate) : t("workItems.noDates");
+export function DatesMenu({ startDate, dueDate, onChange, readOnly, iconOnlyWhenEmpty, stateGroup, clearable, quiet, emptyLabel }: { startDate: string | null; dueDate: string | null; onChange: (change: Partial<DateRange>) => void; readOnly?: boolean; iconOnlyWhenEmpty?: boolean; stateGroup?: StateGroup; clearable?: boolean; quiet?: boolean; emptyLabel?: string }) {
+  const text = startDate && dueDate ? `${shortDay(startDate)} – ${shortDay(dueDate)}` : startDate ? shortDay(startDate) : dueDate ? shortDay(dueDate) : emptyLabel ?? t("workItems.noDates");
   const iconOnly = iconOnlyWhenEmpty && !startDate && !dueDate;
   const late = isOverdue(dueDate, todayKey(), stateGroup);
   const name = `${t("layout.property.dates")}: ${text}${late ? `, ${t("datePicker.overdue")}` : ""}`;

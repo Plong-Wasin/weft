@@ -1,5 +1,13 @@
 /* Plane design tokens (colour), light and dark. Values observed from a running Plane instance; no Plane source copied (ADR-0003).
    Theme: apps/web/src/theme.ts sets data-theme="light"|"dark" on <html>. Defined once here, consumed through Tailwind in style.css. */
+:root {
+  /* Shared geometry for the app's controls, cards and dialogs; colour themes leave shape unchanged. */
+  --radius-control: .5rem;
+  --radius-row: .5rem;
+  --radius-card: .75rem;
+  --radius-dialog: 1rem;
+}
+
 :root,
 :root[data-theme="light"] {
   color-scheme: light;

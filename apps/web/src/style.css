@@ -13,9 +13,9 @@
   --radius-xs: .125rem;
   --radius-sm: .25rem;
   --radius-md: .375rem;
-  --radius-lg: .5rem;
-  --radius-xl: .75rem;
-  --radius-2xl: 1rem;
+  --radius-lg: var(--radius-control);
+  --radius-xl: var(--radius-card);
+  --radius-2xl: var(--radius-dialog);
   --radius-3xl: 1.5rem;
   --height-header: 3.25rem;
   --padding-page-x: 1.35rem;
@@ -105,10 +105,37 @@
 @layer components {
   /* Preflight (base layer) strips native form controls. Restore a Plane-like look in the components layer at zero specificity (:where): it wins over preflight by layer order, and any Tailwind utility on the element still overrides it. */
   :where(input:not([type="checkbox"], [type="radio"], [type="color"], [type="range"], [type="file"]), textarea, select) {
-    @apply box-border rounded-md border border-strong bg-surface-1 px-2.5 py-1.5 text-14 text-primary;
+    @apply box-border rounded-lg border border-subtle bg-surface-1 px-3 py-1.5 text-14 text-primary;
     font: inherit;
   }
-  /* Native selects keep their element but look like controls: our chevron (preflight removes the browser one), a stronger border, and clear hover, focus and disabled states. */
+  :where(input[type="checkbox"]) {
+    appearance: none;
+    display: inline-grid;
+    flex: none;
+    width: 1rem;
+    height: 1rem;
+    place-content: center;
+    margin: 0;
+    border: 1px solid var(--txt-tertiary);
+    border-radius: .3rem;
+    background: var(--bg-surface-1);
+    color: var(--txt-on-color);
+    cursor: pointer;
+  }
+  :where(input[type="checkbox"]:checked) { border-color: var(--bg-accent-primary); background: var(--bg-accent-primary); }
+  :where(input[type="checkbox"]:checked)::before {
+    content: "";
+    width: .3rem;
+    height: .55rem;
+    margin-top: -.1rem;
+    border: solid currentColor;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
+  :where(input[type="checkbox"]:indeterminate) { border-color: var(--bg-accent-primary); background: var(--bg-accent-primary); }
+  :where(input[type="checkbox"]:indeterminate)::before { content: ""; width: .5rem; height: 0; border-top: 2px solid currentColor; }
+  :where(input[type="checkbox"]:disabled) { cursor: not-allowed; opacity: .55; }
+  /* Native selects keep their element but look like controls: our chevron (preflight removes the browser one), a quiet border (the shared look, see DESIGN.md), and clear hover, focus and disabled states. */
   :where(select) {
     appearance: none;
     padding-right: 2rem;
@@ -121,16 +148,23 @@
     cursor: pointer;
   }
   :where(select:hover:not(:disabled)) { border-color: var(--txt-tertiary); }
-  :where(select:focus-visible) { outline: none; border-color: var(--border-accent-strong); box-shadow: 0 0 0 3px color-mix(in oklab, var(--border-accent-strong) 35%, transparent); }
+  :where(select:focus-visible) { border-color: var(--border-accent-strong); }
   :where(select:disabled) { cursor: not-allowed; border-color: var(--border-disabled); background-color: var(--bg-layer-disabled); color: var(--txt-disabled); }
   /* A label that wraps a text control puts its words above it, so forms read the same everywhere; any utility class on the label still wins. */
   :where(label:has(> :where(input:not([type="checkbox"], [type="radio"], [type="color"], [type="range"], [type="file"]), select, textarea))) { @apply grid gap-1 text-13 font-medium text-secondary; }
-  :where(button:not([class])) { @apply rounded-md border border-strong bg-surface-1 px-3 py-1.5 text-14 font-medium text-primary hover:bg-layer-1-hover disabled:cursor-not-allowed disabled:bg-layer-disabled disabled:text-disabled; }
-  .primary { @apply rounded-md bg-accent-primary px-3 py-1.5 text-14 font-medium text-on-color hover:bg-accent-primary-hover disabled:cursor-not-allowed disabled:bg-layer-disabled disabled:text-disabled; }
-  .secondary { @apply rounded-md border border-strong bg-surface-1 px-3 py-1.5 text-14 font-medium text-primary hover:bg-layer-1-hover disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-surface-1; }
+  :where(button:not([class])) { @apply rounded-lg border border-subtle bg-surface-1 px-3 py-1.5 text-14 font-medium text-primary hover:bg-layer-1-hover disabled:cursor-not-allowed disabled:bg-layer-disabled disabled:text-disabled; }
+  .primary { @apply rounded-lg bg-accent-primary px-3 py-1.5 text-14 font-medium text-on-color hover:bg-accent-primary-hover disabled:cursor-not-allowed disabled:bg-layer-disabled disabled:text-disabled; }
+  .secondary { @apply rounded-lg border border-subtle bg-surface-1 px-3 py-1.5 text-14 font-medium text-primary hover:bg-layer-1-hover disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-surface-1; }
+  .danger { @apply rounded-lg bg-danger-primary px-3 py-1.5 text-14 font-medium text-on-color hover:bg-danger-primary-hover disabled:cursor-not-allowed disabled:bg-layer-disabled disabled:text-disabled; }
+  .ghost { @apply rounded-lg border-0 bg-transparent px-3 py-1.5 text-14 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary disabled:cursor-not-allowed disabled:text-disabled; }
   .search { @apply relative w-full max-w-md; }
-  .search-results { @apply absolute inset-x-0 z-30 mt-1 max-h-80 list-none overflow-auto rounded-md border border-strong bg-surface-1 p-1 shadow-lg; }
+  .search-results { @apply absolute inset-x-0 z-30 mt-1 max-h-80 list-none overflow-auto rounded-lg border border-subtle bg-surface-1 p-1 shadow-lg; }
   .search-results > li { @apply flex flex-col px-2 py-1; }
+  .card-surface { border: 1px solid var(--border-subtle); border-radius: var(--radius-card); background: var(--bg-surface-1); }
+  .inset-row-hover { border-radius: var(--radius-row); transition: background-color 120ms ease; }
+  .inset-row-hover:hover, .inset-row-hover:focus-visible { background: var(--bg-layer-transparent-hover); }
+  .group-band { border-radius: var(--radius-card); background: var(--bg-layer-1); }
+  .quiet-divider { border-color: var(--border-subtle); }
 }
 
 /* AI assist keeps the selection visibly marked while its preview is open. */

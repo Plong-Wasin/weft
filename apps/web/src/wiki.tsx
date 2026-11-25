@@ -410,9 +410,9 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
       <div className="wiki-page-actions flex items-center gap-1">
         {!page.projectId && page.ownerId === self && <button type="button" className="secondary" data-testid="wiki-header-share" onClick={() => revealPanelSection("wiki-share-members")}>{translate("wiki.share.action")}</button>}
         {canPublishHere(page) && <button type="button" className="secondary" aria-pressed={Boolean(page.published)} data-testid="wiki-header-publish" onClick={() => revealPanelSection("wiki-published-link")}>{translate(page.published ? "wiki.published" : "wiki.publish")}</button>}
-        <div className="flex items-center gap-1 border-l border-subtle pl-2">
+        <div className="flex items-center gap-1 rounded-lg bg-layer-1 p-1">
         <button type="button" className="icon-button-ghost" data-testid="wiki-details-toggle" aria-pressed={panelOpen} aria-label={translate(panelOpen ? "wiki.details.hide" : "wiki.details.show")} title={translate(panelOpen ? "wiki.details.hide" : "wiki.details.show")} onClick={togglePanel}><PanelRight aria-hidden size={16} /></button>
-        <Popover label={translate("wiki.exports")} align="right" className="icon-button-ghost !grid !place-items-center !p-0" panelClassName="w-72" trigger={<MoreHorizontal aria-hidden size={16} />}>
+        <Popover label={translate("wiki.exports")} align="right" className="icon-button-ghost !grid !place-items-center !p-0" panelClassName="w-72 rounded-xl" trigger={<MoreHorizontal aria-hidden size={16} />}>
         {(close) => {
           const groups: React.ReactNode[][] = [
             [
@@ -672,10 +672,10 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
     {isError && <p role="alert">{translate("wiki.failed")}</p>}
     {isLoading && <p role="status">{translate("wiki.loading")}</p>}
     {!isLoading && shown.length === 0 && <p className="text-secondary">{translate("wiki.empty")}</p>}
-    {(shown.length > 0 || collections.length > 0) && <div className="overflow-x-auto"><table className="w-full border-collapse text-left text-13">
+    {(shown.length > 0 || collections.length > 0) && <div className="overflow-x-auto rounded-xl border border-subtle bg-surface-1 p-3 sm:p-4"><table className="w-full border-collapse text-left text-13">
       <thead><tr className="border-b border-subtle text-12 text-tertiary"><th className="py-2 font-medium">{translate("wiki.col.name")}</th><th className="py-2 font-medium">{translate("wiki.access")}</th><th className="hidden py-2 font-medium md:table-cell">{translate("pages.created")}</th><th className="py-2 font-medium">{translate("pages.updated")}</th><th className="hidden py-2 font-medium md:table-cell">{translate("wiki.col.nested")}</th></tr></thead>
       <tbody>{collections.map((collection) => <React.Fragment key={collection.id}>
-        <tr className="border-b border-subtle"><th colSpan={5} className="pb-2 pr-2 pt-6 text-left font-semibold text-primary"><div className="flex items-center gap-2"><span>{collection.icon} {collectionLabel(collection)}{collection.visibility === "private" ? ` · ${translate("wiki.access.private")}` : ""}</span><Popover label={`${translate("wiki.collection.actions")}: ${collection.name}`} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-72">
+        <tr className="border-b border-subtle"><th colSpan={5} className="pb-2 pr-2 pt-6 text-left font-semibold text-primary"><div className="flex items-center gap-2"><span>{collection.icon} {collectionLabel(collection)}{collection.visibility === "private" ? ` · ${translate("wiki.access.private")}` : ""}</span><Popover label={`${translate("wiki.collection.actions")}: ${collection.name}`} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-72 rounded-xl">
           {(close) => <>
             <MenuItem icon={Pencil} onClick={() => { close(); setCollectionDialog({ kind: "rename", collection }); }}>{translate("wiki.collection.rename")}</MenuItem>
             {!collection.isDefault && <MenuItem icon={collection.visibility === "public" ? EyeOff : Globe} onClick={async () => { close(); await call("set_collection_visibility", { collectionId: collection.id, visibility: collection.visibility === "public" ? "private" : "public" }); await refreshCollections(); }}>{translate(collection.visibility === "public" ? "wiki.collection.makePrivate" : "wiki.collection.makePublic")}</MenuItem>}

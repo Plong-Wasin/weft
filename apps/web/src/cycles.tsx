@@ -148,7 +148,7 @@ function useCycleCommands(action: Call, reload: () => void, setNote: (note: stri
 }
 
 function CycleRow({ cycle, href, children }: { cycle: Cycle; href: string; children?: React.ReactNode }) {
-  return <li className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-subtle px-4 py-3" data-testid="cycle-row">
+  return <li className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl px-4 py-3 transition-colors hover:bg-layer-transparent-hover" data-testid="cycle-row">
     <Ring cycle={cycle} />
     <Link to={href} title={cycle.name} className="min-w-32 flex-1 truncate text-14 font-medium text-primary">{cycle.name}</Link>
     {statusPill(cycle.status)}
@@ -172,21 +172,21 @@ export function CyclesPage({ workspaceId, workspaceSlug, projectKey, projectId, 
   const tab = pickedTab ?? tabPriority.find((status) => (cycles ?? []).some((cycle) => cycle.status === status)) ?? "active";
   const shown = (cycles ?? []).filter((cycle) => cycle.status === tab);
   const counts = (status: Status) => (cycles ?? []).filter((cycle) => cycle.status === status).length;
-  return <section className="grid gap-3">
+  return <section className="grid gap-4">
     <header className="flex flex-wrap items-center gap-3">
       <h2 className="m-0 flex flex-1 items-center gap-2 text-16 font-semibold"><CalendarSync aria-hidden size={16} />{t("cycles.title")}</h2>
       <label className="flex items-center gap-2 text-13 text-secondary"><input type="checkbox" checked={archived} onChange={(event) => setArchived(event.target.checked)} /> {t("cycles.showArchived")}</label>
       {canWrite && <button type="button" className={primaryButton} onClick={() => setEditing("new")}><Plus aria-hidden size={14} />{t("cycles.new")}</button>}
     </header>
-    <div role="tablist" aria-label={t("cycles.title")} className="flex gap-1 border-b border-subtle">
+    <div role="tablist" aria-label={t("cycles.title")} className="flex w-fit max-w-full flex-wrap gap-1 rounded-lg bg-layer-1 p-1">
       {tabs.map((status) => <button key={status} type="button" role="tab" aria-selected={tab === status} onClick={() => setTab(status)}
-        className={`-mb-px rounded-none border-b-2 bg-transparent px-3 py-2 text-14 font-medium ${tab === status ? "border-accent-strong text-primary" : "border-transparent text-secondary"}`}>{t(`cycles.status.${status}`)} <span className="text-12 text-tertiary">{count(counts(status))}</span></button>)}
+        className={`rounded-md border-0 px-3 py-2 text-14 font-medium ${tab === status ? "bg-surface-1 text-primary shadow-sm" : "bg-transparent text-secondary hover:bg-layer-transparent-hover"}`}>{t(`cycles.status.${status}`)} <span className="text-12 text-tertiary">{count(counts(status))}</span></button>)}
     </div>
     {cycles !== null && cycles.length === 0 && (archived
       ? <EmptyState title={t("archives.emptyCycles")} />
       : <EmptyState title={t("cycles.empty")} description={t("cycles.emptyHint")} action={canWrite ? <button type="button" className={primaryButton} onClick={() => setEditing("new")}><Plus aria-hidden size={14} />{t("cycles.createFirst")}</button> : undefined} />)}
     {cycles !== null && cycles.length > 0 && shown.length === 0 && <p role="status" className="m-0 px-1 py-4 text-14 text-secondary">{t("cycles.emptyTab")}</p>}
-    <ul role="tabpanel" className="m-0 list-none rounded-lg border border-subtle p-0 empty:hidden">
+    <ul role="tabpanel" className="m-0 grid list-none gap-1 rounded-xl bg-layer-1 p-1 empty:hidden">
       {shown.map((cycle) => <CycleRow key={cycle.id} cycle={cycle} href={paths.cycle(workspaceSlug, projectKey, cycle.id)}>
         <CycleMenu cycle={cycle} canWrite={canWrite} canAdmin={canAdmin} onEdit={() => setEditing(cycle)} onArchive={() => void (cycle.archived ? commands.restore(cycle) : commands.archive(cycle))} onDelete={() => void commands.destroy(cycle)} />
       </CycleRow>)}
@@ -328,10 +328,10 @@ export function CycleDetailPage({ workspaceId, workspaceSlug, projectKey, projec
     setNote(result === null ? t("cycles.failed") : `${t("cycles.transferred").replace("{count}", count(result.transferred.length))}${result.conflicts.length ? ` ${t("cycles.transferConflicts").replace("{count}", count(result.conflicts.length))}` : ""}`);
     await load();
   };
-  return <section className="grid gap-3">
-    <header className="flex flex-wrap items-center gap-3">
+  return <section className="grid gap-4">
+    <header className="flex flex-wrap items-center gap-3 rounded-xl bg-layer-1 p-3">
       <Link to={paths.cycles(workspaceSlug, projectKey)} className="text-13">{t("cycles.back")}</Link>
-      <h2 title={cycle.name} className="m-0 min-w-32 flex-1 truncate text-16 font-semibold">{cycle.name}</h2>
+      <h2 title={cycle.name} className="m-0 min-w-32 flex-1 truncate text-20 font-semibold">{cycle.name}</h2>
       {canWrite && !ended && !cycle.archived && <button type="button" className={primaryButton} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("cycles.addItems")}</button>}
       <CycleMenu cycle={cycle} canWrite={canWrite} canAdmin={canAdmin} onEdit={() => setEditing(true)} onArchive={() => void (cycle.archived ? commands.restore(cycle) : commands.archive(cycle))} onDelete={() => void commands.destroy(cycle).then((gone) => { if (gone) navigate(paths.cycles(workspaceSlug, projectKey)); })} />
     </header>
@@ -342,7 +342,7 @@ export function CycleDetailPage({ workspaceId, workspaceSlug, projectKey, projec
         <WorkItemLayouts projectId={projectId} workspaceSlug={workspaceSlug} action={action} run={runQuery} refreshKey={refreshKey} cycleId={cycleId}
           rowAction={canWrite && !cycle.archived ? (item) => <button className="secondary whitespace-nowrap px-2 py-1 text-12" onClick={() => void remove(item.id)}>{t("cycles.remove")}</button> : undefined} />
       </div>
-      <aside aria-label={t("cycles.details")} className="grid h-fit gap-4 rounded-lg border border-subtle p-4 lg:w-80 lg:shrink-0">
+      <aside aria-label={t("cycles.details")} className="grid h-fit gap-4 rounded-xl bg-layer-1 p-4 lg:w-80 lg:shrink-0">
         <section className="grid gap-2" aria-label={t("workItems.description")}><h3 className="m-0 text-14 font-semibold">{t("workItems.description")}</h3><EntityDescription key={cycle.id} action={action} workspaceId={workspaceId} owner={{ ownerType: "cycle", ownerId: cycle.id }} mentionPeople={mentionPeople} initial={cycle.description ?? null} editable={canWrite && !cycle.archived} /></section>
         <div className="flex items-center gap-2">{statusPill(cycle.status)}{cycle.archived && <span role="status" className="text-12 text-secondary">{t("cycles.archived")}</span>}</div>
         <p className="m-0 flex items-center gap-1.5 text-13 text-secondary"><CalendarDays aria-hidden size={14} />{range(cycle)}</p>

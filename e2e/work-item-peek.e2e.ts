@@ -1,6 +1,7 @@
 // Browser end-to-end flow for the work item peek panel, full page, inline property editing and the create modal.
 // Run with `bun e2e/work-item-peek.e2e.ts` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
 import { chromium } from "playwright";
+import { mkdirSync } from "node:fs";
 import { translate } from "../packages/shared/src";
 import { comments, createDatabase } from "../packages/db/src";
 import { reviewShots } from "../tools/visual/paths";
@@ -10,6 +11,8 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5207);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const shots = reviewShots("07-work-item-peek-and-detail");
+const shadcnShots = ".local/shots/shadcn-04";
+mkdirSync(shadcnShots, { recursive: true });
 const uxShots = reviewShots("12-work-items-ux");
 const runPeekShots = "/home/plong/workspace/weft/.local/ai-ux-reliability/09";
 const servers = [
@@ -32,7 +35,7 @@ try {
   await Bun.$`mkdir -p ${runPeekShots}`;
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
   const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US", hasTouch: true });
   const page = await context.newPage();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
@@ -367,6 +370,12 @@ try {
   await page.getByRole("button", { name: translate("workItems.addNew"), exact: true }).first().click();
   const modal = page.getByRole("dialog", { name: translate("workItems.modal.title") });
   await modal.waitFor();
+  const titleField = modal.getByRole("textbox", { name: translate("workItems.titleField") });
+  check(await titleField.evaluate((element) => element === document.activeElement), "create dialog did not focus the first field");
+  await page.keyboard.press("Shift+Tab");
+  check(await modal.evaluate((element) => element.contains(document.activeElement)), "Shift+Tab moved focus outside the create dialog");
+  await page.keyboard.press("Tab");
+  check(await titleField.evaluate((element) => element === document.activeElement), "Tab did not cycle back into the create dialog");
   await modal.getByRole("textbox", { name: translate("workItems.titleField") }).fill("From the modal");
   await modal.getByRole("textbox", { name: translate("workItems.description") }).fill("Line one\nLine two");
   const modalPick = async (property: string, option: string, role: "menuitemradio" | "menuitemcheckbox" = "menuitemradio") => {
@@ -383,6 +392,10 @@ try {
   await modal.getByLabel(translate("workItems.startDate")).fill(day(2));
   await modal.getByLabel(translate("workItems.dueDate")).fill(day(5));
   await page.screenshot({ path: `${shots}/create-modal-1440-light.png` });
+  await page.screenshot({ path: `${shadcnShots}/dialog-1440-light.png` });
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+  await page.screenshot({ path: `${shadcnShots}/dialog-1440-dark.png` });
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   await modal.getByRole("button", { name: translate("workItems.modal.submit") }).click();
   await modal.waitFor({ state: "detached" });
   await page.getByRole("link", { name: "From the modal" }).waitFor();
@@ -393,10 +406,18 @@ try {
   check((await call<Item[]>("list_work_items", { projectId, cycleId: cycle.id })).some((item) => item.id === created.id), "modal cycle did not store");
   check((await call<Item[]>("list_work_items", { projectId, moduleId: module.id })).some((item) => item.id === created.id), "modal module did not store");
   // Escape closes an empty modal.
-  await page.getByRole("button", { name: translate("workItems.addNew"), exact: true }).first().click();
+  const addButton = page.getByRole("button", { name: translate("workItems.addNew"), exact: true }).first();
+  await addButton.click();
   await modal.waitFor();
   await page.keyboard.press("Escape");
   await modal.waitFor({ state: "detached" });
+  await page.waitForFunction((element) => element === document.activeElement, await addButton.elementHandle());
+  await addButton.click();
+  await modal.waitFor();
+  await modal.getByRole("textbox", { name: translate("workItems.titleField") }).fill("Created with Enter");
+  await page.keyboard.press("Enter");
+  await modal.waitFor({ state: "detached" });
+  await page.getByRole("link", { name: "Created with Enter", exact: true }).waitFor();
   console.log("modal: creates with parent, labels, assignees, dates, cycle and modules");
 
   // Narrow screens: the peek goes full screen, the page stacks, the modal fits.
@@ -436,11 +457,28 @@ try {
   await page.getByRole("heading", { name: translate("workItems.properties") }).first().waitFor();
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "page scrolls sideways at 390px");
   await page.screenshot({ path: `${shots}/page-390-light.png`, fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${base}/issues`);
   await page.getByRole("button", { name: translate("workItems.addNew"), exact: true }).first().click();
   await modal.waitFor();
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "modal scrolls sideways at 390px");
   await page.screenshot({ path: `${shots}/create-modal-390-light.png` });
+  await page.screenshot({ path: `${shadcnShots}/dialog-390-light.png` });
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+  await page.screenshot({ path: `${shadcnShots}/dialog-390-dark.png` });
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+  for (const [width, height] of [[1440, 900], [1024, 768], [820, 1180], [768, 1024], [844, 390], [667, 375], [390, 844]] as const) {
+    await page.setViewportSize({ width, height });
+    for (const theme of ["light", "dark"] as const) {
+      await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+      const bounds = await modal.boundingBox();
+      check(!!bounds && bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= width && bounds.y + bounds.height <= height, `create dialog is clipped at ${width}x${height}`);
+      check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), `create dialog causes horizontal page scroll at ${width}x${height}`);
+      if (height <= 390) check(await modal.evaluate((element) => element.scrollHeight > element.clientHeight), `create dialog does not scroll internally at short viewport ${width}x${height}`);
+      if (width <= 820) check((await modal.getByRole("button").evaluateAll((buttons) => buttons.every((button) => button.getBoundingClientRect().height >= 44))), `create dialog has a touch target below 44px at ${width}x${height}`);
+      await page.screenshot({ path: `${shadcnShots}/dialog-${width}x${height}-${theme}.png` });
+    }
+  }
   // Peek at 1440 for the review shots.
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.keyboard.press("Escape");

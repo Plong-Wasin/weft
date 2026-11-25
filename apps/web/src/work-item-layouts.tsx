@@ -418,17 +418,17 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       case "state": return <SingleSelect label={t("workItems.state")} summary={states.find((state) => state.id === item.stateId)?.name ?? ""} value={item.stateId} readOnly={readOnly} quiet={rowQuiet}
           icon={<StateIcon group={states.find((state) => state.id === item.stateId)?.group ?? "unstarted"} />}
           options={states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> }))} onSelect={(stateId) => void change(item, { stateId })} />;
-      case "priority": return <SingleSelect label={t("workItems.priority")} iconOnly={compact && item.priority === "none"} quiet={rowQuiet} summary={rowQuiet && item.priority === "none" ? "—" : t(`workItems.priority.${item.priority}`)} value={item.priority} readOnly={readOnly} icon={<PriorityIcon priority={item.priority} />}
+      case "priority": return <SingleSelect label={t("workItems.priority")} iconOnly={compact && item.priority === "none"} quiet={rowQuiet} summary={t(`workItems.priority.${item.priority}`)} display={rowQuiet && item.priority === "none" ? "—" : undefined} value={item.priority} readOnly={readOnly} icon={<PriorityIcon priority={item.priority} />}
           options={priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> }))} onSelect={(priority) => void change(item, { priority })} />;
       case "assignee": return <MultiSelect label={t("workItems.assignees")} readOnly={readOnly} selected={assignees} quiet={rowQuiet} searchAlways onOpen={() => { void action<Person[]>("list_project_members", { projectId }).then((rows) => rows && setPeople(rows)); }} icon={assignees.length === 0 ? <Users aria-hidden size={14} className="text-secondary" /> : undefined}
-          summary={assignees.length === 0 ? rowQuiet ? <span>—</span> : compact ? <span className="hidden text-11 max-sm:inline">{t("workItems.noAssignee")}</span> : <span className="text-secondary">{t("workItems.noAssignee")}</span> : <span className="flex items-center -space-x-1">{assignees.slice(0, 3).map((id) => <Avatar key={id} name={personName(id)} id={id} agent={isAgentId(id)} />)}{assignees.length > 3 && <span className="pl-2 text-12">+{formatNumber(assignees.length - 3)}</span>}</span>}
+          summary={assignees.length === 0 ? rowQuiet ? <span className="text-tertiary">—</span> : compact ? <span className="hidden text-11 max-sm:inline">{t("workItems.noAssignee")}</span> : <span className="text-secondary">{t("workItems.noAssignee")}</span> : <span className="flex items-center -space-x-1">{assignees.slice(0, 3).map((id) => <Avatar key={id} name={personName(id)} id={id} agent={isAgentId(id)} />)}{assignees.length > 3 && <span className="pl-2 text-12">+{formatNumber(assignees.length - 3)}</span>}</span>}
           options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: accessReasonText(person) }))}
           onToggle={(id, on) => void change(item, { assigneeIds: on ? [...assignees, id] : assignees.filter((other) => other !== id) })} />;
       case "labels": {
         const labelNames = item.labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ");
         const labelSummary = rowQuiet && item.labelIds.length > 0
           ? <span className="flex max-w-24 min-w-0 items-center gap-1.5">{item.labelIds.slice(0, 2).map((id) => { const label = labels.find((candidate) => candidate.id === id); return label && <span key={id} className="inline-flex min-w-0 items-center gap-1"><span aria-hidden className="size-2 rounded-full shrink-0" style={{ backgroundColor: label.color }} /><span className="truncate" title={label.name}>{label.name}</span></span>; })}{item.labelIds.length > 2 && <span className="shrink-0">+{item.labelIds.length - 2}</span>}</span>
-          : item.labelIds.length === 0 ? rowQuiet ? <span>—</span> : compact ? <span className="hidden text-11 max-sm:inline">{t("layout.noLabel")}</span> : <span className="text-secondary">{t("layout.noLabel")}</span> : <span className="block max-w-28 truncate" title={labelNames}>{labelNames}</span>;
+          : item.labelIds.length === 0 ? rowQuiet ? <span className="text-tertiary">—</span> : compact ? <span className="hidden text-11 max-sm:inline">{t("layout.noLabel")}</span> : <span className="text-secondary">{t("layout.noLabel")}</span> : <span className="block max-w-28 truncate" title={labelNames}>{labelNames}</span>;
         return <MultiSelect label={t("workItems.labels")} readOnly={readOnly} selected={item.labelIds} quiet={rowQuiet} icon={<Tag aria-hidden size={14} className="text-secondary" />}
           summary={labelSummary}
           options={labels.map((label) => ({ id: label.id, name: label.name, icon: <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: label.color }} /> }))}
@@ -437,12 +437,12 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       case "estimate": return <EstimateSelect estimate={estimate} pointId={item.estimatePointId ?? null} readOnly={readOnly} iconOnlyWhenEmpty={compact} quiet={rowQuiet} emptyLabel={rowQuiet ? "—" : undefined} onSelect={(estimatePointId) => void change(item, { estimatePointId })} />;
       case "dates": return <DatesMenu iconOnlyWhenEmpty={compact} startDate={item.startDate} dueDate={item.dueDate} stateGroup={states.find((state) => state.id === item.stateId)?.group} readOnly={readOnly} quiet={rowQuiet} emptyLabel={rowQuiet ? "—" : undefined} onChange={(dates) => void change(item, dates)} />;
       case "cycle": return <SingleSelect iconOnly={compact && !cycleOf[item.id]} label={t("workItems.cycle")} readOnly={readOnly} quiet={rowQuiet} value={cycleOf[item.id] ?? ""} icon={<RefreshCw aria-hidden size={14} className="text-secondary" />}
-          summary={cycleOptions.find((cycle) => cycle.id === cycleOf[item.id])?.name ?? (rowQuiet ? "—" : t("workItems.noCycle"))}
+          summary={cycleOptions.find((cycle) => cycle.id === cycleOf[item.id])?.name ?? t("workItems.noCycle")} display={rowQuiet && !cycleOf[item.id] ? "—" : undefined}
           options={[{ id: "", name: t("workItems.noCycle") }, ...cycleOptions.filter((cycle) => cycle.status !== "completed" || cycle.id === cycleOf[item.id]).map((cycle) => ({ id: cycle.id, name: cycle.name }))]} onSelect={(id) => void setCycle(item, id)} />;
       case "modules": {
         const moduleNames = mine.map((id) => moduleOptions.find((module) => module.id === id)?.name).filter(Boolean).join(", ");
         return <MultiSelect label={t("workItems.modules")} readOnly={readOnly} selected={mine} quiet={rowQuiet} icon={<Package aria-hidden size={14} className="text-secondary" />}
-          summary={mine.length === 0 ? rowQuiet ? <span>—</span> : compact ? <span className="hidden text-11 max-sm:inline">{t("workItems.noModules")}</span> : <span className="text-secondary">{t("workItems.noModules")}</span> : <span className="block max-w-28 truncate" title={moduleNames}>{moduleNames}</span>}
+          summary={mine.length === 0 ? rowQuiet ? <span className="text-tertiary">—</span> : compact ? <span className="hidden text-11 max-sm:inline">{t("workItems.noModules")}</span> : <span className="text-secondary">{t("workItems.noModules")}</span> : <span className="block max-w-28 truncate" title={moduleNames}>{moduleNames}</span>}
           options={moduleOptions.map((module) => ({ id: module.id, name: module.name }))} onToggle={(id, on) => void setModule(item, id, on)} />;
       }
       default: return null;
@@ -460,12 +460,12 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
    * Each shown property has a fixed grid track, and the header uses this same template. The measured width includes the checkbox, ID, 12rem title floor, visible properties, row action and grid gaps.
    * If those tracks do not fit, the header disappears and the properties wrap beneath the title. Phones keep their wrapping row.
    */
-  const slotRem: Record<string, number> = { state: 7, priority: 5.75, estimate: 3.5, labels: 5, cycle: 5.5, modules: 5, dates: 5.5, assignee: 4.5 };
+  const slotRem: Record<string, number> = { state: 6.5, priority: 5.75, estimate: 4, labels: 5.5, cycle: 6, modules: 5, dates: 7.5, assignee: 5 };
   const shownProperties = (["state", "priority", "estimate", "labels", "cycle", "modules", "dates", "assignee"] as const).filter((property) => listShows(property));
-  const columnTracks = ["1rem", "5.5rem", "minmax(10rem,1fr)", ...shownProperties.map((property) => `${slotRem[property]}rem`), ...(rowAction ? ["5.5rem"] : [])];
+  const columnTracks = ["1rem", "5rem", "minmax(7rem,1fr)", ...shownProperties.map((property) => `${slotRem[property]}rem`), ...(rowAction ? ["max-content"] : [])];
   const gridColumns = columnTracks.join(" ");
   const gapPx = 8;
-  const rowTracksPx = 16 + 88 + 160 + shownProperties.reduce((sum, property) => sum + slotRem[property] * 16, 0) + (rowAction ? 88 : 0);
+  const rowTracksPx = 16 + 80 + 112 + shownProperties.reduce((sum, property) => sum + slotRem[property] * 16, 0) + (rowAction ? 120 : 0);
   const rowGapsPx = Math.max(0, columnTracks.length - 1) * gapPx;
   const oneLine = listWidth >= 40 + rowTracksPx + rowGapsPx;
   const columnStyle = { "--cols": gridColumns } as React.CSSProperties;
@@ -473,14 +473,14 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     state: t("workItems.state"), priority: t("workItems.priority"), estimate: t("workItems.estimate"), labels: t("workItems.labels"),
     cycle: t("workItems.cycle"), modules: t("workItems.modules"), dates: t("layout.property.dates"), assignee: t("workItems.assignees"),
   };
-  const propertyCell = (item: Item, property: (typeof shownProperties)[number]) => <span key={property} className={`flex min-w-0 items-center overflow-hidden whitespace-nowrap ${isEmptyProperty(item, property) && property !== "state" ? "[&_svg]:hidden" : ""} [&>*]:max-w-full [&_*]:min-w-0 [&_svg]:shrink-0`}>
+  const propertyCell = (item: Item, property: (typeof shownProperties)[number]) => <span key={property} className={`flex min-w-0 items-center whitespace-nowrap ${oneLine && isEmptyProperty(item, property) && property !== "state" ? "sm:[&_svg]:hidden" : ""} [&>*]:max-w-full [&_*]:min-w-0 [&_svg]:shrink-0`}>
     {cellOf(item, property, false, true)}
   </span>;
   const rowOf = (item: Item) => {
     const checkbox = pickBox(item, true);
     const rowActionCell = rowAction?.(item);
     return <li key={item.id} data-testid={`row-${item.displayId}`} className="group/row border-b border-subtle px-1 py-0.5">
-      <div style={columnStyle} className={`mx-1 flex flex-wrap items-center gap-x-2 gap-y-2 rounded-lg px-3 py-0 ${selected.includes(item.id) ? "bg-layer-1" : "bg-transparent"} hover:bg-layer-transparent-hover sm:grid ${oneLine ? "sm:grid-cols-[var(--cols)]" : "sm:grid-cols-[1rem_5.5rem_minmax(10rem,1fr)]"}`}>
+      <div style={columnStyle} className={`mx-1 flex flex-wrap items-center gap-x-2 gap-y-2 rounded-lg px-3 py-0 ${selected.includes(item.id) ? "bg-layer-1" : "bg-transparent"} hover:bg-layer-transparent-hover sm:grid ${oneLine ? "sm:grid-cols-[var(--cols)]" : "sm:grid-cols-[1rem_5rem_minmax(7rem,1fr)]"}`}>
         <span className="flex size-4 shrink-0 items-center justify-center">{checkbox ? React.cloneElement(checkbox, { className: `${checkbox.props.className ?? ""} rounded-sm` }) : <span aria-hidden />}</span>
         {shows("id") ? <span title={item.displayId} className="min-w-0 truncate whitespace-nowrap text-12 tabular-nums text-tertiary">{item.displayId}</span> : <span aria-hidden />}
         <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="min-w-0 flex-1 truncate text-14 font-medium text-primary">{item.title}</Link>

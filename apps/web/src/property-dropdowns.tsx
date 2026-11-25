@@ -89,11 +89,11 @@ function PickerBody({ options, onPick, searchAlways, children }: { options: Opti
 }
 
 /** Inline dropdown that picks one option (state, priority, cycle). */
-export function SingleSelect({ label, summary, options, value, onSelect, readOnly, icon, iconOnly, quiet }: { label: string; summary: string; options: Option[]; value: string; onSelect: (id: string) => void; readOnly?: boolean; icon?: React.ReactNode; iconOnly?: boolean; quiet?: boolean }) {
+export function SingleSelect({ label, summary, display, options, value, onSelect, readOnly, icon, iconOnly, quiet }: { label: string; summary: string; /** Visible text when it differs from the accessible value (a muted dash for an empty list cell). */ display?: string; options: Option[]; value: string; onSelect: (id: string) => void; readOnly?: boolean; icon?: React.ReactNode; iconOnly?: boolean; quiet?: boolean }) {
   const name = `${label}: ${summary}`;
   const className = chipClass(quiet, iconOnly);
-  if (readOnly) return <Static label={name} quiet={quiet} className={className}>{icon}{!iconOnly && <span className="max-w-32 truncate" title={summary}>{summary}</span>}</Static>;
-  return <Popover label={name} className={className} panelClassName="max-h-72 w-52 overflow-auto" trigger={<Trigger label={name}>{icon}<span className={iconOnly ? "hidden text-11 max-sm:inline" : "max-w-32 truncate"}>{summary}</span></Trigger>}>
+  if (readOnly) return <Static label={name} quiet={quiet} className={className}>{icon}{!iconOnly && <span className={`max-w-32 truncate ${display ? "text-tertiary" : ""}`} title={summary}>{display ?? summary}</span>}</Static>;
+  return <Popover label={name} className={className} panelClassName="max-h-72 w-52 overflow-auto" trigger={<Trigger label={name}>{icon}<span className={`${iconOnly ? "hidden text-11 max-sm:inline" : "max-w-32 truncate"} ${display ? "text-tertiary" : ""}`}>{display ?? summary}</span></Trigger>}>
     {(close) => <PickerBody options={options} onPick={(option) => { close(); if (option.id !== value) onSelect(option.id); }}>
       {(visible, activeId, optionId) => visible.map((option) => <button key={option.id} id={optionId(option)} type="button" role="menuitemradio" aria-checked={option.id === value} data-active={option.id === activeId || undefined} className={`${optionClass} data-[active=true]:bg-layer-transparent-hover`}
         onClick={() => { close(); if (option.id !== value) onSelect(option.id); }}>
@@ -106,9 +106,10 @@ export function SingleSelect({ label, summary, options, value, onSelect, readOnl
 /** Picks, changes or clears the Estimate point of a work item. Renders nothing while the project has no turned-on Estimate. */
 export function EstimateSelect({ estimate, pointId, onSelect, readOnly, iconOnlyWhenEmpty, quiet, emptyLabel }: { estimate: Estimate | null; pointId: string | null; onSelect: (pointId: string | null) => void; readOnly?: boolean; iconOnlyWhenEmpty?: boolean; quiet?: boolean; emptyLabel?: string }) {
   if (!estimate?.enabled) return null;
-  const summary = estimate.points.find((point) => point.id === pointId)?.value ?? emptyLabel ?? t("workItems.noEstimate");
+  const point = estimate.points.find((candidate) => candidate.id === pointId)?.value;
+  const summary = point ?? t("workItems.noEstimate");
   const icon = <Sigma aria-hidden size={14} className="text-secondary" />;
-  return <SingleSelect label={t("workItems.estimate")} summary={summary} value={pointId ?? ""} readOnly={readOnly} quiet={quiet} icon={icon} iconOnly={iconOnlyWhenEmpty && !pointId}
+  return <SingleSelect label={t("workItems.estimate")} summary={summary} display={point === undefined ? emptyLabel : undefined} value={pointId ?? ""} readOnly={readOnly} quiet={quiet} icon={icon} iconOnly={iconOnlyWhenEmpty && !pointId}
     options={[{ id: "", name: t("workItems.noEstimate") }, ...estimate.points.map((point) => ({ id: point.id, name: point.value }))]} onSelect={(id) => onSelect(id || null)} />;
 }
 
@@ -155,11 +156,13 @@ export function DateChip({ label, field, range, onChange, readOnly, stateGroup, 
 
 /** Inline dropdown with the start and due date of a work item: one calendar popover for both. `clearable={false}` hides "No date" where clearing is not offered (the bulk bar). */
 export function DatesMenu({ startDate, dueDate, onChange, readOnly, iconOnlyWhenEmpty, stateGroup, clearable, quiet, emptyLabel }: { startDate: string | null; dueDate: string | null; onChange: (change: Partial<DateRange>) => void; readOnly?: boolean; iconOnlyWhenEmpty?: boolean; stateGroup?: StateGroup; clearable?: boolean; quiet?: boolean; emptyLabel?: string }) {
-  const text = startDate && dueDate ? `${shortDay(startDate)} – ${shortDay(dueDate)}` : startDate ? shortDay(startDate) : dueDate ? shortDay(dueDate) : emptyLabel ?? t("workItems.noDates");
+  const text = startDate && dueDate ? `${shortDay(startDate)} – ${shortDay(dueDate)}` : startDate ? shortDay(startDate) : dueDate ? shortDay(dueDate) : t("workItems.noDates");
+  const empty = !startDate && !dueDate;
+  const shown = empty && emptyLabel ? emptyLabel : text;
   const iconOnly = iconOnlyWhenEmpty && !startDate && !dueDate;
   const late = isOverdue(dueDate, todayKey(), stateGroup);
   const name = `${t("layout.property.dates")}: ${text}${late ? `, ${t("datePicker.overdue")}` : ""}`;
-  const body = <><CalendarDays aria-hidden size={14} className="text-secondary" /><span className={`min-w-0 max-w-32 truncate ${iconOnly ? "hidden text-11 max-sm:inline" : ""} ${late ? "text-danger-text" : ""}`} title={late ? t("datePicker.overdue") : undefined}>{text}</span>{late && <span className="sr-only">{t("datePicker.overdue")}</span>}</>;
+  const body = <><CalendarDays aria-hidden size={14} className="text-secondary" /><span className={`min-w-0 max-w-32 truncate ${iconOnly ? "hidden text-11 max-sm:inline" : ""} ${late ? "text-danger-text" : ""} ${empty && emptyLabel ? "text-tertiary" : ""}`} title={late ? t("datePicker.overdue") : undefined}>{shown}</span>{late && <span className="sr-only">{t("datePicker.overdue")}</span>}</>;
   const className = chipClass(quiet, iconOnly);
   if (readOnly) return <Static label={name} quiet={quiet} className={className}>{body}</Static>;
   return <DatePopover label={name} className={className} trigger={<Trigger label={name}>{body}</Trigger>} range={{ startDate, dueDate }} field={startDate || !dueDate ? "start" : "due"} onChange={onChange} clearable={clearable} />;

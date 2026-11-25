@@ -1,6 +1,6 @@
 import React from "react";
 import { Outlet, useLocation } from "react-router";
-import { Command, X } from "lucide-react";
+import { Command } from "lucide-react";
 import { translate } from "@weft/shared";
 import type { Current, Workspace } from "../types";
 import { AppRail } from "./app-rail";
@@ -8,6 +8,7 @@ import { Sidebar } from "./sidebar";
 import { TopBar } from "./top-bar";
 import { SidecarDock, SidecarProvider } from "../sidecar";
 import { openPaletteEvent } from "../command-palette";
+import { Sheet, SheetContent, SheetTitle } from "../ui/sheet";
 
 /** The signed-in shell: top bar over rail + contextual sidebar + routed screen. Below 768px the rail and sidebar live in a drawer. */
 export function Shell({ current, workspace, signOut, refresh }: { current: Current; workspace: Workspace; signOut: () => Promise<void>; refresh: () => Promise<void> }) {
@@ -33,12 +34,6 @@ export function Shell({ current, workspace, signOut, refresh }: { current: Curre
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, []);
-  React.useEffect(() => {
-    if (!drawer) return;
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setDrawer(false); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [drawer]);
   return <SidecarProvider workspace={workspace} userId={current.user.id}><div className="flex h-dvh flex-col bg-canvas text-primary">
     <a href="#main-content" className="skip-link rounded-md bg-accent-primary px-3 py-1.5 text-14 font-medium text-on-color">{translate("shell.skipToMain")}</a>
     <TopBar current={current} workspace={workspace} signOut={signOut} refresh={refresh} onOpenDrawer={() => setDrawer(true)} sidebarCollapsed={sidebarCollapsed} onToggleSidebar={() => { setSidebarCollapsed((value) => !value); setSidebarPeek(false); }} onPeekSidebar={setSidebarPeek} />
@@ -50,15 +45,14 @@ export function Shell({ current, workspace, signOut, refresh }: { current: Curre
           <Sidebar workspace={workspace} />
         </div>
       </div>
-      {drawer && <div className="fixed inset-0 z-40 md:hidden">
-        <button type="button" aria-label={translate("shell.closeMenu")} onClick={() => setDrawer(false)} className="absolute inset-0 rounded-none bg-backdrop p-0 hover:bg-backdrop" />
-        <aside role="dialog" aria-label={translate("shell.sidebar")} className="absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col rounded-r-2xl border-r border-subtle bg-surface-1 shadow-lg">
-          <div className="flex items-center justify-end p-2"><button type="button" aria-label={translate("shell.closeMenu")} onClick={() => setDrawer(false)} className="min-h-11 min-w-11 rounded-lg bg-transparent p-3 text-secondary hover:bg-layer-transparent-hover"><X aria-hidden size={18} /></button></div>
+      <Sheet open={drawer} onOpenChange={setDrawer}>
+        <SheetContent side="left" closeLabel={translate("shell.closeMenu")} aria-label={translate("shell.sidebar")} className="md:hidden">
+          <SheetTitle className="sr-only">{translate("shell.sidebar")}</SheetTitle>
           <AppRail workspaceSlug={workspace.slug} horizontal />
           <button type="button" onClick={() => { setDrawer(false); window.dispatchEvent(new Event(openPaletteEvent)); }} className="inset-row-hover mx-3 mt-2 flex min-h-11 items-center gap-2 rounded-lg bg-transparent px-3 text-left text-14 text-primary"><Command aria-hidden size={16} />{translate("palette.menuLabel")}</button>
           <Sidebar workspace={workspace} />
-        </aside>
-      </div>}
+        </SheetContent>
+      </Sheet>
       <main id="main-content" tabIndex={-1} className="min-w-0 flex-1 focus:outline-none overflow-y-auto p-[var(--padding-page-x)]"><Outlet /></main>
       <SidecarDock />
     </div>

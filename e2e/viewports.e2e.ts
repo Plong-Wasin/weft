@@ -176,6 +176,7 @@ try {
   await drawerPage.goto(`${web}/${slug}`, { waitUntil: "domcontentloaded" });
   await drawerPage.getByRole("button", { name: translate("shell.openMenu") }).tap();
   const drawer = drawerPage.getByRole("dialog", { name: translate("shell.sidebar") });
+  await drawerPage.waitForFunction(() => { const el = document.querySelector('[role="dialog"]'); if (!el) return false; const r = el.getBoundingClientRect(); return r.x >= 0 && r.width > 0; }, undefined, { timeout: 5000 });
   const drawerBox = await drawer.boundingBox();
   check("short-height-drawer-fits", !!drawerBox && drawerBox.x >= 0 && drawerBox.y >= 0 && drawerBox.x + drawerBox.width <= 667 && drawerBox.y + drawerBox.height <= 375,
     `drawer bounds ${JSON.stringify(drawerBox)}`);

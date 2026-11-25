@@ -460,12 +460,12 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
    * Each shown property has a fixed grid track, and the header uses this same template. The measured width includes the checkbox, ID, 12rem title floor, visible properties, row action and grid gaps.
    * If those tracks do not fit, the header disappears and the properties wrap beneath the title. Phones keep their wrapping row.
    */
-  const slotRem: Record<string, number> = { state: 6, priority: 4, estimate: 3.5, labels: 5, cycle: 4.5, modules: 4.5, dates: 5.5, assignee: 4 };
+  const slotRem: Record<string, number> = { state: 7, priority: 5.75, estimate: 3.5, labels: 5, cycle: 5.5, modules: 5, dates: 5.5, assignee: 4.5 };
   const shownProperties = (["state", "priority", "estimate", "labels", "cycle", "modules", "dates", "assignee"] as const).filter((property) => listShows(property));
-  const columnTracks = ["1rem", "5.5rem", "minmax(12rem,1fr)", ...shownProperties.map((property) => `${slotRem[property]}rem`), ...(rowAction ? ["5.5rem"] : [])];
+  const columnTracks = ["1rem", "5.5rem", "minmax(10rem,1fr)", ...shownProperties.map((property) => `${slotRem[property]}rem`), ...(rowAction ? ["5.5rem"] : [])];
   const gridColumns = columnTracks.join(" ");
-  const gapPx = 12;
-  const rowTracksPx = 16 + 88 + 192 + shownProperties.reduce((sum, property) => sum + slotRem[property] * 16, 0) + (rowAction ? 88 : 0);
+  const gapPx = 8;
+  const rowTracksPx = 16 + 88 + 160 + shownProperties.reduce((sum, property) => sum + slotRem[property] * 16, 0) + (rowAction ? 88 : 0);
   const rowGapsPx = Math.max(0, columnTracks.length - 1) * gapPx;
   const oneLine = listWidth >= 40 + rowTracksPx + rowGapsPx;
   const columnStyle = { "--cols": gridColumns } as React.CSSProperties;
@@ -473,18 +473,18 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     state: t("workItems.state"), priority: t("workItems.priority"), estimate: t("workItems.estimate"), labels: t("workItems.labels"),
     cycle: t("workItems.cycle"), modules: t("workItems.modules"), dates: t("layout.property.dates"), assignee: t("workItems.assignees"),
   };
-  const propertyCell = (item: Item, property: (typeof shownProperties)[number]) => <span key={property} className="flex min-w-0 items-center overflow-hidden whitespace-nowrap [&>*]:max-w-full [&_*]:min-w-0 [&_svg]:shrink-0">
+  const propertyCell = (item: Item, property: (typeof shownProperties)[number]) => <span key={property} className={`flex min-w-0 items-center overflow-hidden whitespace-nowrap ${isEmptyProperty(item, property) && property !== "state" ? "[&_svg]:hidden" : ""} [&>*]:max-w-full [&_*]:min-w-0 [&_svg]:shrink-0`}>
     {cellOf(item, property, false, true)}
   </span>;
   const rowOf = (item: Item) => {
     const checkbox = pickBox(item, true);
     const rowActionCell = rowAction?.(item);
     return <li key={item.id} data-testid={`row-${item.displayId}`} className="group/row border-b border-subtle px-1 py-0.5">
-      <div style={columnStyle} className={`mx-1 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg px-3 py-0 ${selected.includes(item.id) ? "bg-layer-1" : "bg-transparent"} hover:bg-layer-transparent-hover sm:grid ${oneLine ? "sm:grid-cols-[var(--cols)]" : "sm:grid-cols-[1rem_5.5rem_minmax(12rem,1fr)]"}`}>
+      <div style={columnStyle} className={`mx-1 flex flex-wrap items-center gap-x-2 gap-y-2 rounded-lg px-3 py-0 ${selected.includes(item.id) ? "bg-layer-1" : "bg-transparent"} hover:bg-layer-transparent-hover sm:grid ${oneLine ? "sm:grid-cols-[var(--cols)]" : "sm:grid-cols-[1rem_5.5rem_minmax(10rem,1fr)]"}`}>
         <span className="flex size-4 shrink-0 items-center justify-center">{checkbox ? React.cloneElement(checkbox, { className: `${checkbox.props.className ?? ""} rounded-sm` }) : <span aria-hidden />}</span>
         {shows("id") ? <span title={item.displayId} className="min-w-0 truncate whitespace-nowrap text-12 tabular-nums text-tertiary">{item.displayId}</span> : <span aria-hidden />}
         <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="min-w-0 flex-1 truncate text-14 font-medium text-primary">{item.title}</Link>
-        {oneLine ? <>{shownProperties.map((property) => propertyCell(item, property))}{rowActionCell}</> : <div data-testid="list-property-wrap" className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 sm:col-start-3 sm:col-span-full">{shownProperties.map((property) => propertyCell(item, property))}{rowActionCell}</div>}
+        {oneLine ? <>{shownProperties.map((property) => propertyCell(item, property))}{rowActionCell}</> : <div data-testid="list-property-wrap" className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 sm:col-start-3 sm:col-span-full">{shownProperties.filter((property) => property === "state" || !isEmptyProperty(item, property)).map((property) => propertyCell(item, property))}{rowActionCell}</div>}
       </div>
     </li>;
   };
@@ -704,9 +704,9 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     {params.layout === "gantt" && ganttView}
     {!board && !sheet && !emptyProject && params.layout !== "calendar" && params.layout !== "gantt" && <div ref={setListBox} className="overflow-hidden rounded-xl border border-subtle">
       {filtered && items.length === 0 && <p className="border-b border-subtle bg-surface-1 px-5 py-3 text-14 text-secondary">{t("layout.noMatch")}</p>}
-      {oneLine && <div data-testid="list-column-header" aria-hidden="true" style={columnStyle} className="hidden h-8 items-center gap-x-3 border-b border-subtle px-5 text-12 font-medium text-tertiary sm:grid sm:grid-cols-[var(--cols)]">
+      {oneLine && <div data-testid="list-column-header" aria-hidden="true" style={columnStyle} className="hidden h-8 items-center gap-x-2 border-b border-subtle px-5 text-12 font-medium text-tertiary sm:grid sm:grid-cols-[var(--cols)]">
         <span /><span>{shows("id") ? t("layout.property.id") : ""}</span><span>{t("workItems.titleField")}</span>
-        {shownProperties.map((property) => <span key={property} className="truncate">{headerLabel[property]}</span>)}{rowAction && <span />}
+        {shownProperties.map((property) => <span key={property} className="truncate pl-2">{headerLabel[property]}</span>)}{rowAction && <span />}
       </div>}
       {groups.map((group) => {
         const empty = group.items.length === 0;

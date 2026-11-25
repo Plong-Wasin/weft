@@ -23,7 +23,8 @@ test("the outlined icon-only chip is the same as the outlined chip, so board car
 test("icon-only SingleSelect keeps its accessible name, shadcn hit area, and responsive label", () => {
   const html = renderToStaticMarkup(<SingleSelect quiet iconOnly label="State" summary="Todo" value="todo" options={options} onSelect={noop} />);
   expect(html).toContain('aria-label="State: Todo"');
-  expect(html).toContain("min-w-7 pointer-coarse:min-h-11 pointer-coarse:min-w-11");
+  expect(html).toContain("pointer-coarse:min-h-11 pointer-coarse:min-w-11");
+  expect(html).toContain("min-w-7");
   expect(html).toContain("border-input bg-background");
   expect(html).toContain("focus-visible:ring-ring/50");
   expect(html).toContain("max-sm:inline");

@@ -3,6 +3,7 @@
 // Small pickers (Priority) keep no search field; the Assignee picker (eight People and Agents) searches, labels its groups and keeps a disabled Agent's reason. Run with `bun e2e/picker-search.e2e.ts`.
 import { chromium } from "playwright";
 import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { like } from "drizzle-orm";
 import { createDatabase, projectMembers, users, workspaceMembers, workspaces } from "../packages/db/src";
 import { createAgentActions } from "../packages/actions/src";
@@ -12,6 +13,9 @@ const apiPort = Number(Bun.env.E2E_API_PORT ?? 31430);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52430);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
+const acceptanceShotPhase = Bun.env.SHADCN_SCREENSHOT_PHASE ?? "after";
+const acceptanceShots = join(Bun.env.SHADCN_SCREENSHOT_ROOT ?? process.cwd(), ".local/shots/shadcn-05", acceptanceShotPhase);
+mkdirSync(acceptanceShots, { recursive: true });
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
   Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
@@ -86,10 +90,38 @@ try {
   const activeIndex = () => panel.locator("[role=menuitemcheckbox]").evaluateAll((items) => items.findIndex((item) => item.hasAttribute("data-active")));
 
   // Labels: seven options, so the field appears, takes focus on open and filters.
-  await sidebar.getByRole("button", { name: new RegExp(`^${t("workItems.labels")}:`) }).click();
+  const labelsTrigger = sidebar.getByRole("button", { name: new RegExp(`^${t("workItems.labels")}:`) });
+  await labelsTrigger.click();
   await searchField.waitFor();
   check(await searchField.evaluate((element) => element === document.activeElement), "search field should be focused when the picker opens");
   check(await panel.getByRole("menuitemcheckbox").count() === 7, "all seven labels should be listed before typing");
+  // Acceptance screenshots show a searchable property popover at every specified viewport and theme.
+  for (const [width, height] of [[1440, 900], [1024, 768], [820, 1180], [768, 1024], [844, 390], [667, 375], [390, 844]] as const) {
+    for (const theme of ["light", "dark"] as const) {
+      await page.setViewportSize({ width, height });
+      await page.evaluate((value) => { localStorage.setItem("weft.theme", value); document.documentElement.setAttribute("data-theme", value); }, theme);
+      if (await labelsTrigger.isVisible()) {
+        if (!(await panel.isVisible())) await labelsTrigger.click();
+      } else {
+        await page.goto(`${web}/${slug}/projects/POP/intake`);
+        await page.getByRole("button", { name: t("intake.add"), exact: true }).click();
+        const intakeDialog = page.getByRole("dialog");
+        await intakeDialog.getByRole("button", { name: new RegExp(`^${t("workItems.labels")}:`) }).click();
+      }
+      await searchField.waitFor();
+      const pageWidth = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth }));
+      check(pageWidth.scrollWidth <= pageWidth.innerWidth, `horizontal page scroll at ${width}x${height} ${theme}: ${JSON.stringify(pageWidth)}`);
+      await page.screenshot({ path: join(acceptanceShots, `property-popover-${width}x${height}-${theme}.png`) });
+      await page.keyboard.press("Escape");
+      await panel.waitFor({ state: "detached" });
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.evaluate(() => { localStorage.setItem("weft.theme", "light"); document.documentElement.setAttribute("data-theme", "light"); });
+  await page.goto(`${web}/${slug}/browse/POP-1`);
+  await sidebar.waitFor();
+  await labelsTrigger.click();
+  await searchField.waitFor();
   await page.keyboard.type("char");
   await panel.getByRole("menuitemcheckbox").first().waitFor();
   check(await panel.getByRole("menuitemcheckbox").count() === 1, "typing should leave only the matching label");
@@ -182,12 +214,12 @@ try {
   // Large label sets remain searchable, and filtering does not clear selections made before the query changed.
   for (let index = 1; index <= 243; index++) await call("create_label", { projectId: project.id, name: `Long-tail ${String(index).padStart(3, "0")}` });
   await page.reload();
-  const labelsTrigger = sidebar.getByRole("button", { name: new RegExp(`^${t("workItems.labels")}:`) });
-  await labelsTrigger.click();
+  const refreshedLabelsTrigger = sidebar.getByRole("button", { name: new RegExp(`^${t("workItems.labels")}:`) });
+  await refreshedLabelsTrigger.click();
   await searchField.fill("Long-tail 243");
   check(await panel.getByRole("menuitemcheckbox").count() === 1, "a 250-label picker should narrow to one matching option");
   await page.keyboard.press("Escape");
-  await labelsTrigger.click();
+  await refreshedLabelsTrigger.click();
   await searchField.fill("Charlie");
   check(await panel.getByRole("menuitemcheckbox", { name: "Charlie", exact: true }).getAttribute("aria-checked") === "true", "filtering a selected label should keep it selected");
   mkdirSync("/home/plong/workspace/weft/.local/continuous-improvements/labels-keyboard", { recursive: true });
@@ -201,6 +233,38 @@ try {
   await panel.getByRole("menuitemcheckbox", { name: /Long-tail 243/ }).waitFor();
   await page.screenshot({ path: "/home/plong/workspace/weft/.local/continuous-improvements/labels-keyboard/labels-390.png", fullPage: false });
   await page.keyboard.press("Escape");
+
+  const touchContext = await browser.newContext({ viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
+  const touchPage = await touchContext.newPage();
+  await touchPage.goto(`${web}/${slug}/browse/POP-1`);
+  const touchSidebar = touchPage.getByRole("complementary", { name: t("workItems.properties") });
+  const touchLabelsTrigger = touchSidebar.getByRole("button", { name: new RegExp(`^${t("workItems.labels")}:`) });
+  await touchLabelsTrigger.tap();
+  const touchPanel = touchPage.locator("[data-popover-panel]");
+  const touchSearch = touchPanel.getByRole("searchbox", { name: t("picker.search") });
+  await touchSearch.waitFor();
+  const touchTargets = await touchPage.evaluate(() => {
+    const bounds = (selector: string) => {
+      const element = document.querySelector<HTMLElement>(selector);
+      const rect = element?.getBoundingClientRect();
+      return rect ? { width: rect.width, height: rect.height } : null;
+    };
+    return {
+      coarse: matchMedia("(pointer: coarse)").matches,
+      trigger: bounds('button[aria-label^="Labels:"]'),
+      search: bounds('[data-popover-panel] input[type="search"]'),
+      option: bounds('[data-popover-panel] [role="menuitemcheckbox"]'),
+      scrollWidth: document.documentElement.scrollWidth,
+      innerWidth: window.innerWidth,
+    };
+  });
+  check(touchTargets.coarse, `phone landscape did not use a coarse pointer: ${JSON.stringify(touchTargets)}`);
+  const targetSizes = [touchTargets.trigger, touchTargets.search, touchTargets.option];
+  check(targetSizes.every((target) => target !== null && target.width >= 44 && target.height >= 44), `a property picker touch target is under 44px: ${JSON.stringify(touchTargets)}`);
+  check(touchTargets.scrollWidth <= touchTargets.innerWidth, `horizontal page scroll in touch property picker: ${JSON.stringify(touchTargets)}`);
+  await touchPage.screenshot({ path: join(acceptanceShots, "property-popover-844x390-touch-light.png") });
+  await touchPage.keyboard.press("Escape");
+  await touchContext.close();
   console.log("e2e picker-search: search above six options, focus, filter, empty message, arrows, Enter, Escape, Assignee People/Agents, disabled Agent reason and no field on Priority ok");
   await browser.close();
 } catch (error) {

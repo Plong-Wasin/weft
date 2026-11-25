@@ -1,8 +1,6 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { resources } from "@weft/shared";
-import { modalDialogOpen, paletteToolAllowed, formatShortcut, isMacPlatform, isPaletteToggle, matchesQuery, nextActive, openPaletteShortcut, pageLocation, paletteKeys, shortcuts } from "../src/command-palette-model";
+import { modalDialogOpen, paletteToolAllowed, formatShortcut, isMacPlatform, isPaletteToggle, matchesQuery, openPaletteShortcut, pageLocation, paletteKeys, shortcuts } from "../src/command-palette-model";
 
 const event = (key: string, modifiers: Partial<Record<"metaKey" | "ctrlKey" | "altKey" | "shiftKey", boolean>> = {}) =>
   ({ key, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...modifiers });
@@ -29,7 +27,7 @@ test("the shortcut is shown with Command on Mac and Ctrl elsewhere", () => {
   expect(formatShortcut(openPaletteShortcut.keys, false)).toBe("Ctrl K");
 });
 
-test("the shortcuts page lists exactly the keys the palette answers to", () => {
+test("the shortcuts page lists the keys handled by the palette and editors", () => {
   // The page and the palette read the same registry; this checks the palette rows match the keys its key handler accepts.
   // Esc appears twice on purpose: it closes an open menu (global) and the palette (palette row).
   expect(new Set(shortcuts.flatMap((row) => row.keys))).toEqual(new Set(["Mod", "K", "\\", "Esc", "↓", "↑", "Enter", "B", "I", "Shift", "S", "E", "8", "7", "U", "H", "9", "Alt", "1–6", "C", "Z", "Y", "Tab", "D", "/"]));
@@ -39,9 +37,6 @@ test("the shortcuts page lists exactly the keys the palette answers to", () => {
   for (const entry of Object.values(paletteKeys)) expect(shortcuts.some((row) => row.keys.length === 1 && row.keys[0] === entry.key)).toBe(true);
   expect(Object.values(paletteKeys).map((entry) => entry.action).sort()).toEqual(["close", "next", "previous", "run"]);
   expect(shortcuts[0]).toBe(openPaletteShortcut);
-  const source = readFileSync(join(import.meta.dir, "..", "src", "command-palette.tsx"), "utf8");
-  expect(source).toContain("paletteKeys[event.key");
-  expect(source).toContain("isPaletteToggle(event)");
 });
 
 test("every shortcut row has a translated description in both languages", () => {
@@ -56,13 +51,6 @@ test("the query matches every typed word, ignoring case, in the label or its hin
   expect(matchesQuery("Settings: General", "gen SET")).toBe(true);
   expect(matchesQuery("Members", "members extra")).toBe(false);
   expect(matchesQuery("MOB-12 Fix login", "mob-12")).toBe(true);
-});
-
-test("arrow keys wrap around the result list", () => {
-  expect(nextActive(0, -1, 3)).toBe(2);
-  expect(nextActive(2, 1, 3)).toBe(0);
-  expect(nextActive(1, 1, 3)).toBe(2);
-  expect(nextActive(0, 1, 0)).toBe(0);
 });
 
 test("a Pages hit opens its project Page under the project key, or a wiki page in the Wiki", () => {
@@ -88,6 +76,7 @@ test("the palette lists Invites only for Admins and the other tools only for Adm
 });
 
 test("the palette does not open over another modal dialog", () => {
-  expect(modalDialogOpen({ querySelector: (selector: string) => (selector === '[aria-modal="true"]' ? {} as Element : null) })).toBe(true);
+  expect(modalDialogOpen({ querySelector: (selector: string) => (selector === '[aria-modal="true"]:not([data-slot="dialog-content"])' ? {} as Element : null) })).toBe(true);
+  expect(modalDialogOpen({ querySelector: (selector: string) => (selector === '[aria-modal="true"][data-slot="dialog-content"][data-open]' ? {} as Element : null) })).toBe(true);
   expect(modalDialogOpen({ querySelector: () => null })).toBe(false);
 });

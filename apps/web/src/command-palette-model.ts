@@ -11,8 +11,6 @@ export const paletteKeys = {
   Escape: { action: "close", key: "Esc", describe: "shortcuts.paletteClose" },
 } as const satisfies Record<string, { action: string; key: string; describe: MessageKey }>;
 
-export type PaletteAction = (typeof paletteKeys)[keyof typeof paletteKeys]["action"];
-
 export type ShortcutKeyEvent = Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey"> & { defaultPrevented?: boolean };
 
 /** Cmd+K on Mac or Ctrl+K elsewhere opens and closes the palette. Alt or Shift combinations are other shortcuts, and a key an editor already handled (Cmd+K makes a link inside text) is left to it. */
@@ -81,12 +79,6 @@ export function pageLocation(projectId: string | null, projects: ReadonlyArray<{
   return project ? { kind: "project", key: project.key } : { kind: "unavailable" };
 }
 
-/** Moves the highlighted row by one, wrapping at both ends. */
-export function nextActive(active: number, delta: 1 | -1, length: number): number {
-  if (length === 0) return 0;
-  return (active + delta + length) % length;
-}
-
 export type PaletteTool = "invites" | "runtimes" | "ai" | "exports" | "tokens" | "usage";
 
 /** Palette entries that lead to a page the viewer cannot use are left out: Invites and Usage are for Admins; Runtimes, AI, Exports and API tokens are for Admins and Members. Until the role is known they stay hidden. */
@@ -98,5 +90,7 @@ export function paletteToolAllowed(tool: PaletteTool, role: "Admin" | "Member" |
 
 /** True when a modal dialog other than the palette itself is on screen; the palette does not open over it. */
 export function modalDialogOpen(root: Pick<ParentNode, "querySelector">): boolean {
-  return root.querySelector('[aria-modal="true"]') !== null;
+  // Base UI keeps a closed Dialog popup mounted briefly for its exit transition; data-open distinguishes that from an active modal.
+  return root.querySelector('[aria-modal="true"]:not([data-slot="dialog-content"])') !== null
+    || root.querySelector('[aria-modal="true"][data-slot="dialog-content"][data-open]') !== null;
 }

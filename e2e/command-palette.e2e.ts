@@ -1,6 +1,8 @@
 // Browser end-to-end flow: the command palette (Ctrl+K / Cmd+K), its search and commands, focus return, the shortcuts page, and the phone layout.
 // Run with `bun e2e/command-palette.e2e.ts` (needs the shared weft-postgres container; set DATABASE_URL to use your own database). Screenshots go to .local/visual/review/35-command-palette.
 import { chromium } from "playwright";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { resources, translate } from "../packages/shared/src";
@@ -11,6 +13,9 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52037);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const shots = reviewShots("35-command-palette");
+const acceptanceShotPhase = Bun.env.SHADCN_SCREENSHOT_PHASE ?? "after";
+const acceptanceShots = join(process.cwd(), ".local/shots/shadcn-05", acceptanceShotPhase);
+mkdirSync(acceptanceShots, { recursive: true });
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
   Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
@@ -74,9 +79,9 @@ try {
   // Tab and Shift+Tab stay within the modal palette, and Escape still closes it.
   await openWithKeys();
   await page.keyboard.press("Tab");
-  check(await input().evaluate((element) => element === document.activeElement), "Tab moved focus outside the modal palette");
+  check(await palette().getByRole("button", { name: translate("workItems.close") }).evaluate((element) => element === document.activeElement), "Tab did not move focus to the palette close control");
   await page.keyboard.press("Shift+Tab");
-  check(await input().evaluate((element) => element === document.activeElement), "Shift+Tab moved focus outside the modal palette");
+  check(await input().evaluate((element) => element === document.activeElement), "Shift+Tab did not return focus to the palette search field");
   await page.keyboard.press("Escape");
   await palette().waitFor({ state: "detached" });
   console.log("palette ok: Ctrl+K opens, Escape closes and returns focus (also after Tab)");
@@ -166,6 +171,63 @@ try {
   await page.screenshot({ path: `${shots}/03-palette-phone-light.png` });
   await page.keyboard.press("Escape");
   console.log("palette ok: phone width, opened from the drawer");
+
+  // Acceptance screenshots cover every specified viewport and both themes with the palette open and search results visible.
+  for (const [width, height] of [[1440, 900], [1024, 768], [820, 1180], [768, 1024], [844, 390], [667, 375], [390, 844]] as const) {
+    for (const theme of ["light", "dark"] as const) {
+      await page.setViewportSize({ width, height });
+      await page.evaluate((value) => { localStorage.setItem("weft.theme", value); document.documentElement.setAttribute("data-theme", value); }, theme);
+      await page.goto(`${web}/${slug}/projects/MOB/issues`);
+      if (width > 767) await openWithKeys();
+      else {
+        await page.getByRole("button", { name: translate("shell.openMenu") }).waitFor();
+        await page.getByRole("button", { name: translate("shell.openMenu") }).click();
+        await page.getByRole("button", { name: translate("palette.menuLabel") }).click();
+      }
+      await palette().waitFor();
+      await input().fill("alpha");
+      await page.getByRole("option", { name: /Alpha palette item/ }).waitFor();
+      const pageWidth = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth }));
+      check(pageWidth.scrollWidth <= pageWidth.innerWidth, `horizontal page scroll at ${width}x${height} ${theme}: ${JSON.stringify(pageWidth)}`);
+      await page.screenshot({ path: join(acceptanceShots, `command-palette-${width}x${height}-${theme}.png`) });
+      await page.keyboard.press("Escape");
+      await palette().waitFor({ state: "detached" });
+    }
+  }
+
+  // The phone-landscape layout is wider than md but still uses coarse-pointer target sizes.
+  const touchContext = await browser.newContext({ viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
+  const touchPage = await touchContext.newPage();
+  await touchPage.goto(`${web}/${slug}/projects/MOB/issues`);
+  const touchPaletteButton = touchPage.getByRole("button", { name: /^Open the command palette/ });
+  await touchPaletteButton.tap();
+  const touchPalette = touchPage.getByRole("dialog", { name: translate("palette.title") });
+  await touchPalette.waitFor();
+  await touchPage.getByRole("combobox", { name: translate("palette.title") }).fill("alpha");
+  await touchPage.getByRole("option", { name: /Alpha palette item/ }).waitFor();
+  const touchTargets = await touchPage.evaluate(() => {
+    const bounds = (selector: string) => {
+      const element = document.querySelector<HTMLElement>(selector);
+      const rect = element?.getBoundingClientRect();
+      return rect ? { width: rect.width, height: rect.height } : null;
+    };
+    return {
+      coarse: matchMedia("(pointer: coarse)").matches,
+      trigger: bounds('button[aria-label^="Open the command palette"]'),
+      close: bounds('[role="dialog"] button[aria-label="Close"]'),
+      input: bounds('[cmdk-input]'),
+      option: bounds('[cmdk-item]'),
+      scrollWidth: document.documentElement.scrollWidth,
+      innerWidth: window.innerWidth,
+    };
+  });
+  check(touchTargets.coarse, `phone landscape did not use a coarse pointer: ${JSON.stringify(touchTargets)}`);
+  const targetSizes = [touchTargets.trigger, touchTargets.close, touchTargets.input, touchTargets.option];
+  check(targetSizes.every((target) => target !== null && target.width >= 44 && target.height >= 44), `a command palette touch target is under 44px: ${JSON.stringify(touchTargets)}`);
+  check(touchTargets.scrollWidth <= touchTargets.innerWidth, `horizontal page scroll with touch palette: ${JSON.stringify(touchTargets)}`);
+  await touchPage.screenshot({ path: join(acceptanceShots, "command-palette-844x390-touch-light.png") });
+  await touchPage.keyboard.press("Escape");
+  await touchContext.close();
 
   // Thai: every palette string and the shortcuts page in Thai, light and dark, at 1440 and 390 px. Screenshots are the review.
   const th = resources.th;

@@ -1,7 +1,9 @@
 import React from "react";
+import { flushSync } from "react-dom";
+import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router";
-import { Command, Search } from "lucide-react";
+import { Command as CommandIcon, X } from "lucide-react";
 import { translate, type MessageKey } from "@weft/shared";
 import { action } from "./api";
 import { CreateWorkItemModal } from "./create-work-item-modal";
@@ -10,7 +12,9 @@ import { projectsKey } from "./shell/sidebar";
 import { themes, useTheme, type Theme } from "./theme";
 import type { Current, Member, Project } from "./types";
 import { useAiEnabled } from "./ai-flag";
-import { isPaletteToggle, matchesQuery, modalDialogOpen, paletteToolAllowed, type PaletteTool, nextActive, pageLocation, paletteKeys, type PaletteAction } from "./command-palette-model";
+import { isPaletteToggle, matchesQuery, modalDialogOpen, paletteToolAllowed, type PaletteTool, pageLocation } from "./command-palette-model";
+import { DialogClose, DialogContent } from "./ui/dialog";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "./ui/command";
 
 /** The top-bar button dispatches this event; the palette, mounted once for every signed-in screen, listens for it. */
 export const openPaletteEvent = "weft:open-command-palette";
@@ -46,13 +50,12 @@ export function CommandPalette({ current, signOut }: { current: Current; signOut
   const [open, setOpen] = React.useState(false);
   const aiOn = useAiEnabled();
   const [query, setQuery] = React.useState("");
-  const [active, setActive] = React.useState(0);
+  const [activeEntryId, setActiveEntryId] = React.useState("");
   const [found, setFound] = React.useState<Found>({ status: "idle", items: [], pages: [] });
   const [creatingIn, setCreatingIn] = React.useState<Project | null>(null);
   const returnFocus = React.useRef<HTMLElement | null>(null);
   const input = React.useRef<HTMLInputElement>(null);
   const latest = React.useRef(0);
-  const listId = React.useId();
   const slug = pathname.split("/")[1] ?? "";
   const workspace = current.workspaces.find((item) => item.slug === slug) ?? null;
   const workspaceId = workspace?.id ?? "";
@@ -75,22 +78,17 @@ export function CommandPalette({ current, signOut }: { current: Current; signOut
     if (modalDialogOpen(document)) return;
     returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setQuery("");
-    setActive(0);
+    setActiveEntryId("");
     setOpen(true);
   }, []);
 
-  /** Escape and the backdrop put focus back where the person was; a chosen entry navigates instead, so focus is left alone. */
+  /** Base UI restores focus on Escape and outside dismissal; choosing an entry navigates instead. */
   const closePalette = React.useCallback(() => {
     setOpen(false);
-    const target = returnFocus.current;
-    returnFocus.current = null;
-    if (target?.isConnected) target.focus();
   }, []);
 
   React.useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      // Escape is read here, not only in the search field, so it still closes the palette after Tab moves focus.
-      if (open && event.key === "Escape") { event.preventDefault(); closePalette(); return; }
       // A create dialog already on screen keeps the keys; the palette does not open over it.
       if (!isPaletteToggle(event) || creatingIn) return;
       event.preventDefault();
@@ -104,8 +102,6 @@ export function CommandPalette({ current, signOut }: { current: Current; signOut
       window.removeEventListener(openPaletteEvent, onOpenRequest);
     };
   }, [open, creatingIn, openPalette, closePalette]);
-
-  React.useEffect(() => { if (open) input.current?.focus(); }, [open]);
 
   React.useEffect(() => {
     if (!open || workspaceId === "" || text.length === 0) { setFound({ status: "idle", items: [], pages: [] }); return; }
@@ -159,66 +155,57 @@ export function CommandPalette({ current, signOut }: { current: Current; signOut
   );
 
   const visible = [...serverEntries, ...localEntries.filter((entry) => matchesQuery(`${entry.label} ${entry.hint ?? ""}`, text))];
-  const activeIndex = Math.min(active, Math.max(visible.length - 1, 0));
-  const optionId = (index: number) => `${listId}-option-${index}`;
+  const commandValue = visible.some((entry) => entry.id === activeEntryId) ? activeEntryId : visible[0]?.id ?? "";
+  React.useEffect(() => {
+    if (open && !visible.some((entry) => entry.id === activeEntryId)) setActiveEntryId(visible[0]?.id ?? "");
+  }, [open, activeEntryId, visible]);
+
+  const grouped: Array<{ group: Group; entries: Entry[] }> = [];
+  for (const entry of visible) {
+    const currentGroup = grouped[grouped.length - 1];
+    if (currentGroup?.group === entry.group) currentGroup.entries.push(entry);
+    else grouped.push({ group: entry.group, entries: [entry] });
+  }
 
   function choose(entry: Entry) {
     // Choosing an entry navigates or opens a dialog, so the palette closes without handing focus back.
-    setOpen(false);
     returnFocus.current = null;
+    flushSync(() => setOpen(false));
     entry.run();
-  }
-
-  function onInputKey(event: React.KeyboardEvent<HTMLInputElement>) {
-    if (event.nativeEvent.isComposing) return;
-    const handled = paletteKeys[event.key as keyof typeof paletteKeys] as { action: PaletteAction } | undefined;
-    // Escape (action "close") is handled by the document listener above.
-    if (!handled || handled.action === "close") return;
-    event.preventDefault();
-    if (handled.action === "next") setActive(nextActive(activeIndex, 1, visible.length));
-    else if (handled.action === "previous") setActive(nextActive(activeIndex, -1, visible.length));
-    else if (handled.action === "run") { const entry = visible[activeIndex]; if (entry) choose(entry); }
   }
 
   const creating = creatingIn && workspace
     ? <CreateWorkItemModal project={creatingIn} onClose={() => setCreatingIn(null)} onCreated={(item) => { setCreatingIn(null); navigate(paths.workItem(slug, item.displayId)); }} />
     : null;
-  if (!open) return creating;
 
-  let previousGroup: Group | null = null;
   return <>
-    <div className="fixed inset-0 z-50 flex justify-center bg-backdrop px-4 pt-[10vh] max-md:pt-4" onMouseDown={(event) => { if (event.target === event.currentTarget) closePalette(); }}>
-      <div role="dialog" aria-modal="true" aria-label={translate("palette.title")} onKeyDownCapture={(event) => {
-        // The search field is the palette's only tab stop; keep keyboard focus inside this modal overlay.
-        if (event.key === "Tab") { event.preventDefault(); input.current?.focus(); }
-      }} className="flex max-h-[75vh] w-full max-w-xl flex-col overflow-hidden rounded-lg border border-subtle bg-surface-1 shadow-xl">
-        <div className="flex items-center gap-2 border-b border-subtle px-3">
-          <Search aria-hidden size={16} className="shrink-0 text-tertiary" />
-          <input ref={input} type="text" role="combobox" aria-expanded="true" aria-controls={listId} aria-autocomplete="list"
-            aria-activedescendant={visible[activeIndex] ? optionId(activeIndex) : undefined} aria-label={translate("palette.title")}
-            placeholder={translate("palette.placeholder")} maxLength={200} value={query} autoComplete="off"
-            className="min-w-0 flex-1 border-0 bg-transparent py-3 text-14 text-primary placeholder:text-tertiary focus:outline-none"
-            onChange={(event) => { setQuery(event.target.value); setActive(0); }} onKeyDown={onInputKey} />
-        </div>
-        <div id={listId} role="listbox" aria-label={translate("palette.results")} className="min-h-0 flex-1 overflow-y-auto p-1">
-          {visible.map((entry, index) => {
-            const heading = entry.group !== previousGroup ? <p key={`heading-${entry.group}`} role="presentation" className="px-2.5 pb-1 pt-2 text-12 font-medium text-tertiary">{translate(groupLabel[entry.group])}</p> : null;
-            previousGroup = entry.group;
-            return <React.Fragment key={entry.id}>{heading}
-              <div id={optionId(index)} role="option" aria-selected={index === activeIndex} onMouseMove={() => setActive(index)} onClick={() => choose(entry)}
-                className={`flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-14 text-primary ${index === activeIndex ? "bg-layer-transparent-hover" : ""}`}>
+    <DialogPrimitive.Root open={open} onOpenChange={setOpen} modal>
+      <DialogContent aria-label={translate("palette.title")} initialFocus={input} finalFocus={() => returnFocus.current ?? false} className="flex max-h-[min(75vh,calc(100dvh-2rem))] w-[calc(100vw-2rem)] max-w-xl flex-col gap-0 overflow-hidden p-0">
+        <Command shouldFilter={false} loop value={commandValue} onValueChange={setActiveEntryId} onKeyDownCapture={(event) => {
+          if (event.key !== "Enter" || event.nativeEvent.isComposing || !(event.target instanceof HTMLInputElement)) return;
+          const selectedId = document.querySelector<HTMLElement>('[cmdk-item][aria-selected="true"]')?.dataset.value ?? commandValue;
+          const selectedEntry = visible.find((entry) => entry.id === selectedId);
+          if (!selectedEntry) return;
+          event.preventDefault();
+          event.stopPropagation();
+          choose(selectedEntry);
+        }} className="min-h-0 flex-1">
+          <CommandInput ref={input} aria-label={translate("palette.title")} placeholder={translate("palette.placeholder")} maxLength={200} value={query} onValueChange={setQuery} endContent={<DialogClose aria-label={translate("workItems.close")} className="grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-11"><X aria-hidden size={16} /></DialogClose>} />
+          <CommandList aria-label={translate("palette.results")} className="min-h-0 max-h-none flex-1">
+            {grouped.map(({ group, entries }) => <CommandGroup key={group} heading={translate(groupLabel[group])}>
+              {entries.map((entry) => <CommandItem key={entry.id} value={entry.id} keywords={[entry.label, entry.hint ?? "", entry.where ?? ""]} onSelect={() => choose(entry)} className="min-h-9 gap-2 rounded-md px-2.5 py-2 text-sm">
                 <span className="min-w-0 flex-1 truncate">{entry.label}</span>
-                {entry.where && <span className="max-w-[40%] shrink-0 truncate rounded bg-layer-2 px-1.5 py-0.5 text-12 text-secondary">{entry.where}</span>}
-                {entry.hint && <span className="max-w-[40%] shrink truncate text-12 text-tertiary">{entry.hint}</span>}
-              </div>
-            </React.Fragment>;
-          })}
-          {visible.length === 0 && <p role="status" className="px-2.5 py-3 text-14 text-secondary">{found.status === "loading" ? translate("palette.searching") : translate("palette.empty")}</p>}
-          {found.status === "failed" && <p role="alert" className="px-2.5 py-2 text-12 text-danger-text">{translate("palette.failed")}</p>}
-        </div>
-        <p className="border-t border-subtle px-3 py-2 text-12 text-tertiary">{translate("palette.hint")}</p>
-      </div>
-    </div>
+                {entry.where && <span className="max-w-[40%] shrink-0 truncate rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">{entry.where}</span>}
+                {entry.hint && <span className="max-w-[40%] shrink truncate text-xs text-muted-foreground">{entry.hint}</span>}
+              </CommandItem>)}
+            </CommandGroup>)}
+            {visible.length === 0 && <CommandEmpty role="status">{found.status === "loading" ? translate("palette.searching") : translate("palette.empty")}</CommandEmpty>}
+          </CommandList>
+          {found.status === "failed" && <p role="alert" className="m-0 border-t border-border px-3 py-2 text-xs text-destructive">{translate("palette.failed")}</p>}
+          <p className="m-0 border-t border-border px-3 py-2 text-xs text-muted-foreground">{translate("palette.hint")}</p>
+        </Command>
+      </DialogContent>
+    </DialogPrimitive.Root>
     {creating}
   </>;
 }
@@ -227,7 +214,7 @@ export function CommandPalette({ current, signOut }: { current: Current; signOut
 export function CommandPaletteButton({ shortcut }: { shortcut: string }) {
   const label = `${translate("palette.button")} (${shortcut})`;
   return <button type="button" aria-label={label} title={label} onClick={() => window.dispatchEvent(new Event(openPaletteEvent))}
-    className="flex items-center rounded-lg bg-transparent p-2 text-secondary hover:bg-layer-transparent-hover hover:text-primary">
-    <Command aria-hidden size={18} />
+    className="flex items-center rounded-lg bg-transparent p-2 text-secondary hover:bg-layer-transparent-hover hover:text-primary pointer-coarse:min-h-11 pointer-coarse:min-w-11">
+    <CommandIcon aria-hidden size={18} />
   </button>;
 }

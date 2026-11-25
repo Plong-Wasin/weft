@@ -23,8 +23,8 @@ import { dropWithinGroup, filterProjectGroups, matchesProjectSearch, moveWithinG
 export const projectsKey = (workspaceId: string) => ["projects", workspaceId] as const;
 const favoritesKey = (workspaceId: string) => ["favorite-wiki-pages", workspaceId] as const;
 
-const itemClass = ({ isActive }: { isActive: boolean }) => `flex items-center gap-2 rounded-md px-2.5 py-1.5 text-14 font-medium ${isActive ? "bg-layer-1-selected text-primary" : "text-secondary hover:bg-layer-transparent-hover"}`;
-const heading = "px-2.5 pb-1 pt-3 text-12 font-medium text-tertiary";
+const itemClass = ({ isActive }: { isActive: boolean }) => `inset-row-hover flex min-h-9 max-md:min-h-11 items-center gap-2 rounded-lg px-3 py-1.5 text-14 font-medium ${isActive ? "bg-layer-1-selected text-primary" : "text-secondary hover:bg-layer-transparent-hover"}`;
+const heading = "px-3 pb-1 pt-4 text-12 font-medium text-tertiary";
 
 /** What a project row can do to the order. The list owns the state; a row only reports the gesture. */
 type Reorder = {
@@ -63,13 +63,13 @@ function ProjectEntry({ workspace, project, current, starred, expanded, canMoveU
     onDragOver={(event) => { if (drag.current && drag.current.starred === starred && drag.current.id !== project.id) event.preventDefault(); }}
     onDrop={(event) => { event.preventDefault(); const from = drag.current; drag.current = null; if (from && from.starred === starred) reorder.drop(from.id, project.id); }}
     onDragEnd={() => { drag.current = null; }}>
-    <div className="flex items-center gap-0.5 rounded-md hover:bg-layer-transparent-hover">
+    <div className="inset-row-hover flex items-center gap-0.5 rounded-lg">
       <span aria-hidden title={translate("sidebar.dragHandle")} className="flex shrink-0 cursor-grab items-center px-0.5 text-tertiary max-md:hidden"><GripVertical size={14} /></span>
       <button type="button" aria-pressed={starred} aria-label={`${starLabel}: ${project.name}`} title={starLabel} onClick={() => reorder.star(project.id, !starred)} className="shrink-0 bg-transparent p-1 text-tertiary hover:bg-transparent hover:text-primary">
         <Star aria-hidden size={14} className={starred ? "text-accent-primary" : undefined} fill={starred ? "currentColor" : "none"} />
       </button>
       <button type="button" data-project-toggle={project.id} aria-expanded={expanded} aria-label={`${translate("sidebar.toggleProject")}: ${project.name}`} title={translate("sidebar.reorderHint")} onKeyDown={onKeyDown} onClick={() => reorder.expand(project.id, !expanded)}
-        className="flex min-w-0 flex-1 items-center gap-2 bg-transparent px-1 py-1.5 text-left text-14 font-medium text-primary hover:bg-transparent">
+        className="flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-lg bg-transparent px-1 py-1.5 text-left text-14 font-medium text-primary hover:bg-transparent max-md:min-h-11">
         <Folder aria-hidden size={14} className="shrink-0 text-secondary" /><span className="flex-1 truncate">{project.name}</span>
         <ChevronRight aria-hidden size={14} className={`shrink-0 text-tertiary transition-transform ${expanded ? "rotate-90" : ""}`} />
       </button>
@@ -97,8 +97,8 @@ function SettingsProjectNav({ workspace, projects, projectKey }: { workspace: Wo
   const section = pathname.split(`/settings/projects/${encodeURIComponent(projectKey)}`)[1]?.replace(/^\//, "").split("/")[0] ?? "";
   const known = settingsSections.some((item) => item.path === section) ? section : "";
   return <div className="grid min-w-0 gap-1">
-    <label className="grid min-w-0 gap-1 px-2.5 text-12 font-medium text-secondary">{translate("sidebar.projectSwitcher")}
-      <select value={projectKey} onChange={(event) => navigate(paths.projectSettings(workspace.slug, event.target.value, known))} className="min-w-0 text-14 text-primary">
+    <label className="grid min-w-0 gap-1 px-3 text-12 font-medium text-secondary">{translate("sidebar.projectSwitcher")}
+      <select value={projectKey} onChange={(event) => navigate(paths.projectSettings(workspace.slug, event.target.value, known))} className="min-w-0 rounded-lg px-3 py-2 text-14 text-primary">
         {/* The open project may be missing from the list while it loads, or after it was archived: it stays selectable so the sections keep showing. */}
         {!projects.some((project) => project.key === projectKey) && <option value={projectKey}>{projectKey}</option>}
         {projects.map((project) => <option key={project.id} value={project.key}>{project.name}</option>)}
@@ -213,7 +213,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
     <p className={heading}>{translate("sidebar.favorites")}</p>
     <ul className="grid gap-0.5">{favorites.map((page) => <li key={page.id}><NavLink to={page.projectId ? paths.page(workspace.slug, (data ?? []).find((project) => project.id === page.projectId)?.key ?? "", page.id) : paths.wikiPage(workspace.slug, page.id)} className={itemClass}><FileText aria-hidden size={14} /><span className="truncate">{page.title}</span></NavLink></li>)}</ul>
   </> : null;
-  return <nav aria-label={translate("shell.sidebar")} className="flex w-64 shrink-0 max-md:w-auto max-md:flex-1 max-md:border-r-0 flex-col gap-0.5 overflow-y-auto border-r border-subtle bg-surface-1 p-2">
+  return <nav aria-label={translate("shell.sidebar")} className="flex w-64 shrink-0 max-md:w-auto max-md:flex-1 max-md:border-r-0 flex-col gap-1 overflow-y-auto border-r border-subtle bg-surface-1 p-3">
     <InboxNavLink workspace={workspace} />
     {section === "work" && <>
       <span role="status" aria-live="polite" aria-atomic="true" className="sr-only">{reorderAnnouncement}</span>
@@ -222,9 +222,9 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       <NavLink to={paths.activeCycles(workspace.slug)} className={itemClass}>{translate("cycles.activeTitle")}</NavLink>
       {canSeeAnalytics && <NavLink to={paths.analytics(workspace.slug)} className={itemClass}>{translate("analytics.title")}</NavLink>}
       {favoritesBlock}
-      <label className="grid gap-1 px-2.5 pt-1 text-12 font-medium text-secondary">
+      <label className="grid gap-1 px-3 pt-2 text-12 font-medium text-secondary">
         {translate("projects.find")}
-        <input type="search" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder={translate("projects.searchPlaceholder")} className="min-w-0 px-2 py-1 text-13" />
+        <input type="search" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder={translate("projects.searchPlaceholder")} className="min-h-9 min-w-0 rounded-lg px-3 py-2 text-13" />
       </label>
       <ProjectGroups workspace={workspace} projects={projectList} prefs={prefs} projectKey={projectKey} reorder={reorder} drag={drag} query={projectQuery} />
     </>}
@@ -255,9 +255,9 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       {webhooksOn && <NavLink to={paths.workspaceWebhooks(workspace.slug)} className={itemClass}>{translate("outboundWebhooks.nav")}</NavLink>}
       <NavLink to={paths.workspaceProjectOrder(workspace.slug)} className={itemClass}>{translate("settings.projectOrder")}</NavLink>
       <p className={heading}>{translate("projects.title")}</p>
-      <label className="grid gap-1 px-2.5 pt-1 text-12 font-medium text-secondary">
+      <label className="grid gap-1 px-3 pt-2 text-12 font-medium text-secondary">
         {translate("projects.find")}
-        <input type="search" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder={translate("projects.searchPlaceholder")} className="min-w-0 px-2 py-1 text-13" />
+        <input type="search" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder={translate("projects.searchPlaceholder")} className="min-h-9 min-w-0 rounded-lg px-3 py-2 text-13" />
       </label>
       <SettingsProjectList workspace={workspace} projects={[...projectSort.starred, ...projectSort.others]} query={projectQuery} />
     </>}

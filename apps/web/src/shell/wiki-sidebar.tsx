@@ -12,8 +12,8 @@ import { collectionLabel } from "../type-descriptions";
 type PageRow = { id: string; title: string; parentId: string | null; collectionId?: string | null; projectId?: string | null; access: "public" | "private"; ownerId: string; archived: boolean; canEdit: boolean; canMoveAcrossCollections: boolean };
 type Collection = { id: string; name: string; icon: string; visibility: "public" | "private"; isDefault: boolean };
 
-const row = (active: boolean) => `flex min-w-0 items-center gap-2 rounded-md px-2 py-1 text-13 ${active ? "bg-layer-1-selected font-medium text-primary" : "text-secondary hover:bg-layer-transparent-hover hover:text-primary"}`;
-const heading = "flex w-full items-center gap-1 rounded-md !bg-transparent px-2 py-1 text-left text-12 font-medium text-tertiary hover:!bg-layer-transparent-hover";
+const row = (active: boolean) => `inset-row-hover flex min-h-9 max-md:min-h-11 min-w-0 items-center gap-2 rounded-lg px-3 py-1.5 text-13 ${active ? "bg-layer-1-selected font-medium text-primary" : "text-secondary hover:bg-layer-transparent-hover hover:text-primary"}`;
+const heading = "inset-row-hover flex min-h-9 max-md:min-h-11 w-full items-center gap-1 rounded-lg !bg-transparent px-3 py-1.5 text-left text-12 font-medium text-tertiary";
 
 /** Pages of one level, each with its children below it when it is open; the path to the open page is always open. */
 function PageTree({ workspace, pages, parentId, activeId, open, toggle, depth, dragging, over, dragStart, overKind, moveBeside }: { workspace: Workspace; pages: PageRow[]; parentId: string | null; activeId: string; open: Set<string>; toggle: (id: string) => void; depth: number; dragging: string | null; over: string | null; dragStart: (id: string, event: React.PointerEvent) => void; overKind: string | null; moveBeside: (page: PageRow, sibling: PageRow, position: "before" | "after") => void }) {
@@ -168,12 +168,12 @@ export function WikiSidebar({ workspace, selfId }: { workspace: Workspace; selfI
   return <>
     <button type="button" onClick={() => void create()} className={`${row(false)} mb-1 w-full`}><Plus aria-hidden size={13} />{translate("wiki.new")}</button>
     <NavLink end to={paths.wiki(workspace.slug)} className={({ isActive }) => row(isActive)}>{translate("sidebar.allPages")}</NavLink>
-    <p className="px-2 pb-0.5 pt-3 text-12 font-medium text-tertiary">{translate("wikiSidebar.collections")}</p>
+    <p className="px-3 pb-1 pt-4 text-12 font-medium text-tertiary">{translate("wikiSidebar.collections")}</p>
     <p role="status" className="sr-only">{announcement}</p>
     {dropMessage && <p role="alert" className="px-2 text-12 text-danger">{dropMessage}</p>}
     {collections.map((collection) => {
       const inCollection = workspacePages.filter((page) => !isMine.has(page.id)).filter((page) => collection.isDefault ? !page.collectionId || page.collectionId === collection.id : page.collectionId === collection.id);
-      return <div key={collection.id} data-wiki-drop-id={`collection:${collection.id}`} className={over === `collection:${collection.id}` ? "rounded-md bg-accent-primary/15 ring-1 ring-accent-primary" : ""}><Group label={collectionLabel(collection)} icon={collection.visibility === "private" ? <Lock aria-hidden size={12} /> : <Folder aria-hidden size={12} />} count={inCollection.length} defaultOpen={collection.isDefault} holdsActive={inCollection.some((page) => page.id === activeId)} dropHint={over === `collection:${collection.id}` ? translate("wikiSidebar.dropTopLevel") : undefined}>
+      return <div key={collection.id} data-wiki-drop-id={`collection:${collection.id}`} className={over === `collection:${collection.id}` ? "rounded-lg bg-accent-primary/15 ring-1 ring-accent-primary" : ""}><Group label={collectionLabel(collection)} icon={collection.visibility === "private" ? <Lock aria-hidden size={12} /> : <Folder aria-hidden size={12} />} count={inCollection.length} defaultOpen={collection.isDefault} holdsActive={inCollection.some((page) => page.id === activeId)} dropHint={over === `collection:${collection.id}` ? translate("wikiSidebar.dropTopLevel") : undefined}>
         {inCollection.length === 0 ? <p className="m-0 px-2 py-1 text-12 text-tertiary">{translate("wikiSidebar.emptyCollection")}</p> : tree(inCollection)}
       </Group></div>;
     })}

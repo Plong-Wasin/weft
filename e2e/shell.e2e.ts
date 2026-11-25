@@ -139,7 +139,10 @@ try {
   await assertOneSidebarToggle("1440 expanded initial state");
   await assertFirstTextIsNotCovered(page.getByRole("link", { name: translate("projects.back"), exact: true }), "1440 expanded breadcrumb");
   check(await sidebarToggle.isVisible(), "desktop sidebar toggle is missing");
-  check((await sidebarToggle.getAttribute("title"))?.includes("Ctrl/⌘+\\"), "sidebar shortcut is missing from the toggle tooltip");
+  await sidebarToggle.hover();
+  const sidebarTooltip = page.locator('[data-slot="tooltip-content"]');
+  await sidebarTooltip.waitFor();
+  check((await sidebarTooltip.textContent())?.includes("Ctrl/⌘+\\"), "sidebar shortcut is missing from the toggle tooltip");
   check(await sidebarToggle.getAttribute("aria-expanded") === "true", "sidebar does not start expanded");
   await sidebar.getByRole("navigation", { name: new RegExp(translate("projectNav.label")) }).waitFor();
   await sidebar.getByRole("link", { name: translate("cycles.title"), exact: true }).waitFor();

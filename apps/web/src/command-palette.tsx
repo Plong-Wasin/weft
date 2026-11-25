@@ -11,6 +11,7 @@ import { themes, useTheme, type Theme } from "./theme";
 import type { Current, Member, Project } from "./types";
 import { useAiEnabled } from "./ai-flag";
 import { isPaletteToggle, matchesQuery, modalDialogOpen, paletteToolAllowed, type PaletteTool, nextActive, pageLocation, paletteKeys, type PaletteAction } from "./command-palette-model";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 /** The top-bar button dispatches this event; the palette, mounted once for every signed-in screen, listens for it. */
 export const openPaletteEvent = "weft:open-command-palette";
@@ -226,8 +227,6 @@ export function CommandPalette({ current, signOut }: { current: Current; signOut
 /** Top-bar button for the palette. Its title shows the shortcut, so the key is discoverable. */
 export function CommandPaletteButton({ shortcut }: { shortcut: string }) {
   const label = `${translate("palette.button")} (${shortcut})`;
-  return <button type="button" aria-label={label} title={label} onClick={() => window.dispatchEvent(new Event(openPaletteEvent))}
-    className="flex items-center rounded-lg bg-transparent p-2 text-secondary hover:bg-layer-transparent-hover hover:text-primary">
-    <Command aria-hidden size={18} />
-  </button>;
+  return <Tooltip><TooltipTrigger render={<button type="button" aria-label={label} onClick={() => window.dispatchEvent(new Event(openPaletteEvent))}
+    className="flex items-center rounded-lg bg-transparent p-2 text-secondary hover:bg-layer-transparent-hover hover:text-primary pointer-coarse:min-h-11 pointer-coarse:min-w-11"><Command aria-hidden size={18} /></button>} /><TooltipContent>{label}</TooltipContent></Tooltip>;
 }

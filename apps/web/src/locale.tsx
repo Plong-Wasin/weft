@@ -1,5 +1,6 @@
 import React from "react";
 import { getLocale, isLocale, locales, setLocale, subscribeLocale, translate, type Locale } from "@weft/shared";
+import { Select, SelectContent, SelectItem, SelectItemText, SelectTrigger, SelectValue } from "./ui/select";
 
 const STORAGE_KEY = "weft.locale";
 
@@ -49,13 +50,14 @@ export function LanguageSwitch({ signedIn, save, defaultLocale = null }: { signe
   const locale = useLocale();
   const [failed, setFailed] = React.useState(false);
   return <label className="flex items-center gap-1.5">{translate("language.label")}
-    <select value={locale} onChange={async (event) => {
-      const next = event.target.value as Locale;
-      adoptUserLocale(next);
-      setFailed(signedIn ? !(await save(next)) : false);
+    <Select value={locale} items={locales.map((code) => ({ value: code, label: translate(`language.${code}`, code) }))} onValueChange={async (value: string | null) => {
+      if (!isLocale(value)) return;
+      adoptUserLocale(value);
+      setFailed(signedIn ? !(await save(value)) : false);
     }}>
-      {locales.map((code) => <option key={code} value={code}>{translate(`language.${code}`, code)}</option>)}
-    </select>
+      <SelectTrigger aria-label={translate("language.label")} className="w-auto pointer-coarse:min-h-11 pointer-coarse:min-w-11"><SelectValue /></SelectTrigger>
+      <SelectContent>{locales.map((code) => <SelectItem key={code} value={code}><SelectItemText>{translate(`language.${code}`, code)}</SelectItemText></SelectItem>)}</SelectContent>
+    </Select>
     {defaultLocale && <small className="basis-full text-tertiary">{translate("language.instanceDefault", locale).replace("{language}", translate(`language.${defaultLocale}` as never, locale))}</small>}
     {failed && <small role="alert"> {translate("language.saveFailed")}</small>}
   </label>;

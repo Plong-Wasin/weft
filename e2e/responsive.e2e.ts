@@ -145,6 +145,7 @@ try {
     );
   });
   const tooltipTrigger = tooltipPage.getByRole("button", { name: "Keyboard help" });
+  await tooltipPage.evaluate(() => { document.body.tabIndex = 0; document.body.focus(); });
   await tooltipPage.keyboard.press("Tab");
   check(await tooltipTrigger.evaluate((element) => element === document.activeElement), "Tab does not focus the Tooltip trigger");
   check((await tooltipTrigger.evaluate((element) => getComputedStyle(element).outlineWidth)) === "2px", "the Tooltip trigger focus ring is missing");

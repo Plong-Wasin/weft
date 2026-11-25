@@ -55,7 +55,7 @@ export function LanguageSwitch({ signedIn, save, defaultLocale = null }: { signe
       adoptUserLocale(value);
       setFailed(signedIn ? !(await save(value)) : false);
     }}>
-      <SelectTrigger aria-label={translate("language.label")} className="w-auto"><SelectValue /></SelectTrigger>
+      <SelectTrigger aria-label={translate("language.label")} className="w-auto pointer-coarse:min-h-11 pointer-coarse:min-w-11"><SelectValue /></SelectTrigger>
       <SelectContent>{locales.map((code) => <SelectItem key={code} value={code}><SelectItemText>{translate(`language.${code}`, code)}</SelectItemText></SelectItem>)}</SelectContent>
     </Select>
     {defaultLocale && <small className="basis-full text-tertiary">{translate("language.instanceDefault", locale).replace("{language}", translate(`language.${defaultLocale}` as never, locale))}</small>}

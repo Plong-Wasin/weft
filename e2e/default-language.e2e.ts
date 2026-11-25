@@ -47,8 +47,19 @@ try {
       await page.screenshot({ path: `${evidence}/language-${width}x${height}-${theme}.png`, fullPage: true });
     }
   }
+  const touchContext = await browser.newContext({ locale: "en-US", viewport: { width: 667, height: 375 }, isMobile: true, hasTouch: true });
+  const touchPage = await touchContext.newPage();
+  await touchPage.goto(web);
+  const touchLanguage = touchPage.getByRole("combobox").first();
+  await touchLanguage.waitFor();
+  const touchTarget = await touchLanguage.boundingBox();
+  if (!touchTarget || touchTarget.width < 44 || touchTarget.height < 44) throw new Error(`The touch Language Select must be at least 44x44px: ${JSON.stringify(touchTarget)}`);
+  await touchContext.close();
   await page.setViewportSize({ width: 667, height: 375 });
   await language.focus();
+  await page.keyboard.press("Shift");
+  const focusRing = await language.evaluate((element) => getComputedStyle(element).boxShadow);
+  if (focusRing === "none") throw new Error("Keyboard focus should draw a ring around the Language Select");
   await page.keyboard.press("Enter");
   if (await language.getAttribute("aria-expanded") !== "true") throw new Error("Enter should open the Language Select");
   const popup = page.getByRole("listbox");

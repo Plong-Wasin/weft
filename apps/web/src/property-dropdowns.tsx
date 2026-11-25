@@ -7,17 +7,18 @@ import { DatePanel } from "./date-picker";
 import { isOverdue, shortDay, todayKey, type DateField, type DateRange } from "./date-picker-logic";
 import { filterPickerOptions, groupPickerOptions, isPickable, isSearchable, moveActive } from "./picker-search";
 import type { Estimate, StateGroup } from "./types";
+import { cn } from "./lib/utils";
 
 const t = (key: string) => translate(key as MessageKey);
-const outlinedChip = "border border-subtle bg-surface-1 px-2 py-1 text-12 font-medium text-primary hover:bg-layer-transparent-hover [@media(pointer:coarse)]:min-h-11";
-const quietChip = "rounded-md bg-transparent px-2 py-1 text-12 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary [@media(pointer:coarse)]:min-h-11";
-const outlinedIconChip = "border border-subtle bg-surface-1 px-2 py-1 text-12 font-medium text-primary hover:bg-layer-transparent-hover [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11";
-const quietIconChip = "rounded-md bg-transparent px-2 py-1 text-12 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary min-h-7 min-w-7 max-sm:min-h-9 max-sm:min-w-9 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11";
+const outlinedChip = "border border-border bg-background px-2 py-1 text-xs font-medium text-foreground hover:bg-accent [@media(pointer:coarse)]:min-h-11";
+const quietChip = "rounded-md bg-transparent px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground [@media(pointer:coarse)]:min-h-11";
+const outlinedIconChip = "border border-border bg-background px-2 py-1 text-xs font-medium text-foreground hover:bg-accent [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11";
+const quietIconChip = "rounded-md bg-transparent px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground min-h-7 min-w-7 max-sm:min-h-9 max-sm:min-w-9 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11";
 export function chipClass(quiet = false, iconOnly = false) {
   if (quiet) return iconOnly ? quietIconChip : quietChip;
   return iconOnly ? outlinedIconChip : outlinedChip;
 }
-const optionClass = "flex w-full items-center gap-2 rounded-md bg-transparent px-2.5 py-1.5 text-left text-13 text-primary hover:bg-layer-transparent-hover";
+const optionClass = "flex min-h-9 w-full items-center gap-2 rounded-md bg-transparent px-2.5 py-1.5 text-left text-sm text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11";
 
 export type Option = { id: string; name: string; icon?: React.ReactNode; isAgent?: boolean; codeCapable?: boolean; hasAccess?: boolean; accessReason?: string | null };
 
@@ -57,7 +58,7 @@ function Static({ label, children, quiet, className }: { label: string; children
 }
 
 /** The search field (above SEARCH_THRESHOLD options) and the option list of a picker; arrows move the highlight, Enter picks it. */
-function PickerBody({ options, onPick, searchAlways, children }: { options: Option[]; onPick: (option: Option) => void; searchAlways?: boolean; children: (visible: Option[], activeId: string | undefined, optionId: (option: Option) => string) => React.ReactNode }) {
+function PickerBody({ label, options, onPick, searchAlways, children }: { label: string; options: Option[]; onPick: (option: Option) => void; searchAlways?: boolean; children: (visible: Option[], activeId: string | undefined, optionId: (option: Option) => string) => React.ReactNode }) {
   const [query, setQuery] = React.useState("");
   const [index, setIndex] = React.useState(0);
   const list = React.useRef<HTMLDivElement>(null);
@@ -69,6 +70,19 @@ function PickerBody({ options, onPick, searchAlways, children }: { options: Opti
   // Each option has a DOM id, so the search field can name the highlighted option in aria-activedescendant while focus stays in the field.
   const optionId = (option: Option) => `${listId}-${visible.indexOf(option)}`;
   React.useEffect(() => { list.current?.querySelector("[data-active]")?.scrollIntoView?.({ block: "nearest" }); }, [activeIndex]);
+  const onMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (searchable) return;
+    const items = [...(list.current?.querySelectorAll<HTMLElement>("[role=menuitemradio], [role=menuitemcheckbox]") ?? [])]
+      .filter((item) => item.getAttribute("aria-disabled") !== "true");
+    const index = items.indexOf(document.activeElement as HTMLElement);
+    if (index < 0) return;
+    const targetIndex = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1
+      : event.key === "ArrowDown" ? Math.min(items.length - 1, index + 1)
+      : event.key === "ArrowUp" ? Math.max(0, index - 1) : -1;
+    if (targetIndex < 0) return;
+    event.preventDefault();
+    items[targetIndex]?.focus();
+  };
   const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
@@ -79,12 +93,12 @@ function PickerBody({ options, onPick, searchAlways, children }: { options: Opti
     }
   };
   return <>
-    {searchable && <div className="sticky top-0 z-10 bg-surface-1 pb-1">
-      <input type="search" aria-label={t("picker.search")} placeholder={t("picker.search")} autoComplete="off" value={query}
+    {searchable && <div className="sticky top-0 z-10 bg-popover pb-1">
+      <input type="search" aria-label={t("picker.search")} aria-expanded="true" aria-controls={listId} placeholder={t("picker.search")} autoComplete="off" value={query}
         onChange={(event) => { setQuery(event.target.value); setIndex(0); }} onKeyDown={onKeyDown} aria-activedescendant={active ? optionId(active) : undefined}
-        className="w-full rounded-md border border-subtle bg-surface-1 px-2.5 py-1.5 text-13 text-primary placeholder:text-tertiary" />
+        className="min-h-9 w-full rounded-md border border-input bg-background px-2.5 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11" />
     </div>}
-    <div ref={list}>{visible.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-tertiary">{t("picker.noMatches")}</p> : children(visible, active?.id, optionId)}</div>
+    {visible.length === 0 ? <p role="status" className="px-2.5 py-1.5 text-sm text-muted-foreground">{t("picker.noMatches")}</p> : <div id={listId} ref={list} role="menu" aria-label={label} onKeyDown={onMenuKeyDown}>{children(visible, active?.id, optionId)}</div>}
   </>;
 }
 
@@ -93,9 +107,9 @@ export function SingleSelect({ label, summary, display, options, value, onSelect
   const name = `${label}: ${summary}`;
   const className = chipClass(quiet, iconOnly);
   if (readOnly) return <Static label={name} quiet={quiet} className={className}>{icon}{!iconOnly && <span className={`max-w-32 truncate ${display ? "text-tertiary" : ""}`} title={summary}>{display ?? summary}</span>}</Static>;
-  return <Popover label={name} className={className} panelClassName="max-h-72 w-52 overflow-auto" trigger={<Trigger label={name}>{icon}<span className={`${iconOnly ? hideIconOnlyTextOnPhone ? "hidden" : "hidden text-11 max-sm:inline" : "max-w-32 truncate"} ${display ? "text-tertiary" : ""}`}>{display ?? summary}</span></Trigger>}>
-    {(close) => <PickerBody options={options} onPick={(option) => { close(); if (option.id !== value) onSelect(option.id); }}>
-      {(visible, activeId, optionId) => visible.map((option) => <button key={option.id} id={optionId(option)} type="button" role="menuitemradio" aria-checked={option.id === value} data-active={option.id === activeId || undefined} className={`${optionClass} data-[active=true]:bg-layer-transparent-hover`}
+  return <Popover label={name} className={className} panelRole="dialog" panelClassName="max-h-72 w-52 overflow-auto" trigger={<Trigger label={name}>{icon}<span className={`${iconOnly ? hideIconOnlyTextOnPhone ? "hidden" : "hidden text-11 max-sm:inline" : "max-w-32 truncate"} ${display ? "text-tertiary" : ""}`}>{display ?? summary}</span></Trigger>}>
+    {(close) => <PickerBody label={label} options={options} onPick={(option) => { close(); if (option.id !== value) onSelect(option.id); }}>
+      {(visible, activeId, optionId) => visible.map((option) => <button key={option.id} id={optionId(option)} type="button" role="menuitemradio" aria-checked={option.id === value} data-active={option.id === activeId || undefined} className={cn(optionClass, "data-[active=true]:bg-accent")}
         onClick={() => { close(); if (option.id !== value) onSelect(option.id); }}>
         {option.icon}<span className="min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]">{option.name}</span>{option.id === value && <Check aria-hidden size={14} className="text-secondary" />}
       </button>)}
@@ -117,19 +131,22 @@ export function EstimateSelect({ estimate, pointId, onSelect, readOnly, iconOnly
 export function MultiSelect({ label, summary, options, selected, onToggle, readOnly, icon, onOpen, searchAlways, quiet }: { label: string; summary: React.ReactNode; options: Option[]; selected: string[]; onToggle: (id: string, on: boolean) => void; readOnly?: boolean; icon?: React.ReactNode; onOpen?: () => void; /** Shows the search field whatever the number of options (the Assignee picker). */ searchAlways?: boolean; quiet?: boolean }) {
   const name = `${label}: ${selected.map((id) => options.find((option) => option.id === id)?.name ?? "").filter(Boolean).join(", ") || "—"}`;
   if (readOnly) return <Static label={name} quiet={quiet}>{icon}{summary}</Static>;
-  return <Popover label={name} className={chipClass(quiet)} panelClassName="max-h-72 w-52 !min-w-0 overflow-auto" onOpen={onOpen} trigger={<Trigger label={name}>{icon}{summary}</Trigger>}>
-    {() => options.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-tertiary">—</p> : <PickerBody options={options} searchAlways={searchAlways} onPick={(option) => { if (isPickable(option)) onToggle(option.id, !selected.includes(option.id)); }}>
+  return <Popover label={name} className={chipClass(quiet)} panelRole="dialog" panelClassName="max-h-72 w-52 !min-w-0 overflow-auto" onOpen={onOpen} trigger={<Trigger label={name}>{icon}{summary}</Trigger>}>
+    {() => options.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-tertiary">—</p> : <PickerBody label={label} options={options} searchAlways={searchAlways} onPick={(option) => { if (isPickable(option)) onToggle(option.id, !selected.includes(option.id)); }}>
       {(visible, activeId, optionId) => <>{[false, true].map((agents) => {
       const group = visible.filter((option) => !!option.isAgent === agents);
       if (!group.length) return null;
-      return <React.Fragment key={String(agents)}>{visible.some((option) => option.isAgent) && <p className="px-2.5 pb-1 pt-2 text-11 font-semibold uppercase tracking-wide text-tertiary">{agents ? t("agents.group") : t("members.group")}</p>}{group.map((option) => {
+      const hasAgentGroup = visible.some((option) => option.isAgent);
+      const groupName = agents ? t("agents.group") : t("members.group");
+      const rows = group.map((option) => {
       const on = selected.includes(option.id);
       const unavailable = option.isAgent && option.hasAccess === false;
-      return <button key={option.id} id={optionId(option)} type="button" role="menuitemcheckbox" aria-checked={on} aria-disabled={unavailable || undefined} data-active={option.id === activeId || undefined} title={unavailable ? option.accessReason ?? undefined : undefined} className={`${optionClass} data-[active=true]:bg-layer-transparent-hover ${option.codeCapable ? "flex-wrap gap-1 text-11" : ""} ${unavailable ? "flex-wrap cursor-not-allowed" : ""}`} onClick={() => { if (!unavailable) onToggle(option.id, !on); }}>
-        {option.icon}<span className={`min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere] ${unavailable ? "text-tertiary" : ""}`}>{option.name}{option.isAgent && <> <AgentLabel /></>}</span>{option.codeCapable && <span className={`inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded bg-layer-1 px-2 py-1 text-12 text-secondary basis-[calc(100%_-_1.25rem)] ml-5`} title={t("agents.codeCapable")}><Code2 aria-hidden size={13} className="text-warning-primary" />{t("agents.canEditCode")}</span>}{on && <Check aria-hidden size={14} className="text-secondary" />}
-        {unavailable && <span className="w-full basis-full min-w-0 whitespace-normal pl-5 text-12 text-secondary">{option.accessReason}</span>}
+      return <button key={option.id} id={optionId(option)} type="button" role="menuitemcheckbox" aria-checked={on} aria-disabled={unavailable || undefined} data-active={option.id === activeId || undefined} title={unavailable ? option.accessReason ?? undefined : undefined} className={cn(optionClass, "data-[active=true]:bg-accent", option.codeCapable && "flex-wrap gap-1 text-xs", unavailable && "flex-wrap cursor-not-allowed")} onClick={() => { if (!unavailable) onToggle(option.id, !on); }}>
+        {option.icon}<span className={cn("min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]", unavailable && "text-muted-foreground")}>{option.name}{option.isAgent && <> <AgentLabel /></>}</span>{option.codeCapable && <span className="ml-5 inline-flex shrink-0 basis-[calc(100%_-_1.25rem)] items-center gap-1 whitespace-nowrap rounded bg-muted px-2 py-1 text-xs text-muted-foreground" title={t("agents.codeCapable")}><Code2 aria-hidden size={13} className="text-warning-primary" />{t("agents.canEditCode")}</span>}{on && <Check aria-hidden size={14} className="text-secondary" />}
+        {unavailable && <span className="w-full basis-full min-w-0 whitespace-normal pl-5 text-xs text-muted-foreground">{option.accessReason}</span>}
       </button>;
-      })}</React.Fragment>;
+      });
+      return hasAgentGroup ? <div key={String(agents)} role="group" aria-label={groupName}><p aria-hidden="true" className="px-2.5 pb-1 pt-2 text-xs font-medium text-muted-foreground">{groupName}</p>{rows}</div> : <React.Fragment key={String(agents)}>{rows}</React.Fragment>;
     })}</>}
     </PickerBody>}
   </Popover>;
@@ -137,7 +154,7 @@ export function MultiSelect({ label, summary, options, selected, onToggle, readO
 
 /** A calendar popover for the Start and Due dates of a work item; it opens on `field` and picks both dates in one calendar. */
 export function DatePopover({ label, trigger, range, field, onChange, className = outlinedChip, clearable }: { label: string; trigger: React.ReactNode; range: DateRange; field: DateField; onChange: (change: Partial<DateRange>) => void; className?: string; clearable?: boolean }) {
-  return <Popover label={label} className={className} panelRole="dialog" panelClassName="grid w-64 gap-2 p-3" trigger={trigger}>
+  return <Popover label={label} className={className} panelRole="dialog" panelClassName="grid w-[22rem] gap-2 p-3" trigger={trigger}>
     {() => <DatePanel range={range} field={field} onChange={onChange} clearable={clearable} />}
   </Popover>;
 }

@@ -1,12 +1,17 @@
 // Browser end-to-end flow for the Start and Due calendar popover on a Work item: quick picks, No date, a range picked in one calendar, overdue colouring and the keyboard.
 // Run with `bun e2e/date-picker.e2e.ts` (set CHROMIUM_PATH as for the other flows; run-all.ts starts its own servers).
 import { chromium } from "playwright";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { translate } from "../packages/shared/src";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3111);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5211);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
+const acceptanceShotPhase = Bun.env.SHADCN_SCREENSHOT_PHASE ?? "after";
+const acceptanceShots = join(process.cwd(), ".local/shots/shadcn-05", acceptanceShotPhase);
+mkdirSync(acceptanceShots, { recursive: true });
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
   Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
@@ -88,6 +93,29 @@ try {
   check(await overdueMark.getAttribute("title") === t("datePicker.overdue"), "hovering the overdue Due mark should keep its Overdue tooltip");
   check(await sidebar.getByRole("button", { name: new RegExp(`, ${t("datePicker.overdue")}$`) }).count() === 1, "the overdue Due chip has no accessible name that says Overdue");
   check((await dueChip.textContent())?.includes(shortOf(localDay(-2))) === true, `Due chip should read the short date ${shortOf(localDay(-2))}`);
+
+  // Acceptance screenshots show the calendar popover at every specified viewport and theme.
+  for (const [width, height] of [[1440, 900], [1024, 768], [820, 1180], [768, 1024], [844, 390], [667, 375], [390, 844]] as const) {
+    for (const theme of ["light", "dark"] as const) {
+      await page.setViewportSize({ width, height });
+      await page.evaluate((value) => { localStorage.setItem("weft.theme", value); document.documentElement.setAttribute("data-theme", value); }, theme);
+      await page.goto(`${web}/${slug}/browse/DTE-1`);
+      await sidebar.waitFor();
+      const shotTrigger = sidebar.getByRole("button", { name: new RegExp(`^${t("workItems.startDate")}:`) });
+      await shotTrigger.click();
+      await dialog.waitFor();
+      const pageWidth = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth }));
+      check(pageWidth.scrollWidth <= pageWidth.innerWidth, `horizontal page scroll at ${width}x${height} ${theme}: ${JSON.stringify(pageWidth)}`);
+      await page.screenshot({ path: join(acceptanceShots, `date-picker-${width}x${height}-${theme}.png`) });
+      await page.keyboard.press("Escape");
+      await dialog.waitFor({ state: "detached" });
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.evaluate(() => { localStorage.setItem("weft.theme", "light"); document.documentElement.setAttribute("data-theme", "light"); });
+  await page.goto(`${web}/${slug}/browse/DTE-1`);
+  await sidebar.waitFor();
+
   await page.goto(`${web}/${slug}/browse/DTE-2`);
   await sidebar.waitFor();
   // The State list loads after the item; wait for the completed name so the overdue check sees the final state.
@@ -169,6 +197,38 @@ try {
   await page.getByRole("dialog", { name: readOnlyDueName }).getByText(readOnlyDueName, { exact: true }).waitFor();
   await page.keyboard.press("Escape");
   console.log("date-picker: overdue Due field keeps its accessible context when read-only");
+
+  const touchContext = await browser.newContext({ viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
+  const touchPage = await touchContext.newPage();
+  await touchPage.goto(`${web}/${slug}/browse/DTE-1`);
+  const touchSidebar = touchPage.getByRole("complementary", { name: t("workItems.properties") });
+  const touchStartChip = touchSidebar.getByRole("button", { name: new RegExp(`^${t("workItems.startDate")}:`) });
+  await touchStartChip.tap();
+  const touchCalendar = touchPage.locator("[data-popover-panel]");
+  await touchCalendar.waitFor();
+  const touchTargets = await touchPage.evaluate(() => {
+    const bounds = (selector: string) => {
+      const element = document.querySelector<HTMLElement>(selector);
+      const rect = element?.getBoundingClientRect();
+      return rect ? { width: rect.width, height: rect.height } : null;
+    };
+    return {
+      coarse: matchMedia("(pointer: coarse)").matches,
+      trigger: bounds('button[aria-label^="Start date:"]'),
+      quickPick: bounds('[data-popover-panel] button'),
+      day: bounds('[data-popover-panel] [data-date]'),
+      nextMonth: bounds('[data-popover-panel] button[aria-label="Next month"]'),
+      scrollWidth: document.documentElement.scrollWidth,
+      innerWidth: window.innerWidth,
+    };
+  });
+  check(touchTargets.coarse, `phone landscape did not use a coarse pointer: ${JSON.stringify(touchTargets)}`);
+  const targetSizes = [touchTargets.trigger, touchTargets.quickPick, touchTargets.day, touchTargets.nextMonth];
+  check(targetSizes.every((target) => target !== null && target.width >= 44 && target.height >= 44), `a date picker touch target is under 44px: ${JSON.stringify(touchTargets)}`);
+  check(touchTargets.scrollWidth <= touchTargets.innerWidth, `horizontal page scroll in touch date picker: ${JSON.stringify(touchTargets)}`);
+  await touchPage.screenshot({ path: join(acceptanceShots, "date-picker-844x390-touch-light.png") });
+  await touchPage.keyboard.press("Escape");
+  await touchContext.close();
 
   console.log(`date-picker ok: ${open.displayId} ${done.displayId}`);
 } catch (error) {

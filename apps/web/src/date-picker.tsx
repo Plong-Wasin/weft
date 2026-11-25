@@ -66,31 +66,31 @@ export function DatePanel({ range, field: initialField, onChange, today = todayK
   return <div className="grid gap-2">
     <div className="grid grid-cols-2 gap-1" role="group" aria-label={t("datePicker.calendar")}>
       {(["start", "due"] as const).map((name) => <button key={name} type="button" aria-pressed={field === name} onClick={() => setField(name)}
-        className={`grid gap-0.5 rounded-md border px-2 py-1 text-left text-12 ${field === name ? "border-accent-strong text-primary" : "border-subtle text-secondary hover:bg-layer-transparent-hover"}`}>
+        className={`grid min-h-11 gap-0.5 rounded-md border px-2 py-1.5 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${field === name ? "border-ring bg-accent text-accent-foreground" : "border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground"}`}>
         <span>{t(name === "start" ? "workItems.startDate" : "workItems.dueDate")}</span>
-        <span className="font-medium text-primary">{fieldValue(name) ? shortDay(fieldValue(name)!) : t("datePicker.noDate")}</span>
+        <span className="font-medium text-foreground">{fieldValue(name) ? shortDay(fieldValue(name)!) : t("datePicker.noDate")}</span>
       </button>)}
     </div>
     <div className="flex flex-wrap gap-1">
-      {quickPicks.filter((quick) => clearable || quick !== "none").map((quick) => <button key={quick} type="button" className="rounded-md border border-subtle bg-surface-1 px-2 py-1 text-12 font-medium text-primary hover:bg-layer-transparent-hover"
+      {quickPicks.filter((quick) => clearable || quick !== "none").map((quick) => <button key={quick} type="button" className="min-h-9 rounded-md border border-input bg-background px-2 py-1.5 text-xs font-medium text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11"
         onClick={() => commit(applyQuickPick(draft, field, quick, today))}>{t(quickPickKeys[quick])}</button>)}
     </div>
     <div className="flex items-center justify-between gap-1">
-      <button type="button" aria-label={t("datePicker.previousMonth")} className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" onClick={() => setMonth(shiftMonth(month, -1))}><ChevronLeft aria-hidden size={16} /></button>
-      <span className="text-13 font-semibold text-primary" aria-live="polite">{monthTitle}</span>
-      <button type="button" aria-label={t("datePicker.nextMonth")} className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" onClick={() => setMonth(shiftMonth(month, 1))}><ChevronRight aria-hidden size={16} /></button>
+      <button type="button" aria-label={t("datePicker.previousMonth")} className="grid size-9 place-items-center rounded-md bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-11" onClick={() => setMonth(shiftMonth(month, -1))}><ChevronLeft aria-hidden size={16} /></button>
+      <span className="text-sm font-semibold text-foreground" aria-live="polite">{monthTitle}</span>
+      <button type="button" aria-label={t("datePicker.nextMonth")} className="grid size-9 place-items-center rounded-md bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-11" onClick={() => setMonth(shiftMonth(month, 1))}><ChevronRight aria-hidden size={16} /></button>
     </div>
-    <div className="grid grid-cols-7 gap-0.5 text-center text-11 text-tertiary" aria-hidden>{weekdays.map((name, index) => <span key={index}>{name}</span>)}</div>
+    <div className="grid grid-cols-7 gap-0.5 text-center text-xs text-muted-foreground" aria-hidden>{weekdays.map((name, index) => <span key={index}>{name}</span>)}</div>
     <div ref={grid} role="group" aria-label={monthTitle} onKeyDown={onGridKey} className="grid grid-cols-7 gap-0.5">
       {cells.map((day, index) => {
         if (!day) return <span key={`pad-${index}`} />;
         const start = draft.startDate, due = draft.dueDate;
         const selected = day === start || day === due;
         const inRange = !!start && !!due && day > start && day < due;
-        const tone = selected ? "bg-accent-primary text-on-color hover:bg-accent-primary-hover" : inRange ? "bg-accent-subtle text-primary hover:bg-layer-transparent-hover" : "text-primary hover:bg-layer-transparent-hover";
+        const tone = selected ? "bg-primary text-primary-foreground hover:bg-primary/90" : inRange ? "bg-accent text-accent-foreground" : "text-foreground hover:bg-accent hover:text-accent-foreground";
         return <button key={day} type="button" data-date={day} aria-label={longDay(day)} aria-pressed={selected} aria-current={day === today ? "date" : undefined}
           tabIndex={day === tabStop ? 0 : -1} onClick={() => pick(day)}
-          className={`h-8 rounded-md bg-transparent text-center text-13 ${tone} ${day === today ? "font-semibold underline" : ""}`}>{Number(day.slice(8))}</button>;
+          className={`grid h-9 place-items-center rounded-md bg-transparent text-center text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-11 ${tone} ${day === today ? "font-semibold underline underline-offset-4" : ""}`}>{Number(day.slice(8))}</button>;
       })}
     </div>
   </div>;

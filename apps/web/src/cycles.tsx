@@ -186,7 +186,7 @@ export function CyclesPage({ workspaceId, workspaceSlug, projectKey, projectId, 
       ? <EmptyState title={t("archives.emptyCycles")} />
       : <EmptyState title={t("cycles.empty")} description={t("cycles.emptyHint")} action={canWrite ? <button type="button" className={primaryButton} onClick={() => setEditing("new")}><Plus aria-hidden size={14} />{t("cycles.createFirst")}</button> : undefined} />)}
     {cycles !== null && cycles.length > 0 && shown.length === 0 && <p role="status" className="m-0 px-1 py-4 text-14 text-secondary">{t("cycles.emptyTab")}</p>}
-    <ul role="tabpanel" className="m-0 grid list-none gap-1 rounded-xl bg-layer-1 p-1 empty:hidden">
+    <ul role="tabpanel" className="m-0 grid list-none gap-1 rounded-xl border border-subtle bg-surface-1 p-1 empty:hidden">
       {shown.map((cycle) => <CycleRow key={cycle.id} cycle={cycle} href={paths.cycle(workspaceSlug, projectKey, cycle.id)}>
         <CycleMenu cycle={cycle} canWrite={canWrite} canAdmin={canAdmin} onEdit={() => setEditing(cycle)} onArchive={() => void (cycle.archived ? commands.restore(cycle) : commands.archive(cycle))} onDelete={() => void commands.destroy(cycle)} />
       </CycleRow>)}

@@ -153,7 +153,7 @@ export function ViewsPage({ workspaceSlug, project, selfId }: Scope) {
       <button type="button" className={ghost} onClick={() => { void load(); }}>{t("views.retry")}</button>
     </div>}
     {views !== null && shown.length === 0 && <div className="rounded-xl bg-layer-1 px-4 py-6"><p role="status" className="m-0 text-14 text-secondary">{t(views.length === 0 ? "views.empty" : "views.noMatch")}</p></div>}
-    <ul aria-label={t("views.title")} className="m-0 grid list-none gap-1 rounded-xl bg-layer-1 p-1">{shown.map((view) => <li key={view.id} data-testid={`view-row-${view.name}`} className="flex items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-layer-transparent-hover">
+    <ul aria-label={t("views.title")} className="m-0 grid list-none gap-1 rounded-xl border border-subtle bg-surface-1 p-1 empty:hidden">{shown.map((view) => <li key={view.id} data-testid={`view-row-${view.name}`} className="flex items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-layer-transparent-hover">
       <Layers aria-hidden size={16} className="shrink-0 text-secondary" />
       <div className="grid min-w-0 flex-1">
         <Link to={paths.view(workspaceSlug, project.key, view.id)} className="truncate text-14 font-medium text-primary">{view.name}</Link>

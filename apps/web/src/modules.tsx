@@ -186,7 +186,7 @@ export function ModulesPage({ workspaceId, workspaceSlug, projectKey, projectId,
   const toggle = (value: Display, icon: React.ReactNode) => <button type="button" aria-pressed={display === value} aria-label={t(`modules.display.${value}`)} title={t(`modules.display.${value}`)}
     className={`${iconButton} ${display === value ? "bg-layer-transparent-selected text-primary" : ""}`} onClick={() => setDisplay(value)}>{icon}</button>;
   return <section className="grid gap-4">
-    <header className="flex flex-wrap items-center gap-3 border-b border-subtle px-4 pb-3">
+    <header className="flex flex-wrap items-center gap-3 border-b border-subtle pb-3">
       <nav aria-label={t("workItems.breadcrumb")} className="flex items-center gap-2 text-13 text-secondary">
         <Link to={paths.workItems(workspaceSlug, projectKey)} className="text-secondary hover:text-primary">{projectKey}</Link><ChevronRight aria-hidden size={12} />
         <Package aria-hidden size={14} /><h2 className="m-0 text-13 font-medium text-primary">{t("modules.title")}</h2>
@@ -211,7 +211,7 @@ export function ModulesPage({ workspaceId, workspaceSlug, projectKey, projectId,
       ? <EmptyState title={search || statusFilter || leadFilter || memberFilter || dateFrom || dateTo ? t("modules.noMatches") : t("modules.empty")} />
       : <EmptyState title={t("modules.empty")} description={t("modules.emptyHint")} action={canWrite ? <button type="button" className={primaryButton} onClick={() => setForm({})}><Plus aria-hidden size={14} />{t("modules.createFirst")}</button> : undefined} />)}
     {display === "list"
-      ? <ul aria-label={t("modules.title")} className="m-0 grid list-none gap-1 rounded-xl border border-subtle bg-surface-1 p-1">{(modules ?? []).map((module) => <li key={module.id} data-testid={`module-row-${module.name}`} className="flex flex-wrap items-center gap-3 rounded-lg px-4 py-3 transition-colors hover:bg-layer-transparent-hover">
+      ? <ul aria-label={t("modules.title")} className="m-0 grid list-none gap-1 rounded-xl border border-subtle bg-surface-1 p-1 empty:hidden">{(modules ?? []).map((module) => <li key={module.id} data-testid={`module-row-${module.name}`} className="flex flex-wrap items-center gap-3 rounded-lg px-4 py-3 transition-colors hover:bg-layer-transparent-hover">
         <ProgressRing percent={module.progress.percent} />
         <Link to={paths.module(workspaceSlug, projectKey, module.id)} className="min-w-48 flex-1 truncate text-14 font-medium text-primary">{module.name}</Link>
         <span className="flex items-center gap-1.5 rounded-md border border-subtle px-2 py-1 text-12 text-secondary"><CalendarRange aria-hidden size={13} />{dateRange(module)}</span>
@@ -221,7 +221,7 @@ export function ModulesPage({ workspaceId, workspaceSlug, projectKey, projectId,
         {leadOf(module) && <span title={`${t("modules.lead")}: ${leadOf(module)?.name}`}><Avatar name={leadOf(module)?.name ?? ""} id={module.leadId ?? undefined} /></span>}
         {menu(module)}
       </li>)}</ul>
-      : <ul aria-label={t("modules.title")} className="m-0 grid list-none grid-cols-1 gap-2 rounded-xl border border-subtle bg-surface-1 p-2 sm:grid-cols-2 xl:grid-cols-3">{(modules ?? []).map((module) => <li key={module.id} data-testid={`module-card-${module.name}`} className="grid content-between gap-4 rounded-lg bg-layer-1 p-4 transition-colors hover:bg-layer-2">
+      : <ul aria-label={t("modules.title")} className="m-0 grid list-none grid-cols-1 gap-2 rounded-xl border border-subtle bg-surface-1 p-2 empty:hidden sm:grid-cols-2 xl:grid-cols-3">{(modules ?? []).map((module) => <li key={module.id} data-testid={`module-card-${module.name}`} className="grid content-between gap-4 rounded-lg bg-layer-1 p-4 transition-colors hover:bg-layer-2">
         <div className="flex items-start gap-2">
           <Link to={paths.module(workspaceSlug, projectKey, module.id)} className="min-w-0 flex-1 truncate text-16 font-medium text-primary">{module.name}</Link>
           {menu(module)}
@@ -308,7 +308,7 @@ export function ModuleDetailPage({ workspaceId, workspaceSlug, projectKey, proje
   const nameOf = (id: string) => people.find((person) => person.userId === id)?.name ?? "";
   const { completed, total, percent } = module.progress;
   return <section className="flex min-h-full min-w-0 max-w-full flex-col gap-3 overflow-x-hidden">
-    <header className="flex flex-wrap items-center gap-2 border-b border-subtle px-4 pb-3">
+    <header className="flex flex-wrap items-center gap-2 border-b border-subtle pb-3">
       <nav aria-label={t("workItems.breadcrumb")} className="flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap text-13 text-secondary">
         <Link to={paths.workItems(workspaceSlug, projectKey)} className="text-secondary hover:text-primary">{projectKey}</Link><ChevronRight aria-hidden size={12} />
         <Link to={back} aria-label={t("modules.back")} className="text-secondary hover:text-primary">{t("modules.title")}</Link><ChevronRight aria-hidden size={12} />

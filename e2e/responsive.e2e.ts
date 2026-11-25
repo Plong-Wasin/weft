@@ -3,6 +3,7 @@
 // Run with `bun e2e/responsive.e2e.ts` (needs the shared weft-postgres container; set DATABASE_URL, CHROMIUM_PATH).
 import { chromium } from "playwright";
 import { join } from "node:path";
+import { mkdirSync } from "node:fs";
 import { translate } from "../packages/shared/src";
 import { WeftClient, seedWeft } from "../tools/visual/weft-client";
 import { fillPath, loadRoutes } from "../tools/visual/lib";
@@ -47,7 +48,7 @@ try {
     await context.addCookies(client.cookies().map((c) => ({ ...c, domain: "localhost", path: "/" })));
     const page = await context.newPage();
     const errors: string[] = [];
-    page.on("pageerror", (e) => errors.push(e.message));
+    page.on("pageerror", (e) => errors.push(`${e.message} at ${page.url()}: ${e.stack ?? "no stack"}`));
     for (const route of routes) {
       const path = fillPath(route.weft!, seed)!;
       const context2 = route.auth === false ? await browser.newContext({ viewport: { width: viewport.width, height: viewport.height } }) : null;
@@ -80,8 +81,42 @@ try {
       await page.getByRole("button", { name: translate("shell.openMenu") }).click();
       const drawer = page.getByRole("dialog", { name: translate("shell.sidebar") });
       await drawer.waitFor();
+      await page.waitForFunction(() => document.querySelector('[data-slot="sheet-content"]')?.getBoundingClientRect().x === 0);
       check(await drawer.getByRole("link", { name: translate("cycles.activeTitle") }).isVisible(), "drawer lacks the Active cycles link");
-      await page.getByRole("button", { name: translate("shell.closeMenu") }).last().click();
+      const drawerClose = drawer.getByRole("button", { name: translate("shell.closeMenu") });
+      const drawerCloseBounds = await drawerClose.boundingBox();
+      check(!!drawerCloseBounds && drawerCloseBounds.width >= 44 && drawerCloseBounds.height >= 44, "phone drawer close control is below a 44px touch target");
+      const ticketShots = ".local/shots/shadcn-04";
+      mkdirSync(ticketShots, { recursive: true });
+      await page.screenshot({ path: join(ticketShots, "drawer-390-light.png") });
+      await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+      await page.screenshot({ path: join(ticketShots, "drawer-390-dark.png") });
+      await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+      await page.keyboard.press("Tab");
+      check(await drawer.evaluate((element) => element.contains(document.activeElement)), "Tab moved focus outside the phone drawer");
+      await page.keyboard.press("Shift+Tab");
+      check(await drawer.evaluate((element) => element.contains(document.activeElement)), "Shift+Tab moved focus outside the phone drawer");
+      await page.keyboard.press("Escape");
+      await drawer.waitFor({ state: "hidden" });
+      check(await page.getByRole("button", { name: translate("shell.openMenu") }).evaluate((element) => element === document.activeElement), "Escape did not restore focus to the menu button");
+      await page.getByRole("button", { name: translate("shell.openMenu") }).click();
+      await drawer.waitFor();
+      await page.locator('[data-slot="sheet-overlay"]').click({ position: { x: 370, y: 400 } });
+      await drawer.waitFor({ state: "hidden" });
+      await page.setViewportSize({ width: 667, height: 375 });
+      const landscapeMenu = page.getByRole("button", { name: translate("shell.openMenu") });
+      await landscapeMenu.click();
+      await drawer.waitFor();
+      await page.waitForFunction(() => document.querySelector('[data-slot="sheet-content"]')?.getBoundingClientRect().x === 0);
+      check(await drawer.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight;
+      }), `phone landscape drawer does not fit the visible viewport: ${JSON.stringify(await drawer.boundingBox())} in ${JSON.stringify(await page.evaluate(() => ({ width: innerWidth, height: innerHeight })))}`);
+      await page.screenshot({ path: join(ticketShots, "drawer-667x375-light.png") });
+      await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+      await page.screenshot({ path: join(ticketShots, "drawer-667x375-dark.png") });
+      await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+      await page.keyboard.press("Escape");
       await drawer.waitFor({ state: "hidden" });
     }
     await context.close();

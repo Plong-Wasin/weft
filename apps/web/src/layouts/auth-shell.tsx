@@ -27,7 +27,7 @@ export function AuthShell({ action, footer, children }: { action?: React.ReactNo
 export function OnboardingShell({ action, children }: { action?: React.ReactNode; children: React.ReactNode }) {
   return <div className="flex min-h-dvh flex-col bg-surface-1 sm:flex-row">
     <div className="relative h-24 flex-shrink-0 sm:h-auto sm:w-2/12 md:w-3/12 lg:w-1/5">
-      <div className="absolute left-0 top-1/2 h-px w-full -translate-y-1/2 bg-[var(--border-subtle)] sm:left-1/2 sm:top-0 sm:h-full sm:w-px sm:-translate-x-1/2 sm:translate-y-0 md:left-1/3" />
+      <div className="absolute left-0 top-1/2 h-px w-full -translate-y-1/2 bg-[var(--border)] sm:left-1/2 sm:top-0 sm:h-full sm:w-px sm:-translate-x-1/2 sm:translate-y-0 md:left-1/3" />
       <div className="absolute left-5 top-1/2 -translate-y-1/2 bg-surface-1 px-3 sm:left-1/2 sm:top-12 sm:-translate-x-4 sm:translate-y-0 sm:px-0 sm:py-5 md:left-1/3"><Logo /></div>
       {action && <div className="absolute right-4 top-1/2 flex -translate-y-1/2 items-center gap-3 text-13 sm:fixed sm:right-16 sm:top-12 sm:translate-y-0 sm:py-5">{action}</div>}
     </div>

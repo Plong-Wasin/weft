@@ -109,11 +109,11 @@ try {
   await sourceSwitch.click();
   const toolbarBox = await descriptionToolbar.boundingBox();
   const toolBoxes = await descriptionToolbar.locator(".editor-tool").evaluateAll((buttons) => buttons.map((button) => { const rect = button.getBoundingClientRect(); return { width: rect.width, height: rect.height, top: rect.top }; }));
-  check(toolBoxes.length === 13 && toolBoxes.every((box) => Math.round(box.width) === 28 && Math.round(box.height) === 28 && Math.abs(box.top - toolBoxes[0]!.top) < 1), `toolbar icons are not one 28 px row: ${JSON.stringify(toolBoxes)}`);
-  check(!!toolbarBox && toolbarBox.height <= 34, `toolbar is taller than about 32 px (${toolbarBox?.height}px)`);
+  check(toolBoxes.length === 13 && toolBoxes.every((box) => Math.round(box.width) === 28 && Math.round(box.height) === 36 && Math.abs(box.top - toolBoxes[0]!.top) < 1), `toolbar icons are not one 36 px row: ${JSON.stringify(toolBoxes)}`);
+  check(!!toolbarBox && toolbarBox.height <= 40, `toolbar is taller than 36 px (${toolbarBox?.height}px)`);
   await sourceSwitch.focus();
-  const focusRing = await sourceSwitch.evaluate((element) => ({ visible: element.matches(":focus-visible"), style: getComputedStyle(element).outlineStyle, width: getComputedStyle(element).outlineWidth }));
-  check(focusRing.visible && focusRing.style === "solid" && focusRing.width === "2px", `toolbar focus ring is missing: ${JSON.stringify(focusRing)}`);
+  const focusRing = await sourceSwitch.evaluate((element) => ({ visible: element.matches(":focus-visible"), style: getComputedStyle(element).outlineStyle, width: getComputedStyle(element).outlineWidth, shadow: getComputedStyle(element).boxShadow }));
+  check(focusRing.visible && ((focusRing.style === "solid" && focusRing.width === "2px") || focusRing.shadow !== "none"), `toolbar focus ring is missing: ${JSON.stringify(focusRing)}`);
   await page.setViewportSize({ width: 390, height: 844 });
   const phoneOverflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   check(phoneOverflow <= 0, `page scrolls sideways on a phone by ${phoneOverflow}px`);

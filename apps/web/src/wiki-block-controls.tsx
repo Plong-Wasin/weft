@@ -256,7 +256,7 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
     ghost.className = "wiki-editor shadow-xl";
     ghost.dataset.testid = "wiki-block-ghost";
     ghost.setAttribute("aria-hidden", "true");
-    ghost.style.cssText = `position:fixed;left:0;top:0;z-index:60;pointer-events:none;opacity:.92;max-width:none;width:${sourceElement.getBoundingClientRect().width}px;background:var(--bg-surface-1);border-radius:.375rem;padding:.25rem .5rem;`;
+    ghost.style.cssText = `position:fixed;left:0;top:0;z-index:60;pointer-events:none;opacity:.92;max-width:none;width:${sourceElement.getBoundingClientRect().width}px;background:var(--card);border-radius:.375rem;padding:.25rem .5rem;`;
     const content = document.createElement("div");
     content.className = "ProseMirror";
     // The editor gives .ProseMirror a 10rem minimum height; the ghost is only as tall as the block it copies.
@@ -377,6 +377,6 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
         }}><Trash2 aria-hidden size={14} />{translate("wiki.blockDelete")}</Button>
       </div>}
     </div>}
-    {dropLine && <div data-testid="wiki-block-drop-line" aria-hidden="true" className="pointer-events-none absolute h-0.5 rounded-full" style={{ top: dropLine.top, left: dropLine.left, width: dropLine.width, background: "var(--bg-accent-primary)" }} />}
+    {dropLine && <div data-testid="wiki-block-drop-line" aria-hidden="true" className="pointer-events-none absolute h-0.5 rounded-full" style={{ top: dropLine.top, left: dropLine.left, width: dropLine.width, background: "var(--primary)" }} />}
   </div>;
 }

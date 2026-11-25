@@ -67,10 +67,10 @@ export function SortableList({ ids, onReorder, disabled = false, label, renderRo
   const from = drag ? ids.indexOf(drag.id) : -1;
   return <>
   <span role="status" aria-live="polite" className="sr-only">{announce}</span>
-  <ul ref={list} className="m-0 list-none divide-y divide-[var(--border-subtle)] overflow-hidden rounded-lg border border-subtle bg-surface-1 p-0">
+  <ul ref={list} className="m-0 list-none divide-y divide-[var(--border)] overflow-hidden rounded-lg border border-subtle bg-surface-1 p-0">
     {ids.map((id, index) => {
       const target = drag && drag.over === index && drag.over !== from ? (index > from ? "after" : "before") : null;
-      return <li key={id} className={`flex flex-wrap items-center gap-3 px-3 py-3 text-14 ${drag?.id === id ? "opacity-50" : ""} ${target === "before" ? "shadow-[inset_0_2px_0_var(--bg-accent-primary)]" : target === "after" ? "shadow-[inset_0_-2px_0_var(--bg-accent-primary)]" : ""}`}>{renderRow(id, grip(id))}</li>;
+      return <li key={id} className={`flex flex-wrap items-center gap-3 px-3 py-3 text-14 ${drag?.id === id ? "opacity-50" : ""} ${target === "before" ? "shadow-[inset_0_2px_0_var(--primary)]" : target === "after" ? "shadow-[inset_0_-2px_0_var(--primary)]" : ""}`}>{renderRow(id, grip(id))}</li>;
     })}
   </ul>
   </>;

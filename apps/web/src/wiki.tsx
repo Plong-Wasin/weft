@@ -496,7 +496,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
       {!wide && <div className="flex justify-end"><Button type="button" autoFocus data-drawer-close className="secondary !size-8 !p-0" aria-label={translate("wiki.details.close")} title={translate("wiki.details.close")} onClick={() => setDrawerOpen(false)}><X aria-hidden size={16} /></Button></div>}
       <Tabs value={pane} onValueChange={(value) => setPane(value as typeof pane)}>
         <TabsList aria-label={translate("wiki.breadcrumb")} className="-mx-1 flex h-auto flex-nowrap justify-start gap-x-1 overflow-x-auto rounded-none border-b border-subtle bg-transparent p-0">
-          {tabs.map((tab) => <TabsTrigger key={tab.key} value={tab.key} className={`-mb-px shrink-0 whitespace-nowrap rounded-none border-0 border-b-2 !bg-transparent px-0.5 py-2 text-13 font-medium ${pane === tab.key ? "border-b-[var(--bg-accent-primary)] !text-accent-text" : "border-b-transparent !text-secondary hover:!text-primary"}`}>{tab.label}{tab.count ? <span className="ml-1 font-normal text-tertiary">{tab.count}</span> : null}</TabsTrigger>)}
+          {tabs.map((tab) => <TabsTrigger key={tab.key} value={tab.key} className={`-mb-px shrink-0 whitespace-nowrap rounded-none border-0 border-b-2 !bg-transparent px-0.5 py-2 text-13 font-medium ${pane === tab.key ? "border-b-[var(--primary)] !text-accent-text" : "border-b-transparent !text-secondary hover:!text-primary"}`}>{tab.label}{tab.count ? <span className="ml-1 font-normal text-tertiary">{tab.count}</span> : null}</TabsTrigger>)}
         </TabsList>
         <TabsContent value={pane} className="grid gap-3">
       {pane === "info" && <div className="grid gap-3">{info}</div>}
@@ -507,7 +507,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
       {pane === "comments" && <section aria-label={translate("wiki.comments")} className="grid gap-3">
         <label className="flex items-center gap-2 text-secondary"><Checkbox checked={showResolved} onChange={(event) => setShowResolved(event.target.checked)} /> {translate("wiki.comments.showResolved")}</label>
         {threads.length === 0 && <p className="m-0 text-secondary">{translate("wiki.comments.empty")}</p>}
-        <ul className="m-0 grid list-none gap-2 p-0">{threads.map((thread) => <li key={thread.id} className={`grid gap-1.5 rounded-lg border p-2.5 ${replyTo === thread.id ? "border-[var(--bg-accent-primary)]" : "border-subtle"} ${thread.resolved ? "opacity-60" : ""}`} data-comment-anchor={thread.anchor ?? ""}>
+        <ul className="m-0 grid list-none gap-2 p-0">{threads.map((thread) => <li key={thread.id} className={`grid gap-1.5 rounded-lg border p-2.5 ${replyTo === thread.id ? "border-[var(--primary)]" : "border-subtle"} ${thread.resolved ? "opacity-60" : ""}`} data-comment-anchor={thread.anchor ?? ""}>
           {editingComment?.id === thread.id
             ? <form className="grid gap-1.5" onSubmit={async (event) => { event.preventDefault(); const text = editingComment.text.trim(); if (!text) return; await call("update_wiki_page_comment", { commentId: thread.id, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] } }); setEditingComment(null); await loadThreads(); }}>
               <Input aria-label={translate("wiki.comments.edit")} autoFocus value={editingComment.text} onChange={(event) => setEditingComment({ id: thread.id, text: event.target.value })} />
@@ -603,7 +603,7 @@ function ListControls({ pages, filters, update, shared = false }: { pages: Summa
     <Tabs value={filters.tab} onValueChange={(value) => update("tab", value)}>
       <TabsList className="flex h-auto justify-start gap-x-3 overflow-x-auto rounded-none border-b border-subtle bg-transparent p-0 sm:gap-x-4">
         {(["all", "public", "private", "archived", ...(shared ? ["shared" as const] : [])] as const).map((name) => <TabsTrigger key={name} value={name}
-          className={`-mb-px whitespace-nowrap border-0 border-b-2 bg-transparent px-1 py-2 text-13 font-medium ${filters.tab === name ? "border-b-[var(--bg-accent-primary)] text-accent-text" : "border-b-transparent text-secondary"}`}>{translate(`pages.tab.${name}` as MessageKey)}</TabsTrigger>)}
+          className={`-mb-px whitespace-nowrap border-0 border-b-2 bg-transparent px-1 py-2 text-13 font-medium ${filters.tab === name ? "border-b-[var(--primary)] text-accent-text" : "border-b-transparent text-secondary"}`}>{translate(`pages.tab.${name}` as MessageKey)}</TabsTrigger>)}
       </TabsList>
     </Tabs>
     <div className="flex flex-wrap items-end gap-3 text-13">

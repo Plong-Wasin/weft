@@ -72,12 +72,12 @@ export function avatarElement(name: string, id: string | null | undefined, agent
   element.setAttribute("aria-hidden", "true");
   element.style.cssText = "display:inline-grid;place-items:center;width:20px;height:20px;flex-shrink:0;font-size:10px;font-weight:600;margin-right:6px;";
   if (agent) {
-    element.style.cssText += "border-radius:6px;border:1px solid var(--border-subtle);background:var(--bg-surface-1);color:var(--txt-primary);";
+    element.style.cssText += "border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--foreground);";
     element.innerHTML = botMark;
     return element;
   }
   const letter = avatarLetter(name);
-  element.style.cssText += letter === null ? "border-radius:50%;background:var(--bg-layer-3);color:var(--txt-secondary);" : `border-radius:50%;background:${avatarColor(id, name)};color:#fff;`;
+  element.style.cssText += letter === null ? "border-radius:50%;background:var(--muted);color:var(--muted-foreground);" : `border-radius:50%;background:${avatarColor(id, name)};color:#fff;`;
   element.textContent = letter ?? "";
   return element;
 }

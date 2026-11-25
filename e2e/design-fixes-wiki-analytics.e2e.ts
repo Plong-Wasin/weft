@@ -126,7 +126,7 @@ try {
   // The selected tab carries the accent underline; a class glued to the one before it (a missing space) loses it.
   const underline = await page.getByRole("tab", { selected: true }).first().evaluate((node) => {
     const probe = document.createElement("span");
-    probe.style.background = "var(--bg-accent-primary)";
+    probe.style.background = "var(--primary)";
     document.body.append(probe);
     const accent = getComputedStyle(probe).backgroundColor;
     probe.remove();

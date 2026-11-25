@@ -76,7 +76,7 @@ export function WorkspaceExports() {
       {projects.length === 0 ? <p className="text-secondary">{translate("exports.noProjects")}</p> : <form className="grid max-w-xl gap-4" onSubmit={(event) => { event.preventDefault(); void request(); }}>
         <fieldset className="m-0 grid min-w-0 gap-2 border-0 p-0">
           <legend className="mb-1 text-14 font-medium text-primary">{translate("exports.project")}</legend>
-          <div className="grid gap-px overflow-hidden rounded-lg border border-subtle bg-[var(--border-subtle)]">
+          <div className="grid gap-px overflow-hidden rounded-lg border border-subtle bg-[var(--border)]">
             {projects.map((project) => <label key={project.id} className="flex min-w-0 items-center gap-3 bg-surface-1 px-3 py-2 text-14 hover:bg-layer-transparent-hover">
               <Checkbox checked={picked.includes(project.id)} onChange={(event) => setPicked(event.target.checked ? [...picked, project.id] : picked.filter((id) => id !== project.id))} />
               <span className="min-w-0 truncate"><span className="text-tertiary">{project.key}</span> · {project.name}</span>

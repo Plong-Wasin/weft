@@ -471,7 +471,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const propertyBlockPx = shownProperties.reduce((sum, property) => sum + (slotRem[property] ?? 0) * 16, 0) + propertyGaps + (rowAction ? rowActionPx : 0);
   const oneLine = listWidth >= rowFixedPx + propertyBlockPx;
   const rowOf = (item: Item) => {
-    const checkbox = pickBox(item);
+    const checkbox = pickBox(item, true);
     return (
     <li key={item.id} data-testid={`row-${item.displayId}`} className={`group/row border-b border-subtle px-5 py-1.5 hover:bg-layer-transparent-hover ${selected.includes(item.id) ? "bg-layer-1" : "bg-surface-1"}`}>
       <div className={`flex flex-wrap items-center gap-x-3 gap-y-2 sm:grid sm:gap-y-1.5 ${oneLine ? "sm:grid-cols-[1rem_2rem_5.5rem_2rem_minmax(8rem,1fr)_auto]" : "sm:grid-cols-[1rem_2rem_5.5rem_2rem_minmax(8rem,1fr)]"}`}>
@@ -533,7 +533,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     });
     anchor.current = id;
   };
-  const pickBox = (item: Item) => selectable && <input type="checkbox" data-no-drag className={`relative z-10 size-4 shrink-0 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100 ${selected.includes(item.id) ? "opacity-100" : ""}`} aria-label={t("bulk.selectItem").replace("{id}", item.displayId)} checked={selected.includes(item.id)}
+  const pickBox = (item: Item, revealOnHover = false) => selectable && <input type="checkbox" data-no-drag className={`size-4 shrink-0 ${revealOnHover ? `relative z-10 ${selected.includes(item.id) ? "" : "[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100"}` : ""}`} aria-label={t("bulk.selectItem").replace("{id}", item.displayId)} checked={selected.includes(item.id)}
     onChange={() => undefined} onClick={(event) => pick(item.id, event.shiftKey)} />;
   // Collapsing a group hides its work items, so they leave the selection too: the bar never acts on what the user cannot see.
   const visibleKey = orderedIds.join(",");

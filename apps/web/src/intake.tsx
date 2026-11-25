@@ -354,7 +354,7 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
         <button type="button" className={iconButton} aria-label={t("intake.previous")} disabled={index <= 0} onClick={() => onMove(-1)}><ChevronUp aria-hidden size={16} /></button>
         <button type="button" className={iconButton} aria-label={t("intake.next")} disabled={index >= count - 1} onClick={() => onMove(1)}><ChevronDown aria-hidden size={16} /></button>
         {canDecide && undecided && <>
-          <button type="button" className={primaryButton} onClick={() => setDialog("accept")}>{t("intake.accept")}</button>
+          <button type="button" className={quietButton} onClick={() => setDialog("accept")}>{t("intake.accept")}</button>
           <button type="button" className={quietButton} onClick={() => void run("reject_intake_item", {})}>{t("intake.reject")}</button>
         </>}
         {canDecide && unsnoozed && <button type="button" className={quietButton} onClick={() => void run("unsnooze_intake_item", {})}>{t("intake.unsnooze")}</button>}
@@ -503,7 +503,7 @@ export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, 
       <div className="flex w-full shrink-0 flex-col border-b border-subtle p-2 md:w-[26rem] md:border-b-0 md:border-r">
         <div role="tablist" className="flex gap-2 border-b border-subtle px-2">
           {(["open", "closed"] as const).map((value) => <button key={value} role="tab" type="button" aria-selected={tab === value} onClick={() => { if (value !== tab) select(null, value); }}
-            className={`flex items-center gap-1.5 rounded-md border-0 px-3 py-2.5 text-14 font-medium ${tab === value ? "bg-layer-1 text-primary" : "bg-transparent text-secondary hover:bg-layer-transparent-hover hover:text-primary"}`}>
+            className={`flex items-center gap-1.5 rounded-md border-0 px-3 py-2.5 text-14 font-medium ${tab === value ? "bg-layer-1 text-accent-primary" : "bg-transparent text-secondary hover:bg-layer-transparent-hover hover:text-primary"}`}>
             {t(`intake.tab.${value}`)}
             {value === "open" && tab === "open" && items && <span data-testid="intake-open-count" className="rounded-full bg-accent-primary/20 px-1.5 py-0.5 text-11 font-semibold text-accent-primary">{items.length}</span>}
           </button>)}

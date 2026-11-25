@@ -11,6 +11,7 @@ import { paths } from "./routes";
 import { Popover, menuItemClass } from "./shell/popover";
 import { MultiSelect, SingleSelect, formatDay } from "./property-dropdowns";
 import { Avatar } from "./avatar";
+import { DetailsPanelToggle, useDetailsPanel } from "./details-panel";
 
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
@@ -273,6 +274,7 @@ function PropertyRow({ icon, label, children }: { icon: React.ReactNode; label: 
 }
 
 export function ModuleDetailPage({ workspaceId, workspaceSlug, projectKey, projectId, moduleId, canWrite, canAdmin, enabled, action, run: runQuery }: { workspaceId: string; workspaceSlug: string; projectKey: string; projectId: string; moduleId: string; canWrite: boolean; canAdmin: boolean; enabled: boolean; action: Call; run?: Run }) {
+  const detailsPanel = useDetailsPanel("module");
   const navigate = useNavigate();
   const [module, setModule] = React.useState<ModuleDetail | null | undefined>(undefined);
   const [candidates, setCandidates] = React.useState<Item[]>([]);
@@ -315,6 +317,7 @@ export function ModuleDetailPage({ workspaceId, workspaceSlug, projectKey, proje
         <span className="truncate font-medium text-primary">{module.name}</span>
       </nav>
       <div className="ml-auto flex items-center gap-2">
+        <DetailsPanelToggle open={detailsPanel.open} onToggle={detailsPanel.toggle} panelId="module-details-panel" />
         {editable && <button type="button" className={primaryButton} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("modules.addWorkItems")}</button>}
         <ModuleMenu module={module} canWrite={canWrite} canAdmin={canAdmin} onEdit={() => setEditing(true)}
           onArchive={() => void run(module.archived ? "unarchive_module" : "archive_module", { moduleId })}
@@ -332,7 +335,7 @@ export function ModuleDetailPage({ workspaceId, workspaceSlug, projectKey, proje
         <WorkItemLayouts projectId={projectId} workspaceSlug={workspaceSlug} action={action} run={runQuery} refreshKey={refreshKey} moduleId={moduleId}
           rowAction={editable ? (item) => <button className="whitespace-nowrap rounded-md border border-subtle bg-surface-1 px-2 py-1 text-12 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={() => void run("remove_module_items", { moduleId, workItemIds: [item.id] })}>{t("modules.remove")}</button> : undefined} />
       </div>
-      <aside aria-label={t("modules.properties")} className="grid content-start gap-3 rounded-xl border border-subtle bg-surface-1 p-4 sm:p-5 lg:w-80 lg:shrink-0">
+      <aside id="module-details-panel" aria-label={t("modules.properties")} className={`grid content-start gap-3 rounded-xl border border-subtle bg-surface-1 p-4 sm:p-5 lg:w-80 lg:shrink-0 ${detailsPanel.open ? "" : "lg:hidden"}`}>
         <section className="grid gap-2" aria-label={t("workItems.description")}><h3 className="m-0 text-14 font-semibold">{t("workItems.description")}</h3><EntityDescription key={module.id} action={action} workspaceId={workspaceId} owner={{ ownerType: "module", ownerId: module.id }} mentionPeople={people} initial={module.description ?? null} editable={editable} /></section>
         <div className="flex items-center gap-2"><StatusBadge status={module.status} /></div>
         <BurndownChart action={action} name="get_module_burndown" body={{ moduleId }} projectId={projectId} refreshKey={refreshKey} testId="module-burndown" />

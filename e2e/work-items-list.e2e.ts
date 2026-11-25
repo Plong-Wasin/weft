@@ -1,6 +1,6 @@
 // Browser end-to-end flow for the work items list layout: groups, inline property dropdowns, display options, quick create.
 // Run with `bun e2e/work-items-list.e2e.ts` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
-import { chromium } from "playwright";
+import { chromium, type Locator } from "playwright";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { like } from "drizzle-orm";
@@ -40,6 +40,20 @@ try {
   const page = await context.newPage();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
+  const assertStableBounds = async (control: Locator, name: string) => {
+    const measure = async () => {
+      const bounds = await control.boundingBox();
+      if (!bounds) throw new Error(`${name} is not visible for its stability check`);
+      return bounds;
+    };
+    const before = await measure();
+    await control.hover();
+    const hovered = await measure();
+    await control.focus();
+    const focused = await measure();
+    const stable = (next: typeof before) => (["x", "y", "width", "height"] as const).every((key) => Math.abs(before[key] - next[key]) < 0.01);
+    check(stable(hovered) && stable(focused), `${name} bounding box stays fixed on hover and focus (Stable${name}Bounds): ${JSON.stringify({ before, hovered, focused })}`);
+  };
   const checkBoardSurface = async () => {
     const lane = page.locator('[data-testid^="column-"]').first();
     const colors = await lane.evaluate((element) => {
@@ -112,6 +126,11 @@ try {
   await page.getByRole("button", { name: translate("workItems.create"), exact: true }).click();
   await page.getByRole("region", { name: "Todo" }).getByRole("link", { name: "Charlie" }).waitFor();
 
+  await assertStableBounds(page.getByRole("button", { name: translate("workItems.addNew"), exact: true }), "Button");
+  await assertStableBounds(page.getByRole("searchbox", { name: translate("search.label") }), "Input");
+  await assertStableBounds(page.getByTestId("row-MOB-1").getByRole("checkbox"), "Checkbox");
+  await assertStableBounds(page.getByRole("button", { name: translate("layout.list") }), "Tabs");
+
   // Group headers collapse and expand.
   const header = page.getByRole("button", { name: `${translate("layout.toggleGroup")}: Backlog` });
   await header.click();
@@ -125,6 +144,7 @@ try {
   check(await done.getAttribute("aria-expanded") === "true", "an empty group did not expand through its toggle");
   await done.click();
   check(await done.getAttribute("aria-expanded") === "false", "an empty group did not collapse again");
+
   // Named acceptance checks for airy shadcn rows and their quiet property slots.
   const firstRow = page.getByTestId("row-MOB-1");
   const desktopRowMetrics = await page.locator('[data-testid^="row-"]').evaluateAll((rows) => rows.map((row) => {
@@ -252,6 +272,10 @@ try {
   await call("add_cycle_items", { cycleId: sprintOne.id, workItemIds: variedIds.slice(0, 14) });
   for (const [index, module] of modules.entries()) await call("add_module_items", { moduleId: module.id, workItemIds: variedIds.slice(index * 6, index * 6 + 8) });
   check(await page.evaluate(() => (window as unknown as { __noReload?: boolean }).__noReload === true), "the page reloaded before seeding responsive rows");
+  await page.reload();
+  const todoState = states.find((state) => state.name === "Todo")!;
+  const longThaiTitle = "ทดสอบชื่อรายการภาษาไทยที่ยาวพอเพื่อยืนยันว่าข้อความไม่ล้น ไม่ตัดคำ และไม่ทำให้ปุ่มหรือแถวเปลี่ยนตำแหน่ง";
+  await call("create_work_item", { projectId: project!.id, stateId: todoState.id, title: longThaiTitle, priority: "none" });
   await page.reload();
   await page.evaluate(() => { (window as unknown as { __noReload: boolean }).__noReload = true; });
   await page.getByTestId("row-MOB-1").waitFor();
@@ -526,6 +550,9 @@ try {
     }
     await control.click();
   }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.getByRole("link", { name: translate("cycles.title"), exact: true }).click();
+  await assertStableBounds(page.getByRole("tab", { name: new RegExp(translate("cycles.status.active")) }), "Tabs");
   console.log("e2e work items list: ok");
   await browser.close();
 } catch (error) {

@@ -16,6 +16,10 @@ test("chipClass preserves the outlined chip and defines the quiet variant", () =
   expect(quiet).toContain("hover:text-primary");
 });
 
+test("the outlined icon-only chip is the same as the outlined chip, so board cards do not change", () => {
+  expect(chipClass(false, true)).toBe(chipClass(false, false));
+});
+
 test("icon-only quiet SingleSelect keeps its accessible name, value title, and hit area", () => {
   const html = renderToStaticMarkup(<SingleSelect quiet iconOnly label="State" summary="Todo" value="todo" options={options} onSelect={noop} />);
   expect(html).toContain('aria-label="State: Todo"');

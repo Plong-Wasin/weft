@@ -11,7 +11,7 @@ import type { Estimate, StateGroup } from "./types";
 const t = (key: string) => translate(key as MessageKey);
 const outlinedChip = "border border-subtle bg-surface-1 px-2 py-1 text-12 font-medium text-primary hover:bg-layer-transparent-hover";
 const quietChip = "bg-transparent px-2 py-1 text-12 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary";
-const outlinedIconChip = "border border-subtle bg-surface-1 px-2 py-1 text-12 font-medium text-primary hover:bg-layer-transparent-hover min-h-7 min-w-7 max-sm:min-h-9 max-sm:min-w-9";
+const outlinedIconChip = outlinedChip;
 const quietIconChip = "bg-transparent px-2 py-1 text-12 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary min-h-7 min-w-7 max-sm:min-h-9 max-sm:min-w-9";
 export function chipClass(quiet = false, iconOnly = false) {
   if (quiet) return iconOnly ? quietIconChip : quietChip;

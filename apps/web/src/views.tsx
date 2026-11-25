@@ -110,7 +110,7 @@ function ViewMenu({ view, scope, onEdit, onDelete }: { view: SavedView; scope: S
       <button type="button" role="menuitem" className={menuItemClass} onClick={() => { void copyText(link, t("views.linkCopied"), t("comments.copyFailed")); close(); }}>{t("views.copyLink")}</button>
       {canChange(view, scope) && <>
         <button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); onEdit(); }}>{t("views.edit")}</button>
-        <button type="button" role="menuitem" className={`${menuItemClass} text-danger-text`} onClick={() => { close(); onDelete(); }}>{t("views.delete")}</button>
+        <button type="button" role="menuitem" className={`${menuItemClass} text-destructive`} onClick={() => { close(); onDelete(); }}>{t("views.delete")}</button>
       </>}
     </>}
   </Popover>;

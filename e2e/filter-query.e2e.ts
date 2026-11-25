@@ -81,7 +81,7 @@ try {
   await page.screenshot({ path: `${shots}/filter-picker-390.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
   await dialog.getByRole("button", { name: translate("layout.filter.priority") }).click();
-  await dialog.getByRole("group", { name: translate("layout.filter.priority") }).getByLabel(translate("workItems.priority.high")).check();
+  await dialog.getByRole("group", { name: translate("layout.filter.priority") }).getByRole("checkbox", { name: translate("workItems.priority.high") }).click();
   await waitTitles("Alpha");
   await page.getByTestId("chip-priority").waitFor();
   await page.screenshot({ path: `${shots}/filter-picker-1440.png` });
@@ -121,7 +121,7 @@ try {
   await dialog.getByRole("group", { name: translate("layout.filter.dueDate") }).getByLabel(translate("layout.filter.from")).fill(day(10));
   await waitTitles("Charlie");
   await dialog.getByRole("button", { name: translate("layout.filter.createdBy") }).click();
-  await dialog.getByRole("group", { name: translate("layout.filter.createdBy") }).getByLabel("Filters Tester").check();
+  await dialog.getByRole("group", { name: translate("layout.filter.createdBy") }).getByRole("checkbox", { name: "Filters Tester" }).click();
   await waitTitles("Charlie");
   await page.keyboard.press("Escape");
   const url = page.url();

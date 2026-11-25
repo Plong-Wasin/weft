@@ -33,7 +33,7 @@ export function Popover({ label, panelLabel = label, trigger, align = "left", cl
 }) {
   const [open, setOpen] = React.useState(false);
   const root = React.useRef<HTMLDivElement>(null);
-  const panelContainer = root.current?.closest<HTMLElement>('[data-slot="dialog-content"], dialog[open]') ?? undefined;
+  const panelContainer = root.current?.closest<HTMLElement>('dialog[open], [data-slot="dialog-content"], [data-create-modal]') ?? undefined;
   React.useEffect(() => {
     if (!open || panelRole !== "dialog") return;
     const anchor = root.current?.querySelector("button");
@@ -50,13 +50,19 @@ export function Popover({ label, panelLabel = label, trigger, align = "left", cl
   if (panelRole === "menu") return <DropdownMenu open={open} onOpenChange={(nextOpen) => { if (nextOpen && !open) onOpen?.(); setOpen(nextOpen); }}>
     <div ref={root} className="relative">
       <DropdownMenuTrigger aria-label={label} title={label} className={cn("flex items-center gap-1.5 rounded-md bg-transparent p-1.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background pointer-coarse:min-h-11 pointer-coarse:min-w-11", className, "pointer-coarse:min-h-11 pointer-coarse:min-w-11")}>{trigger}</DropdownMenuTrigger>
-      <DropdownMenuContent align={align === "right" ? "end" : "start"} sideOffset={4} data-popover-panel aria-label={panelLabel} className={cn("max-h-[min(32rem,var(--available-height))] min-w-56", panelClassName)}>
+      <DropdownMenuContent container={panelContainer} align={align === "right" ? "end" : "start"} sideOffset={4} data-popover-panel aria-label={panelLabel} className={cn("max-h-[min(32rem,var(--available-height))] min-w-56", panelClassName)}>
         {children(() => setOpen(false))}
       </DropdownMenuContent>
     </div>
   </DropdownMenu>;
   return <PopoverPrimitive open={open} onOpenChange={(nextOpen) => { if (nextOpen && !open) onOpen?.(); setOpen(nextOpen); }}>
-    <div ref={root} className="relative">
+    <div ref={root} className="relative" onKeyDownCapture={(event) => {
+      if (event.key === "Escape" && open) {
+        event.preventDefault();
+        event.stopPropagation();
+        setOpen(false);
+      }
+    }}>
       <PopoverTrigger render={<Button type="button" aria-label={label} title={label} className={cn("flex items-center gap-1.5 rounded-md bg-transparent p-1.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background pointer-coarse:min-h-11 pointer-coarse:min-w-11", className, "pointer-coarse:min-h-11 pointer-coarse:min-w-11")} />}>{trigger}</PopoverTrigger>
       <PopoverContent container={panelContainer} align={align === "right" ? "end" : "start"} sideOffset={4} role={panelRole} aria-label={panelLabel} data-popover-panel className={cn("w-auto p-1", panelClassName)}>
         {children(() => setOpen(false))}

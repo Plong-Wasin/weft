@@ -13,6 +13,9 @@ import { DescriptionEditor } from "./description-editor";
 import { EntityDescription } from "./entity-description";
 import { DetailsPanelToggle, useDetailsPanel } from "./details-panel";
 
+import { Checkbox } from "@/ui/checkbox";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/ui/tabs";
+import { Input } from "@/ui/input";
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
 type Status = "upcoming" | "active" | "completed";
@@ -93,11 +96,11 @@ function CycleModal({ action, projectId, workspaceId, cycle, onClose, onSaved }:
       onSaved();
       onClose();
     }}>
-      <label>{t("cycles.name")}<input autoFocus required value={name} onChange={(event) => setName(event.target.value)} /></label>
+      <label>{t("cycles.name")}<Input autoFocus required value={name} onChange={(event) => setName(event.target.value)} /></label>
       <div className="grid gap-1 text-13 text-secondary"><span>{t("workItems.description")}</span><DescriptionEditor workspaceId={workspaceId} owner={cycle ? { ownerType: "cycle", ownerId: cycle.id } : undefined} mentionPeople={mentionPeople} initial={description} editable onChange={setDescription} /></div>
       <div className="grid gap-3 sm:grid-cols-2">
-        <label>{t("cycles.start")}<input required type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label>
-        <label>{t("cycles.end")}<input required type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label>
+        <label>{t("cycles.start")}<Input required type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label>
+        <label>{t("cycles.end")}<Input required type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label>
       </div>
       {overlap.length > 0 && <p role="status" data-testid="cycle-overlap" className="m-0 rounded-md bg-warning-subtle px-3 py-2 text-13 text-primary">{t("cycles.overlap").replace("{names}", overlap.join(", "))}</p>}
       {note && <p role="alert" className="m-0 text-danger-text">{note}</p>}
@@ -177,22 +180,25 @@ export function CyclesPage({ workspaceId, workspaceSlug, projectKey, projectId, 
   return <section className="grid gap-4">
     <header className="flex flex-wrap items-center gap-3">
       <h2 className="m-0 flex flex-1 items-center gap-2 text-16 font-semibold"><CalendarSync aria-hidden size={16} />{t("cycles.title")}</h2>
-      <label className="flex items-center gap-2 text-13 text-secondary"><input type="checkbox" checked={archived} onChange={(event) => setArchived(event.target.checked)} /> {t("cycles.showArchived")}</label>
+      <label className="flex items-center gap-2 text-13 text-secondary"><Checkbox checked={archived} onChange={(event) => setArchived(event.target.checked)} /> {t("cycles.showArchived")}</label>
       {canWrite && <Button type="button" className={primaryButton} onClick={() => setEditing("new")}><Plus aria-hidden size={14} />{t("cycles.new")}</Button>}
     </header>
-    <div role="tablist" aria-label={t("cycles.title")} className="flex w-fit max-w-full flex-wrap gap-1 rounded-lg bg-layer-1 p-1">
-      {tabs.map((status) => <Button key={status} type="button" role="tab" aria-selected={tab === status} onClick={() => setTab(status)}
-        className={`rounded-md border-0 px-3 py-2 text-14 font-medium ${tab === status ? "bg-surface-1 text-primary shadow-sm" : "bg-transparent text-secondary hover:bg-layer-transparent-hover"}`}>{t(`cycles.status.${status}`)} <span className="text-12 text-tertiary">{count(counts(status))}</span></Button>)}
-    </div>
+    <Tabs value={tab} onValueChange={(value) => setTab(value as Status)}>
+      <TabsList aria-label={t("cycles.title")} className="flex h-auto w-fit max-w-full flex-wrap gap-1 rounded-lg bg-layer-1 p-1">
+        {tabs.map((status) => <TabsTrigger key={status} value={status} className={`rounded-md border-0 px-3 py-2 text-14 font-medium ${tab === status ? "bg-surface-1 text-primary shadow-sm" : "bg-transparent text-secondary hover:bg-layer-transparent-hover"}`}>{t(`cycles.status.${status}`)} <span className="text-12 text-tertiary">{count(counts(status))}</span></TabsTrigger>)}
+      </TabsList>
+      <TabsContent value={tab} className="grid gap-4">
     {cycles !== null && cycles.length === 0 && (archived
       ? <EmptyState title={t("archives.emptyCycles")} />
       : <EmptyState title={t("cycles.empty")} description={t("cycles.emptyHint")} action={canWrite ? <Button type="button" className={primaryButton} onClick={() => setEditing("new")}><Plus aria-hidden size={14} />{t("cycles.createFirst")}</Button> : undefined} />)}
     {cycles !== null && cycles.length > 0 && shown.length === 0 && <p role="status" className="m-0 px-1 py-4 text-14 text-secondary">{t("cycles.emptyTab")}</p>}
-    <ul role="tabpanel" className="m-0 grid list-none gap-1 rounded-xl border border-subtle bg-surface-1 p-1 empty:hidden">
+    <ul className="m-0 grid list-none gap-1 rounded-xl border border-subtle bg-surface-1 p-1 empty:hidden">
       {shown.map((cycle) => <CycleRow key={cycle.id} cycle={cycle} href={paths.cycle(workspaceSlug, projectKey, cycle.id)}>
         <CycleMenu cycle={cycle} canWrite={canWrite} canAdmin={canAdmin} onEdit={() => setEditing(cycle)} onArchive={() => void (cycle.archived ? commands.restore(cycle) : commands.archive(cycle))} onDelete={() => void commands.destroy(cycle)} />
       </CycleRow>)}
     </ul>
+      </TabsContent>
+    </Tabs>
     {note && <p role="alert" className="m-0 text-danger-text">{note}</p>}
     {editing && <CycleModal action={action} projectId={projectId} workspaceId={workspaceId} cycle={editing === "new" ? undefined : editing} onClose={() => setEditing(null)} onSaved={() => void load()} />}
   </section>;
@@ -361,7 +367,7 @@ export function CycleDetailPage({ workspaceId, workspaceSlug, projectKey, projec
             {others.map((other) => <option key={other.id} value={other.id}>{other.name}</option>)}
           </select>
           {transferSelection.length === 0 && <p className="m-0 text-12 text-secondary">{t("cycles.noTransferItems")}</p>}
-          <ul className="m-0 grid list-none gap-1 p-0">{everyone.filter((item) => cycle.workItemIds.includes(item.id) && (() => { const group = states.find((state) => state.id === item.stateId)?.group; return group !== "completed" && group !== "cancelled"; })()).map((item) => <li key={item.id} className="flex items-center gap-2 text-13"><input type="checkbox" aria-label={`${t("cycles.selectTransferItem")} ${item.displayId}`} checked={transferSelection.includes(item.id)} onChange={(event) => setTransferSelection((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))} /><span className="truncate">{item.displayId} · {item.title}</span></li>)}</ul>
+          <ul className="m-0 grid list-none gap-1 p-0">{everyone.filter((item) => cycle.workItemIds.includes(item.id) && (() => { const group = states.find((state) => state.id === item.stateId)?.group; return group !== "completed" && group !== "cancelled"; })()).map((item) => <li key={item.id} className="flex items-center gap-2 text-13"><Checkbox aria-label={`${t("cycles.selectTransferItem")} ${item.displayId}`} checked={transferSelection.includes(item.id)} onChange={(event) => setTransferSelection((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))} /><span className="truncate">{item.displayId} · {item.title}</span></li>)}</ul>
           <Button disabled={!target || transferSelection.length === 0} onClick={() => void transfer()}>{t("cycles.transfer")}</Button>
         </div>}
       </aside>
@@ -369,13 +375,13 @@ export function CycleDetailPage({ workspaceId, workspaceSlug, projectKey, projec
     {editing && <CycleModal action={action} projectId={projectId} workspaceId={workspaceId} cycle={cycle} onClose={() => setEditing(false)} onSaved={() => void load()} />}
     {adding && <Modal title={t("cycles.addTitle")} onClose={() => setAdding(false)}>
       <div className="grid gap-3">
-      <label>{t("cycles.searchCandidates")}<input autoFocus type="search" value={candidateQuery} onChange={(event) => setCandidateQuery(event.target.value)} /></label>
-      {Object.keys(cycleOf).some((id) => !cycle.workItemIds.includes(id)) && <label className="flex items-center gap-2 text-13"><input type="checkbox" checked={moveCandidates} onChange={(event) => setMoveCandidates(event.target.checked)} />{t("cycles.allowMove")}</label>}
+      <label>{t("cycles.searchCandidates")}<Input autoFocus type="search" value={candidateQuery} onChange={(event) => setCandidateQuery(event.target.value)} /></label>
+      {Object.keys(cycleOf).some((id) => !cycle.workItemIds.includes(id)) && <label className="flex items-center gap-2 text-13"><Checkbox checked={moveCandidates} onChange={(event) => setMoveCandidates(event.target.checked)} />{t("cycles.allowMove")}</label>}
       {candidates.length === 0 && <p className="m-0 text-secondary">{t("cycles.noCandidates")}</p>}
       <ul className="m-0 grid max-h-72 list-none gap-1 overflow-auto p-0">{candidates.map((item) => {
         const currentCycle = cycleOf[item.id];
         const disabled = !!currentCycle && (!moveCandidates || currentCycle.archived);
-        return <li key={item.id} className="flex items-center gap-2 text-13"><input type="checkbox" aria-label={`${t("cycles.selectCandidate")} ${item.displayId}`} disabled={disabled} checked={selectedCandidates.includes(item.id)} onChange={(event) => setSelectedCandidates((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))} /><span className="min-w-0 flex-1 truncate">{item.displayId} · {item.title}</span><span title={currentCycle?.name} className="min-w-0 max-w-[40%] truncate text-secondary">{currentCycle ?t("cycles.currentCycle").replace("{name}", currentCycle.name) : t("cycles.noCurrentCycle")}</span></li>;
+        return <li key={item.id} className="flex items-center gap-2 text-13"><Checkbox aria-label={`${t("cycles.selectCandidate")} ${item.displayId}`} disabled={disabled} checked={selectedCandidates.includes(item.id)} onChange={(event) => setSelectedCandidates((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))} /><span className="min-w-0 flex-1 truncate">{item.displayId} · {item.title}</span><span title={currentCycle?.name} className="min-w-0 max-w-[40%] truncate text-secondary">{currentCycle ?t("cycles.currentCycle").replace("{name}", currentCycle.name) : t("cycles.noCurrentCycle")}</span></li>;
       })}</ul>
       <div className="flex justify-end"><Button disabled={selectedCandidates.length === 0} onClick={async () => {
         const expectedCycleIds = Object.fromEntries(selectedCandidates.map((id) => [id, cycleOf[id]?.id ?? null]));

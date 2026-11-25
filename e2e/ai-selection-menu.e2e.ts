@@ -88,12 +88,12 @@ try {
     await page.goto(`${web}/account/preferences`);
     const box = preferenceCheckbox();
     await box.waitFor();
-    if ((await box.isChecked()) !== on) {
+    if ((await box.getAttribute("aria-checked")) !== String(on)) {
       const saved = page.waitForResponse((response) => response.url().endsWith("/actions/set_my_ai_preferences") && response.ok());
       await box.click();
       await saved;
     }
-    check((await preferenceCheckbox().isChecked()) === on, `preference did not switch ${on ? "on" : "off"}`);
+    check((await preferenceCheckbox().getAttribute("aria-checked")) === String(on), `preference did not switch ${on ? "on" : "off"}`);
   }
 
   // A failed preference load offers an in-page retry, then the default switch loads successfully.
@@ -114,10 +114,10 @@ try {
   // The switch is on by default and the menu shows when text is selected in the Wiki.
   await page.goto(`${web}/account/preferences`);
   await preferenceCheckbox().waitFor();
-  check(await preferenceCheckbox().isChecked(), "the AI selection menu switch is not on by default");
+  check(await preferenceCheckbox().getAttribute("aria-checked") === "true", "the AI selection menu switch is not on by default");
   await page.setViewportSize({ width: 390, height: 844 });
   const preferenceGeometry = await preferenceCheckbox().evaluate((input) => ({
-    labelHeight: input.labels?.[0]?.getBoundingClientRect().height ?? 0,
+    labelHeight: input.closest("label")?.getBoundingClientRect().height ?? 0,
   }));
   const preferencesHeading = await page.getByRole("heading", { name: translate("accountPrefs.title"), exact: true }).boundingBox();
   check(preferenceGeometry.labelHeight >= 44, "the account preference checkbox has a touch target under 44 px");

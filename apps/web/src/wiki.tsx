@@ -37,6 +37,10 @@ import { ReferencePicker } from "./reference-picker";
 import { collectionLabel } from "./type-descriptions";
 import { NotFound } from "./not-found";
 
+import { Checkbox } from "@/ui/checkbox";
+import { Input } from "@/ui/input";
+import { Textarea } from "@/ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/ui/tabs";
 const heartbeatMs = 20_000;
 const autosaveMs = 1_500;
 const live = liveUrl(import.meta.env.VITE_LIVE_URL, window.location);
@@ -406,7 +410,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
     <div className="wiki-print-document">
     <h1 className="wiki-print-title">{title}</h1>
     <div className="flex flex-wrap items-center gap-2">
-      <textarea ref={titleRef} rows={1} className="wiki-edit-title min-w-0 flex-1 basis-[12rem] resize-none overflow-hidden border-0 bg-transparent px-0 text-28 font-semibold leading-tight text-primary sm:text-40" aria-label={translate("wiki.untitled")} value={title} disabled={!page.canEdit} onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }} onChange={(event) => { setTitle(event.target.value); dirtyTitle.current = event.target.value || translate("wiki.untitled"); schedule(); }} onBlur={onChanged} />
+      <Textarea ref={titleRef} rows={1} className="wiki-edit-title min-w-0 flex-1 basis-[12rem] resize-none overflow-hidden border-0 bg-transparent px-0 text-28 font-semibold leading-tight text-primary sm:text-40" aria-label={translate("wiki.untitled")} value={title} disabled={!page.canEdit} onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }} onChange={(event) => { setTitle(event.target.value); dirtyTitle.current = event.target.value || translate("wiki.untitled"); schedule(); }} onBlur={onChanged} />
       {page.locked && <span data-testid="wiki-locked-badge" className="shrink-0 rounded-md border border-subtle bg-surface-2 px-2 py-0.5 text-12 text-secondary">{translate("wiki.locked")}</span>}
       <div className="wiki-page-actions flex items-center gap-1">
         {!page.projectId && page.ownerId === self && <Button type="button" className="secondary rounded-lg" data-testid="wiki-header-share" onClick={() => revealPanelSection("wiki-share-members")}>{translate("wiki.share.action")}</Button>}
@@ -466,7 +470,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
             {(["a4", "a3", "a2", "letter", "legal", "tabloid"] as const).map((size) => <option key={size} value={size}>{translate(`wiki.pdfSize.${size}` as MessageKey)}</option>)}
           </select>
         </label>
-        <label className="flex items-center gap-2 text-13 text-secondary"><input type="checkbox" checked={pdfIncludeImages} onChange={(event) => setPdfIncludeImages(event.target.checked)} />{translate("wiki.pdfIncludeImages")}</label>
+        <label className="flex items-center gap-2 text-13 text-secondary"><Checkbox checked={pdfIncludeImages} onChange={(event) => setPdfIncludeImages(event.target.checked)} />{translate("wiki.pdfIncludeImages")}</label>
         {pdfError && <p role="alert" className="m-0 text-13 text-danger">{pdfError}</p>}
         <DialogActions onClose={() => setPdfDialog(false)} submit={pdfExporting ? translate("wiki.pdfExporting") : translate("wiki.exportPdf")} />
       </form>
@@ -490,28 +494,29 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
       ? "grid min-w-0 max-w-full grid-cols-[minmax(0,1fr)] [&_select]:min-w-0 [&_select]:max-w-full [&_.grid]:min-w-0 h-fit content-start gap-4 self-start overflow-x-hidden rounded-lg border border-subtle bg-surface-1 p-3 text-13 sticky top-0 max-h-[calc(100vh-8rem)] overflow-y-auto"
       : "absolute inset-y-0 right-0 grid w-[min(20rem,calc(100vw-2rem))] min-w-0 content-start gap-4 overflow-y-auto overflow-x-hidden border-l border-subtle bg-surface-1 p-3 text-13 shadow-xl [&_select]:min-w-0 [&_select]:max-w-full [&_.grid]:min-w-0"}>
       {!wide && <div className="flex justify-end"><Button type="button" autoFocus data-drawer-close className="secondary !size-8 !p-0" aria-label={translate("wiki.details.close")} title={translate("wiki.details.close")} onClick={() => setDrawerOpen(false)}><X aria-hidden size={16} /></Button></div>}
-      <div role="tablist" aria-label={translate("wiki.breadcrumb")} className="-mx-1 flex flex-nowrap gap-x-1 overflow-x-auto border-b border-subtle">
-        {tabs.map((tab) => <Button key={tab.key} type="button" role="tab" aria-selected={pane === tab.key} onClick={() => setPane(tab.key)}
-          className={`-mb-px shrink-0 whitespace-nowrap rounded-none border-0 border-b-2 !bg-transparent px-0.5 py-2 text-13 font-medium ${pane === tab.key ? "border-b-[var(--bg-accent-primary)] !text-accent-text" : "border-b-transparent !text-secondary hover:!text-primary"}`}>{tab.label}{tab.count ? <span className="ml-1 font-normal text-tertiary">{tab.count}</span> : null}</Button>)}
-      </div>
+      <Tabs value={pane} onValueChange={(value) => setPane(value as typeof pane)}>
+        <TabsList aria-label={translate("wiki.breadcrumb")} className="-mx-1 flex h-auto flex-nowrap justify-start gap-x-1 overflow-x-auto rounded-none border-b border-subtle bg-transparent p-0">
+          {tabs.map((tab) => <TabsTrigger key={tab.key} value={tab.key} className={`-mb-px shrink-0 whitespace-nowrap rounded-none border-0 border-b-2 !bg-transparent px-0.5 py-2 text-13 font-medium ${pane === tab.key ? "border-b-[var(--bg-accent-primary)] !text-accent-text" : "border-b-transparent !text-secondary hover:!text-primary"}`}>{tab.label}{tab.count ? <span className="ml-1 font-normal text-tertiary">{tab.count}</span> : null}</TabsTrigger>)}
+        </TabsList>
+        <TabsContent value={pane} className="grid gap-3">
       {pane === "info" && <div className="grid gap-3">{info}</div>}
       {pane === "outline" && <nav aria-label={translate("wiki.outline")} data-testid="wiki-outline">
         {headings.length === 0 ? <p className="m-0 text-secondary">{translate("wiki.outlineEmpty")}</p> : <ul className="m-0 grid list-none gap-0.5 p-0">{headings.map((heading, index) => <li key={`${heading.pos}-${index}`} style={{ paddingLeft: `${(heading.level - 1) * 12}px` }}><Button type="button" className="w-full truncate rounded-md !bg-transparent !px-2 !py-1 text-left text-13 !font-normal !text-secondary hover:!bg-layer-transparent-hover hover:!text-primary" onClick={() => { editor?.chain().focus().setTextSelection(heading.pos + 1).run(); editor?.view.domAtPos(heading.pos).node.parentElement?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>{heading.text || translate("wiki.outlineUntitled")}</Button></li>)}</ul>}
       </nav>}
       {pane === "links" && <OutlinksPanel kind={page.projectId ? "page" : "wiki"} id={page.id} run={call} />}
       {pane === "comments" && <section aria-label={translate("wiki.comments")} className="grid gap-3">
-        <label className="flex items-center gap-2 text-secondary"><input type="checkbox" checked={showResolved} onChange={(event) => setShowResolved(event.target.checked)} /> {translate("wiki.comments.showResolved")}</label>
+        <label className="flex items-center gap-2 text-secondary"><Checkbox checked={showResolved} onChange={(event) => setShowResolved(event.target.checked)} /> {translate("wiki.comments.showResolved")}</label>
         {threads.length === 0 && <p className="m-0 text-secondary">{translate("wiki.comments.empty")}</p>}
         <ul className="m-0 grid list-none gap-2 p-0">{threads.map((thread) => <li key={thread.id} className={`grid gap-1.5 rounded-lg border p-2.5 ${replyTo === thread.id ? "border-[var(--bg-accent-primary)]" : "border-subtle"} ${thread.resolved ? "opacity-60" : ""}`} data-comment-anchor={thread.anchor ?? ""}>
           {editingComment?.id === thread.id
             ? <form className="grid gap-1.5" onSubmit={async (event) => { event.preventDefault(); const text = editingComment.text.trim(); if (!text) return; await call("update_wiki_page_comment", { commentId: thread.id, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] } }); setEditingComment(null); await loadThreads(); }}>
-              <input aria-label={translate("wiki.comments.edit")} autoFocus value={editingComment.text} onChange={(event) => setEditingComment({ id: thread.id, text: event.target.value })} />
+              <Input aria-label={translate("wiki.comments.edit")} autoFocus value={editingComment.text} onChange={(event) => setEditingComment({ id: thread.id, text: event.target.value })} />
               <div className="flex gap-1 [&_button]:!px-2 [&_button]:!py-0.5 [&_button]:!text-12"><Button type="submit">{translate("webLinks.save")}</Button><Button type="button" className="secondary" onClick={() => setEditingComment(null)}>{translate("comments.cancel")}</Button></div>
             </form>
             : <div><strong className="text-primary">{thread.authorName}</strong>: {thread.bodyText}</div>}
           {thread.replies.map((reply) => <p key={reply.id} className="m-0 border-l-2 border-subtle pl-2 text-secondary">{reply.authorName}: {reply.bodyText}</p>)}
           {replyTo === thread.id && <form className="grid gap-1.5" onSubmit={(event) => { event.preventDefault(); void reply(thread.id); }} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); closeReply(); } }}>
-            <input aria-label={`${translate("wiki.comments.replyTo")} ${thread.authorName}`} autoFocus value={replyText} onChange={(event) => setReplyText(event.target.value)} />
+            <Input aria-label={`${translate("wiki.comments.replyTo")} ${thread.authorName}`} autoFocus value={replyText} onChange={(event) => setReplyText(event.target.value)} />
             <div className="flex gap-1 [&_button]:!px-2 [&_button]:!py-0.5 [&_button]:!text-12"><Button type="submit" disabled={!replyText.trim()}>{translate("wiki.comments.send")}</Button><Button type="button" className="secondary" onClick={closeReply}>{translate("comments.cancel")}</Button></div>
           </form>}
           <div className="flex items-center gap-3 text-13">
@@ -526,7 +531,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
         </li>)}</ul>
         <div className="grid gap-2 border-t border-subtle pt-3">
           {!replyTo && <Button type="button" className="secondary w-fit" disabled={!editor || editor.state.selection.empty} onClick={() => setReplyTo(null)}>{translate("wiki.comments.selected")}</Button>}
-          <div className="flex gap-2"><input className="min-w-0 flex-1" aria-label={translate("wiki.comments.text")} value={commentText} onChange={(event) => setCommentText(event.target.value)} /><Button type="button" className="secondary" disabled={!commentText.trim()} onClick={() => void addComment()}>{translate("wiki.comments.add")}</Button></div>
+          <div className="flex gap-2"><Input className="min-w-0 flex-1" aria-label={translate("wiki.comments.text")} value={commentText} onChange={(event) => setCommentText(event.target.value)} /><Button type="button" className="secondary" disabled={!commentText.trim()} onClick={() => void addComment()}>{translate("wiki.comments.add")}</Button></div>
         </div>
       </section>}
       {pane === "activity" && <div className="grid gap-4">
@@ -536,6 +541,8 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
           <ul className="m-0 grid list-none gap-2 p-0">{versions.map((version) => <li key={version.id} className="flex items-center justify-between gap-2 text-secondary"><span className="min-w-0 truncate">{formatDate(version.createdAt)} — {version.title}</span><Button className="secondary !px-2 !py-0.5 !text-12" disabled={!page.canEdit} onClick={() => void restore(version.id)}>{translate("wiki.restore")}</Button></li>)}</ul>
         </section>
       </div>}
+        </TabsContent>
+      </Tabs>
     </aside>
     </DetailsPanelFrame>}
   </div>;
@@ -593,16 +600,18 @@ function writeListFilter(params: URLSearchParams, key: keyof ListFilters, value:
 function ListControls({ pages, filters, update, shared = false }: { pages: Summary[]; filters: ListFilters; update: (key: keyof ListFilters, value: string) => void; shared?: boolean }) {
   const owners = Array.from(new Map(pages.map((page) => [page.ownerId, page.ownerName ?? page.ownerId])).entries());
   return <div className="grid gap-3">
-    <div role="tablist" className="flex gap-x-3 overflow-x-auto border-b border-subtle sm:gap-x-4">
-      {(["all", "public", "private", "archived", ...(shared ? ["shared" as const] : [])] as const).map((name) => <Button key={name} role="tab" type="button" aria-selected={filters.tab === name} onClick={() => update("tab", name)}
-        className={`-mb-px whitespace-nowrap border-0 border-b-2 bg-transparent px-1 py-2 text-13 font-medium ${filters.tab === name ? "border-b-[var(--bg-accent-primary)] text-accent-text" : "border-b-transparent text-secondary"}`}>{translate(`pages.tab.${name}` as MessageKey)}</Button>)}
-    </div>
+    <Tabs value={filters.tab} onValueChange={(value) => update("tab", value)}>
+      <TabsList className="flex h-auto justify-start gap-x-3 overflow-x-auto rounded-none border-b border-subtle bg-transparent p-0 sm:gap-x-4">
+        {(["all", "public", "private", "archived", ...(shared ? ["shared" as const] : [])] as const).map((name) => <TabsTrigger key={name} value={name}
+          className={`-mb-px whitespace-nowrap border-0 border-b-2 bg-transparent px-1 py-2 text-13 font-medium ${filters.tab === name ? "border-b-[var(--bg-accent-primary)] text-accent-text" : "border-b-transparent text-secondary"}`}>{translate(`pages.tab.${name}` as MessageKey)}</TabsTrigger>)}
+      </TabsList>
+    </Tabs>
     <div className="flex flex-wrap items-end gap-3 text-13">
       <label className="grid gap-1 text-secondary">{translate("pages.filter.owner")}<select aria-label={translate("pages.filter.owner")} value={filters.owner} onChange={(event) => update("owner", event.target.value)}>
         <option value="">{translate("pages.filter.anyOwner")}</option>{owners.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
       </select></label>
-      <label className="grid gap-1 text-secondary">{translate("pages.filter.createdAfter")}<input aria-label={translate("pages.filter.createdAfter")} type="date" value={filters.createdAfter} onChange={(event) => update("createdAfter", event.target.value)} /></label>
-      <label className="grid gap-1 text-secondary">{translate("pages.filter.updatedAfter")}<input aria-label={translate("pages.filter.updatedAfter")} type="date" value={filters.updatedAfter} onChange={(event) => update("updatedAfter", event.target.value)} /></label>
+      <label className="grid gap-1 text-secondary">{translate("pages.filter.createdAfter")}<Input aria-label={translate("pages.filter.createdAfter")} type="date" value={filters.createdAfter} onChange={(event) => update("createdAfter", event.target.value)} /></label>
+      <label className="grid gap-1 text-secondary">{translate("pages.filter.updatedAfter")}<Input aria-label={translate("pages.filter.updatedAfter")} type="date" value={filters.updatedAfter} onChange={(event) => update("updatedAfter", event.target.value)} /></label>
       <label className="grid gap-1 text-secondary">{translate("pages.order")}<select aria-label={translate("pages.order")} value={filters.order} onChange={(event) => update("order", event.target.value)}>
         <option value="name">{translate("pages.order.name")}</option><option value="created">{translate("pages.order.created")}</option><option value="updated">{translate("pages.order.updated")}</option>
       </select></label>
@@ -704,7 +713,7 @@ function CollectionNameDialog({ initial, title, onSubmit, onClose }: { initial: 
   const [name, setName] = React.useState(initial);
   return <Dialog title={title} onClose={onClose}>
     <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); onSubmit(name); }}>
-      <label className="grid gap-1 text-13 text-secondary">{translate("wiki.collection.name")}<input required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} /></label>
+      <label className="grid gap-1 text-13 text-secondary">{translate("wiki.collection.name")}<Input required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} /></label>
       <DialogActions onClose={onClose} submit={translate("webLinks.save")} />
     </form>
   </Dialog>;

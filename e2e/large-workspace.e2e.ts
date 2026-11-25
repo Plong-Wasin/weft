@@ -155,16 +155,16 @@ try {
   await firstAgent.waitFor();
   const access = firstAgent.getByRole("group", { name: translate("agents.access") });
   const allProjectToggle = access.getByRole("checkbox", { name: translate("agents.allProjects") });
-  if (await allProjectToggle.isChecked()) await allProjectToggle.click();
+  if (await allProjectToggle.getAttribute("aria-checked") === "true") await allProjectToggle.click();
   const accessSearch = access.getByRole("searchbox", { name: translate("projects.find") });
   await accessSearch.fill("SCL249");
-  const targetProject = access.getByLabel("SCL249 · Scale Project 249");
-  await targetProject.check();
+  const targetProject = access.getByRole("checkbox", { name: "SCL249 · Scale Project 249" });
+  await targetProject.click();
   await accessSearch.fill("SCL248");
   await access.getByLabel("SCL248 · Scale Project 248").waitFor();
   await access.getByRole("button", { name: translate("agents.save"), exact: true }).click();
   await accessSearch.fill("SCL249");
-  check(await targetProject.isChecked(), "filtering another Project removed the selected Project from Agent access");
+  check(await targetProject.getAttribute("aria-checked") === "true", "filtering another Project removed the selected Project from Agent access");
 
   const started = performance.now();
   const measured = await call<{ items: Array<{ displayId: string; labelIds: string[] }>; truncated: boolean }>("list_workspace_work_items_with_metadata", { workspaceId });

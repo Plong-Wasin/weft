@@ -18,6 +18,8 @@ import { EmptyState } from "./empty-state";
 import type { Estimate, StateGroup } from "./types";
 import { TypeIconMark, type WorkItemType } from "./work-item-types";
 
+import { Checkbox } from "@/ui/checkbox";
+import { Input } from "@/ui/input";
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
 type State = { id: string; name: string; group: StateGroup };
@@ -512,7 +514,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   };
 
   const quickForm = (groupKey: string) => <form className="mx-1 my-1 flex flex-wrap items-center gap-2 rounded-xl border border-subtle bg-layer-1 px-3 py-2" onSubmit={(event) => { event.preventDefault(); void create(groupKey); }}>
-    <input autoFocus aria-label={t("workItems.titleField")} placeholder={t("workItems.quickTitle")} value={quickTitle} maxLength={500} className="min-w-0 flex-1 max-sm:basis-full" onChange={(event) => setQuickTitle(event.target.value)}
+    <Input autoFocus aria-label={t("workItems.titleField")} placeholder={t("workItems.quickTitle")} value={quickTitle} maxLength={500} className="min-w-0 flex-1 max-sm:basis-full" onChange={(event) => setQuickTitle(event.target.value)}
       onKeyDown={(event) => { if (event.key === "Escape") { setQuick(null); setQuickTitle(""); } }} />
     <Button type="submit" className={`${ghost} max-sm:ml-auto whitespace-nowrap`}>{t("workItems.create")}</Button>
   </form>;
@@ -551,7 +553,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     });
     anchor.current = id;
   };
-  const pickBox = (item: Item, revealOnHover = false) => selectable && <input type="checkbox" data-no-drag className={`size-4 shrink-0 ${revealOnHover ? `relative z-10 ${selected.includes(item.id) ? "" : "[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100"}` : ""}`} aria-label={t("bulk.selectItem").replace("{id}", item.displayId)} checked={selected.includes(item.id)}
+  const pickBox = (item: Item, revealOnHover = false) => selectable && <Checkbox data-no-drag className={`size-4 shrink-0 ${revealOnHover ? `relative z-10 ${selected.includes(item.id) ? "" : "[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100"}` : ""}`} aria-label={t("bulk.selectItem").replace("{id}", item.displayId)} checked={selected.includes(item.id)}
     onChange={() => undefined} onClick={(event) => pick(item.id, event.shiftKey)} />;
   // Collapsing a group hides its work items, so they leave the selection too: the bar never acts on what the user cannot see.
   const visibleKey = orderedIds.join(",");
@@ -607,7 +609,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
           {canCreate && canWrite && <Button type="button" aria-label={t("layout.calendar.add").replace("{date}", day.date)} className="rounded-md px-1.5 text-secondary hover:bg-layer-transparent-hover" onClick={() => { setQuick(day.date); setQuickTitle(""); }}>+</Button>}</div>
         <div className="grid gap-1">{day.items.map((item) => <Link key={item.id} to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} draggable={canWrite} onDragStart={(event) => { event.dataTransfer.setData("text/plain", item.id); event.dataTransfer.effectAllowed = "move"; }} data-testid={`calendar-card-${item.displayId}`}
           className="block truncate rounded-md border border-transparent bg-layer-1 px-2 py-1.5 text-12 font-medium text-primary hover:bg-layer-transparent-hover">{item.title}</Link>)}</div>
-        {quick === day.date && <form className="mt-1 flex gap-1" onSubmit={(event) => { event.preventDefault(); void createForDate(day.date); }}><input autoFocus aria-label={t("workItems.titleField")} value={quickTitle} className="min-w-0 w-full" onChange={(event) => setQuickTitle(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setQuick(null); }} /><Button type="submit" aria-label={t("workItems.create")}>+</Button></form>}
+        {quick === day.date && <form className="mt-1 flex gap-1" onSubmit={(event) => { event.preventDefault(); void createForDate(day.date); }}><Input autoFocus aria-label={t("workItems.titleField")} value={quickTitle} className="min-w-0 w-full" onChange={(event) => setQuickTitle(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setQuick(null); }} /><Button type="submit" aria-label={t("workItems.create")}>+</Button></form>}
       </div>)}
     </div>
     <aside aria-label={t("layout.calendar.undated")} className="mt-2 rounded-lg bg-layer-1 p-3"><h3 className="mb-2 text-13 font-medium">{t("layout.calendar.undated")}</h3>
@@ -659,7 +661,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       {(["list", "board", "spreadsheet", "calendar", "gantt"] as const).map((layout) => { const Icon = layout === "list" ? List : layout === "board" ? Columns3 : layout === "spreadsheet" ? Table2 : layout === "calendar" ? CalendarDays : BarChart3; return <Button key={layout} type="button" aria-pressed={params.layout === layout} aria-label={t(`layout.${layout}`)} title={t(`layout.${layout}`)}
         className={`inline-flex items-center rounded-md p-1.5 max-sm:min-h-9 max-sm:min-w-9 max-sm:flex-col max-sm:justify-center max-sm:gap-0.5 ${params.layout === layout ? "bg-surface-1 text-primary shadow-sm" : "bg-transparent text-secondary hover:bg-layer-transparent-hover"} hover:text-primary`} onClick={() => update({ layout })}><Icon aria-hidden size={16} /><span className="hidden text-11 leading-none max-sm:inline">{t(`layout.${layout}`)}</span></Button>; })}
     </div>
-    {selectable && <label className={`${ghost} cursor-pointer max-sm:min-h-9 max-sm:gap-1`} title={t("bulk.selectAll")}><input type="checkbox" className="size-4" checked={allPicked} onChange={() => setSelected(allPicked ? [] : orderedIds.slice(0, 500))} /><span className="sr-only">{t("bulk.selectAll")}</span><span aria-hidden className="text-12">{t("bulk.selectShown")}</span></label>}
+    {selectable && <label className={`${ghost} cursor-pointer max-sm:min-h-9 max-sm:gap-1`} title={t("bulk.selectAll")}><Checkbox className="size-4" checked={allPicked} onChange={() => setSelected(allPicked ? [] : orderedIds.slice(0, 500))} /><span className="sr-only">{t("bulk.selectAll")}</span><span aria-hidden className="text-12">{t("bulk.selectShown")}</span></label>}
     <FilterPicker sections={sections} filters={chips ?? emptyFilters()} count={filterCount} onChange={setFilters} onClear={() => update({ q: "" })} />
     <FilterQueryToggle open={filterQueryOpen || (queryError !== null)} onToggle={() => setFilterQueryOpen(!filterQueryOpen)} />
     <Popover label={t("layout.display")} className={`${ghost} max-sm:min-h-9`} panelRole="dialog" panelClassName="grid w-72 max-w-[calc(100vw-2rem)] max-h-[70dvh] gap-3 overflow-auto p-3" trigger={<><SlidersHorizontal aria-hidden size={14} /><span className="max-sm:sr-only">{t("layout.display")}</span></>}>
@@ -681,7 +683,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
         <fieldset className="grid gap-1.5"><legend className="pb-1 text-12 font-medium text-tertiary">{t("layout.properties")}</legend>
           {(sheet ? [...params.props, ...displayProperties.filter((property) => !params.props.includes(property))] : [...displayProperties]).filter((property) => property !== "estimate" || !!estimate?.enabled).map((property) => <div key={property} className="flex items-center gap-1">
             <label className={`${checkRow} flex-1`}>
-              <input type="checkbox" checked={params.props.includes(property)} onChange={(event) => update({ props: sheet ? (event.target.checked ? [...params.props, property] : params.props.filter((other) => other !== property)) : displayProperties.filter((other) => other === property ? event.target.checked : params.props.includes(other)) })} />{t(`layout.property.${property}`)}</label>
+              <Checkbox checked={params.props.includes(property)} onChange={(event) => update({ props: sheet ? (event.target.checked ? [...params.props, property] : params.props.filter((other) => other !== property)) : displayProperties.filter((other) => other === property ? event.target.checked : params.props.includes(other)) })} />{t(`layout.property.${property}`)}</label>
             {sheet && params.props.includes(property) && <>
               <Button type="button" className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={`${t("layout.column.earlier")}: ${t(`layout.property.${property}`)}`} onClick={() => update({ props: moveProperty(params.props, property, -1) })}><ArrowLeft aria-hidden size={14} /></Button>
               <Button type="button" className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={`${t("layout.column.later")}: ${t(`layout.property.${property}`)}`} onClick={() => update({ props: moveProperty(params.props, property, 1) })}><ArrowRight aria-hidden size={14} /></Button>

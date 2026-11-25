@@ -12,6 +12,8 @@ import { priorityOrder } from "./work-item-layout";
 import type { Estimate, Label, Member, Project, WorkItem, WorkState } from "./types";
 import { PropertyFields, TypePicker, missingRequired, propertiesOfType, useWorkItemTypes, hasValue, type WorkItemType } from "./work-item-types";
 
+import { Input } from "@/ui/input";
+import { Textarea } from "@/ui/textarea";
 type Named = { id: string; name: string; status?: string };
 const t = (key: string) => translate(key as MessageKey);
 
@@ -119,8 +121,8 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
           <DialogTitle className="m-0 flex-1">{t("workItems.modal.title")}</DialogTitle>
           <Button type="button" className="size-11 rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent hover:text-accent-foreground" aria-label={t("workItems.modal.cancel")} onClick={onClose}><X aria-hidden size={16} /></Button>
         </div>
-        <input autoFocus required aria-label={t("workItems.titleField")} placeholder={t("workItems.titleField")} value={title} maxLength={500} className="w-full text-16" onChange={(event) => setTitle(event.target.value)} />
-        <textarea aria-label={t("workItems.description")} placeholder={t("workItems.descriptionHint")} rows={4} value={description} className="w-full text-14" onChange={(event) => setDescription(event.target.value)} />
+        <Input autoFocus required aria-label={t("workItems.titleField")} placeholder={t("workItems.titleField")} value={title} maxLength={500} className="w-full text-16" onChange={(event) => setTitle(event.target.value)} />
+        <Textarea aria-label={t("workItems.description")} placeholder={t("workItems.descriptionHint")} rows={4} value={description} className="w-full text-14" onChange={(event) => setDescription(event.target.value)} />
         {typesOn && types.length > 0 && <div className="grid gap-3">
           <div className="grid gap-1"><span className="text-12 font-medium text-secondary">{t("types.type")}</span><div className={chipRow}><TypePicker types={types} value={typeId} onSelect={chooseType} /></div></div>
           <PropertyFields properties={propertiesOfType(properties, typeId)} values={propertyValues} members={people} idPrefix="create"
@@ -151,9 +153,9 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
         </div>
         <div className={chipRow}>
           <label className="flex items-center gap-2 text-13 text-secondary"><CalendarClock aria-hidden size={14} />{t("workItems.startDate")}
-            <input type="date" value={startDate} max={dueDate || undefined} className="w-auto" onChange={(event) => setStartDate(event.target.value)} /></label>
+            <Input type="date" value={startDate} max={dueDate || undefined} className="w-auto" onChange={(event) => setStartDate(event.target.value)} /></label>
           <label className="flex items-center gap-2 text-13 text-secondary"><CalendarCheck aria-hidden size={14} />{t("workItems.dueDate")}
-            <input type="date" value={dueDate} min={startDate || undefined} className="w-auto" onChange={(event) => setDueDate(event.target.value)} /></label>
+            <Input type="date" value={dueDate} min={startDate || undefined} className="w-auto" onChange={(event) => setDueDate(event.target.value)} /></label>
         </div>
         {note && <p role="alert" className="m-0 text-danger-text">{note}</p>}
         <div className="sticky bottom-0 z-10 flex justify-end gap-2 border-t border-border bg-background -mb-6 pb-6 pt-4 max-sm:-mb-4 max-sm:pb-4">

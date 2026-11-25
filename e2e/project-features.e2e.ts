@@ -99,11 +99,11 @@ try {
   check(await confirm.getByText("Launch plan").isVisible(), "confirmation does not name the page in use");
   await page.screenshot({ path: `${shots}/pages-confirm-1440.png` });
   await confirm.getByRole("button", { name: translate("features.confirmKeep") }).click();
-  check(await page.getByRole("switch", { name: translate("features.pages") }).isChecked(), "Keep on still turned Pages off");
+  check(await page.getByRole("switch", { name: translate("features.pages") }).getAttribute("aria-checked") === "true", "Keep on still turned Pages off");
   await page.getByRole("switch", { name: translate("features.pages") }).click();
   await confirm.getByRole("button", { name: translate("features.confirmTurnOff") }).click();
-  for (let attempt = 0; attempt < 30 && await page.getByRole("switch", { name: translate("features.pages") }).isChecked(); attempt += 1) await Bun.sleep(100);
-  check(!(await page.getByRole("switch", { name: translate("features.pages") }).isChecked()), "Pages did not turn off");
+  for (let attempt = 0; attempt < 30 && await page.getByRole("switch", { name: translate("features.pages") }).getAttribute("aria-checked") === "true"; attempt += 1) await Bun.sleep(100);
+  check(await page.getByRole("switch", { name: translate("features.pages") }).getAttribute("aria-checked") === "false", "Pages did not turn off");
   const projectMenu = sidebar.getByRole("navigation", { name: new RegExp(translate("projectNav.label")) });
   await page.getByRole("link", { name: /SIMP · Simple app/ }).click();
   await projectMenu.getByRole("link", { name: translate("projectNav.views") }).waitFor();

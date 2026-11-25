@@ -9,6 +9,9 @@ import type { Project } from "../../types";
 import { TypeForm, type TypeValues } from "./type-form";
 import { typeDescriptionText } from "../../type-descriptions";
 
+import { Checkbox } from "@/ui/checkbox";
+import { Input } from "@/ui/input";
+import { Textarea } from "@/ui/textarea";
 const t = (key: string) => translate(key as MessageKey);
 // Every occurrence: a line may name the same property or type twice.
 const replaceAll = (text: string, values: Record<string, string>) => Object.entries(values).reduce((result, [key, value]) => result.split(`{${key}}`).join(value), text);
@@ -115,7 +118,7 @@ function TypeRow({ type, types, properties, onRun, grip, canUp, canDown, onMove 
             <option value="">{t("types.choose")}</option>
             {others.map((other) => <option key={other.id} value={other.id}>{other.name}</option>)}
           </select></label>
-          <label className="flex items-center gap-2 text-13"><input type="checkbox" checked={dropValues} onChange={(event) => setDropValues(event.target.checked)} />{t("types.dropValuesOnMove")}</label>
+          <label className="flex items-center gap-2 text-13"><Checkbox checked={dropValues} onChange={(event) => setDropValues(event.target.checked)} />{t("types.dropValuesOnMove")}</label>
         </> : <span className="text-13 text-secondary">{t("types.deleteUnused")}</span>}
         <span className="flex flex-wrap gap-2">
           <Button type="button" disabled={type.workItems > 0 && !moveTo} onClick={() => void onRun("delete_work_item_type", { typeId: type.id, ...(moveTo ? { moveToTypeId: moveTo } : {}), ...(dropValues ? { dropPropertyValues: true } : {}) }, "types.failed").then((ok) => ok && setDeleting(false))}>{t("types.confirmDelete")}</Button>
@@ -199,7 +202,7 @@ function TypeProperties({ type, types, properties, onRun }: { type: WorkItemType
     {using && <div className="grid gap-2 rounded-md border border-subtle bg-layer-1 p-3" data-use-property>
       <span className="font-medium text-13">{t("types.useExisting")}</span>
       {candidates.length === 0 ? <p className="m-0 text-13 text-secondary">{t("types.useExistingEmpty")}</p> : <>
-        {candidates.length > 6 && <input type="search" aria-label={t("types.searchProperties")} placeholder={t("types.searchProperties")} value={query} className="w-full" onChange={(event) => setQuery(event.target.value)} />}
+        {candidates.length > 6 && <Input type="search" aria-label={t("types.searchProperties")} placeholder={t("types.searchProperties")} value={query} className="w-full" onChange={(event) => setQuery(event.target.value)} />}
         {matches.length === 0 ? <p className="m-0 text-13 text-secondary">{t("types.noPropertyMatch")}</p> : <ul className="m-0 grid list-none gap-2 p-0">
           {matches.map((property) => <li key={property.id} className="flex flex-wrap items-center justify-between gap-2">
             <span className="flex flex-wrap items-center gap-2 text-13">
@@ -282,11 +285,11 @@ function PropertyRow({ property, types, typeName, onRun, grip, canUp, canDown, o
       </span>
       {isOption && property.options.length > 0 && <span className="text-12 text-tertiary">{replaceAll(t("types.optionsList"), { options: property.options.map((option) => option.label).join(", ") })}</span>}
       {editing && <span className="mt-2 grid gap-2 rounded-md border border-subtle bg-layer-1 p-3" data-property-editor>
-        <label className="grid gap-1 text-13">{t("types.propertyName")}<input value={name} maxLength={60} onChange={(event) => setName(event.target.value)} /></label>
-        {isOption && <label className="grid gap-1 text-13">{t("types.optionsOnePerLine")}<textarea rows={4} value={options} onChange={(event) => setOptions(event.target.value)} /></label>}
-        <label className="flex items-center gap-2 text-13"><input type="checkbox" checked={required} onChange={(event) => setRequired(event.target.checked)} />{t("types.requiredToggle")}</label>
+        <label className="grid gap-1 text-13">{t("types.propertyName")}<Input value={name} maxLength={60} onChange={(event) => setName(event.target.value)} /></label>
+        {isOption && <label className="grid gap-1 text-13">{t("types.optionsOnePerLine")}<Textarea rows={4} value={options} onChange={(event) => setOptions(event.target.value)} /></label>}
+        <label className="flex items-center gap-2 text-13"><Checkbox checked={required} onChange={(event) => setRequired(event.target.checked)} />{t("types.requiredToggle")}</label>
         <fieldset className="grid gap-1 text-13"><legend className="mb-1">{t("types.belongsTo")}</legend>
-          {types.map((type) => <label key={type.id} className="flex items-center gap-2"><input type="checkbox" checked={typeIds.includes(type.id)} onChange={(event) => setTypeIds(event.target.checked ? [...typeIds, type.id] : typeIds.filter((id) => id !== type.id))} />{type.name}</label>)}
+          {types.map((type) => <label key={type.id} className="flex items-center gap-2"><Checkbox checked={typeIds.includes(type.id)} onChange={(event) => setTypeIds(event.target.checked ? [...typeIds, type.id] : typeIds.filter((id) => id !== type.id))} />{type.name}</label>)}
         </fieldset>
         <span className="flex flex-wrap gap-2">
           <Button type="button" disabled={typeIds.length === 0} onClick={() => void save()}>{t("types.save")}</Button>
@@ -328,17 +331,17 @@ function AddProperty({ types, initialTypeIds, onAdd, onCancel }: { types: WorkIt
   }}>
     <h3 className="m-0 text-14 font-semibold text-primary">{t("types.addProperty")}</h3>
     <div className="flex flex-wrap items-start gap-4">
-      <label className="grid content-start gap-1.5 text-13">{t("types.propertyName")}<input required value={name} maxLength={60} onChange={(event) => setName(event.target.value)} /></label>
+      <label className="grid content-start gap-1.5 text-13">{t("types.propertyName")}<Input required value={name} maxLength={60} onChange={(event) => setName(event.target.value)} /></label>
       <label className="grid content-start gap-1.5 text-13">{t("types.propertyKind")}<select value={kind} onChange={(event) => setKind(event.target.value as PropertyKind)}>
         {propertyKinds.map((value) => <option key={value} value={value}>{t(`types.kind.${value}`)}</option>)}
       </select></label>
-      {isOption && <label className="grid min-w-48 flex-1 content-start gap-1.5 text-13">{t("types.optionsOnePerLine")}<textarea rows={3} value={options} onChange={(event) => setOptions(event.target.value)} /></label>}
+      {isOption && <label className="grid min-w-48 flex-1 content-start gap-1.5 text-13">{t("types.optionsOnePerLine")}<Textarea rows={3} value={options} onChange={(event) => setOptions(event.target.value)} /></label>}
     </div>
     <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-      <label className="flex items-center gap-2 text-13"><input type="checkbox" checked={required} onChange={(event) => setRequired(event.target.checked)} />{t("types.requiredToggle")}</label>
+      <label className="flex items-center gap-2 text-13"><Checkbox checked={required} onChange={(event) => setRequired(event.target.checked)} />{t("types.requiredToggle")}</label>
       <div role="group" aria-labelledby={usedById} className="flex flex-wrap items-center gap-x-4 gap-y-2 text-13">
         <span id={usedById} className="font-medium text-primary">{t("types.belongsTo")}</span>
-        {types.map((type) => <label key={type.id} className="flex items-center gap-1.5"><input type="checkbox" checked={typeIds.includes(type.id)} onChange={(event) => setTypeIds(event.target.checked ? [...typeIds, type.id] : typeIds.filter((id) => id !== type.id))} />{type.name}</label>)}
+        {types.map((type) => <label key={type.id} className="flex items-center gap-1.5"><Checkbox checked={typeIds.includes(type.id)} onChange={(event) => setTypeIds(event.target.checked ? [...typeIds, type.id] : typeIds.filter((id) => id !== type.id))} />{type.name}</label>)}
       </div>
     </div>
     <div className="flex flex-wrap gap-2">

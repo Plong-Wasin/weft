@@ -71,7 +71,7 @@ try {
   const typesSwitch = page.getByRole("switch", { name: t("features.types") });
   await typesSwitch.waitFor();
   await typesSwitch.click();
-  await page.waitForFunction((label: string) => (document.querySelector(`input[role="switch"][aria-label="${label}"]`) as HTMLInputElement | null)?.checked === true, t("features.types"));
+  await page.waitForFunction((label: string) => document.querySelector(`[role="switch"][aria-label="${label}"]`)?.getAttribute("aria-checked") === "true", t("features.types"));
   await page.getByRole("heading", { name: t("types.title") }).waitFor();
   await page.getByRole("button", { name: t("types.addSuggestion").replace("{name}", "Bug") }).click();
 

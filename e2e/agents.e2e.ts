@@ -79,7 +79,7 @@ try {
   await page.getByRole("button", { name: translate("agents.save") }).click();
   const card = page.locator('[data-agent="Helper Bot"]');
   await card.waitFor();
-  await card.getByLabel(translate("agents.allProjects")).click();
+  await card.getByRole("checkbox", { name: translate("agents.allProjects") }).click();
   await page.waitForFunction(() => document.querySelector('[data-agent="Helper Bot"] input[type=checkbox]:checked') !== null);
   await card.locator("fieldset").filter({ hasText: translate("agents.allProjects") }).getByRole("button", { name: translate("agents.save") }).click();
   const ownerId = me.user.id;

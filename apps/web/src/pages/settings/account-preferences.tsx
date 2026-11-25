@@ -8,6 +8,7 @@ import { useAiState } from "../../ai-flag";
 import { NotFound } from "../../not-found";
 import { Note, SettingsBlock, SettingsHeader } from "./settings-ui";
 
+import { Checkbox } from "@/ui/checkbox";
 /** The signed-in person's own preferences that follow the account. Only AI preferences for now, shown only while AI is on. */
 export function AccountPreferencesPage() {
   const state = useAiState();
@@ -39,7 +40,7 @@ function AiPreferencesForm() {
     {data && <SettingsBlock>
       <div className="grid gap-1">
         <label htmlFor="ai-selection-menu" className="flex min-h-11 items-center gap-2 text-14 text-primary">
-          <input id="ai-selection-menu" type="checkbox" checked={data.showSelectionMenu} aria-describedby="ai-selection-menu-hint" onChange={(event) => void save(event.target.checked)} />
+          <Checkbox id="ai-selection-menu" checked={data.showSelectionMenu} aria-describedby="ai-selection-menu-hint" onChange={(event) => void save(event.target.checked)} />
           <span>{translate("accountPrefs.aiMenu")}</span>
         </label>
         <p id="ai-selection-menu-hint" className="m-0 text-13 text-secondary">{translate("accountPrefs.aiMenuHint")}</p>

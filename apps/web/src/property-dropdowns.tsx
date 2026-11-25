@@ -10,6 +10,7 @@ import { filterPickerOptions, groupPickerOptions, isPickable, isSearchable, move
 import type { Estimate, StateGroup } from "./types";
 import { cn } from "./lib/utils";
 
+import { Input } from "@/ui/input";
 const t = (key: string) => translate(key as MessageKey);
 const outlinedChip = "border border-border bg-background px-2 py-1 text-xs font-medium text-foreground hover:bg-accent [@media(pointer:coarse)]:min-h-11";
 const quietChip = "rounded-md bg-transparent px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground [@media(pointer:coarse)]:min-h-11";
@@ -95,7 +96,7 @@ function PickerBody({ label, options, onPick, searchAlways, children }: { label:
   };
   return <>
     {searchable && <div className="sticky top-0 z-10 bg-popover pb-1">
-      <input type="search" aria-label={t("picker.search")} aria-expanded="true" aria-controls={listId} placeholder={t("picker.search")} autoComplete="off" value={query}
+      <Input type="search" aria-label={t("picker.search")} aria-expanded="true" aria-controls={listId} placeholder={t("picker.search")} autoComplete="off" value={query}
         onChange={(event) => { setQuery(event.target.value); setIndex(0); }} onKeyDown={onKeyDown} aria-activedescendant={active ? optionId(active) : undefined}
         className="min-h-9 w-full rounded-md border border-input bg-background px-2.5 py-2 text-sm text-foreground placeholder:text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11" />
     </div>}

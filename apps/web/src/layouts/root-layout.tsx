@@ -18,6 +18,7 @@ import { OnboardingShell, fieldClass, primaryButton } from "./auth-shell";
 import { ThemeSwitch } from "./theme-switch";
 import { ForcedPasswordReset, SecurityNotice } from "../pages/account-security";
 
+import { Input } from "@/ui/input";
 export type RootContext = { current: Current; languageSwitch: React.ReactNode; signOut: () => Promise<void>; refresh: () => Promise<void> };
 export const useRoot = () => useOutletContext<RootContext>();
 
@@ -54,11 +55,11 @@ export function WorkspaceChooser({ current, languageSwitch, signOut, refresh }: 
       {current.workspaces.map((item) => <li key={item.id}><a className="block rounded-md border border-subtle px-3.5 py-3 text-14 font-medium !text-primary hover:bg-layer-1-hover" href={paths.home(item.slug)}>{item.name}</a></li>)}
     </ul>}
     {current.canCreateWorkspace && <form onSubmit={createWorkspace} className="grid gap-4">
-      <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("workspace.name")}<input className={fieldClass} required value={workspaceName} onChange={(event) => {
+      <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("workspace.name")}<Input className={fieldClass} required value={workspaceName} onChange={(event) => {
         const value = event.target.value; setWorkspaceName(value);
         if (!slug || slug === slugify(workspaceName)) setSlug(slugify(value));
       }} /></label>
-      <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("workspace.slug")}<input className={fieldClass} required pattern="[a-z0-9]+(-[a-z0-9]+)*" value={slug} onChange={(event) => setSlug(event.target.value)} /></label>
+      <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("workspace.slug")}<Input className={fieldClass} required pattern="[a-z0-9]+(-[a-z0-9]+)*" value={slug} onChange={(event) => setSlug(event.target.value)} /></label>
       <Button className={primaryButton}>{translate("workspace.create")}</Button>
     </form>}
     {needsFirstWorkspace && !current.canCreateWorkspace && <p className="text-14 text-secondary">{translate("workspace.noAccess")}</p>}

@@ -69,10 +69,10 @@ try {
   const workspaceId = me.workspaces.find((item) => item.slug === slug)!.id;
   const setFeature = async (feature: "cycles" | "modules" | "intake", on: boolean) => {
     const toggle = page.getByRole("switch", { name: translate(`features.${feature}`) });
-    if (await toggle.isChecked() === on) return;
+    if ((await toggle.getAttribute("aria-checked")) === String(on)) return;
     await toggle.click();
-    for (let attempt = 0; attempt < 30 && await toggle.isChecked() !== on; attempt += 1) await Bun.sleep(100);
-    check(await toggle.isChecked() === on, `${feature} toggle did not settle`);
+    for (let attempt = 0; attempt < 30 && await toggle.getAttribute("aria-checked") !== String(on); attempt += 1) await Bun.sleep(100);
+    check(await toggle.getAttribute("aria-checked") === String(on), `${feature} toggle did not settle`);
   };
   const members = () => call<Array<{ userId: string; name: string; email: string; role: string }>>("list_members", { workspaceId });
 

@@ -14,6 +14,7 @@ import { paths } from "../routes";
 import { authClient } from "../auth-client";
 import { useAiEnabled } from "../ai-flag";
 
+import { Input } from "@/ui/input";
 /** Profile menu: who is signed in, language, theme (light, dark, system), sign out. */
 export function ProfileMenu({ user, signOut }: { user: Current["user"]; signOut: () => Promise<void> }) {
   const locale = useLocale();
@@ -71,8 +72,8 @@ export function ProfileMenu({ user, signOut }: { user: Current["user"]; signOut:
       {failed && <p role="alert" className="px-2.5 text-12 text-destructive">{translate("language.saveFailed")}</p>}
       <Button type="button" role="menuitem" className={`${menuItemClass} mt-1 border-t border-border`} onClick={() => { setChangingPassword(!changingPassword); setPasswordIssue(null); }}><LockKeyhole aria-hidden size={14} />{translate("auth.changePassword")}</Button>
       {changingPassword && <form className="grid gap-2 px-2.5 py-2" onSubmit={(event) => void changePassword(event)}>
-        <label className="grid gap-1 text-12 text-muted-foreground">{translate("auth.currentPassword")}<input className="h-9 rounded-md border border-input bg-background px-3 text-foreground" type="password" required autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} /></label>
-        <label className="grid gap-1 text-12 text-muted-foreground">{translate("auth.newPassword")}<input className="h-9 rounded-md border border-input bg-background px-3 text-foreground" type="password" required minLength={passwordMinimum} maxLength={256} autoComplete="new-password" aria-describedby="change-password-hint" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label>
+        <label className="grid gap-1 text-12 text-muted-foreground">{translate("auth.currentPassword")}<Input className="h-9 rounded-md border border-input bg-background px-3 text-foreground" type="password" required autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} /></label>
+        <label className="grid gap-1 text-12 text-muted-foreground">{translate("auth.newPassword")}<Input className="h-9 rounded-md border border-input bg-background px-3 text-foreground" type="password" required minLength={passwordMinimum} maxLength={256} autoComplete="new-password" aria-describedby="change-password-hint" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label>
         <p id="change-password-hint" className="m-0 text-11 text-muted-foreground">{translate("auth.passwordHint").replace("{min}", String(passwordMinimum))}</p>
         {passwordIssue && <p role="alert" className="m-0 text-12 text-destructive">{passwordIssue}</p>}
         <Button type="submit" className="h-8 rounded-md bg-primary px-3 text-12 font-medium text-primary-foreground">{translate("auth.savePassword")}</Button>

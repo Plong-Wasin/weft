@@ -187,8 +187,8 @@ try {
   check(await moduleDescriptionEditor.locator("strong").filter({ hasText: "Module scope and goal" }).count() === 1, "Module rich formatting did not render safely");
   await page.getByRole("button", { name: t("modules.addWorkItems") }).click();
   const add = page.getByRole("dialog", { name: t("modules.addItemsTitle") });
-  await add.getByLabel(/Alpha/).check();
-  await add.getByLabel(/Beta/).check();
+  await add.getByRole("checkbox", { name: /Alpha/ }).click();
+  await add.getByRole("checkbox", { name: /Beta/ }).click();
   await add.getByRole("button", { name: t("modules.add"), exact: true }).click();
   await add.waitFor({ state: "detached" });
   await page.getByTestId("row-MOB-1").getByRole("link", { name: "Alpha" }).waitFor();
@@ -258,12 +258,12 @@ try {
   await page.keyboard.press("Escape");
   await page.goto(`${base}/modules`);
   await page.getByText(t("modules.empty")).waitFor();
-  await page.getByLabel(t("modules.showArchived")).check();
+  await page.getByRole("checkbox", { name: t("modules.showArchived") }).click();
   await page.getByTestId("module-row-Authentication").waitFor();
   await page.getByTestId("module-row-Authentication").getByRole("button", { name: t("modules.actions") }).click();
   await page.getByRole("menuitem", { name: t("modules.unarchive") }).click();
   await page.getByText(t("modules.empty")).waitFor();
-  await page.getByLabel(t("modules.showArchived")).uncheck();
+  await page.getByRole("checkbox", { name: t("modules.showArchived") }).click();
   await page.getByTestId("module-row-Authentication").getByRole("button", { name: t("modules.actions") }).click();
   await page.getByRole("menuitem", { name: t("modules.delete") }).click();
   await page.getByText(t("modules.empty")).waitFor();

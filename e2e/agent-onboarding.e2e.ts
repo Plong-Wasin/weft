@@ -100,9 +100,9 @@ try {
   for (let attempt = 0; attempt < 50 && await allowAutopilot.isDisabled(); attempt += 1) await Bun.sleep(100);
   check(!(await allowAutopilot.isDisabled()), "workspace settings did not load the Admin controls");
   // The control is controlled by a query: it reverts until the save refetches, so click and poll instead of check().
-  if (!(await allowAutopilot.isChecked())) await allowAutopilot.click();
-  for (let attempt = 0; attempt < 50 && !(await allowAutopilot.isChecked()); attempt += 1) await Bun.sleep(100);
-  check(await allowAutopilot.isChecked(), "workspace Autopilot setting did not enable");
+  if (await allowAutopilot.getAttribute("aria-checked") !== "true") await allowAutopilot.click();
+  for (let attempt = 0; attempt < 50 && await allowAutopilot.getAttribute("aria-checked") !== "true"; attempt += 1) await Bun.sleep(100);
+  check(await allowAutopilot.getAttribute("aria-checked") === "true", "workspace Autopilot setting did not enable");
   await screenshotMatrix(admin, "workspace-autopilot-settings");
 
   // Complete the browser-based `weft login` callback using the signed-in session.
@@ -187,14 +187,14 @@ try {
   await agentCard.waitFor();
   const allProjects = agentCard.getByLabel(translate("agents.allProjects"));
   await allProjects.click();
-  for (let attempt = 0; attempt < 50 && !(await allProjects.isChecked()); attempt += 1) await Bun.sleep(100);
-  if (!(await allProjects.isChecked())) throw new Error(`Could not open Agent to all projects; note: ${(await agentCard.getByRole("alert").allTextContents()).join("; ") || "none"}`);
+  for (let attempt = 0; attempt < 50 && await allProjects.getAttribute("aria-checked") !== "true"; attempt += 1) await Bun.sleep(100);
+  if (await allProjects.getAttribute("aria-checked") !== "true") throw new Error(`Could not open Agent to all projects; note: ${(await agentCard.getByRole("alert").allTextContents()).join("; ") || "none"}`);
   const developerAccess = agentCard.getByLabel(`${translate("agents.mayUse")} Developer`);
   await developerAccess.click();
-  for (let attempt = 0; attempt < 50 && !(await developerAccess.isChecked()); attempt += 1) await Bun.sleep(100);
-  if (!(await developerAccess.isChecked())) throw new Error(`Runtime owner could not grant Developer Agent access; note: ${(await agentCard.getByRole("alert").allTextContents()).join("; ") || "none"}`);
+  for (let attempt = 0; attempt < 50 && await developerAccess.getAttribute("aria-checked") !== "true"; attempt += 1) await Bun.sleep(100);
+  if (await developerAccess.getAttribute("aria-checked") !== "true") throw new Error(`Runtime owner could not grant Developer Agent access; note: ${(await agentCard.getByRole("alert").allTextContents()).join("; ") || "none"}`);
   const pmAccess = agentCard.getByLabel(`${translate("agents.mayUse")} PM`);
-  check(!(await pmAccess.isChecked()), "PM unexpectedly has Code-capable Agent access");
+  check(await pmAccess.getAttribute("aria-checked") === "false", "PM unexpectedly has Code-capable Agent access");
   await screenshotMatrix(adminPage, "agent-access-settings");
   // Agents you can ask: the Developer may use the Agent; the PM sees it greyed with who to ask. Read-only for both.
   await developer.goto(`${web}/${slug}/settings/agents`);

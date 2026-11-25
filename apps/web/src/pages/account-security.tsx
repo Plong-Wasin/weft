@@ -7,6 +7,7 @@ import { securityNoticeText } from "../security-notice";
 import { Dialog } from "../dialog";
 import { Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings/settings-ui";
 
+import { Input } from "@/ui/input";
 type SessionRow = { id: string; device: string; createdAt: string; lastSeenAt: string; current: boolean };
 
 /** Shown instead of the app while an Admin's forced reset is pending: the person chooses a new password before anything else. */
@@ -37,9 +38,9 @@ export function ForcedPasswordReset({ notice, languageSwitch, signOut, onDone, m
     <h1 className="text-20 font-semibold">{translate("account.resetTitle")}</h1>
     <p className="text-14 text-secondary">{notice ? securityNoticeText(notice) : translate("account.resetWhy")}</p>
     <form onSubmit={submit} className="grid gap-4">
-      <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("account.currentPassword")}<input className={fieldClass} type="password" autoComplete="current-password" required value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} /></label>
-      <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("account.newPassword")}<input className={fieldClass} type="password" autoComplete="new-password" required minLength={minPasswordLength} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label>
-      <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.confirmPassword")}<input className={fieldClass} type="password" autoComplete="new-password" required minLength={minPasswordLength} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} /></label>
+      <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("account.currentPassword")}<Input className={fieldClass} type="password" autoComplete="current-password" required value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} /></label>
+      <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("account.newPassword")}<Input className={fieldClass} type="password" autoComplete="new-password" required minLength={minPasswordLength} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label>
+      <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.confirmPassword")}<Input className={fieldClass} type="password" autoComplete="new-password" required minLength={minPasswordLength} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} /></label>
       <p className="text-13 text-secondary">{translate("account.resetHelp")}</p>
       <Button className={primaryButton} disabled={busy}>{translate("account.resetSave")}</Button>
     </form>

@@ -8,6 +8,8 @@ import { Navigate } from "react-router";
 import { useOutboundWebhooksEnabled } from "../../outbound-webhooks-flag";
 import { Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 
+import { Checkbox } from "@/ui/checkbox";
+import { Input } from "@/ui/input";
 type Webhook = { id: string; name: string; displayUrl: string; disabledReason: string | null; events: string[]; enabled: boolean; includePrivateProjects: boolean; createdAt: string };
 type Delivery = {
   id: string; eventId: string; eventType: string; status: string; attempts: number; responseStatus: number | null; responseExcerpt: string | null;
@@ -51,13 +53,13 @@ function WebhookBlock({ webhook, secret, onSecret, onChanged, say }: {
         await onChanged();
       }}>{translate("outboundWebhooks.reEnable")}</Button>
     </div>}
-    <label className="flex items-center gap-2"><input type="checkbox" checked={webhook.enabled} onChange={async (event) => {
+    <label className="flex items-center gap-2"><Checkbox checked={webhook.enabled} onChange={async (event) => {
       const result = await action("update_outbound_webhook", { webhookId: webhook.id, enabled: event.target.checked });
       say(result === null ? translate("outboundWebhooks.failed") : translate("outboundWebhooks.saved"), result === null);
       await onChanged();
     }} />{translate("outboundWebhooks.enabled")}</label>
     <p className="m-0 text-13 text-secondary">{translate("outboundWebhooks.enabledHelp")}</p>
-    <label className="flex items-center gap-2"><input type="checkbox" checked={webhook.includePrivateProjects} onChange={async (event) => {
+    <label className="flex items-center gap-2"><Checkbox checked={webhook.includePrivateProjects} onChange={async (event) => {
       const result = await action("update_outbound_webhook", { webhookId: webhook.id, includePrivateProjects: event.target.checked });
       say(result === null ? translate("outboundWebhooks.failed") : translate("outboundWebhooks.saved"), result === null);
       await onChanged();
@@ -76,7 +78,7 @@ function WebhookBlock({ webhook, secret, onSecret, onChanged, say }: {
       <span className="text-14 font-medium">{translate("outboundWebhooks.secretTitle")}</span>
       <p className="m-0 text-13 text-secondary">{translate("outboundWebhooks.secretOnce")}</p>
       <div className="flex flex-wrap items-center gap-2">
-        <input readOnly value={secret} aria-label={translate("outboundWebhooks.secretTitle")} onFocus={(event) => event.target.select()} className="min-w-0 flex-1 bg-layer-1" />
+        <Input readOnly value={secret} aria-label={translate("outboundWebhooks.secretTitle")} onFocus={(event) => event.target.select()} className="min-w-0 flex-1 bg-layer-1" />
         <Button type="button" className="secondary" onClick={async () => { if (await copyText(secret, translate("outboundWebhooks.copySecret"), translate("comments.copyFailed"))) say(translate("outboundWebhooks.copySecret")); }}>{translate("outboundWebhooks.copySecret")}</Button>
       </div>
     </div>}
@@ -167,22 +169,22 @@ function AddWebhook({ workspaceId, onCreated, say }: { workspaceId: string; onCr
       say(translate("outboundWebhooks.created"));
     }}>
       <label className="grid gap-1 text-13 text-secondary">{translate("outboundWebhooks.name")}
-        <input value={name} maxLength={100} onChange={(event) => setName(event.target.value)} />
+        <Input value={name} maxLength={100} onChange={(event) => setName(event.target.value)} />
       </label>
       <p className="m-0 text-13 text-secondary">{translate("outboundWebhooks.nameHelp")}</p>
       <label className="grid gap-1 text-13 text-secondary">{translate("outboundWebhooks.url")}
-        <input type="url" value={url} placeholder={urlExample} onChange={(event) => setUrl(event.target.value)} />
+        <Input type="url" value={url} placeholder={urlExample} onChange={(event) => setUrl(event.target.value)} />
       </label>
       <p className="m-0 text-13 text-secondary">{translate("outboundWebhooks.urlHelp")}</p>
       <fieldset className="grid gap-2 border-0 p-0">
         <legend className="mb-1 text-13 text-secondary">{translate("outboundWebhooks.events")}</legend>
         {eventTypes.map((type) => <label key={type} className="flex items-center gap-2 text-14">
-          <input type="checkbox" checked={events.includes(type)} onChange={() => toggle(type)} />{translate(`outboundWebhooks.event.${type}` as MessageKey)}
+          <Checkbox checked={events.includes(type)} onChange={() => toggle(type)} />{translate(`outboundWebhooks.event.${type}` as MessageKey)}
         </label>)}
         <p className="m-0 text-13 text-secondary">{translate("outboundWebhooks.eventsHelp")}</p>
       </fieldset>
       <label className="flex items-center gap-2 text-14">
-        <input type="checkbox" checked={includePrivate} onChange={(event) => setIncludePrivate(event.target.checked)} />{translate("outboundWebhooks.includePrivate")}
+        <Checkbox checked={includePrivate} onChange={(event) => setIncludePrivate(event.target.checked)} />{translate("outboundWebhooks.includePrivate")}
       </label>
       <p className="m-0 text-13 text-secondary">{translate("outboundWebhooks.includePrivateHelp")}</p>
       <Button type="submit" className="primary w-fit" disabled={busy}>{translate("outboundWebhooks.create")}</Button>

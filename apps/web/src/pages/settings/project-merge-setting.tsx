@@ -4,6 +4,7 @@ import { action } from "../../api";
 import { useIntegrationsEnabled } from "../../integrations-flag";
 import { SettingsBlock } from "./settings-ui";
 
+import { Switch } from "@/ui/switch";
 /** "When a linked request merges": about pull and merge requests, so it exists only while integrations are on. */
 export function ProjectMergeSetting({ projectId, canAdmin, onNote }: { projectId: string; canAdmin: boolean; onNote: (note: string | null) => void }) {
   const enabled = useIntegrationsEnabled();
@@ -14,7 +15,7 @@ export function ProjectMergeSetting({ projectId, canAdmin, onNote }: { projectId
   }, [projectId, enabled]);
   if (!enabled) return null;
   return <SettingsBlock title={translate("projectMerge.title")} description={translate("projectMerge.desc")}>
-    <label className="flex items-center gap-2"><input type="checkbox" role="switch" disabled={!canAdmin} checked={movesToDone} onChange={async (event) => {
+    <label className="flex items-center gap-2"><Switch disabled={!canAdmin} checked={movesToDone} onChange={async (event) => {
       const result = await action<{ movesToDone: boolean }>("set_project_merged_pr_setting", { projectId, movesToDone: event.target.checked });
       if (result) setMovesToDone(result.movesToDone);
       onNote(result === null ? translate("projectMerge.failed") : null);

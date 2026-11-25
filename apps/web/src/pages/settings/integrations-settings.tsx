@@ -11,6 +11,9 @@ import { useIntegrationsState } from "../../integrations-flag";
 import { useWorkspaceMembers } from "./workspace-settings";
 import { Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 
+import { Checkbox } from "@/ui/checkbox";
+import { Input } from "@/ui/input";
+import { Textarea } from "@/ui/textarea";
 type Integration = { id: string; provider: "github" | "gitlab"; enabled: boolean; repositories: string[]; webhookPath: string; createdAt: string };
 type Created = { id: string; provider: string; enabled: boolean; webhookPath: string; secret: string };
 
@@ -28,14 +31,14 @@ function Connection({ provider, row, secret, onChanged, onSecret, say }: { provi
   const url = webhookUrl(api, row.webhookPath);
   const setup = translate(provider === "github" ? "integrations.setupGithub" : "integrations.setupGitlab");
   return <SettingsBlock title={providerName(provider)}>
-    <label className="flex items-center gap-2"><input type="checkbox" checked={row.enabled} onChange={async (event) => {
+    <label className="flex items-center gap-2"><Checkbox checked={row.enabled} onChange={async (event) => {
       const result = await action("update_work_item_integration", { integrationId: row.id, enabled: event.target.checked });
       say(result === null ? translate("integrations.failed") : null, result === null);
       await onChanged();
     }} />{translate("integrations.enabled")}</label>
     <p className="m-0 text-13 text-secondary">{translate("integrations.enabledDesc")}</p>
     <label className="grid gap-1 text-13 text-secondary">{translate("integrations.webhookUrl")}
-      <input readOnly value={url} onFocus={(event) => event.target.select()} className="bg-layer-1" />
+      <Input readOnly value={url} onFocus={(event) => event.target.select()} className="bg-layer-1" />
     </label>
     <p className="m-0 text-13 text-secondary">{translate("integrations.webhookUrlHelp")}</p>
     <p className="m-0 text-13 text-secondary">{setup}</p>
@@ -44,7 +47,7 @@ function Connection({ provider, row, secret, onChanged, onSecret, say }: { provi
       <p className="m-0 text-13 text-secondary">{translate("integrations.secretHelp")}</p>
       <p className="m-0 text-13 text-secondary">{translate("integrations.secretOnce")}</p>
       <div className="flex flex-wrap items-center gap-2">
-        <input readOnly value={secret} aria-label={translate("integrations.secretTitle")} onFocus={(event) => event.target.select()} className="min-w-0 flex-1 bg-layer-1" />
+        <Input readOnly value={secret} aria-label={translate("integrations.secretTitle")} onFocus={(event) => event.target.select()} className="min-w-0 flex-1 bg-layer-1" />
         <Button type="button" className="secondary" onClick={async () => { if (await copyText(secret, translate("integrations.secretCopied"), translate("comments.copyFailed"))) say(translate("integrations.secretCopied")); }}>{translate("integrations.copySecret")}</Button>
       </div>
     </div>}
@@ -56,7 +59,7 @@ function Connection({ provider, row, secret, onChanged, onSecret, say }: { provi
       say(null);
     }}>{translate("integrations.rotate")}</Button>
     <label className="grid gap-1 text-13 text-secondary">{translate("integrations.repositories")}
-      <textarea rows={4} value={draft} placeholder={repositoryExample} onChange={(event) => setDraft(event.target.value)} />
+      <Textarea rows={4} value={draft} placeholder={repositoryExample} onChange={(event) => setDraft(event.target.value)} />
     </label>
     <p className="m-0 text-13 text-secondary">{translate("integrations.repositoriesDesc")}</p>
     <Button type="button" className="secondary w-fit" onClick={async () => {

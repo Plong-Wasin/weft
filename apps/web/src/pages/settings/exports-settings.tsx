@@ -6,6 +6,7 @@ import { useWorkspace } from "../../layouts/workspace-layout";
 import type { Project } from "../../types";
 import { Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 
+import { Checkbox } from "@/ui/checkbox";
 type ExportItem = {
   id: string; projects: Array<{ id: string; key: string; name: string }>; format: "csv" | "json";
   status: "queued" | "processing" | "completed" | "failed"; failureReason: string | null; createdAt: string; completedAt: string | null; expired: boolean;
@@ -77,7 +78,7 @@ export function WorkspaceExports() {
           <legend className="mb-1 text-14 font-medium text-primary">{translate("exports.project")}</legend>
           <div className="grid gap-px overflow-hidden rounded-lg border border-subtle bg-[var(--border-subtle)]">
             {projects.map((project) => <label key={project.id} className="flex min-w-0 items-center gap-3 bg-surface-1 px-3 py-2 text-14 hover:bg-layer-transparent-hover">
-              <input type="checkbox" checked={picked.includes(project.id)} onChange={(event) => setPicked(event.target.checked ? [...picked, project.id] : picked.filter((id) => id !== project.id))} />
+              <Checkbox checked={picked.includes(project.id)} onChange={(event) => setPicked(event.target.checked ? [...picked, project.id] : picked.filter((id) => id !== project.id))} />
               <span className="min-w-0 truncate"><span className="text-tertiary">{project.key}</span> · {project.name}</span>
             </label>)}
           </div>

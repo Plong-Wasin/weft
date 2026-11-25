@@ -10,6 +10,9 @@ import { hasValidTokenExpiry } from "../../token-expiry";
 import { defaultTokenPreset, presetExpiry, presetName, tokenPresets, type TokenPreset } from "../../token-presets";
 import { Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 
+import { Checkbox } from "@/ui/checkbox";
+import { Input } from "@/ui/input";
+import { Textarea } from "@/ui/textarea";
 type ApiToken = {
   id: string; name: string; prefix: string; description: string | null; createdAt: string;
   expiresAt: string | null; lastUsedAt: string | null; revokedAt: string | null; status: "active" | "expired" | "revoked"; kind: "personal" | "daemon";
@@ -214,7 +217,7 @@ export function ApiTokensPage() {
           <p className="mt-1 text-13 text-secondary">{secret ? translate("tokens.secretOnce") : translate("tokens.dialogDescription")}</p></div>
           <Button type="button" className="secondary" onClick={closeDialog}>{translate("settings.cancel")}</Button></header>
         {secret ? <div className="grid gap-3">
-          <label>{translate("tokens.secret")}<input readOnly value={secret.token} className="font-mono" /></label>
+          <label>{translate("tokens.secret")}<Input readOnly value={secret.token} className="font-mono" /></label>
           <p role="alert" className="m-0 rounded-md border border-danger-strong px-3 py-2 text-13 text-danger-text">{translate("tokens.secretWarning")}</p>
           <Button type="button" className="primary w-full !py-3 !text-16" onClick={async () => { if (await copyText(secret.token, translate("tokens.copied"), translate("comments.copyFailed"))) setNote(translate("tokens.copied")); }}>{translate("tokens.copy")}</Button>
           <div className="flex justify-end gap-2"><Button type="button" className="secondary" onClick={closeDialog}>{translate("settings.cancel")}</Button></div>
@@ -222,10 +225,10 @@ export function ApiTokensPage() {
           <label>{translate("tokens.presetLabel")}<select value={preset} onChange={(event) => choosePreset(event.target.value as TokenPreset)}>
             {tokenPresets.map((item) => <option key={item} value={item}>{translate(`tokens.preset.${item}`)}</option>)}
           </select></label>
-          <label>{translate("tokens.name")}<input required maxLength={100} autoFocus value={name} onChange={(event) => setName(event.target.value)} /></label>
-          <label>{translate("tokens.fieldDescription")}<textarea maxLength={500} value={description} onChange={(event) => setDescription(event.target.value)} /></label>
-          <label>{translate("tokens.customDate")}<input required={!neverExpires} type="date" min={todayTomorrow()} value={expiresAt} disabled={neverExpires} onChange={(event) => setExpiresAt(event.target.value)} /></label>
-          <label className="flex items-center gap-2"><input type="checkbox" checked={neverExpires} onChange={(event) => setNeverExpires(event.target.checked)} />{translate("tokens.neverExpires")}</label>
+          <label>{translate("tokens.name")}<Input required maxLength={100} autoFocus value={name} onChange={(event) => setName(event.target.value)} /></label>
+          <label>{translate("tokens.fieldDescription")}<Textarea maxLength={500} value={description} onChange={(event) => setDescription(event.target.value)} /></label>
+          <label>{translate("tokens.customDate")}<Input required={!neverExpires} type="date" min={todayTomorrow()} value={expiresAt} disabled={neverExpires} onChange={(event) => setExpiresAt(event.target.value)} /></label>
+          <label className="flex items-center gap-2"><Checkbox checked={neverExpires} onChange={(event) => setNeverExpires(event.target.checked)} />{translate("tokens.neverExpires")}</label>
           <div className="flex justify-end gap-2"><Button type="button" className="secondary" onClick={closeDialog}>{translate("settings.cancel")}</Button><Button type="submit" disabled={!hasValidTokenExpiry(expiresAt, neverExpires)}>{translate("tokens.create")}</Button></div>
           {failed && <Note note={translate("tokens.failed")} error />}
         </form>}

@@ -4,6 +4,7 @@ import { translate } from "@weft/shared";
 import { AuthShell, fieldClass, primaryButton } from "../layouts/auth-shell";
 import { paths } from "../routes";
 
+import { Input } from "@/ui/input";
 /** The page a reset link opens. The API redirects here with `?token=` (or `?error=INVALID_TOKEN` when the link is no good). Public: it shows before sign-in. */
 export function ResetPasswordScreen({ api, languageSwitch, minPasswordLength }: { api: string; languageSwitch: React.ReactNode; minPasswordLength: number }) {
   const params = new URLSearchParams(window.location.search);
@@ -34,8 +35,8 @@ export function ResetPasswordScreen({ api, languageSwitch, minPasswordLength }: 
     {state === "invalid" && <p role="alert" className="mt-4 text-13 text-danger-text">{translate("auth.resetLinkInvalid")}</p>}
     {state === "done" && <p role="status" className="mt-4 text-13 text-secondary">{translate("auth.resetDone")}</p>}
     {state === "form" && <form onSubmit={submit} className="mt-8 grid gap-4">
-      <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.newPassword")}<input className={fieldClass} required type="password" minLength={minPasswordLength} autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
-      <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.confirmPassword")}<input className={`${fieldClass} ${mismatch ? "border-danger-strong" : ""}`} required type="password" minLength={minPasswordLength} autoComplete="new-password" aria-invalid={mismatch || undefined} value={confirm} onChange={(event) => setConfirm(event.target.value)} /></label>
+      <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.newPassword")}<Input className={fieldClass} required type="password" minLength={minPasswordLength} autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+      <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.confirmPassword")}<Input className={`${fieldClass} ${mismatch ? "border-danger-strong" : ""}`} required type="password" minLength={minPasswordLength} autoComplete="new-password" aria-invalid={mismatch || undefined} value={confirm} onChange={(event) => setConfirm(event.target.value)} /></label>
       {mismatch && <p role="status" className="-mt-2 text-13 text-danger-text">{translate("auth.passwordMismatch")}</p>}
       <Button className={primaryButton} disabled={mismatch}>{translate("auth.resetSubmit")}</Button>
       {error && <p role="alert" className="text-13 text-danger-text">{error}</p>}

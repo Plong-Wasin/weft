@@ -10,6 +10,7 @@ import { Popover } from "./shell/popover";
 import { showToast } from "./toast";
 import type { Estimate, StateGroup } from "./types";
 
+import { Input } from "@/ui/input";
 type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
 type BulkItem = { id: string; stateId: string; assigneeIds: string[]; labelIds: string[] };
 type Named = { id: string; name: string; status?: string };
@@ -30,7 +31,7 @@ function SetMenu({ label, icon, options, present, onApply }: { label: string; ic
       <div role="group" aria-label={label} className="grid grid-cols-2 gap-1 pb-1">
         {(["add", "remove"] as const).map((value) => <Button key={value} type="button" aria-pressed={mode === value} className={`rounded-md px-2 py-1 text-13 ${mode === value ? "bg-layer-1 font-medium text-primary" : "bg-transparent text-secondary hover:bg-layer-transparent-hover"}`} onClick={() => setMode(value)}>{t(`bulk.${value}`)}</Button>)}
       </div>
-      <label className="grid gap-1 text-13 text-secondary">{t("picker.search")}<input type="search" autoComplete="off" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+      <label className="grid gap-1 text-13 text-secondary">{t("picker.search")}<Input type="search" autoComplete="off" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
       {available.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-tertiary">{mode === "remove" ? t("bulk.nothingToRemove") : "—"}</p> : shown.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-tertiary">{t("picker.noMatches")}</p> : <>{[false, true].map((agents) => {
         const group = shown.filter((option) => !!option.isAgent === agents);
         if (!group.length) return null;

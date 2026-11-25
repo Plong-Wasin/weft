@@ -8,6 +8,7 @@ import { AuthShell, fieldClass, primaryButton } from "./auth-shell";
 import { ThemeSwitch } from "./theme-switch";
 import { authClient } from "../auth-client";
 
+import { Input } from "@/ui/input";
 /** Sign in and sign up. Sign in is the default (most visits are returning users); an invite link opens on sign-up, and `inviteToken` rides along so the new account joins the inviting workspace. */
 export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch, minPasswordLength = 10, emailEnabled = false, contextualNotice }: { api: string; inviteToken: string | null; onSignedIn: () => Promise<void>; languageSwitch: React.ReactNode; minPasswordLength?: number; emailEnabled?: boolean; contextualNotice?: string }) {
   const oauthSignIn = window.location.pathname === "/oauth/sign-in";
@@ -121,8 +122,8 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch, minPa
       <p className="m-0 text-12 text-tertiary">{translate("auth.microsoftHelp")}</p>
     </div>}
     {authSettings.passwordSignInEnabled && <form onSubmit={authenticate} aria-busy={pending} className={`${authSettings.microsoftSignInEnabled ? "mt-5 border-t border-subtle pt-5" : "mt-8"} grid gap-4`}>
-      {mode === "sign-up" && <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.name")}<input className={fieldClass} required autoComplete="name" placeholder={translate("auth.namePlaceholder")} value={name} onChange={(event) => setName(event.target.value)} /></label>}
-      <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.email")}<input className={fieldClass} required type="email" autoComplete="email" placeholder={translate("auth.emailPlaceholder")} value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+      {mode === "sign-up" && <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.name")}<Input className={fieldClass} required autoComplete="name" placeholder={translate("auth.namePlaceholder")} value={name} onChange={(event) => setName(event.target.value)} /></label>}
+      <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.email")}<Input className={fieldClass} required type="email" autoComplete="email" placeholder={translate("auth.emailPlaceholder")} value={email} onChange={(event) => setEmail(event.target.value)} /></label>
       <PasswordField label={translate("auth.password")} value={password} onChange={setPassword} visible={showPassword} onToggle={() => setShowPassword(!showPassword)} autoComplete={mode === "sign-up" ? "new-password" : "current-password"} minLength={passwordFieldMinLength(mode, minPasswordLength)} hint={mode === "sign-up" ? translate("auth.passwordHint").replace("{min}", String(minPasswordLength)) : undefined} />
       {passwordIssue && <p role="alert" className="-mt-3 text-13 text-danger-text">{passwordIssue}</p>}
       {mode === "sign-up" && <PasswordField label={translate("auth.confirmPassword")} value={confirmPassword} onChange={setConfirmPassword} visible={showPassword} onToggle={() => setShowPassword(!showPassword)} autoComplete="new-password" invalid={mismatch} describedBy="password-mismatch" />}
@@ -150,7 +151,7 @@ function PasswordField({ label, value, onChange, visible, onToggle, autoComplete
   return <div className="grid gap-1.5">
     <label htmlFor={id} className="text-13 font-medium text-secondary">{label}</label>
     <div className="relative">
-      <input id={id} className={`${fieldClass} ${onToggle ? "pr-10" : ""} ${invalid ? "border-danger-strong" : ""}`} required type={visible ? "text" : "password"} minLength={minLength} maxLength={256} autoComplete={autoComplete} aria-invalid={invalid || undefined} aria-describedby={[invalid ? describedBy : null, hint ? `${id}-hint` : null].filter(Boolean).join(" ") || undefined} value={value} onChange={(event) => onChange(event.target.value)} />
+      <Input id={id} className={`${fieldClass} ${onToggle ? "pr-10" : ""} ${invalid ? "border-danger-strong" : ""}`} required type={visible ? "text" : "password"} minLength={minLength} maxLength={256} autoComplete={autoComplete} aria-invalid={invalid || undefined} aria-describedby={[invalid ? describedBy : null, hint ? `${id}-hint` : null].filter(Boolean).join(" ") || undefined} value={value} onChange={(event) => onChange(event.target.value)} />
       {onToggle && <Button type="button" aria-label={translate(visible ? "auth.hidePassword" : "auth.showPassword")} title={translate(visible ? "auth.hidePassword" : "auth.showPassword")} aria-pressed={visible} onClick={onToggle} className="absolute right-1 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded text-tertiary hover:bg-layer-transparent-hover hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-strong">
         <Icon size={16} aria-hidden />
       </Button>}
@@ -196,7 +197,7 @@ function ForgotPasswordForm({ api, emailEnabled, languageSwitch, onBack }: { api
         : <>
           <p className="mt-4 text-14 text-secondary">{translate("auth.forgotHelp")}</p>
           <form onSubmit={submit} aria-busy={pending} className="mt-6 grid gap-4">
-            <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.email")}<input className={fieldClass} required type="email" autoComplete="email" placeholder={translate("auth.emailPlaceholder")} value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+            <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.email")}<Input className={fieldClass} required type="email" autoComplete="email" placeholder={translate("auth.emailPlaceholder")} value={email} onChange={(event) => setEmail(event.target.value)} /></label>
             <Button disabled={pending} className={primaryButton}>{translate("auth.forgotSubmit")}</Button>
           </form>
           {error && <p role="alert" className="mt-4 text-13 text-danger-text">{error}</p>}

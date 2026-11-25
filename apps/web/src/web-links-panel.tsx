@@ -4,6 +4,7 @@ import { formatDate, translate } from "@weft/shared";
 import { Copy, ExternalLink, Pencil, Trash2 } from "lucide-react";
 import { Dialog, DialogActions } from "./dialog";
 import { copyText } from "./toast";
+import { Input } from "@/ui/input";
 type WebLink = { id: string; url: string; title: string | null; createdBy?: string; createdAt?: string };
 const t = (key: string) => translate(key as never);
 const rowButton = "grid size-7 place-items-center rounded-md !bg-transparent !p-0 text-secondary hover:!bg-layer-transparent-hover hover:text-primary";
@@ -20,8 +21,8 @@ function LinkDialog({ link, onSubmit, onClose }: { link: WebLink | null; onSubmi
       busy.current = true;
       try { if (await onSubmit(url, title.trim() || null)) onClose(); } finally { busy.current = false; }
     }}>
-      <label className="grid gap-1 text-13 text-secondary">{t("webLinks.urlLabel")}<input type="url" required pattern="https?://.*" placeholder={t("webLinks.url")} value={url} onChange={(event) => setUrl(event.target.value)} /></label>
-      <label className="grid gap-1 text-13 text-secondary">{t("webLinks.titleOptional")}<input value={title} onChange={(event) => setTitle(event.target.value)} /></label>
+      <label className="grid gap-1 text-13 text-secondary">{t("webLinks.urlLabel")}<Input type="url" required pattern="https?://.*" placeholder={t("webLinks.url")} value={url} onChange={(event) => setUrl(event.target.value)} /></label>
+      <label className="grid gap-1 text-13 text-secondary">{t("webLinks.titleOptional")}<Input value={title} onChange={(event) => setTitle(event.target.value)} /></label>
       <DialogActions onClose={onClose} submit={link ? t("webLinks.save") : t("webLinks.add")} />
     </form>
   </Dialog>;

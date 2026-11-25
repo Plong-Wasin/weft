@@ -65,11 +65,12 @@ try {
   await page.goto(`${web}/${slug}/settings/projects/MOB/automation`);
   await page.getByRole("heading", { name: t("autoRules.title") }).waitFor();
   // The form fills in after list_states and get_auto_rules answer; a late answer would reset what the test typed, so wait for the states first.
-  await page.getByLabel(started.name).waitFor();
-  check(!(await page.getByLabel(t("autoRules.closeOn")).isChecked()), "auto-close is on before anyone turned it on");
-  await page.getByLabel(t("autoRules.closeOn")).check();
+  await page.getByRole("checkbox", { name: started.name }).waitFor();
+  const closeOn = page.getByRole("switch", { name: t("autoRules.closeOn") });
+  check(await closeOn.getAttribute("aria-checked") === "false", "auto-close is on before anyone turned it on");
+  await closeOn.click();
   await page.getByLabel(t("autoRules.closeAfter")).fill("30");
-  await page.getByLabel(started.name).check();
+  await page.getByRole("checkbox", { name: started.name }).click();
   await page.getByLabel(t("autoRules.moveTo")).selectOption({ label: done.name });
   await page.getByRole("button", { name: t("autoRules.preview") }).click();
   // The item was just created, so nothing is idle yet: the preview says so.
@@ -79,7 +80,7 @@ try {
   await page.reload();
   // The form fills in after get_auto_rules answers: wait for the saved state instead of reading the first paint.
   await page.getByRole("switch", { name: t("autoRules.closeOn"), checked: true }).waitFor({ timeout: 15_000 });
-  check(await page.getByLabel(t("autoRules.closeOn")).isChecked(), "the saved rule did not come back after a reload");
+  check(await page.getByRole("switch", { name: t("autoRules.closeOn") }).getAttribute("aria-checked") === "true", "the saved rule did not come back after a reload");
   check((await page.getByLabel(t("autoRules.closeAfter")).inputValue()) === "30", "the saved number of days did not come back");
   await page.screenshot({ path: reviewShots("auto-rules-settings.png"), fullPage: true });
 

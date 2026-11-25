@@ -4,6 +4,7 @@ import { translate, type MessageKey } from "@weft/shared";
 import { action, api } from "../../api";
 import { Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 
+import { Checkbox } from "@/ui/checkbox";
 type EmailPreferences = { email: string; emailVerified: boolean; kinds: string[] };
 
 /** Every notification kind that can be emailed, in the order the page lists them. */
@@ -71,7 +72,7 @@ export function AccountNotificationsPage() {
       <fieldset className="m-0 grid gap-2 border-0 p-0">
         <legend className="sr-only">{translate("email.kindsLabel")}</legend>
         {emailKinds.map(({ kind, label }) => <label key={kind} className="flex items-center gap-2 text-14 text-primary">
-          <input type="checkbox" checked={prefs.kinds.includes(kind)} onChange={(event) => void save(event.target.checked ? [...prefs.kinds, kind] : prefs.kinds.filter((value) => value !== kind))} />
+          <Checkbox checked={prefs.kinds.includes(kind)} onChange={(event) => void save(event.target.checked ? [...prefs.kinds, kind] : prefs.kinds.filter((value) => value !== kind))} />
           {translate(label)}
         </label>)}
       </fieldset>

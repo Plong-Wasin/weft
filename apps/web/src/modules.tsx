@@ -14,6 +14,8 @@ import { MultiSelect, SingleSelect, formatDay } from "./property-dropdowns";
 import { Avatar } from "./avatar";
 import { DetailsPanelToggle, useDetailsPanel } from "./details-panel";
 
+import { Checkbox } from "@/ui/checkbox";
+import { Input } from "@/ui/input";
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
 const statuses = ["backlog", "planned", "in-progress", "paused", "completed", "cancelled"] as const;
@@ -108,11 +110,11 @@ function ModuleFormModal({ action, projectId, workspaceId, module, onClose, onSa
         <h2 className="m-0 flex-1 text-18 font-semibold text-primary">{title}</h2>
         <Button type="button" className={iconButton} aria-label={t("modules.close")} onClick={onClose}><X aria-hidden size={16} /></Button>
       </div>
-      <input autoFocus required aria-label={t("modules.name")} placeholder={t("modules.name")} value={name} maxLength={255} className="w-full text-16" onChange={(event) => setName(event.target.value)} />
+      <Input autoFocus required aria-label={t("modules.name")} placeholder={t("modules.name")} value={name} maxLength={255} className="w-full text-16" onChange={(event) => setName(event.target.value)} />
       <div className="grid gap-1 text-13 text-secondary"><span>{t("workItems.description")}</span><DescriptionEditor workspaceId={workspaceId} owner={module ? { ownerType: "module", ownerId: module.id } : undefined} mentionPeople={people} initial={description} editable onChange={setDescription} /></div>
       <div className="flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-2 text-13 text-secondary">{t("modules.start")}<input type="date" value={startDate} max={endDate || undefined} className="w-auto" onChange={(event) => setStartDate(event.target.value)} /></label>
-        <label className="flex items-center gap-2 text-13 text-secondary">{t("modules.end")}<input type="date" value={endDate} min={startDate || undefined} className="w-auto" onChange={(event) => setEndDate(event.target.value)} /></label>
+        <label className="flex items-center gap-2 text-13 text-secondary">{t("modules.start")}<Input type="date" value={startDate} max={endDate || undefined} className="w-auto" onChange={(event) => setStartDate(event.target.value)} /></label>
+        <label className="flex items-center gap-2 text-13 text-secondary">{t("modules.end")}<Input type="date" value={endDate} min={startDate || undefined} className="w-auto" onChange={(event) => setEndDate(event.target.value)} /></label>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <SingleSelect label={t("modules.status")} summary={t(`modules.status.${status}`)} value={status} options={statuses.map((value) => ({ id: value, name: t(`modules.status.${value}`) }))} onSelect={(value) => setStatus(value as Status)} />
@@ -194,18 +196,18 @@ export function ModulesPage({ workspaceId, workspaceSlug, projectKey, projectId,
         <Package aria-hidden size={14} /><h2 className="m-0 text-13 font-medium text-primary">{t("modules.title")}</h2>
       </nav>
       <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-        <label className="flex items-center gap-1.5 whitespace-nowrap text-13 text-secondary"><input type="checkbox" checked={archived} onChange={(event) => setArchived(event.target.checked)} />{t("modules.showArchived")}</label>
+        <label className="flex items-center gap-1.5 whitespace-nowrap text-13 text-secondary"><Checkbox checked={archived} onChange={(event) => setArchived(event.target.checked)} />{t("modules.showArchived")}</label>
         <div role="group" aria-label={t("modules.display")} className="flex items-center gap-0.5 rounded-md bg-layer-1 p-0.5">{toggle("list", <List aria-hidden size={15} />)}{toggle("grid", <LayoutGrid aria-hidden size={15} />)}</div>
         {canWrite && !archived && <Button type="button" className={primaryButton} onClick={() => setForm({})}><Plus aria-hidden size={14} />{t("modules.addNew")}</Button>}
       </div>
     </header>
     <div className="flex flex-wrap items-center gap-2 rounded-xl border border-subtle bg-surface-1 p-3">
-      <input type="search" aria-label={t("modules.searchModules")} placeholder={t("modules.searchModules")} value={search} onChange={(event) => setSearch(event.target.value)} className="w-48" />
+      <Input type="search" aria-label={t("modules.searchModules")} placeholder={t("modules.searchModules")} value={search} onChange={(event) => setSearch(event.target.value)} className="w-48" />
       <select aria-label={t("modules.statusFilter")} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">{t("modules.anyStatus")}</option>{statuses.map((value) => <option key={value} value={value}>{t(`modules.status.${value}`)}</option>)}</select>
       <select aria-label={t("modules.leadFilter")} value={leadFilter} onChange={(event) => setLeadFilter(event.target.value)}><option value="">{t("modules.anyLead")}</option>{people.filter((person) => !person.isAgent).map((person) => <option key={person.userId} value={person.userId}>{person.name}</option>)}</select>
       <select aria-label={t("modules.memberFilter")} value={memberFilter} onChange={(event) => setMemberFilter(event.target.value)}><option value="">{t("modules.anyMember")}</option>{people.map((person) => <option key={person.userId} value={person.userId}>{person.name}</option>)}</select>
-      <label className="flex items-center gap-1 text-12 text-secondary">{t("modules.dateFrom")}<input aria-label={t("modules.dateFrom")} type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /></label>
-      <label className="flex items-center gap-1 text-12 text-secondary">{t("modules.dateTo")}<input aria-label={t("modules.dateTo")} type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /></label>
+      <label className="flex items-center gap-1 text-12 text-secondary">{t("modules.dateFrom")}<Input aria-label={t("modules.dateFrom")} type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /></label>
+      <label className="flex items-center gap-1 text-12 text-secondary">{t("modules.dateTo")}<Input aria-label={t("modules.dateTo")} type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /></label>
       {(search || statusFilter || leadFilter || memberFilter || dateFrom || dateTo) && <Button type="button" className={primaryButton} onClick={() => { setSearch(""); setStatusFilter(""); setLeadFilter(""); setMemberFilter(""); setDateFrom(""); setDateTo(""); }}>{t("modules.clearFilters")}</Button>}
     </div>
     {note && <p role="alert" className="m-0 px-4 py-2 text-danger-text">{note}</p>}
@@ -251,11 +253,11 @@ function AddItemsModal({ candidates, onAdd, onClose }: { candidates: Item[]; onA
         <h2 className="m-0 flex-1 text-18 font-semibold text-primary">{t("modules.addItemsTitle")}</h2>
         <Button type="button" className={iconButton} aria-label={t("modules.close")} onClick={onClose}><X aria-hidden size={16} /></Button>
       </div>
-      <input autoFocus type="search" aria-label={t("modules.searchItems")} placeholder={t("modules.searchItems")} value={query} className="w-full text-14" onChange={(event) => setQuery(event.target.value)} />
+      <Input autoFocus type="search" aria-label={t("modules.searchItems")} placeholder={t("modules.searchItems")} value={query} className="w-full text-14" onChange={(event) => setQuery(event.target.value)} />
       {candidates.length === 0 && <p className="m-0 text-13 text-secondary">{t("modules.noneToAdd")}</p>}
       <ul className="m-0 grid max-h-72 list-none gap-0.5 overflow-auto p-0">{shown.map((item) => <li key={item.id}>
         <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-13 text-primary hover:bg-layer-transparent-hover">
-          <input type="checkbox" checked={selected.includes(item.id)} onChange={(event) => setSelected(event.target.checked ? [...selected, item.id] : selected.filter((id) => id !== item.id))} />
+          <Checkbox checked={selected.includes(item.id)} onChange={(event) => setSelected(event.target.checked ? [...selected, item.id] : selected.filter((id) => id !== item.id))} />
           <span className="text-tertiary">{item.displayId}</span><span className="truncate">{item.title}</span>
         </label>
       </li>)}</ul>
@@ -357,8 +359,8 @@ export function ModuleDetailPage({ workspaceId, workspaceSlug, projectKey, proje
             options={statuses.map((value) => ({ id: value, name: t(`modules.status.${value}`) }))} onSelect={(value) => void patch({ status: value as Status })} />
         </PropertyRow>
         <PropertyRow icon={<CalendarRange aria-hidden size={15} />} label={t("modules.dateRange")}>
-          <input type="date" aria-label={t("modules.start")} disabled={!editable} value={module.startDate ?? ""} max={module.endDate ?? undefined} className="w-auto text-13" onChange={(event) => void patch({ startDate: event.target.value || null })} />
-          <input type="date" aria-label={t("modules.end")} disabled={!editable} value={module.endDate ?? ""} min={module.startDate ?? undefined} className="w-auto text-13" onChange={(event) => void patch({ endDate: event.target.value || null })} />
+          <Input type="date" aria-label={t("modules.start")} disabled={!editable} value={module.startDate ?? ""} max={module.endDate ?? undefined} className="w-auto text-13" onChange={(event) => void patch({ startDate: event.target.value || null })} />
+          <Input type="date" aria-label={t("modules.end")} disabled={!editable} value={module.endDate ?? ""} min={module.startDate ?? undefined} className="w-auto text-13" onChange={(event) => void patch({ endDate: event.target.value || null })} />
         </PropertyRow>
         <PropertyRow icon={<CircleUserRound aria-hidden size={15} />} label={t("modules.lead")}>
           <SingleSelect label={t("modules.lead")} summary={module.leadId ? nameOf(module.leadId) : t("modules.noLead")} value={module.leadId ?? ""} readOnly={!editable}

@@ -6,6 +6,7 @@ import { Link, useLocation } from "react-router";
 import { Search, X } from "lucide-react";
 import { paths } from "./routes";
 
+import { Input } from "@/ui/input";
 type Result = { id: string; displayId: string; title: string; snippet: string };
 
 type WikiResult = { id: string; title: string; snippet: string };
@@ -34,7 +35,7 @@ export function WorkItemSearch({ workspace }: { workspace: { id: string; slug: s
   const box = React.useRef<HTMLDivElement>(null);
   const input = React.useRef<HTMLInputElement>(null);
   const { pathname } = useLocation();
-  React.useEffect(() => setExpanded(false), [pathname]);
+  React.useEffect(() => { setExpanded(false); setQuery(""); setClosed(false); }, [pathname]);
   React.useEffect(() => { if (expanded) input.current?.focus(); }, [expanded]);
   React.useEffect(() => {
     const onPointerDown = (event: MouseEvent) => { if (!box.current?.contains(event.target as Node)) setClosed(true); };
@@ -60,7 +61,7 @@ export function WorkItemSearch({ workspace }: { workspace: { id: string; slug: s
     <div ref={box} role="search" className={`search ${expanded ? "max-md:fixed max-md:inset-x-0 max-md:top-0 max-md:z-40 max-md:flex max-md:h-header max-md:max-w-none max-md:items-center max-md:gap-2 max-md:border-b max-md:border-subtle max-md:bg-surface-1 max-md:px-3" : "max-md:hidden"}`}>
     <div className="relative min-w-0 flex-1">
       <Search aria-hidden size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-tertiary" />
-      <input ref={input} type="search" className="h-9 w-full rounded-lg pl-8" value={query} placeholder={translate("search.placeholder")} aria-label={translate("search.label")}
+      <Input ref={input} type="search" className="h-9 w-full rounded-lg pl-8" value={query} placeholder={translate("search.placeholder")} aria-label={translate("search.label")}
         onChange={(event) => { setQuery(event.target.value); setClosed(false); }} onKeyDown={(event) => { if (event.key === "Escape") { setQuery(""); setClosed(true); setExpanded(false); } }} />
     </div>
     {expanded && <Button type="button" aria-label={translate("search.close")} onClick={() => { setQuery(""); setExpanded(false); }} className="rounded-md bg-transparent p-1.5 text-secondary hover:bg-layer-transparent-hover md:hidden"><X aria-hidden size={18} /></Button>}
@@ -68,12 +69,12 @@ export function WorkItemSearch({ workspace }: { workspace: { id: string; slug: s
       {failed && <li role="alert">{translate("search.failed")}</li>}
       {!failed && results.items.length === 0 && results.wiki.length === 0 && <li>{translate("search.empty")}</li>}
       {results.items.map((item) => <li key={item.id}>
-        <Link to={paths.workItem(workspace.slug, item.displayId)} onClick={() => setClosed(true)}><strong>{item.displayId}</strong> {item.title}</Link>
+        <Link to={paths.workItem(workspace.slug, item.displayId)}><strong>{item.displayId}</strong> {item.title}</Link>
         {item.snippet && <small>{item.snippet}</small>}
       </li>)}
       {results.wiki.length > 0 && <li role="presentation"><strong>{translate("search.wikiHeading")}</strong></li>}
       {results.wiki.map((page) => <li key={page.id}>
-        <Link to={paths.wikiPage(workspace.slug, page.id)} onClick={() => setClosed(true)}>{page.title}</Link>
+        <Link to={paths.wikiPage(workspace.slug, page.id)}>{page.title}</Link>
         {page.snippet && <small>{page.snippet}</small>}
       </li>)}
     </ul>}

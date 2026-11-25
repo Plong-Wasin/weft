@@ -270,6 +270,7 @@ try {
   await createWorkspaceDialog.getByRole("button", { name: translate("workspace.close") }).click();
   const newWorkspaceItem = page.getByRole("menuitem", { name: translate("workspace.new") });
   await newWorkspaceItem.waitFor();
+  await page.waitForFunction((label) => document.activeElement?.getAttribute("role") === "menuitem" && document.activeElement.textContent?.includes(label), translate("workspace.new"));
   check(await newWorkspaceItem.evaluate((element) => element === document.activeElement), "workspace switcher does not restore focus to New workspace after cancel");
   await newWorkspaceItem.click();
   await page.getByLabel(translate("workspace.name")).fill("Second team");
@@ -294,12 +295,17 @@ try {
   await phoneCreateDialog.getByRole("button", { name: translate("workspace.close") }).click();
   const phoneNewWorkspaceItem = page.getByRole("menuitem", { name: translate("workspace.new") });
   await phoneNewWorkspaceItem.waitFor();
+  await page.waitForFunction((label) => document.activeElement?.getAttribute("role") === "menuitem" && document.activeElement.textContent?.includes(label), translate("workspace.new"));
   check(await phoneNewWorkspaceItem.evaluate((element) => element === document.activeElement), "phone workspace switcher does not restore focus to New workspace after cancel");
   await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 1440, height: 900 });
   console.log("shell ok: workspace creation dialog on desktop and phone");
 
   // Search opens the work item and wiki results.
+  // The work item and handbook belong to E2E team; switch back after the workspace-switcher checks.
+  await page.getByRole("button", { name: translate("workspace.switch") }).click();
+  await page.getByRole("menuitemradio", { name: "E2E team" }).click();
+  await page.waitForURL(`${web}/${slug}`);
   const searchInput = page.getByRole("searchbox", { name: translate("search.label") });
   await searchInput.fill("Alpha");
   const results = page.getByRole("list", { name: translate("search.results") });
@@ -307,6 +313,7 @@ try {
   await results.getByRole("link", { name: /Alpha handbook/ }).waitFor();
   await results.getByRole("link", { name: /Alpha handbook/ }).click();
   await page.waitForURL(new RegExp(`/${slug}/wiki/`));
+  await searchInput.fill("");
   await searchInput.fill("Alpha");
   await results.getByRole("link", { name: /Alpha shell item/ }).click();
   await page.waitForURL(`${web}/${slug}/browse/MOB-1`);

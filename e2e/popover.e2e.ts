@@ -51,20 +51,22 @@ try {
   await page.getByRole("button", { name: t("modules.addNew") }).click();
   const modal = page.getByRole("dialog", { name: t("modules.addTitleModal") });
   await modal.getByLabel(t("modules.name")).fill("Popover module");
-  const statusTrigger = modal.getByRole("button").nth(1);
+  const statusTrigger = modal.getByRole("button", { name: new RegExp(`^${t("modules.status")}:`) });
   const modalScrollHeight = await modal.evaluate((element) => element.scrollHeight);
   await statusTrigger.click();
   const menu = page.locator('[role="menu"]').last();
   await menu.waitFor();
-  check(await menu.evaluate((element) => element.parentElement === document.body), "dropdown should render in a body portal");
+  check(await menu.evaluate((element, label) => element.closest("dialog")?.getAttribute("aria-label") === label, t("modules.addTitleModal")), "dropdown should stay inside its native modal");
   const menuScroll = await menu.evaluate((element) => ({ scrollWidth: element.scrollWidth, clientWidth: element.clientWidth }));
   check(menuScroll.scrollWidth <= menuScroll.clientWidth, `dropdown should not scroll sideways: ${JSON.stringify(menuScroll)}`);
   check(await modal.evaluate((element) => element.scrollHeight) === modalScrollHeight, "dropdown should not grow the dialog scroll area");
 
-  await statusTrigger.evaluate((element) => {
+  const modalBounds = await modal.boundingBox();
+  check(Boolean(modalBounds), "Module dialog has no layout box");
+  await statusTrigger.evaluate((element, dialogBottom) => {
     const bounds = element.getBoundingClientRect();
-    element.style.transform = `translateY(${window.innerHeight - bounds.bottom - 8}px)`;
-  });
+    element.style.transform = `translateY(${dialogBottom - bounds.bottom - 8}px)`;
+  }, modalBounds!.y + modalBounds!.height);
   await page.evaluate(() => window.dispatchEvent(new Event("resize")));
   const menuBounds = await menu.boundingBox();
   const triggerBounds = await statusTrigger.boundingBox();

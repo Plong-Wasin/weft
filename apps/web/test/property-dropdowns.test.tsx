@@ -20,21 +20,13 @@ test("the outlined icon-only chip is the same as the outlined chip, so board car
   expect(chipClass(false, true)).toBe(chipClass(false, false));
 });
 
-test("icon-only SingleSelect keeps its accessible name, shadcn hit area, and responsive label", () => {
+test("icon-only quiet SingleSelect keeps its accessible name, value title, and hit area", () => {
   const html = renderToStaticMarkup(<SingleSelect quiet iconOnly label="State" summary="Todo" value="todo" options={options} onSelect={noop} />);
   expect(html).toContain('aria-label="State: Todo"');
-  expect(html).toContain("pointer-coarse:min-h-11 pointer-coarse:min-w-11");
-  expect(html).toContain("min-w-7");
-  expect(html).toContain("border-input bg-background");
-  expect(html).toContain("focus-visible:ring-ring/50");
+  expect(html).toContain('title="State: Todo"');
+  expect(html).toContain("min-h-7 min-w-7 max-sm:min-h-9 max-sm:min-w-9");
+  expect(html).toContain("hover:bg-layer-transparent-hover hover:text-primary");
   expect(html).toContain("max-sm:inline");
-});
-
-test("SingleSelect longer than the search threshold keeps the searchable popover, not the shadcn Select", () => {
-  const many = Array.from({ length: 7 }, (_, index) => ({ id: `option-${index}`, name: `Option ${index}` }));
-  const html = renderToStaticMarkup(<SingleSelect label="Cycle" summary="Option 0" value="option-0" options={many} onSelect={noop} />);
-  expect(html).not.toContain('role="combobox"');
-  expect(html).toContain('aria-label="Cycle: Option 0"');
 });
 
 test("quiet reaches read-only SingleSelect and DatesMenu triggers", () => {
@@ -46,12 +38,11 @@ test("quiet reaches read-only SingleSelect and DatesMenu triggers", () => {
   expect(dates).not.toContain("border-subtle");
 });
 
-test("SingleSelect uses shadcn while MultiSelect and DatePopover keep their quiet trigger treatment", () => {
+test("quiet reaches interactive EstimateSelect, MultiSelect, and DatePopover triggers", () => {
   const estimate = renderToStaticMarkup(<EstimateSelect quiet estimate={{ id: "estimate", projectId: "project", name: "Estimate", type: "points", enabled: true, points: [{ id: "one", position: 0, value: "1" }] }} pointId="one" onSelect={noop} />);
   const multi = renderToStaticMarkup(<MultiSelect quiet label="Labels" summary="Bug" options={[{ id: "bug", name: "Bug" }]} selected={["bug"]} onToggle={noop} />);
   const dates = renderToStaticMarkup(<DatesMenu quiet startDate={null} dueDate={null} onChange={noop} />);
-  expect(estimate).toContain("border-input bg-background");
-  for (const html of [multi, dates]) {
+  for (const html of [estimate, multi, dates]) {
     expect(html).toContain("bg-transparent px-2 py-1 text-12 font-medium text-secondary");
     expect(html).not.toContain("border-subtle");
   }

@@ -13,7 +13,7 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5207);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const shots = reviewShots("05-work-items-list-layout");
-const evidenceShots = join(import.meta.dir, "../.local/shots");
+const evidenceShots = join(import.meta.dir, "../.local/shots/03");
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
   Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
@@ -100,30 +100,27 @@ try {
   check(await done.getAttribute("aria-expanded") === "true", "an empty group did not expand through its toggle");
   await done.click();
   check(await done.getAttribute("aria-expanded") === "false", "an empty group did not collapse again");
-  // Named acceptance checks for the table header and its shared grid columns.
+  // Named acceptance checks for the compact issue rows and their quiet property slots.
   const firstRow = page.getByTestId("row-MOB-1");
   const desktopRowMetrics = await page.locator('[data-testid^="row-"]').evaluateAll((rows) => rows.map((row) => {
     const rect = row.getBoundingClientRect();
     return { id: row.getAttribute("data-testid"), height: rect.height };
   }));
   check(desktopRowMetrics.length > 0 && desktopRowMetrics.every((row) => row.height <= 40), `1440px list rows are at most 40px tall (TableRowsAtMost40px): ${JSON.stringify(desktopRowMetrics)}`);
-  const tableHeader = page.getByTestId("list-column-header").getByText(translate("workItems.titleField"), { exact: true });
-  check(await tableHeader.isVisible(), "desktop one-line list shows its column header (TableHeaderVisible)");
-  for (const [property, label] of [["State", translate("workItems.state")], ["Priority", translate("workItems.priority")], ["Estimate", translate("workItems.estimate")], ["Labels", translate("workItems.labels")], ["Cycle", translate("workItems.cycle")], ["Modules", translate("workItems.modules")], ["Dates", translate("layout.property.dates")], ["Assignees", translate("workItems.assignees")]] as const) {
-    const headerLabel = page.getByTestId("list-column-header").getByText(label, { exact: true });
+  check(await page.getByTestId("list-column-header").count() === 0, "Linear Issues list has no header row (ListHasNoHeader)");
+  for (const [property, label] of [["Estimate", translate("workItems.estimate")], ["Labels", translate("workItems.labels")], ["Cycle", translate("workItems.cycle")], ["Modules", translate("workItems.modules")], ["Dates", translate("layout.property.dates")], ["Assignees", translate("workItems.assignees")]] as const) {
     const trigger = firstRow.getByRole("button", { name: new RegExp(`^${label}:`) });
     if (await trigger.count() === 0) continue;
-    const [headerX, chipX] = await Promise.all([headerLabel.evaluate((element) => element.getBoundingClientRect().x), trigger.evaluate((element) => element.getBoundingClientRect().x)]);
-    check(Math.abs(headerX - chipX) <= 1, `${property} header aligns with its first row chip (TableHeader${property}Aligned): ${headerX} / ${chipX}`);
     const xs = await Promise.all(["MOB-1", "MOB-2", "MOB-3"].map((id) => page.getByTestId(`row-${id}`).getByRole("button", { name: new RegExp(`^${label}:`) }).evaluate((element) => element.getBoundingClientRect().x)));
-    check(Math.max(...xs) - Math.min(...xs) <= 1, `${property} chips share one column (Table${property}ColumnAligned): ${xs.join(", ")}`);
+    check(Math.max(...xs) - Math.min(...xs) <= 1, `${property} chips share a stable right-side slot (List${property}SlotStable): ${xs.join(", ")}`);
   }
   for (const property of ["state", "priority"] as const) {
     const control = firstRow.getByRole("button", { name: new RegExp(`^${translate(`workItems.${property}`)}:`) });
-    check(await control.innerText().then((text) => text.trim().length > 0), `${property} text remains visible beside its icon (Table${property}TextVisible)`);
-    check(await control.evaluate((element) => getComputedStyle(element).borderTopWidth === "0px"), `${property} remains a quiet borderless list chip`);
+    check(await control.locator("svg").count() > 0, `${property} remains icon-only in the list (List${property}IconOnly)`);
+    check(await control.evaluate((element) => getComputedStyle(element).borderTopWidth === "0px"), `${property} remains a quiet borderless list control`);
   }
-  check(await firstRow.getByText("—", { exact: true }).count() > 0 && await firstRow.getByText("—", { exact: true }).first().isVisible(), "empty list properties show a visible muted dash (TableEmptyPropertiesShowDash)");
+  const emptyAssignee = firstRow.getByRole("button", { name: new RegExp(`^${translate("workItems.assignees")}:`) });
+  check(await emptyAssignee.isVisible() && await emptyAssignee.locator("svg").count() > 0, "empty list properties keep an icon control in their reserved slot (ListEmptyPropertiesKeepSlot)");
 
   // Each inline dropdown changes the work item without a reload (a marker on window survives only without navigation).
   await page.evaluate(() => { (window as unknown as { __noReload: boolean }).__noReload = true; });
@@ -142,7 +139,7 @@ try {
   await row.screenshot({ path: `${shots}/popover-scroll-row-after-hover.png` });
   await page.mouse.move(0, 0);
   await row.getByRole("link", { name: "Alpha" }).focus();
-  await page.keyboard.press("Tab");
+  await page.keyboard.press("Shift+Tab");
   check(await row.getByRole("button", { name: new RegExp(`^${translate("workItems.state")}:`) }).evaluate((element) => document.activeElement === element), "keyboard focus should move to the next visible row control, State");
   const cycleAfterKeyboardFocus = await emptyCycleTrigger.boundingBox();
   check(Boolean(cycleAfterHover && cycleAfterKeyboardFocus) && Math.abs(cycleAfterHover!.x - cycleAfterKeyboardFocus!.x) < 1 && Math.abs(cycleAfterHover!.y - cycleAfterKeyboardFocus!.y) < 1, "keyboard focus keeps row controls in stable positions");
@@ -210,22 +207,14 @@ try {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     const columnHeader = page.getByTestId("list-column-header");
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    check(await columnHeader.count() === 0, `${width}px Linear Issues list has no header row (ListNoHeaderAt${width})`);
     if (width >= 1440) {
-      await columnHeader.waitFor({ state: "visible" });
       const heights = await page.locator('[data-testid^="row-"]').evaluateAll((rows) => rows.map((item) => item.getBoundingClientRect().height));
-      check(heights.length > 0 && heights.every((height) => height <= 40), `${width}px uses one-line rows no taller than 40px (TableOneLineAt${width}): ${JSON.stringify(heights)}`);
-    } else {
-      await columnHeader.waitFor({ state: "hidden" });
-      if (width === 1100) {
-        await firstRow.getByTestId("list-property-wrap").waitFor();
-        const title = firstRow.locator("a").boundingBox();
-        const properties = firstRow.getByTestId("list-property-wrap").boundingBox();
-        const [titleBox, propertyBox] = await Promise.all([title, properties]);
-        check(Boolean(titleBox && propertyBox && propertyBox.y > titleBox.y), "1100px fallback places properties below the title (TableNarrowPropertiesWrap)");
-      }
+      check(heights.length > 0 && heights.every((height) => height <= 40), `${width}px uses one-line rows no taller than 40px (ListOneLineAt${width}): ${JSON.stringify(heights)}`);
     }
     for (const theme of ["light", "dark"] as const) {
       await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+      await mkdir(evidenceShots, { recursive: true });
       await page.screenshot({ path: `${evidenceShots}/work-items-list-${width}-${theme}.png`, fullPage: true });
     }
   }
@@ -309,6 +298,8 @@ try {
   await page.getByRole("button", { name: translate("layout.display") }).click();
   const labelsProperty = page.getByLabel(translate("layout.property.labels"), { exact: true });
   if (!(await labelsProperty.isChecked())) await labelsProperty.check();
+  const cycleProperty = page.getByLabel(translate("layout.property.cycle"), { exact: true });
+  if (!(await cycleProperty.isChecked())) await cycleProperty.check();
   await page.keyboard.press("Escape");
 
   await page.setViewportSize({ width: 390, height: 844 });
@@ -367,6 +358,31 @@ try {
   await keyboardResize;
   const resizedItem = await call<{ dueDate: string | null }>("get_work_item", { workspaceId: me.workspaces[0]!.id, displayId: "MOB-1" });
   check(resizedItem.dueDate === day(4), "keyboard resizing the Gantt due date did not save one day later");
+  for (const layout of ["board", "spreadsheet", "calendar", "gantt"] as const) {
+    await page.getByRole("button", { name: translate(`layout.${layout}`) }).click();
+    const surface = layout === "board" ? page.getByTestId("board") : layout === "spreadsheet" ? page.getByTestId("sheet-scroll") : page.getByTestId(`${layout}-layout`);
+    await surface.waitFor();
+    for (const [width, height] of [[1440, 900], [390, 844]] as const) {
+      await page.setViewportSize({ width, height });
+      for (const theme of ["light", "dark"] as const) {
+        await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+        await page.screenshot({ path: `${evidenceShots}/${layout}-${theme}-${width}.png`, fullPage: true });
+      }
+    }
+  }
+  await page.getByRole("button", { name: translate("layout.list") }).click();
+  for (const [name, label] of [["filters", translate("layout.filters")], ["query", translate("layout.filterQuery.toggle")], ["display", translate("layout.display")]] as const) {
+    const control = page.getByRole("button", { name: label });
+    await control.click();
+    for (const [width, height] of [[1440, 900], [390, 844]] as const) {
+      await page.setViewportSize({ width, height });
+      for (const theme of ["light", "dark"] as const) {
+        await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+        await page.screenshot({ path: `${evidenceShots}/${name}-${theme}-${width}.png`, fullPage: true });
+      }
+    }
+    await control.click();
+  }
   console.log("e2e work items list: ok");
   await browser.close();
 } catch (error) {

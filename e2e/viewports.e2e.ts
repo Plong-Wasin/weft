@@ -132,7 +132,8 @@ try {
     check("touch-filled-chip-target-44px", !!stateBox && stateBox.height >= 44, `State target is ${stateBox?.height ?? 0}px at ${viewport.suffix}`);
     const rowBox = await firstRow.boundingBox();
     check("touch-row-present", !!rowBox, `seed row has no visible bounds at ${viewport.suffix}`);
-    if (rowBox) await touch.touchscreen.tap(Math.round(rowBox.x + rowBox.width - 32), Math.round(rowBox.y + rowBox.height / 2));
+    // The last property slot can contain Assignee at wider widths, so the trailing edge is not reliably blank.
+    if (rowBox) await touch.touchscreen.tap(Math.round(rowBox.x + rowBox.width - 2), Math.round(rowBox.y + rowBox.height / 2));
   check("touch-blank-row-does-not-open-menu", await touch.locator("[data-popover-panel]:visible").count() === 0 && touch.url().includes("/issues?layout=list"), `blank row tap opened a menu or peek panel at ${viewport.suffix}`);
     await touch.screenshot({ path: join(root, `work-item-list-touch-${viewport.suffix}.png`) });
     await touchContext.close();
@@ -154,7 +155,8 @@ try {
     await shortPage.keyboard.press("Escape");
     const stateTrigger = shortPage.getByTestId(`row-${seed.workItem}`).getByRole("button", { name: /^State:/ }).first();
     await stateTrigger.tap();
-    const propertyMenu = shortPage.locator('[data-popover-panel][role="menu"]');
+    // SingleSelect renders its accessible picker as a dialog; role="menu" belongs to the nested option list.
+    const propertyMenu = shortPage.locator('[data-popover-panel][role="dialog"]');
     const menuBox = await propertyMenu.boundingBox();
     check("short-height-menu-fits", !!menuBox && menuBox.x >= 0 && menuBox.y >= 0 && menuBox.x + menuBox.width <= viewport.width && menuBox.y + menuBox.height <= viewport.height,
       `property menu bounds at ${viewport.suffix}: ${JSON.stringify(menuBox)}`);

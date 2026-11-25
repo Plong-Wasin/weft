@@ -64,6 +64,17 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   /** Ids picked for a Bulk edit, in the order they were picked; `anchor` is the last one clicked, where a shift-click range starts. */
   const [selected, setSelected] = React.useState<string[]>([]);
   const anchor = React.useRef<string | null>(null);
+  /** Width of the list box, measured so each row knows whether its properties fit on the title's line. */
+  const [listBox, setListBox] = React.useState<HTMLElement | null>(null);
+  const [listWidth, setListWidth] = React.useState(0);
+  React.useLayoutEffect(() => {
+    if (!listBox) return;
+    setListWidth(listBox.clientWidth);
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => setListWidth(listBox.clientWidth));
+    observer.observe(listBox);
+    return () => observer.disconnect();
+  }, [listBox]);
   const [filterQueryOpen, setFilterQueryOpen] = React.useState(false);
   const [lookupsLoaded, setLookupsLoaded] = React.useState({ base: false, cycles: false, modules: false, types: false });
   const [typeOptions, setTypeOptions] = React.useState<WorkItemType[]>([]);
@@ -442,16 +453,31 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const isEmptyProperty = (item: Item, property: DisplayProperty) => property === "priority" ? item.priority === "none" : property === "estimate" ? !item.estimatePointId
     : property === "assignee" ? item.assigneeIds.length === 0 : property === "labels" ? item.labelIds.length === 0 : property === "dates" ? !item.startDate && !item.dueDate
     : property === "cycle" ? !cycleOf[item.id] : property === "modules" ? (modulesOf[item.id] ?? []).length === 0 : false;
+  /**
+   * Every property has a slot of one fixed width (in rem), so its chip starts at the same x in every row, whether the chip is set or hidden-empty; a longer value is clipped to the slot.
+   * The slots of the shown properties add up to the width of the property block. When the row is wide enough for the checkbox, ID, a readable title and that block, they share one line;
+   * otherwise the block sits on a second line under the title, in the same columns. Phones keep the wrapping row.
+   */
+  const slotRem: Record<string, number> = { state: 6.75, priority: 6.5, estimate: 5.5, assignee: 6, labels: 7, dates: 8.5, cycle: 6.5, modules: 7 };
+  const shownProperties = (["state", "priority", "estimate", "assignee", "labels", "dates", "cycle", "modules"] as const).filter((property) => listShows(property));
+  const gapPx = 8;
+  const rowActionPx = 88;
+  /** Row padding (40) + checkbox (16) + ID (88) + title floor (192) + the three gaps between the four columns (36). */
+  const rowFixedPx = 40 + 16 + 88 + 192 + 36;
+  const propertyBlockPx = shownProperties.reduce((sum, property) => sum + (slotRem[property] ?? 0) * 16 + gapPx, 0) + (rowAction ? rowActionPx : 0);
+  const oneLine = listWidth >= rowFixedPx + propertyBlockPx;
   const rowOf = (item: Item) => (
-    <li key={item.id} data-testid={`row-${item.displayId}`} className={`group/row flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-subtle px-5 py-2.5 hover:bg-layer-transparent-hover ${selected.includes(item.id) ? "bg-layer-1" : "bg-surface-1"}`}>
-      {pickBox(item)}
-      {shows("id") && <span className="w-16 shrink-0 text-12 text-tertiary">{item.displayId}</span>}
-      <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="min-w-40 flex-1 truncate text-14 font-medium text-primary">{item.title}</Link>
-      <div className="flex flex-wrap items-center gap-2">
-        {(["state", "priority", "estimate", "assignee", "labels", "dates", "cycle", "modules"] as const).filter((property) => listShows(property)).map((property) => isEmptyProperty(item, property)
-          ? <span key={property} className="[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-hover/row:pointer-events-auto [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:pointer-events-auto [@media(hover:hover)]:group-has-[[aria-expanded=true]]/row:opacity-100 [@media(hover:hover)]:group-has-[[aria-expanded=true]]/row:pointer-events-auto">{cellOf(item, property)}</span>
-          : <React.Fragment key={property}>{cellOf(item, property)}</React.Fragment>)}
-        {rowAction?.(item)}
+    <li key={item.id} data-testid={`row-${item.displayId}`} className={`group/row border-b border-subtle px-5 py-2.5 hover:bg-layer-transparent-hover ${selected.includes(item.id) ? "bg-layer-1" : "bg-surface-1"}`}>
+      <div className={`flex flex-wrap items-center gap-x-3 gap-y-2 sm:grid sm:gap-y-1.5 ${oneLine ? "sm:grid-cols-[1rem_5.5rem_minmax(8rem,1fr)_auto]" : "sm:grid-cols-[1rem_5.5rem_minmax(8rem,1fr)]"}`}>
+        {pickBox(item) || <span aria-hidden className="max-sm:hidden" />}
+        {shows("id") ? <span title={item.displayId} className="min-w-[5.5rem] shrink-0 whitespace-nowrap text-12 tabular-nums text-tertiary sm:min-w-0 sm:truncate">{item.displayId}</span> : <span aria-hidden className="max-sm:hidden" />}
+        <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="min-w-40 flex-1 truncate text-14 font-medium text-primary sm:min-w-0">{item.title}</Link>
+        <div className={`flex flex-wrap items-center gap-2 ${oneLine ? "sm:col-start-4 sm:flex-nowrap" : "sm:col-start-3"}`}>
+          {shownProperties.map((property) => isEmptyProperty(item, property)
+            ? <span key={property} style={{ "--slot": `${slotRem[property]}rem` } as React.CSSProperties} className="sm:-mx-1 sm:-my-[5px] sm:box-content sm:flex sm:w-[var(--slot)] sm:shrink-0 sm:overflow-hidden sm:whitespace-nowrap sm:px-1 sm:py-[5px] sm:[&>*]:max-w-full sm:[&_*]:min-w-0 sm:[&_svg]:shrink-0 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-hover/row:pointer-events-auto [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:pointer-events-auto [@media(hover:hover)]:group-has-[[aria-expanded=true]]/row:opacity-100 [@media(hover:hover)]:group-has-[[aria-expanded=true]]/row:pointer-events-auto">{cellOf(item, property)}</span>
+            : <span key={property} style={{ "--slot": `${slotRem[property]}rem` } as React.CSSProperties} className="sm:-mx-1 sm:-my-[5px] sm:box-content sm:flex sm:w-[var(--slot)] sm:shrink-0 sm:overflow-hidden sm:whitespace-nowrap sm:px-1 sm:py-[5px] sm:[&>*]:max-w-full sm:[&_*]:min-w-0 sm:[&_svg]:shrink-0">{cellOf(item, property)}</span>)}
+          {rowAction?.(item)}
+        </div>
       </div>
     </li>
   );
@@ -669,7 +695,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     {sheet && !emptyProject && sheetView}
     {params.layout === "calendar" && calendarView}
     {params.layout === "gantt" && ganttView}
-    {!board && !sheet && !emptyProject && params.layout !== "calendar" && params.layout !== "gantt" && <div className="overflow-hidden rounded-lg border border-subtle">
+    {!board && !sheet && !emptyProject && params.layout !== "calendar" && params.layout !== "gantt" && <div ref={setListBox} className="overflow-hidden rounded-lg border border-subtle">
       {filtered && items.length === 0 && <p className="border-b border-subtle bg-surface-1 px-5 py-3 text-14 text-secondary">{t("layout.noMatch")}</p>}
       {groups.map((group) => {
         const empty = group.items.length === 0;

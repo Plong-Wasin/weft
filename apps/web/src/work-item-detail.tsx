@@ -101,9 +101,9 @@ function TypeRows({ project, item, canWrite, people, onSaved }: { project: Proje
 }
 
 function PropertyRow({ icon, label, children }: { icon: React.ReactNode; label: string; children: React.ReactNode }) {
-  return <div className="group grid min-h-9 grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-2 rounded-lg px-2 text-13 transition-colors hover:bg-layer-transparent-hover">
-    <span className="flex min-w-0 items-center gap-2 text-secondary">{icon}<span className="truncate">{label}</span></span>
-    <div className="flex min-w-0 flex-wrap items-center gap-1">{children}</div>
+  return <div className="grid min-h-8 grid-cols-[5.75rem_minmax(0,1fr)] items-center gap-2 rounded-lg px-1 text-13 transition-colors hover:bg-layer-transparent-hover">
+    <span className="flex min-w-0 items-center gap-2 text-secondary">{icon}<span className="truncate" title={label}>{label}</span></span>
+    <div className="flex min-w-0 flex-nowrap items-center gap-1">{children}</div>
   </div>;
 }
 
@@ -399,7 +399,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     </div>}
     <div className="grid gap-2">
       {mode === "page" ? <h1 className="m-0 text-14 font-medium text-tertiary">{item.displayId}</h1> : <h2 className="m-0 text-14 font-medium text-tertiary">{item.displayId}</h2>}
-      <textarea ref={titleRef} rows={1} aria-label={t("workItems.titleField")} value={title} maxLength={500} readOnly={!canWrite} className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-20 font-semibold leading-tight text-primary [overflow-wrap:anywhere]"
+      <textarea ref={titleRef} rows={1} aria-label={t("workItems.titleField")} value={title} maxLength={500} readOnly={!canWrite} className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-24 font-semibold leading-tight text-primary [overflow-wrap:anywhere]"
         onChange={(event) => setTitle(event.target.value)}
         onBlur={() => { const next = title.trim(); if (!next) setTitle(item.title); else if (next !== item.title) void change({ title: next }); }}
         onKeyDown={(event) => { handleImeSafeEnter(event.nativeEvent, () => event.currentTarget.blur()); }} />
@@ -517,7 +517,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     </>)}
     {propSection("details", <>
       <PropertyRow icon={<CircleUserRound aria-hidden size={15} />} label={t("workItems.createdBy")}>
-        <span className="flex items-center gap-1.5 px-1 text-13 font-medium text-primary"><Avatar name={creator} id={item.createdBy} agent={isAgentId(item.createdBy)} />{creator}</span>
+        <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap px-1 text-13 font-medium text-primary"><Avatar name={creator} id={item.createdBy} agent={isAgentId(item.createdBy)} /><span className="min-w-0 truncate" title={creator}>{creator}</span></span>
       </PropertyRow>
       {project && <TypeRows project={project} item={item} canWrite={canWrite} people={people} onSaved={async () => { await load(); onChanged?.(); }} />}
     </>)}

@@ -10,8 +10,8 @@ import { AiOnly } from "./ai-flag";
 import type { Option } from "./property-dropdowns";
 
 const t = (key: string) => translate(key as MessageKey);
-const ghost = "flex items-center gap-1.5 rounded-md border border-subtle bg-surface-1 px-2.5 py-1 text-13 font-medium text-primary hover:bg-layer-transparent-hover max-sm:min-h-9";
-const chipClass = "flex items-center gap-1.5 rounded-md border border-subtle bg-layer-1 py-0.5 pl-2 pr-1 text-12 text-primary";
+const ghost = "flex items-center gap-1.5 rounded-lg border border-transparent bg-layer-1 px-2.5 py-1 text-13 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary max-sm:min-h-9";
+const chipClass = "flex items-center gap-1.5 rounded-md border border-transparent bg-layer-1 py-0.5 pl-2 pr-1 text-12 text-primary";
 
 export type FilterSection = { key: NamedFilter; options: Option[] };
 
@@ -42,7 +42,7 @@ export function FilterPicker({ sections, filters, count, onChange, onClear }: { 
         const expanded = needle !== "" || open === section.key;
         const selected = filters[section.key].length;
         return <div key={section.key} className="grid gap-1">
-          <button type="button" aria-expanded={expanded} className="flex w-full items-center justify-between rounded-md bg-transparent px-2 py-1.5 text-13 font-medium text-primary hover:bg-layer-transparent-hover" onClick={() => setOpen(open === section.key ? null : section.key)}>
+          <button type="button" aria-expanded={expanded} className="flex w-full items-center justify-between rounded-lg bg-transparent px-2 py-1.5 text-13 font-medium text-primary hover:bg-layer-transparent-hover" onClick={() => setOpen(open === section.key ? null : section.key)}>
             <span>{t(`layout.filter.${section.key}`)}</span>{selected > 0 && <span className="rounded bg-layer-1 px-1.5 text-11 text-secondary">{selected}</span>}</button>
           {expanded && <fieldset className="m-0 grid gap-0.5 border-0 p-0 px-1" aria-label={t(`layout.filter.${section.key}`)}>
             <legend className="sr-only">{t(`layout.filter.${section.key}`)}</legend>
@@ -55,7 +55,7 @@ export function FilterPicker({ sections, filters, count, onChange, onClear }: { 
         const expanded = needle !== "" || open === key;
         const range = filters[key];
         return <div key={key} className="grid gap-1">
-          <button type="button" aria-expanded={expanded} className="flex w-full items-center justify-between rounded-md bg-transparent px-2 py-1.5 text-13 font-medium text-primary hover:bg-layer-transparent-hover" onClick={() => setOpen(open === key ? null : key)}>
+          <button type="button" aria-expanded={expanded} className="flex w-full items-center justify-between rounded-lg bg-transparent px-2 py-1.5 text-13 font-medium text-primary hover:bg-layer-transparent-hover" onClick={() => setOpen(open === key ? null : key)}>
             <span>{t(`layout.filter.${key}`)}</span>{(range.from || range.to) && <span className="rounded bg-layer-1 px-1.5 text-11 text-secondary">1</span>}</button>
           {expanded && <fieldset className="m-0 grid gap-1 border-0 p-0 px-2" aria-label={t(`layout.filter.${key}`)}>
             <legend className="sr-only">{t(`layout.filter.${key}`)}</legend>
@@ -96,7 +96,7 @@ export function FilterChips({ filters, sections, custom, onChange, onClear }: { 
 export function FilterQueryEditor({ text, error, onApply, generate }: { text: string; error: string | null; onApply: (text: string) => void; generate?: FilterQueryScope }) {
   const [draft, setDraft] = React.useState(text);
   React.useEffect(() => setDraft(text), [text]);
-  return <form className="my-0 grid gap-1.5 rounded-lg border border-subtle bg-layer-1 p-2" onSubmit={(event) => { event.preventDefault(); onApply(draft); }}>
+  return <form className="my-0 grid gap-2 rounded-xl border border-transparent bg-layer-1 p-3" onSubmit={(event) => { event.preventDefault(); onApply(draft); }}>
     {generate && <AiOnly><FilterQueryGenerate scope={generate} onQuery={setDraft} /></AiOnly>}
     <label className="my-0 grid gap-1 text-12 font-medium text-tertiary">{t("layout.filterQuery.label")}
       <textarea value={draft} rows={2} maxLength={2000} spellCheck={false} aria-invalid={error !== null} placeholder={t("layout.filterQuery.placeholder")} className="font-mono text-13"

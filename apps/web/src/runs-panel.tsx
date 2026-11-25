@@ -88,7 +88,7 @@ function RunCard({ run, workspaceId, highlighted, canControl, action, tick, onCh
   }, [action, run.id, run.status, showTranscript, tick]);
   const control = async (name: "cancel_run" | "rerun_run", extra: { newSession?: boolean } = {}) => { setFailed(await action(name, { runId: run.id, ...extra }) === null); onChanged(); };
   const pending = (transcript?.confirmations ?? []).filter((card) => card.status === "pending").map((card) => card.id);
-  return <li id={`run-${run.id}`} data-run-status={run.status} data-highlighted={highlighted || undefined} className={`grid gap-2 rounded-lg border bg-surface-1 px-4 py-3 ${highlighted ? "border-accent-strong" : "border-subtle"}`}>
+  return <li id={`run-${run.id}`} data-run-status={run.status} data-highlighted={highlighted || undefined} className={`grid gap-2 rounded-xl border bg-surface-1 px-4 py-4 ${highlighted ? "border-accent-strong" : "border-subtle"}`}>
     <div className="flex flex-wrap items-center gap-2 text-14">
       <strong data-testid="run-status">{translate(runStatusKey(run.status))}</strong>
       <small className="text-tertiary">{formatDate(run.createdAt)} · {translate("runs.attempt").replace("{attempt}", String(run.attempt + 1))}</small>

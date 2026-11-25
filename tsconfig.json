@@ -7,6 +7,10 @@
     "skipLibCheck": true,
     "jsx": "react-jsx",
     "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["apps/web/src/*"]
+    },
     "types": ["bun"]
   },
   "include": ["apps/**/*.ts", "apps/**/*.tsx", "packages/**/*.ts"]

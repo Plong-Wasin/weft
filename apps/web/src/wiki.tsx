@@ -408,11 +408,11 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
       <textarea ref={titleRef} rows={1} className="wiki-edit-title min-w-0 flex-1 basis-[12rem] resize-none overflow-hidden border-0 bg-transparent px-0 text-28 font-semibold leading-tight text-primary sm:text-40" aria-label={translate("wiki.untitled")} value={title} disabled={!page.canEdit} onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }} onChange={(event) => { setTitle(event.target.value); dirtyTitle.current = event.target.value || translate("wiki.untitled"); schedule(); }} onBlur={onChanged} />
       {page.locked && <span data-testid="wiki-locked-badge" className="shrink-0 rounded-md border border-subtle bg-surface-2 px-2 py-0.5 text-12 text-secondary">{translate("wiki.locked")}</span>}
       <div className="wiki-page-actions flex items-center gap-1">
-        {!page.projectId && page.ownerId === self && <button type="button" className="secondary" data-testid="wiki-header-share" onClick={() => revealPanelSection("wiki-share-members")}>{translate("wiki.share.action")}</button>}
-        {canPublishHere(page) && <button type="button" className="secondary" aria-pressed={Boolean(page.published)} data-testid="wiki-header-publish" onClick={() => revealPanelSection("wiki-published-link")}>{translate(page.published ? "wiki.published" : "wiki.publish")}</button>}
-        <div className="flex items-center gap-1 border-l border-subtle pl-2">
+        {!page.projectId && page.ownerId === self && <button type="button" className="secondary rounded-lg" data-testid="wiki-header-share" onClick={() => revealPanelSection("wiki-share-members")}>{translate("wiki.share.action")}</button>}
+        {canPublishHere(page) && <button type="button" className="secondary rounded-lg" aria-pressed={Boolean(page.published)} data-testid="wiki-header-publish" onClick={() => revealPanelSection("wiki-published-link")}>{translate(page.published ? "wiki.published" : "wiki.publish")}</button>}
+        <div className="flex items-center gap-1 rounded-lg bg-layer-1 p-1">
         <button type="button" className="icon-button-ghost" data-testid="wiki-details-toggle" aria-pressed={panelOpen} aria-label={translate(panelOpen ? "wiki.details.hide" : "wiki.details.show")} title={translate(panelOpen ? "wiki.details.hide" : "wiki.details.show")} onClick={togglePanel}><PanelRight aria-hidden size={16} /></button>
-        <Popover label={translate("wiki.exports")} align="right" className="icon-button-ghost !grid !place-items-center !p-0" panelClassName="w-72" trigger={<MoreHorizontal aria-hidden size={16} />}>
+        <Popover label={translate("wiki.exports")} align="right" className="icon-button-ghost !grid !place-items-center !p-0" panelClassName="w-72 rounded-xl" trigger={<MoreHorizontal aria-hidden size={16} />}>
         {(close) => {
           const groups: React.ReactNode[][] = [
             [
@@ -470,14 +470,14 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
         <DialogActions onClose={() => setPdfDialog(false)} submit={pdfExporting ? translate("wiki.pdfExporting") : translate("wiki.exportPdf")} />
       </form>
     </Dialog>}
-    <small role="status" className={`text-12 ${status === "not-saved" ? "text-danger-text" : "text-tertiary"}`}>{translate(status === "saved" ? "wiki.saved" : status === "saving" ? "wiki.saving" : status === "not-saved" ? "wiki.notSaved" : "wiki.saveFailed")}</small>
-    <div data-testid="wiki-editor-shell" className="wiki-editor-shell grid gap-3">
+    <small role="status" className={`mt-2 text-12 ${status === "not-saved" ? "text-danger-text" : "text-tertiary"}`}>{translate(status === "saved" ? "wiki.saved" : status === "saving" ? "wiki.saving" : status === "not-saved" ? "wiki.notSaved" : "wiki.saveFailed")}</small>
+    <div data-testid="wiki-editor-shell" className="wiki-editor-shell grid gap-4">
     <div className="relative">
       <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-testid="inline-image-input" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !editor) return; const assetId = await uploadFile(file); if (assetId) { const { selection } = editor.state; const at = "node" in selection ? selection.to : selection.from; editor.chain().focus().insertContentAt(at, { type: "assetImage", attrs: { assetId } }).run(); } }} />
     <div className="wiki-editor relative min-h-40" data-testid="wiki-editor"><EditorSourceMode editor={page.canEdit ? editor : null} initialWarnings={limitWarnings} onSourceDraftChange={(hasDraft) => { if (hasDraft) setStatus("not-saved"); }} toggleRef={sourceToggle} onModeChange={setSourceActive} /><CalloutControls editor={editor} editable={page.canEdit} /><CodeBlockControls editor={editor} editable={page.canEdit} /><TableControls editor={editor} editable={page.canEdit} /><EditorContent editor={editor} /><WikiBlockControls editor={editor} editable={page.canEdit} /><WikiBubbleMenu editor={page.canEdit ? editor : null} />{page.canEdit && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>
     </div>
     </div>
-    <section aria-label={translate("assets.title")} className="mt-5 border-t border-subtle pt-4">
+    <section aria-label={translate("assets.title")} className="mt-5 rounded-xl border border-subtle bg-surface-1 p-4 [&_[data-testid=attachment-dropzone]]:rounded-lg">
       <h2 className="mb-2 mt-0 text-16 font-semibold text-primary">{translate("assets.title")}</h2>
       <AttachmentsPanel workItemId={page.id} ownerType="wiki_page" canWrite={page.canEdit} action={call} showForm={page.canEdit} onCount={() => {}} testId="wiki-attachments" excludeAssetIds={inlineAssetIds} />
     </section>
@@ -672,10 +672,10 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
     {isError && <p role="alert">{translate("wiki.failed")}</p>}
     {isLoading && <p role="status">{translate("wiki.loading")}</p>}
     {!isLoading && shown.length === 0 && <p className="text-secondary">{translate("wiki.empty")}</p>}
-    {(shown.length > 0 || collections.length > 0) && <div className="overflow-x-auto"><table className="w-full border-collapse text-left text-13">
-      <thead><tr className="border-b border-subtle text-12 text-tertiary"><th className="py-2 font-medium">{translate("wiki.col.name")}</th><th className="py-2 font-medium">{translate("wiki.access")}</th><th className="hidden py-2 font-medium md:table-cell">{translate("pages.created")}</th><th className="py-2 font-medium">{translate("pages.updated")}</th><th className="hidden py-2 font-medium md:table-cell">{translate("wiki.col.nested")}</th></tr></thead>
+    {(shown.length > 0 || collections.length > 0) && <div className="overflow-x-auto rounded-xl border border-subtle bg-surface-1 p-3 sm:p-4"><table className="w-full table-fixed border-collapse text-left text-13">
+      <thead><tr className="border-b border-subtle text-12 text-tertiary"><th className="w-[45%] py-2 font-medium md:w-auto">{translate("wiki.col.name")}</th><th className="w-[25%] py-2 font-medium md:w-auto">{translate("wiki.access")}</th><th className="hidden py-2 font-medium md:table-cell">{translate("pages.created")}</th><th className="w-[30%] py-2 font-medium md:w-auto">{translate("pages.updated")}</th><th className="hidden py-2 font-medium md:table-cell">{translate("wiki.col.nested")}</th></tr></thead>
       <tbody>{collections.map((collection) => <React.Fragment key={collection.id}>
-        <tr className="border-b border-subtle"><th colSpan={5} className="pb-2 pr-2 pt-6 text-left font-semibold text-primary"><div className="flex items-center gap-2"><span>{collection.icon} {collectionLabel(collection)}{collection.visibility === "private" ? ` · ${translate("wiki.access.private")}` : ""}</span><Popover label={`${translate("wiki.collection.actions")}: ${collection.name}`} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-72">
+        <tr className="border-b border-subtle"><th colSpan={5} className="pb-2 pr-2 pt-6 text-left font-semibold text-primary"><div className="flex items-center gap-2"><span>{collection.icon} {collectionLabel(collection)}{collection.visibility === "private" ? ` · ${translate("wiki.access.private")}` : ""}</span><Popover label={`${translate("wiki.collection.actions")}: ${collection.name}`} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-72 rounded-xl">
           {(close) => <>
             <MenuItem icon={Pencil} onClick={() => { close(); setCollectionDialog({ kind: "rename", collection }); }}>{translate("wiki.collection.rename")}</MenuItem>
             {!collection.isDefault && <MenuItem icon={collection.visibility === "public" ? EyeOff : Globe} onClick={async () => { close(); await call("set_collection_visibility", { collectionId: collection.id, visibility: collection.visibility === "public" ? "private" : "public" }); await refreshCollections(); }}>{translate(collection.visibility === "public" ? "wiki.collection.makePrivate" : "wiki.collection.makePublic")}</MenuItem>}

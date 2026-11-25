@@ -13,9 +13,9 @@
   --radius-xs: .125rem;
   --radius-sm: .25rem;
   --radius-md: .375rem;
-  --radius-lg: .5rem;
-  --radius-xl: .75rem;
-  --radius-2xl: 1rem;
+  --radius-lg: var(--radius-control);
+  --radius-xl: var(--radius-card);
+  --radius-2xl: var(--radius-dialog);
   --radius-3xl: 1.5rem;
   --height-header: 3.25rem;
   --padding-page-x: 1.35rem;
@@ -83,6 +83,30 @@
   --color-danger-strong: var(--border-danger-strong);
 }
 
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+/* Keep Weft's existing text-primary utility; shadcn's primary surface is a dedicated utility. */
+@utility bg-primary { background-color: var(--primary); }
+@utility bg-secondary { background-color: var(--secondary); }
+
 @layer base {
   body { @apply bg-canvas text-primary font-body text-14; margin: 0; -webkit-font-smoothing: antialiased; font-variant-ligatures: none; }
   button:not(:disabled), [role="button"]:not(:disabled) { cursor: pointer; }
@@ -105,10 +129,37 @@
 @layer components {
   /* Preflight (base layer) strips native form controls. Restore a Plane-like look in the components layer at zero specificity (:where): it wins over preflight by layer order, and any Tailwind utility on the element still overrides it. */
   :where(input:not([type="checkbox"], [type="radio"], [type="color"], [type="range"], [type="file"]), textarea, select) {
-    @apply box-border rounded-md border border-strong bg-surface-1 px-2.5 py-1.5 text-14 text-primary;
+    @apply box-border rounded-lg border border-subtle bg-surface-1 px-3 py-1.5 text-14 text-primary;
     font: inherit;
   }
-  /* Native selects keep their element but look like controls: our chevron (preflight removes the browser one), a stronger border, and clear hover, focus and disabled states. */
+  :where(input[type="checkbox"]) {
+    appearance: none;
+    display: inline-grid;
+    flex: none;
+    width: 1rem;
+    height: 1rem;
+    place-content: center;
+    margin: 0;
+    border: 1px solid var(--txt-tertiary);
+    border-radius: .3rem;
+    background: var(--bg-surface-1);
+    color: var(--txt-on-color);
+    cursor: pointer;
+  }
+  :where(input[type="checkbox"]:checked) { border-color: var(--bg-accent-primary); background: var(--bg-accent-primary); }
+  :where(input[type="checkbox"]:checked)::before {
+    content: "";
+    width: .3rem;
+    height: .55rem;
+    margin-top: -.1rem;
+    border: solid currentColor;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
+  :where(input[type="checkbox"]:indeterminate) { border-color: var(--bg-accent-primary); background: var(--bg-accent-primary); }
+  :where(input[type="checkbox"]:indeterminate)::before { content: ""; width: .5rem; height: 0; border-top: 2px solid currentColor; }
+  :where(input[type="checkbox"]:disabled) { cursor: not-allowed; opacity: .55; }
+  /* Native selects keep their element but look like controls: our chevron (preflight removes the browser one), a quiet border (the shared look, see DESIGN.md), and clear hover, focus and disabled states. */
   :where(select) {
     appearance: none;
     padding-right: 2rem;
@@ -121,16 +172,23 @@
     cursor: pointer;
   }
   :where(select:hover:not(:disabled)) { border-color: var(--txt-tertiary); }
-  :where(select:focus-visible) { outline: none; border-color: var(--border-accent-strong); box-shadow: 0 0 0 3px color-mix(in oklab, var(--border-accent-strong) 35%, transparent); }
+  :where(select:focus-visible) { border-color: var(--border-accent-strong); }
   :where(select:disabled) { cursor: not-allowed; border-color: var(--border-disabled); background-color: var(--bg-layer-disabled); color: var(--txt-disabled); }
   /* A label that wraps a text control puts its words above it, so forms read the same everywhere; any utility class on the label still wins. */
   :where(label:has(> :where(input:not([type="checkbox"], [type="radio"], [type="color"], [type="range"], [type="file"]), select, textarea))) { @apply grid gap-1 text-13 font-medium text-secondary; }
-  :where(button:not([class])) { @apply rounded-md border border-strong bg-surface-1 px-3 py-1.5 text-14 font-medium text-primary hover:bg-layer-1-hover disabled:cursor-not-allowed disabled:bg-layer-disabled disabled:text-disabled; }
-  .primary { @apply rounded-md bg-accent-primary px-3 py-1.5 text-14 font-medium text-on-color hover:bg-accent-primary-hover disabled:cursor-not-allowed disabled:bg-layer-disabled disabled:text-disabled; }
-  .secondary { @apply rounded-md border border-strong bg-surface-1 px-3 py-1.5 text-14 font-medium text-primary hover:bg-layer-1-hover disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-surface-1; }
+  :where(button:not([class])) { @apply rounded-lg border border-subtle bg-surface-1 px-3 py-1.5 text-14 font-medium text-primary hover:bg-layer-1-hover disabled:cursor-not-allowed disabled:bg-layer-disabled disabled:text-disabled; }
+  .primary { @apply rounded-lg bg-accent-primary px-3 py-1.5 text-14 font-medium text-on-color hover:bg-accent-primary-hover disabled:cursor-not-allowed disabled:bg-layer-disabled disabled:text-disabled; }
+  .secondary { @apply rounded-lg border border-subtle bg-surface-1 px-3 py-1.5 text-14 font-medium text-primary hover:bg-layer-1-hover disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-surface-1; }
+  .danger { @apply rounded-lg bg-danger-primary px-3 py-1.5 text-14 font-medium text-on-color hover:bg-danger-primary-hover disabled:cursor-not-allowed disabled:bg-layer-disabled disabled:text-disabled; }
+  .ghost { @apply rounded-lg border-0 bg-transparent px-3 py-1.5 text-14 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary disabled:cursor-not-allowed disabled:text-disabled; }
   .search { @apply relative w-full max-w-md; }
-  .search-results { @apply absolute inset-x-0 z-30 mt-1 max-h-80 list-none overflow-auto rounded-md border border-strong bg-surface-1 p-1 shadow-lg; }
+  .search-results { @apply absolute inset-x-0 z-30 mt-1 max-h-80 list-none overflow-auto rounded-lg border border-subtle bg-surface-1 p-1 shadow-lg; }
   .search-results > li { @apply flex flex-col px-2 py-1; }
+  .card-surface { border: 1px solid var(--border-subtle); border-radius: var(--radius-card); background: var(--bg-surface-1); }
+  .inset-row-hover { border-radius: var(--radius-row); transition: background-color 120ms ease; }
+  .inset-row-hover:hover, .inset-row-hover:focus-visible { background: var(--bg-layer-transparent-hover); }
+  .group-band { border-radius: var(--radius-card); background: var(--bg-layer-1); }
+  .quiet-divider { border-color: var(--border-subtle); }
 }
 
 /* AI assist keeps the selection visibly marked while its preview is open. */
@@ -250,11 +308,11 @@
 .ProseMirror:has(> p.is-empty:only-child) > p.is-empty::before { color: var(--txt-placeholder); content: attr(data-placeholder); float: left; height: 0; pointer-events: none; }
 .ProseMirror a { color: var(--color-link); text-decoration: underline; cursor: pointer; }
 .wiki-editor .ProseMirror { min-height: 10rem; }
-.wiki-bubble-menu { position:relative; z-index:30; display:flex; flex-wrap:nowrap; align-items:center; gap:.2rem; max-width:max-content; padding:.35rem; border:1px solid var(--border-strong); border-radius:.5rem; background:var(--bg-surface-1); color:var(--txt-primary); box-shadow:var(--shadow-menu); }
-.wiki-bubble-button { display:inline-flex; flex:none; align-items:center; justify-content:center; width:1.75rem; height:1.75rem; margin:0; padding:0; border:0; border-radius:.25rem; background:transparent; color:var(--txt-icon-secondary); cursor:pointer; }
+.wiki-bubble-menu { position:relative; z-index:30; display:flex; flex-wrap:nowrap; align-items:center; gap:.2rem; max-width:max-content; padding:.25rem; border:1px solid var(--border-subtle); border-radius:.625rem; background:var(--bg-layer-1); color:var(--txt-primary); box-shadow:var(--shadow-menu); }
+.wiki-bubble-button { display:inline-flex; flex:none; align-items:center; justify-content:center; width:1.75rem; height:1.75rem; margin:0; padding:0; border:0; border-radius:.375rem; background:transparent; color:var(--txt-icon-secondary); cursor:pointer; }
 .wiki-bubble-button:hover { background:var(--bg-layer-1-hover); color:var(--txt-primary); }
 .wiki-bubble-button.is-active, .wiki-bubble-button[aria-expanded="true"] { background:var(--bg-layer-1-selected); color:var(--txt-primary); }
-.wiki-bubble-menu select.wiki-bubble-select { flex:none; width:auto; max-width:8rem; height:1.75rem; padding-block:0; padding-inline:.25rem 1.5rem; border-radius:.25rem; color:var(--txt-primary); font-size:.75rem; }
+.wiki-bubble-menu select.wiki-bubble-select { flex:none; width:auto; max-width:8rem; height:1.75rem; padding-block:0; padding-inline:.25rem 1.5rem; border-radius:.375rem; color:var(--txt-primary); font-size:.75rem; }
 .assist-menu-surface { box-shadow:var(--shadow-menu); }
 .wiki-bubble-popover { position:absolute; top:calc(100% + .35rem); z-index:31; display:grid; gap:.35rem; padding:.5rem; border:1px solid var(--border-subtle); border-radius:.5rem; background:var(--bg-surface-1); color:var(--txt-primary); box-shadow:var(--shadow-menu); }
 .wiki-bubble-link-popover { left:0; width:17rem; }

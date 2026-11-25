@@ -55,11 +55,11 @@ export function WorkItemSearch({ workspace }: { workspace: { id: string; slug: s
   }, [query, workspace.id]);
 
   return <>
-    <button type="button" aria-label={translate("search.label")} aria-expanded={expanded} onClick={() => setExpanded(true)} className="rounded-md bg-transparent p-1.5 text-secondary hover:bg-layer-transparent-hover hover:text-primary md:hidden"><Search aria-hidden size={18} /></button>
+    <button type="button" aria-label={translate("search.label")} aria-expanded={expanded} onClick={() => setExpanded(true)} className="rounded-lg bg-transparent p-2 text-secondary hover:bg-layer-transparent-hover hover:text-primary md:hidden"><Search aria-hidden size={18} /></button>
     <div ref={box} role="search" className={`search ${expanded ? "max-md:fixed max-md:inset-x-0 max-md:top-0 max-md:z-40 max-md:flex max-md:h-header max-md:max-w-none max-md:items-center max-md:gap-2 max-md:border-b max-md:border-subtle max-md:bg-surface-1 max-md:px-3" : "max-md:hidden"}`}>
     <div className="relative min-w-0 flex-1">
       <Search aria-hidden size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-tertiary" />
-      <input ref={input} type="search" className="w-full pl-8" value={query} placeholder={translate("search.placeholder")} aria-label={translate("search.label")}
+      <input ref={input} type="search" className="h-9 w-full rounded-lg pl-8" value={query} placeholder={translate("search.placeholder")} aria-label={translate("search.label")}
         onChange={(event) => { setQuery(event.target.value); setClosed(false); }} onKeyDown={(event) => { if (event.key === "Escape") { setQuery(""); setClosed(true); setExpanded(false); } }} />
     </div>
     {expanded && <button type="button" aria-label={translate("search.close")} onClick={() => { setQuery(""); setExpanded(false); }} className="rounded-md bg-transparent p-1.5 text-secondary hover:bg-layer-transparent-hover md:hidden"><X aria-hidden size={18} /></button>}

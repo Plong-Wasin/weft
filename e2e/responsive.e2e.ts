@@ -64,7 +64,12 @@ try {
         check(await target.getByRole("button", { name: translate("shell.openMenu") }).isVisible(), `${route.name} at ${viewport.width}px has no menu button`);
         check(!(await target.getByRole("dialog", { name: translate("shell.sidebar") }).isVisible()), `${route.name} at ${viewport.width}px shows the drawer closed state wrongly`);
       }
-      if (route.name === "work-items-list") await target.screenshot({ path: join(shots, `${route.name}-${viewport.suffix}.png`) });
+      if (route.name === "work-items-list") {
+        await target.screenshot({ path: join(shots, `${route.name}-${viewport.suffix}-light.png`) });
+        await target.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+        await target.screenshot({ path: join(shots, `${route.name}-${viewport.suffix}-dark.png`) });
+        await target.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+      }
       if (context2) await context2.close();
     }
     check(errors.length === 0, `page errors at ${viewport.width}px: ${errors.slice(0, 3).join(" | ")}`);
@@ -81,6 +86,39 @@ try {
     }
     await context.close();
   }));
+
+  // The new Tooltip is not mounted in the product yet; exercise its keyboard path in an isolated browser root.
+  const tooltipContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const tooltipPage = await tooltipContext.newPage();
+  await tooltipPage.goto(web, { waitUntil: "load" });
+  await tooltipPage.evaluate(async () => {
+    const [React, ReactDOM, components] = await Promise.all([
+      import("/node_modules/.vite/deps/react.js"),
+      import("/node_modules/.vite/deps/react-dom_client.js"),
+      import("/src/ui/tooltip.tsx"),
+    ]);
+    document.body.innerHTML = '<div id="tooltip-keyboard-test"></div>';
+    const createElement = React.default.createElement;
+    const content = createElement(components.TooltipContent, null, "Helpful detail");
+    const trigger = createElement(components.TooltipTrigger, {
+      delay: 0,
+      render: createElement("button", { type: "button", "aria-label": "Keyboard help" }, "Help"),
+    });
+    const tooltip = createElement(components.Tooltip, null, trigger, content);
+    ReactDOM.default.createRoot(document.getElementById("tooltip-keyboard-test")!).render(
+      createElement(components.TooltipProvider, null, tooltip),
+    );
+  });
+  const tooltipTrigger = tooltipPage.getByRole("button", { name: "Keyboard help" });
+  await tooltipPage.keyboard.press("Tab");
+  check(await tooltipTrigger.evaluate((element) => element === document.activeElement), "Tab does not focus the Tooltip trigger");
+  check((await tooltipTrigger.evaluate((element) => getComputedStyle(element).outlineWidth)) === "2px", "the Tooltip trigger focus ring is missing");
+  const tooltipPopup = tooltipPage.locator('[data-slot="tooltip-trigger"][data-popup-open]');
+  await tooltipPopup.waitFor();
+  check((await tooltipPage.locator('[data-slot="tooltip-content"]').innerText()) === "Helpful detail", "keyboard focus does not open the Tooltip content");
+  await tooltipPage.keyboard.press("Escape");
+  await tooltipPopup.waitFor({ state: "hidden" });
+  await tooltipContext.close();
 
   await browser.close();
   console.log("responsive e2e ok");

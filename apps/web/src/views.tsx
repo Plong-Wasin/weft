@@ -137,8 +137,8 @@ export function ViewsPage({ workspaceSlug, project, selfId }: Scope) {
   const needle = search.trim().toLowerCase();
   const shown = (views ?? []).filter((view) => !needle || view.name.toLowerCase().includes(needle));
   const ownerOf = (view: SavedView) => people.find((person) => person.userId === view.ownerId)?.name ?? "";
-  return <section className="grid gap-0">
-    <header className="flex flex-wrap items-center gap-2 border-b border-subtle pb-3">
+  return <section className="grid gap-3">
+    <header className="flex flex-wrap items-center gap-2 rounded-xl bg-layer-1 p-3">
       <nav aria-label={t("views.breadcrumb")} className="flex min-w-0 flex-1 items-center gap-1.5 text-14 text-secondary">
         <Link to={paths.workItems(workspaceSlug, project.key)} className="truncate text-secondary hover:text-primary">{project.name}</Link>
         <ChevronRight aria-hidden size={14} /><Layers aria-hidden size={14} /><h2 className="m-0 text-14 font-medium text-primary">{t("views.title")}</h2>
@@ -152,8 +152,8 @@ export function ViewsPage({ workspaceSlug, project, selfId }: Scope) {
       <span>{t("views.loadFailed")}</span>
       <button type="button" className={ghost} onClick={() => { void load(); }}>{t("views.retry")}</button>
     </div>}
-    {views !== null && shown.length === 0 && <p role="status" className="px-3 py-6 text-14 text-secondary">{t(views.length === 0 ? "views.empty" : "views.noMatch")}</p>}
-    <ul aria-label={t("views.title")} className="m-0 list-none p-0">{shown.map((view) => <li key={view.id} data-testid={`view-row-${view.name}`} className="flex items-center gap-3 border-b border-subtle px-3 py-3 hover:bg-layer-transparent-hover">
+    {views !== null && shown.length === 0 && <div className="rounded-xl bg-layer-1 px-4 py-6"><p role="status" className="m-0 text-14 text-secondary">{t(views.length === 0 ? "views.empty" : "views.noMatch")}</p></div>}
+    <ul aria-label={t("views.title")} className="m-0 grid list-none gap-1 rounded-xl border border-subtle bg-surface-1 p-1 empty:hidden">{shown.map((view) => <li key={view.id} data-testid={`view-row-${view.name}`} className="flex items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-layer-transparent-hover">
       <Layers aria-hidden size={16} className="shrink-0 text-secondary" />
       <div className="grid min-w-0 flex-1">
         <Link to={paths.view(workspaceSlug, project.key, view.id)} className="truncate text-14 font-medium text-primary">{view.name}</Link>
@@ -211,8 +211,8 @@ export function ViewDetailPage({ workspaceSlug, project, selfId, viewId }: Scope
   if (view === null) return <section><p role="alert">{t("views.notFound")}</p><Link to={paths.views(workspaceSlug, project.key)}>{t("views.back")}</Link></section>;
   const canWrite = project.role !== "Guest";
   const owner = people.find((person) => person.userId === view.ownerId)?.name;
-  return <section className="grid gap-3">
-    <header className="flex flex-wrap items-center gap-2 border-b border-subtle pb-3">
+  return <section className="grid gap-4">
+    <header className="flex flex-wrap items-center gap-2 rounded-xl bg-layer-1 p-3">
       <nav aria-label={t("views.breadcrumb")} className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 text-14 text-secondary">
         <Link to={paths.workItems(workspaceSlug, project.key)} className="text-secondary hover:text-primary">{project.name}</Link><ChevronRight aria-hidden size={14} />
         <Link to={paths.views(workspaceSlug, project.key)} className="flex items-center gap-1.5 text-secondary hover:text-primary"><Layers aria-hidden size={14} />{t("views.title")}</Link><ChevronRight aria-hidden size={14} />

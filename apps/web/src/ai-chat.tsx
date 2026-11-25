@@ -59,7 +59,7 @@ function ResultCard({ card, diff, project, selectable, selected, onSelect, onDec
   const heading = `${verb} ${noun}${project ? ` ${translate("ai.proposal.in")} ${project}` : ""}`;
   const title = summary.title ?? heading;
   const pending = card.status === "pending";
-  return <div data-status={card.status} data-action={card.action} className="rounded-lg border border-subtle bg-surface-1 px-4 py-3">
+  return <div data-status={card.status} data-action={card.action} className="card-surface rounded-xl px-4 py-4">
     <div className="flex items-start gap-3">
       {pending && selectable && <input type="checkbox" className="mt-1" checked={selected} onChange={(event) => onSelect?.(event.target.checked)} aria-label={`${translate("ai.selectCard")}: ${title}`} />}
       <div className="min-w-0 flex-1">
@@ -136,7 +136,7 @@ export function ProposalSet({ ids, refreshKey, onResolved, workspaceId }: { ids:
     {loaded.map((card) => <ResultCard key={card.id} card={card} diff={diffs[card.id]} project={projects.find((item) => item.id === card.input.projectId)?.key} selectable={several} selected={!unselected[card.id]} busy={busy}
       onSelect={(value) => setUnselected((previous) => { const next = { ...previous }; if (value) delete next[card.id]; else next[card.id] = true; return next; })}
       onDecide={several ? (decision) => void decide([card], decision) : undefined} />)}
-    {pending.length > 0 && <div className="rounded-lg bg-layer-1 px-4 py-3">
+    {pending.length > 0 && <div className="rounded-xl bg-layer-1 px-4 py-4">
       <p className="text-14 font-semibold text-primary">{translate("ai.awaiting")}</p>
       <p className="mb-2 text-14 text-secondary">{translate("ai.confirmPrompt")}</p>
       <div className="flex flex-wrap items-center gap-2">
@@ -356,7 +356,7 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
     </div>
     {error && <p role="alert" className="px-4 text-14 text-danger-primary">{translate(error.message.includes("rate_limited") ? "ai.rateLimited" : "ai.failed")}</p>}
     <div className="mx-auto w-full max-w-3xl px-4 pb-2">
-      <form ref={composerForm} onSubmit={(event) => { event.preventDefault(); const text = input.trim(); if (!text || busy) return; setInput(""); send(text); }} className="rounded-xl border border-subtle bg-surface-1 p-3 shadow-sm">
+      <form ref={composerForm} onSubmit={(event) => { event.preventDefault(); const text = input.trim(); if (!text || busy) return; setInput(""); send(text); }} className="card-surface rounded-2xl p-3 shadow-sm sm:p-4">
         <span title={translate("ai.contextHint")} className="mb-2 flex w-fit max-w-full items-center gap-1.5 truncate rounded-md border border-subtle px-2 py-1 text-14 text-primary"><span className="sr-only">{translate("ai.contextPill")}: </span>{pill}</span>
         <label className="sr-only" htmlFor={`composer-${chatId}`}>{translate("ai.message")}</label>
         {selectedSkill && <button type="button" onClick={() => setSelectedSkill(null)} className="mb-2 inline-flex rounded-md border border-subtle px-2 py-1 text-13 text-primary">/{selectedSkill.name} · {translate(selectedSkill.scope === "personal" ? "skills.personal" : "skills.workspace")} ×</button>}

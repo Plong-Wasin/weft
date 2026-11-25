@@ -64,24 +64,24 @@ export function ProjectArchivesRoute() {
     setNote("error" in result ? t("archives.failed") : null);
     await load();
   };
-  return <section className="grid gap-3">
+  return <section className="grid gap-4">
     <h2 className="m-0 flex items-center gap-2 text-16 font-semibold"><Archive aria-hidden size={16} />{t("archives.title")}</h2>
-    <div role="tablist" aria-label={t("archives.tabs")} className="flex gap-1 border-b border-subtle">
+    <div role="tablist" aria-label={t("archives.tabs")} className="flex w-fit max-w-full flex-wrap gap-1 rounded-lg bg-layer-1 p-1">
       {tabs.map((id) => <button key={id} id={`archives-tab-${id}`} type="button" role="tab" aria-selected={id === active} tabIndex={id === active ? 0 : -1} onKeyDown={handleTabKeyDown} onClick={() => selectTab(id)}
-        className={`-mb-px rounded-none border-b-2 bg-transparent px-3 py-2 text-14 font-medium ${id === active ? "border-accent-strong text-primary" : "border-transparent text-secondary"}`}>{t(tabLabel[id])}</button>)}
+        className={`rounded-md border-0 px-3 py-2 text-14 font-medium ${id === active ? "bg-surface-1 text-primary shadow-sm" : "bg-transparent text-secondary hover:bg-layer-transparent-hover"}`}>{t(tabLabel[id])}</button>)}
     </div>
     {note && <p role="alert" className="m-0 text-danger-text">{note}</p>}
     {active !== "workItems" && <div role="tabpanel" aria-labelledby={`archives-tab-${active}`} tabIndex={0}>
-      {structures?.length === 0 && <p className="m-0 text-secondary">{t(active === "cycles" ? "archives.emptyCycles" : "archives.emptyModules")}</p>}
-      <ul className="m-0 list-none p-0">{(structures ?? []).map((row) => <li key={row.id} data-testid={`archived-row-${row.id}`} className="flex flex-wrap items-center gap-3 border-b border-subtle px-2 py-3 max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-x-3 max-sm:gap-y-2">
+      {structures?.length === 0 && <p className="m-0 rounded-xl bg-layer-1 p-4 text-secondary">{t(active === "cycles" ? "archives.emptyCycles" : "archives.emptyModules")}</p>}
+      <ul className="m-0 grid list-none gap-1 rounded-xl border border-subtle bg-surface-1 p-1 empty:hidden">{(structures ?? []).map((row) => <li key={row.id} data-testid={`archived-row-${row.id}`} className="flex flex-wrap items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-layer-transparent-hover max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-x-3 max-sm:gap-y-2">
         <Link to={active === "cycles" ? paths.cycle(workspace.slug, project.key, row.id) : paths.module(workspace.slug, project.key, row.id)} className="min-w-0 flex-1 truncate text-14 font-medium text-primary max-sm:col-span-2">{row.name}</Link>
         {row.startDate && row.endDate && <span className="text-12 text-secondary">{formatDate(row.startDate)} – {formatDate(row.endDate)}</span>}
         {canRestoreStructure && <button type="button" className="secondary max-sm:min-h-11 shrink-0" aria-label={t("archives.restoreItem").replace("{name}", row.name)} onClick={() => void restoreStructure(row)}>{t("archives.restore")}</button>}
     </li>)}</ul>
     </div>}
     {active === "workItems" && <div role="tabpanel" aria-labelledby="archives-tab-workItems" tabIndex={0}>
-    {items?.length === 0 && <p className="m-0 text-secondary">{t("archives.empty")}</p>}
-    <ul className="m-0 list-none p-0">{(items ?? []).map((item) => <li key={item.id} data-testid={`archived-row-${item.displayId}`} className="flex flex-wrap items-center gap-3 border-b border-subtle px-2 py-3 max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-x-3 max-sm:gap-y-2">
+    {items?.length === 0 && <p className="m-0 rounded-xl bg-layer-1 p-4 text-secondary">{t("archives.empty")}</p>}
+    <ul className="m-0 grid list-none gap-1 rounded-xl border border-subtle bg-surface-1 p-1 empty:hidden">{(items ?? []).map((item) => <li key={item.id} data-testid={`archived-row-${item.displayId}`} className="flex flex-wrap items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-layer-transparent-hover max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-x-3 max-sm:gap-y-2">
       <span className="text-12 text-secondary max-sm:col-span-2">{item.displayId}</span>
       <Link to={paths.workItem(workspace.slug, item.displayId)} className="min-w-0 flex-1 truncate text-14 font-medium text-primary max-sm:col-span-2 max-sm:overflow-visible max-sm:whitespace-normal max-sm:[overflow-wrap:anywhere]">{item.title}</Link>
       <span className="text-12 text-secondary">{t("archives.archivedAt").replace("{date}", formatDate(item.archivedAt))}</span>

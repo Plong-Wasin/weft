@@ -20,11 +20,11 @@ export function WorkspaceSwitcher({ workspace, workspaces, canCreate, refresh }:
     else if (wasCreating.current) createButton.current?.focus();
     wasCreating.current = creating;
   }, [creating]);
-  return <Popover label={switchLabel} panelLabel={creating ? translate("workspace.new") : undefined} panelRole={creating ? "dialog" : "menu"} className="px-2 text-primary"
+  return <Popover label={switchLabel} panelLabel={creating ? translate("workspace.new") : undefined} panelRole={creating ? "dialog" : "menu"} className="rounded-lg px-2.5 py-2 text-primary"
     trigger={<><span className="grid size-6 place-items-center rounded-md bg-accent-primary text-12 font-semibold text-on-color">{workspace.name.slice(0, 1).toUpperCase()}</span>
       <span className="max-w-32 truncate text-14 font-medium max-md:max-w-[4.5rem] max-[379px]:hidden">{workspace.name}</span><ChevronDown aria-hidden size={14} /></>}>
     {(close) => creating
-      ? <div ref={form} className="w-72 p-2"><CreateWorkspaceForm onCancel={() => setCreating(false)} onCreated={async (created) => { await refresh(); close(); setCreating(false); navigate(paths.home(created.slug)); }} /></div>
+      ? <div ref={form} className="w-72 p-3"><CreateWorkspaceForm onCancel={() => setCreating(false)} onCreated={async (created) => { await refresh(); close(); setCreating(false); navigate(paths.home(created.slug)); }} /></div>
       : <>
         <p className="px-2.5 py-1 text-12 font-medium text-tertiary">{translate("workspace.list")}</p>
         {workspaces.map((item) => <button type="button" role="menuitemradio" aria-checked={item.slug === workspace.slug} key={item.id} className={menuItemClass}

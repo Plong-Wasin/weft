@@ -163,7 +163,7 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
     const result = await action<Version[]>("list_comment_versions", { commentId: current.commentId, limit: VERSIONS_PAGE, after: last.id });
     setVersions((now) => now && now.commentId === current.commentId ? (result === null ? { ...now, loading: false, failed: true } : { ...now, rows: [...now.rows, ...result], more: result.length >= VERSIONS_PAGE, loading: false, failed: false }) : now);
   };
-  const item = (row: CommentRow, replies: CommentRow[]) => <li key={row.id} id={`comment-${row.id}`} className={`grid min-w-0 list-none gap-2 rounded-lg border border-subtle p-3 ${row.parentId === null ? "bg-surface-1" : "bg-layer-1"}`}>
+  const item = (row: CommentRow, replies: CommentRow[]) => <li key={row.id} id={`comment-${row.id}`} className={`grid min-w-0 list-none gap-2 rounded-xl border border-subtle p-4 ${row.parentId === null ? "bg-surface-1" : "bg-layer-1"}`}>
     <div className="flex flex-wrap items-center gap-x-2"><Avatar name={row.authorName} id={row.authorId} agent={row.authorIsAgent} /><strong className="text-13 text-primary">{row.authorName}</strong>{row.authorIsAgent && <> <mark data-agent-marker title={translate("avatar.agentHint")} className="inline-flex items-center gap-1 rounded bg-layer-1 px-1.5 py-0.5 text-10 font-medium text-secondary"><span title={translate("comments.agent")}><Bot aria-hidden size={12} className="inline" /></span> {translate("comments.agent")}</mark>{row.authorCodeCapable && <span className="inline-flex items-center gap-1 rounded bg-layer-1 px-1.5 py-0.5 text-10 text-secondary" title={translate("agents.codeCapable")}><Code2 aria-hidden size={13} className="text-warning-primary" />{translate("agents.canEditCode")}</span>}</>} <small className="text-12 text-tertiary">{formatDate(row.createdAt)}{row.editedAt ? ` · ${translate("comments.edited")}` : ""}</small>
     {row.runId && <small> <a href={runFocusHref(row.runId)}>{translate("comments.viewRun")}</a></small>}</div>
     {editing === row.id
@@ -247,13 +247,13 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
       : (() => {
         const display = displayByActivityId.get(entry.activity!.id);
         if (!display) return null;
-        const listClass = "flex list-none flex-wrap items-baseline gap-x-1.5 px-1 py-0.5 text-13 text-secondary before:mr-1 before:size-1.5 before:self-center before:rounded-full before:bg-[var(--border-strong)] before:content-['']";
+        const listClass = "flex list-none flex-wrap items-baseline gap-x-1.5 rounded-lg px-2 py-1.5 text-13 text-secondary before:mr-1 before:size-1.5 before:self-center before:rounded-full before:bg-[var(--border-strong)] before:content-['']";
         if (display.kind === "activity") return <li key={entry.activity!.id} className={listClass}>{renderActivity(display.activity)}</li>;
         const group = display.group;
         const oldText = readableActivityValue(group.oldValue); const newText = readableActivityValue(group.newValue);
         const latest = group.activities.reduce((a, b) => Date.parse(b.createdAt) > Date.parse(a.createdAt) ? b : a);
         const expanded = expandedActivityId === group.id;
-        return <li key={group.id} className="list-none min-w-0 max-w-full rounded-md bg-surface-1 px-2 py-1 text-13 text-secondary">
+        return <li key={group.id} className="list-none min-w-0 max-w-full rounded-lg bg-layer-1 px-2 py-1.5 text-13 text-secondary">
           <button type="button" aria-expanded={expanded} aria-controls={`activity-group-${group.id}`} onClick={() => setExpandedActivityId((current) => current === group.id ? null : group.id)} className="grid w-full min-w-0 max-w-full box-border grid-cols-[0.75rem_minmax(0,1fr)] items-start gap-x-1.5 gap-y-1 whitespace-normal border-0 bg-transparent p-1 text-left text-secondary">
             <span aria-hidden className="inline-block w-3 shrink-0">{expanded ? "▾" : "▸"}</span><span className="flex min-w-0 flex-wrap items-center gap-x-1.5">{actor(latest)}<span className="activity-group-summary min-w-0">{activityText(group.activities[0]!)} · {translate("timeline.changeCount").replace("{count}", String(group.count))}</span></span>
             {oldText !== null && newText !== null && <span className="activity-group-summary col-span-2 min-w-0 pl-4">{oldText}<br />{translate("timeline.valueNewLabel")} {newText}</span>}
@@ -262,7 +262,7 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
           {expanded && <ol id={`activity-group-${group.id}`} className="ml-4 mt-2 grid gap-1">{group.activities.map((activity) => <li key={activity.id}>{renderActivity(activity)}</li>)}</ol>}
         </li>;
       })())}</ul>
-    {canComment && <div className="sticky bottom-0 z-10 mt-4 grid gap-3 rounded-lg border border-subtle bg-surface-1 p-4 shadow-sm"><CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} submitLabel={translate("comments.add")} onSubmit={async (body) => guard(await actionResult("create_comment", { workItemId, body }))} /></div>}
+    {canComment && <div className="sticky bottom-0 z-10 mt-4 grid gap-3 rounded-xl border border-subtle bg-surface-1 p-4"><CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} submitLabel={translate("comments.add")} onSubmit={async (body) => guard(await actionResult("create_comment", { workItemId, body }))} /></div>}
     {note && <p role="alert">{note}</p>}
   </section>;
 }

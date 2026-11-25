@@ -44,13 +44,18 @@ The product owner wants a tool that can do many things and still feels easy and 
 
 ## Radius and elevation
 
-- Radius scale: `--radius-xs` (2px), `--radius-sm`, `--radius-md` (6px, the default for controls and buttons), `--radius-lg`, `--radius-xl`, `--radius-2xl`, `--radius-3xl` (cards and sheets).
+- Radius scale: `--radius-xs` (2px), `--radius-sm`, `--radius-md` (6px), `--radius-lg` (8px; controls, buttons, menus and popovers), `--radius-xl` (12px; cards), `--radius-2xl` (16px; dialogs), and `--radius-3xl` (24px; sheets). Shared semantic tokens in `tokens.css` keep control, row, card and dialog geometry consistent.
 - Elevation: cards are flat on the canvas with a subtle border; only floating menus, popups and the drawer use `--shadow-menu` and the backdrop tone.
 
 ## Components
 
-- Buttons: a primary (accent fill, white text) for the one main action of a screen; a secondary (surface fill, strong border) for every other action; a ghost icon button in the top bar and toolbars; a danger variant (red fill) only inside a Danger zone section.
-- Text fields and selects: bordered, `--radius-md`, placeholder in `--txt-placeholder`; labels sit above fields.
+### shadcn/ui primitives
+
+New shared primitives live in `apps/web/src/ui/` and use Base UI for accessible interaction behavior. During the gradual migration, shadcn's default light and dark neutral theme variables sit beside Weft's legacy tokens in `apps/web/src/tokens.css`; screens adopt the shadcn tokens as they migrate. Keep Tailwind class names literal and combine conditional classes with `cn()` from `apps/web/src/lib/utils.ts`. Use shadcn's default component styling; override only for an explicit Weft behavior or a documented density decision.
+
+- Buttons: controls use an 8px radius with comfortable horizontal padding and compact vertical sizing; a primary (accent fill, white text) for the one main action of a screen; a secondary (surface fill, subtle border) for every other action; a ghost button in the top bar and toolbars; a danger variant (red fill) only inside a Danger zone section.
+- Text fields and selects: bordered with a subtle outline, 8px radius and roomier horizontal padding; placeholder in `--txt-placeholder`; labels sit above fields. Checkboxes keep native semantics with a compact rounded accent treatment. The quiet outline of text fields is a deliberate look choice and is below 3:1 against the surface (about 1.2:1); the field fill, placeholder, label and the focus ring carry recognition. Unchecked checkboxes use `--txt-tertiary` for their border to stay recognisable.
+- Cards and popups: cards use a flat surface with a subtle border and 12px radius; menus and popovers use an 8px radius, inset rounded row hover, and `--shadow-menu`; dialogs use a 16px radius. Shared classes `card-surface`, `inset-row-hover`, `group-band` and `quiet-divider` provide reusable surface, row, band and divider treatments.
 - Search fields: a bordered field with a leading magnifier; the global search opens a results list below it.
 - Tabs: text tabs with an accent underline for the active one (used for Upcoming, Active, Completed; All, Public, Private, Archived; Overview, Work items; List, Board, Spreadsheet, Calendar, Gantt).
 - Toolbar chips and view switchers: a grouped row of icon-and-label toggles; a filter chip row follows it when filters are active.
@@ -59,8 +64,8 @@ The product owner wants a tool that can do many things and still feels easy and 
 - Cards for summary numbers (analytics overview, work item counts) and for list-style items (cycles, modules, views).
 - Danger zone: a bordered section with a red heading at the foot of settings pages, holding destructive actions only.
 - Editor toolbar: a wrapping row of icon tools with separators; the rich text editor reads as an open page with a placeholder "Press '/' for commands".
-- Popups and menus: anchored panel with `--shadow-menu`; close on outside click and Escape (the shared popover is the reference).
-- Empty states: a single plain sentence in secondary text, sometimes with a create action. There is no illustration system.
+- Popups and menus: anchored 8px panel with `--shadow-menu`; rows have inset rounded hover fills; close on outside click and Escape (the shared popover is the reference).
+- Empty states: a short title and single plain sentence in secondary text, sometimes with a create action; an optional icon sits in a softly rounded tile. There is no illustration system.
 - Focus: one focus ring for every keyboard-focusable control: a 2px outline in `--border-accent-strong`, offset 2px.
 
 ## Patterns

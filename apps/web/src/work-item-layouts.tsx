@@ -685,7 +685,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
 
   const peekPanel = peek && <>
     <div aria-hidden className="fixed inset-0 z-40 bg-backdrop" onClick={() => setPeek(null)} />
-    <aside data-peek role="dialog" aria-label={t("workItems.peek.title")} className="@container fixed inset-y-0 right-0 z-50 w-full border-l border-subtle bg-surface-1 shadow-xl sm:w-[80vw] sm:max-w-[1160px]">
+    <aside data-peek role="dialog" aria-label={t("workItems.peek.title")} className="@container fixed inset-y-0 right-0 z-50 w-full rounded-l-xl border-l border-subtle bg-surface-1 shadow-xl sm:w-[80vw] sm:max-w-[1160px]">
       <WorkItemDetail key={peek} displayId={peek} mode="peek" onChanged={() => void load()} onClose={() => setPeek(null)} />
     </aside>
   </>;

@@ -31,7 +31,7 @@ import { PropertyFields, TypePicker, droppedByTypeChange, missingRequired, prope
 type Named = { id: string; name: string; status?: string };
 const t = (key: string) => translate(key as MessageKey);
 const sectionClass = "grid gap-2 [&_form]:my-0 [&_form]:flex [&_form]:flex-wrap [&_form]:items-center [&_form]:gap-2 [&_select]:w-auto [&_button]:w-auto [&_button]:whitespace-nowrap [&_p]:m-0 [&_h3]:m-0 [&_h3]:text-16 [&_h3]:font-semibold [&_h3]:text-primary [&_ul]:m-0 [&_ul]:pl-5";
-const iconButton = "grid size-8 place-items-center rounded-md border border-subtle bg-surface-1 p-0 text-secondary hover:bg-layer-transparent-hover hover:text-primary";
+const iconButton = "grid size-8 place-items-center rounded-lg bg-transparent p-0 text-secondary hover:bg-layer-transparent-hover hover:text-primary";
 const propertiesOpenKey = "weft:work-item-properties-open";
 const propertiesCollapsedKey = "weft:work-item-properties-collapsed";
 // When browser storage is blocked the choice still lasts for the visit: this module outlives the page component, so the memory survives remounts.
@@ -101,8 +101,8 @@ function TypeRows({ project, item, canWrite, people, onSaved }: { project: Proje
 }
 
 function PropertyRow({ icon, label, children }: { icon: React.ReactNode; label: string; children: React.ReactNode }) {
-  return <div className="grid grid-cols-[7.5rem_1fr] items-center gap-2 text-13">
-    <span className="flex items-center gap-2 text-secondary">{icon}{label}</span>
+  return <div className="group grid min-h-9 grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-2 rounded-lg px-2 text-13 transition-colors hover:bg-layer-transparent-hover">
+    <span className="flex min-w-0 items-center gap-2 text-secondary">{icon}<span className="truncate">{label}</span></span>
     <div className="flex min-w-0 flex-wrap items-center gap-1">{children}</div>
   </div>;
 }
@@ -399,7 +399,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     </div>}
     <div className="grid gap-2">
       {mode === "page" ? <h1 className="m-0 text-14 font-medium text-tertiary">{item.displayId}</h1> : <h2 className="m-0 text-14 font-medium text-tertiary">{item.displayId}</h2>}
-      <textarea ref={titleRef} rows={1} aria-label={t("workItems.titleField")} value={title} maxLength={500} readOnly={!canWrite} className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-24 font-semibold leading-tight text-primary [overflow-wrap:anywhere]"
+      <textarea ref={titleRef} rows={1} aria-label={t("workItems.titleField")} value={title} maxLength={500} readOnly={!canWrite} className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-20 font-semibold leading-tight text-primary [overflow-wrap:anywhere]"
         onChange={(event) => setTitle(event.target.value)}
         onBlur={() => { const next = title.trim(); if (!next) setTitle(item.title); else if (next !== item.title) void change({ title: next }); }}
         onKeyDown={(event) => { handleImeSafeEnter(event.nativeEvent, () => event.currentTarget.blur()); }} />
@@ -446,7 +446,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     <div className={`${sectionClass} mt-2 border-t border-subtle pt-6`}><TimelinePanel workspaceId={workspace.id} workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canWrite} linkBase={itemPath} refreshKey={timelineKey} action={action} actionResult={actionResult} onChange={() => void load()} /></div>
     {note && <p role="alert" className="text-danger-text">{note}</p>}
     {versionsOpen && <div role="presentation" className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setVersionsOpen(false); }}>
-      <section role="dialog" aria-modal="true" aria-labelledby="description-versions-title" className="grid max-h-[80vh] w-full max-w-xl gap-4 overflow-auto rounded-lg bg-surface-1 p-5 shadow-xl">
+      <section role="dialog" aria-modal="true" aria-labelledby="description-versions-title" className="grid max-h-[80vh] w-full max-w-xl gap-4 overflow-auto rounded-2xl bg-surface-1 p-5 shadow-xl">
         <div className="flex items-center justify-between"><h2 id="description-versions-title" className="m-0 text-18 font-semibold">{t("workItems.descriptionVersions")}</h2><button type="button" className="secondary" onClick={() => setVersionsOpen(false)}>{t("workItems.close")}</button></div>
         {descriptionVersions.length === 0 ? (versionsFirstFailed ? <button type="button" className="secondary justify-self-start" data-testid="retry-versions" onClick={() => void openVersions()}>{t("workItems.retryOlderVersions")}</button> : <p>{t("workItems.noDescriptionVersions")}</p>) : <ul className="m-0 grid gap-3 p-0">{descriptionVersions.map((version) => <li key={version.id} className="list-none rounded border border-subtle p-3"><p className="m-0 text-12 text-secondary">{version.createdByName} · {relativeTime(version.createdAt)}</p><p className="my-2 whitespace-pre-wrap text-13">{version.contentText || t("workItems.emptyDescription")}</p>{canWrite && <button type="button" className="secondary" onClick={() => void restoreVersion(version.id)}>{t("workItems.restoreVersion")}</button>}</li>)}</ul>}
         {versionsError && <p role="alert" data-testid="older-versions-error" className="m-0 text-13 text-danger-text">{t("workItems.olderVersionsFailed")}</p>}

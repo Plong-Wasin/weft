@@ -131,8 +131,8 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
   const chipRow = "flex flex-wrap items-center gap-2";
   return <>
     <div aria-hidden className="fixed inset-0 z-40 bg-backdrop" onClick={() => { if (!unsaved) onClose(); }} />
-    <div ref={dialog} data-create-modal role="dialog" aria-modal="true" aria-label={t("workItems.modal.title")} className="fixed left-1/2 top-[6vh] z-50 max-h-[88vh] w-[calc(100vw-1.5rem)] max-w-2xl -translate-x-1/2 overflow-auto rounded-lg border border-subtle bg-surface-1 shadow-xl">
-      <form className="my-0 grid gap-4 p-5" onSubmit={submit}>
+    <div ref={dialog} data-create-modal role="dialog" aria-modal="true" aria-label={t("workItems.modal.title")} className="fixed left-1/2 top-[6vh] z-50 max-h-[88vh] w-[calc(100vw-1.5rem)] max-w-2xl -translate-x-1/2 overflow-auto rounded-2xl border border-subtle bg-surface-1 shadow-xl">
+      <form className="my-0 grid gap-5 p-6 max-sm:gap-4 max-sm:p-4" onSubmit={submit}>
         <div className="flex items-center gap-2">
           <h2 className="m-0 flex-1 text-18 font-semibold text-primary">{t("workItems.modal.title")}</h2>
           <button type="button" className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={t("workItems.modal.cancel")} onClick={onClose}><X aria-hidden size={16} /></button>
@@ -174,7 +174,7 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
             <input type="date" value={dueDate} min={startDate || undefined} className="w-auto" onChange={(event) => setDueDate(event.target.value)} /></label>
         </div>
         {note && <p role="alert" className="m-0 text-danger-text">{note}</p>}
-        <div className="sticky bottom-0 z-10 flex justify-end gap-2 border-t border-subtle bg-surface-1 -mb-5 pb-5 pt-4">
+        <div className="sticky bottom-0 z-10 flex justify-end gap-2 border-t border-subtle bg-surface-1 -mb-6 pb-6 pt-4 max-sm:-mb-4 max-sm:pb-4">
           <button type="button" className="secondary" onClick={onClose}>{t("workItems.modal.cancel")}</button>
           <button type="submit" disabled={busy}>{t("workItems.modal.submit")}</button>
         </div>

@@ -24,7 +24,7 @@ export function editorLimitWarnings(value: unknown): string[] {
 
 /** The ghost icon switch in an editor toolbar: pressed while the Markdown (Written form) text is shown. */
 export function SourceModeButton({ active, onClick }: { active: boolean; onClick: () => void }) {
-  return <Button type="button" className="editor-tool" aria-label={translate("editor.sourceMode")} aria-pressed={active} title={translate(active ? "editor.visualMode" : "editor.sourceMode")} onMouseDown={(event) => event.preventDefault()} onClick={onClick}>
+  return <Button type="button" className="editor-tool !size-7 !p-0 focus-visible:!outline-solid focus-visible:!outline-2 focus-visible:!outline-offset-2 focus-visible:!outline-ring" aria-label={translate("editor.sourceMode")} aria-pressed={active} title={translate(active ? "editor.visualMode" : "editor.sourceMode")} onMouseDown={(event) => event.preventDefault()} onClick={onClick}>
     <FileText aria-hidden size={14} />
   </Button>;
 }

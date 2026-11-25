@@ -17,7 +17,7 @@ export function AuthShell({ action, footer, children }: { action?: React.ReactNo
       {action}
     </header>
     <main className="flex w-full flex-1 flex-col items-center justify-center py-10">
-      <div className="w-full max-w-[22.5rem]">{children}</div>
+      <div className="card-surface w-full max-w-[22.5rem] rounded-2xl p-6 shadow-sm sm:p-8">{children}</div>
     </main>
     {footer && <footer className="flex flex-wrap items-center justify-center gap-4 text-13 text-secondary">{footer}</footer>}
   </div>;
@@ -32,7 +32,7 @@ export function OnboardingShell({ action, children }: { action?: React.ReactNode
       {action && <div className="absolute right-4 top-1/2 flex -translate-y-1/2 items-center gap-3 text-13 sm:fixed sm:right-16 sm:top-12 sm:translate-y-0 sm:py-5">{action}</div>}
     </div>
     <main className="flex flex-1 justify-center px-8 pb-8 pt-4 sm:items-center sm:justify-start sm:p-0 sm:pr-[8.33%]">
-      <div className="w-full space-y-6 sm:max-w-md sm:space-y-8">{children}</div>
+      <div className="card-surface w-full space-y-6 rounded-2xl p-6 shadow-sm sm:max-w-md sm:space-y-8 sm:p-8">{children}</div>
     </main>
   </div>;
 }

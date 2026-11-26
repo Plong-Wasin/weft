@@ -54,6 +54,81 @@ try {
     const stable = (next: typeof before) => (["x", "y", "width", "height"] as const).every((key) => Math.abs(before[key] - next[key]) < 0.01);
     check(stable(hovered) && stable(focused), `${name} bounding box stays fixed on hover and focus (Stable${name}Bounds): ${JSON.stringify({ before, hovered, focused })}`);
   };
+  // The value an empty property control shows after "<Property>: " in its accessible name (a dash, or the "No …" word of that property).
+  const emptyValues = ["—", translate("workItems.priority.none"), translate("workItems.noCycle"), translate("workItems.noDates"), translate("workItems.noModules"), translate("workItems.noAssignee"), translate("workItems.noEstimate")];
+  /**
+   * Measures list rows from what is painted, independent of the data attributes the app sets:
+   * - emptyPainted: painted controls whose accessible name says the value is empty (any property, including Priority);
+   * - outside / glyphOverflow: controls, property cells and text glyphs (after ancestor clipping) that leave the row box;
+   * - siblingOverlaps: rows whose boxes overlap the next row;
+   * - signature: the set properties (by accessible name) plus chip and title line counts, so rows with the same data group together.
+   */
+  const measureRows = (rows: Element[], empties: string[]) => {
+    const shown = (element: Element) => {
+      for (let node: Element | null = element; node; node = node.parentElement) {
+        const style = getComputedStyle(node);
+        if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+      }
+      return element.getClientRects().length > 0;
+    };
+    const inside = (inner: { left: number; right: number; top: number; bottom: number }, outer: DOMRect) => inner.left >= outer.left - 0.5 && inner.right <= outer.right + 0.5 && inner.top >= outer.top - 0.5 && inner.bottom <= outer.bottom + 0.5;
+    const measured = rows.map((row) => {
+      const rowBox = row.getBoundingClientRect();
+      const controls = [...row.querySelectorAll<HTMLElement>("button[aria-label]")].filter(shown);
+      const valueOf = (control: HTMLElement) => (control.getAttribute("aria-label") ?? "").split(": ").slice(1).join(": ").trim();
+      const emptyPainted = controls.filter((control) => empties.includes(valueOf(control))).map((control) => control.getAttribute("aria-label"));
+      const setProperties = controls.filter((control) => !empties.includes(valueOf(control))).map((control) => (control.getAttribute("aria-label") ?? "").split(":")[0]).sort();
+      const outside = [...row.querySelectorAll<HTMLElement>("[data-phone-property], [data-list-property], button, a[href]")].filter(shown)
+        .filter((element) => !inside(element.getBoundingClientRect(), rowBox)).map((element) => element.getAttribute("aria-label") ?? element.tagName);
+      const glyphOverflow: string[] = [];
+      const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (!node.textContent?.trim() || !node.parentElement || !shown(node.parentElement)) continue;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        for (const rect of range.getClientRects()) {
+          let left = rect.left, right = rect.right, top = rect.top, bottom = rect.bottom;
+          for (let parent = node.parentElement; parent && parent !== row; parent = parent.parentElement) {
+            const style = getComputedStyle(parent);
+            const clip = parent.getBoundingClientRect();
+            if (style.overflowX !== "visible") { left = Math.max(left, clip.left); right = Math.min(right, clip.right); }
+            if (style.overflowY !== "visible") { top = Math.max(top, clip.top); bottom = Math.min(bottom, clip.bottom); }
+          }
+          if (right > left && bottom > top && !inside({ left, right, top, bottom }, rowBox)) glyphOverflow.push(node.textContent.trim());
+        }
+      }
+      const cells = [...row.querySelectorAll<HTMLElement>("[data-phone-property], [data-list-property]")].filter(shown);
+      // Cells of different heights centred on one visual line share that line: a new line starts only below the previous one.
+      let chipLines = 0, lineBottom = -Infinity;
+      for (const rect of cells.map((cell) => cell.getBoundingClientRect()).sort((a, b) => a.top - b.top)) {
+        if (rect.top >= lineBottom - 0.5) chipLines += 1;
+        lineBottom = Math.max(lineBottom, rect.bottom);
+      }
+      const phoneChips = [...row.querySelectorAll<HTMLElement>("[data-phone-property]")].filter(shown).length;
+      const title = row.querySelector<HTMLElement>("a[href]");
+      const titleLines = title ? (() => { const range = document.createRange(); range.selectNodeContents(title); return new Set([...range.getClientRects()].filter((rect) => rect.height > 0).map((rect) => Math.round(rect.top))).size; })() : 0;
+      return { id: (row as HTMLElement).dataset.testid, top: rowBox.top, bottom: rowBox.bottom, height: rowBox.height, chipLines, phoneChips, emptyPainted, outside, glyphOverflow, signature: `${setProperties.join(",")}|chips:${chipLines}|title:${titleLines}` };
+    });
+    const ordered = measured.slice().sort((a, b) => a.top - b.top);
+    const heights = new Map<string, number[]>();
+    for (const row of measured) heights.set(row.signature, [...heights.get(row.signature) ?? [], row.height]);
+    return {
+      rows: measured,
+      siblingOverlaps: ordered.slice(1).flatMap((row, index) => ordered[index]!.bottom <= row.top + 0.5 ? [] : [{ previous: ordered[index]!.id, current: row.id }]),
+      unequalHeights: [...heights].filter(([, list]) => Math.max(...list) - Math.min(...list) > 1).map(([signature, list]) => ({ signature, list })),
+    };
+  };
+  /** Real hit testing of a 44px touch target: the 4 corners and 4 edge midpoints, 1px inside a 44x44 square centred on the control, must resolve to the control or a descendant. */
+  const missedHitPoints = (element: Element) => {
+    const rect = element.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2, reach = 21;
+    const points = [[-reach, -reach], [0, -reach], [reach, -reach], [reach, 0], [reach, reach], [0, reach], [-reach, reach], [-reach, 0]] as const;
+    return points.flatMap(([dx, dy]) => {
+      const hit = document.elementFromPoint(cx + dx, cy + dy);
+      return hit && (hit === element || element.contains(hit)) ? [] : [{ dx, dy, hit: hit ? `${hit.tagName}${hit.getAttribute("aria-label") ? `[${hit.getAttribute("aria-label")}]` : ""}.${String(hit.className).slice(0, 40)}` : null }];
+    });
+  };
   const checkBoardSurface = async () => {
     const lane = page.locator('[data-testid^="column-"]').first();
     const colors = await lane.evaluate((element) => {
@@ -294,14 +369,43 @@ try {
       check(await page.getByTestId("list-property-wrap").count() === 0, `${width}px keeps the property block on the title row (ListNoPropertyWrapAt${width})`);
     }
     if (width === 390) {
+      const seededRow = page.getByTestId("row-MOB-5");
+      await seededRow.getByRole("button", { name: `${translate("workItems.modules")}: Auth`, exact: true }).waitFor();
+      await seededRow.getByRole("button", { name: `${translate("workItems.cycle")}: Sprint 1`, exact: true }).waitFor();
       check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "390px list has no horizontal page scroll (ListNoHorizontalScroll390)");
       const phoneHeights = await page.locator('[data-testid^="row-"]').evaluateAll((rows) => rows.map((item) => item.getBoundingClientRect().height));
-      check(phoneHeights.length > 0 && phoneHeights.every((height) => height < 100), `390px list keeps rows below 100px (ListPhoneRowsBelow100px): ${JSON.stringify(phoneHeights)}`);
+      // These seeded rows need two metadata lines at 390px. They measure 121px, with 1px allowed for rounding.
+      // Every other row keeps the single-line budget, even if its metadata wraps by mistake.
+      const twoLineRows = new Set([
+        "row-MOB-1", "row-MOB-4", "row-MOB-5", "row-MOB-6", "row-MOB-8", "row-MOB-9",
+        "row-MOB-10", "row-MOB-11", "row-MOB-12", "row-MOB-13", "row-MOB-14", "row-MOB-16",
+        "row-MOB-17", "row-MOB-20", "row-MOB-24", "row-MOB-25", "row-MOB-28",
+      ]);
+      const assertPhoneRows = async () => {
+        const geometry = await page.locator('[data-testid^="row-"]').evaluateAll(measureRows, emptyValues);
+        const overBudget = geometry.rows.filter((row) => twoLineRows.has(row.id ?? "")
+          ? row.chipLines > 2 || row.height > 122
+          : row.chipLines > 1 || row.height >= 100);
+        const escaped = geometry.rows.filter((row) => row.outside.length || row.glyphOverflow.length);
+        // A row with no chips holds a title line and an ID line only: no chip line is reserved.
+        const chipless = geometry.rows.filter((row) => row.phoneChips === 0);
+        const reserved = chipless.filter((row) => row.height > 90);
+        return { geometry, overBudget, escaped, chipless, reserved, ok: phoneHeights.length > 0 && overBudget.length === 0 && escaped.length === 0 && geometry.siblingOverlaps.length === 0 && geometry.unequalHeights.length === 0 };
+      };
+      const phoneRows = await assertPhoneRows();
+      check(phoneRows.geometry.rows.filter((row) => twoLineRows.has(row.id ?? "")).length === twoLineRows.size, "390px list renders every seeded dense row for the height check");
+      check(phoneRows.ok, `390px list rows are contained, compact and equal for equal data (ListPhoneRowsContained): ${JSON.stringify({ heights: phoneHeights, overBudget: phoneRows.overBudget, escaped: phoneRows.escaped, siblingOverlaps: phoneRows.geometry.siblingOverlaps, unequalHeights: phoneRows.geometry.unequalHeights })}`);
+      check(phoneRows.chipless.length > 0 && phoneRows.reserved.length === 0, `390px rows without chips reserve no chip line (ListPhoneChiplessRowCompact): ${JSON.stringify(phoneRows.chipless.map((row) => ({ id: row.id, height: row.height })))}`);
+      // Self-test: a chip forced wider than its row must make the same measure fail, so the assertion cannot pass vacuously.
+      await page.addStyleTag({ content: '[data-testid="row-MOB-1"] [data-phone-property], [data-testid="row-MOB-1"] [data-phone-property] button { max-width: none !important; width: 640px !important; flex: none !important; }' }).then((tag) => tag.evaluate((element) => element.setAttribute("data-e2e-overflow-probe", "")));
+      const forcedOverflow = await assertPhoneRows();
+      await page.evaluate(() => document.querySelector("[data-e2e-overflow-probe]")?.remove());
+      check(!forcedOverflow.ok && forcedOverflow.escaped.some((row) => row.id === "row-MOB-1"), `ListPhoneRowsContained detects a chip that overflows its row: ${JSON.stringify(forcedOverflow.escaped.map((row) => ({ id: row.id, outside: row.outside })))}`);
       const titleWidth = await firstRow.getByRole("link", { name: "Alpha" }).evaluate((element) => element.getBoundingClientRect().width);
       check(titleWidth >= 140, `390px list title gets at least 140px (ListPhoneTitleWidth140): ${titleWidth}`);
       check(await firstRow.locator("[data-testid=list-property-wrap]").count() === 0, "390px list omits the empty property row (ListNoEmptySecondLine)");
       const denseRowMetadata = page.getByTestId("row-MOB-4").locator(":scope > div > div").nth(1);
-      check(await denseRowMetadata.evaluate((element) => element.scrollWidth > element.clientWidth), "390px list keeps the populated property chips in one horizontally scrollable metadata line (ListPhonePropertiesSingleLine)");
+      check(await denseRowMetadata.evaluate((element) => element.scrollWidth <= element.clientWidth + 1), "390px list wraps or truncates populated property chips inside the row (ListPhonePropertiesFitInsideRow)");
       for (const property of ["priority", "state"] as const) {
         const control = firstRow.getByRole("button", { name: new RegExp(`^${translate(`workItems.${property}`)}:`) });
         const visibleLabel = await control.evaluate((element) => element.innerText.trim() !== "");
@@ -433,8 +537,359 @@ try {
   const mobileContext = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, isMobile: true, hasTouch: true, storageState: await context.storageState() });
   const mobilePage = await mobileContext.newPage();
   await mobilePage.goto(mobileListUrl);
+  await mobilePage.getByTestId("row-MOB-1").waitFor();
+  const mobileListMetrics = await mobilePage.evaluate(() => {
+    const list = document.querySelector<HTMLElement>('[data-testid="work-items-list-container"]');
+    const rows = [...(list?.querySelectorAll<HTMLElement>("[data-list-row]") ?? [])];
+    const metadata = rows.map((row) => row.querySelector<HTMLElement>('[data-testid="work-item-row-metadata"]'));
+    return {
+      documentWidth: document.documentElement.scrollWidth,
+      viewportWidth: window.innerWidth,
+      listRight: list?.getBoundingClientRect().right ?? null,
+      listClientWidth: list?.clientWidth ?? null,
+      listScrollWidth: list?.scrollWidth ?? null,
+      rowsOverflow: rows.map((row) => row.scrollWidth > row.clientWidth + 1),
+      metadataOverflow: metadata.map((item) => item ? item.scrollWidth > item.clientWidth + 1 : true),
+    };
+  });
+  check(mobileListMetrics.documentWidth <= mobileListMetrics.viewportWidth, `390px phone list keeps the document within the viewport: ${JSON.stringify(mobileListMetrics)}`);
+  check(mobileListMetrics.listRight !== null && mobileListMetrics.listRight <= mobileListMetrics.viewportWidth && mobileListMetrics.listScrollWidth !== null && mobileListMetrics.listClientWidth !== null && mobileListMetrics.listScrollWidth <= mobileListMetrics.listClientWidth + 1 && mobileListMetrics.rowsOverflow.every((overflow) => !overflow) && mobileListMetrics.metadataOverflow.every((overflow) => !overflow), `390px work item rows and property chips fit inside the list card: ${JSON.stringify(mobileListMetrics)}`);
   const mobileRow = mobilePage.getByTestId("row-MOB-1");
   await mobileRow.getByRole("link", { name: "Alpha" }).waitFor();
+  const rowCheckbox = mobileRow.getByRole("checkbox");
+  const selectShown = mobilePage.getByRole("checkbox", { name: translate("bulk.selectAll") });
+  const checkboxMetrics = await Promise.all([rowCheckbox, selectShown].map(async (checkbox) => {
+    const box = await checkbox.boundingBox();
+    return box ? { width: box.width, height: box.height } : null;
+  }));
+  check(checkboxMetrics.every((box) => !!box && box.width <= 24 && box.height <= 24), `390px touch checkboxes stay visually at or below 24px: ${JSON.stringify(checkboxMetrics)}`);
+  const checkboxHitTargets = await Promise.all([rowCheckbox, selectShown].map((checkbox) => checkbox.evaluate((element) => {
+    const before = getComputedStyle(element, "::before");
+    return { width: parseFloat(before.width), height: parseFloat(before.height) };
+  })));
+  check(checkboxHitTargets.every((box) => box.width >= 44 && box.height >= 44), `390px touch checkboxes retain 44px invisible hit areas: ${JSON.stringify(checkboxHitTargets)}`);
+  const cycleChip = mobileRow.getByRole("button", { name: `${translate("workItems.cycle")}: Sprint 17` });
+  const cycleChipMetrics = await cycleChip.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const target = getComputedStyle(element, "::before");
+    return { width: rect.width, height: rect.height, targetWidth: parseFloat(target.width), targetHeight: parseFloat(target.height) };
+  });
+  check(cycleChipMetrics.height <= 36 && cycleChipMetrics.targetWidth >= 44 && cycleChipMetrics.targetHeight >= 44, `390px property chips stay visually compact with 44px touch targets: ${JSON.stringify(cycleChipMetrics)}`);
+  for (const [name, control] of [["Cycle chip", cycleChip], ["State chip", mobileRow.getByRole("button", { name: /^State:/ })], ["row checkbox", rowCheckbox], ["Select shown", selectShown]] as const) {
+    await control.scrollIntoViewIfNeeded();
+    const misses = await control.evaluate(missedHitPoints);
+    check(misses.length === 0, `390px ${name} answers taps across its whole 44px area (TouchHitArea44): ${JSON.stringify(misses)}`);
+  }
+  const rowTitleBox = await mobileRow.getByRole("link", { name: "Alpha" }).boundingBox();
+  const rowCheckboxBox = await rowCheckbox.boundingBox();
+  check(!!rowTitleBox && !!rowCheckboxBox && (rowTitleBox.x >= rowCheckboxBox.x + rowCheckboxBox.width || rowTitleBox.y >= rowCheckboxBox.y + rowCheckboxBox.height || rowTitleBox.x + rowTitleBox.width <= rowCheckboxBox.x || rowTitleBox.y + rowTitleBox.height <= rowCheckboxBox.y), `390px title does not overlap its checkbox: ${JSON.stringify({ title: rowTitleBox, checkbox: rowCheckboxBox })}`);
+  // A hit area must not take taps from its neighbours: the title's left edge opens the item, not the row checkbox.
+  const titleEdge = await mobileRow.getByRole("link", { name: "Alpha" }).evaluate((link) => {
+    link.scrollIntoView({ block: "center" });
+    const rect = link.getBoundingClientRect();
+    return [1, rect.height / 2, rect.height - 1].map((dy) => { const hit = document.elementFromPoint(rect.left + 0.5, rect.top + dy); return hit === link ? "title" : hit?.getAttribute("aria-label") ?? hit?.tagName ?? null; });
+  });
+  check(titleEdge.every((hit) => hit === "title"), `390px title left edge answers as the title (TouchTitleEdgeNotStolen): ${JSON.stringify(titleEdge)}`);
+  const toolbar = mobilePage.getByTestId("work-items-toolbar");
+  const addWorkItem = toolbar.getByRole("button", { name: translate("workItems.addNew"), exact: true });
+  const saveView = toolbar.getByRole("button", { name: translate("views.saveAs") });
+  const settingsLink = toolbar.getByRole("link", { name: translate("projects.settings"), exact: true });
+  const [addBox, settingsBox, saveViewVisible] = await Promise.all([addWorkItem.boundingBox(), settingsLink.boundingBox(), saveView.isVisible()]);
+  const saveViewBox = await saveView.boundingBox();
+  const sameRow = (a: { y: number; height: number } | null, b: { y: number; height: number } | null) => !!a && !!b && Math.abs(a.y + a.height / 2 - (b.y + b.height / 2)) <= 1;
+  check(saveViewVisible && sameRow(addBox, settingsBox) && sameRow(addBox, saveViewBox), "390px Add work item, Save as view and Settings share one toolbar row, so Save as view stays on phones without an orphan icon (PhoneSaveViewKept): " + JSON.stringify({ add: addBox, settings: settingsBox, saveView: saveViewBox, saveViewVisible }));
+  // Save as view stays a phone feature: one tap opens its form with the current settings.
+  await saveView.tap();
+  const saveViewDialog = mobilePage.getByRole("dialog", { name: translate("views.form.saveTitle") });
+  await saveViewDialog.waitFor();
+  const saveViewDialogBox = await saveViewDialog.boundingBox();
+  check(!!saveViewDialogBox && saveViewDialogBox.x >= 0 && saveViewDialogBox.x + saveViewDialogBox.width <= 390, `390px Save as view form opens inside the viewport (PhoneSaveViewOpens): ${JSON.stringify(saveViewDialogBox)}`);
+  await mobilePage.keyboard.press("Escape");
+  await saveViewDialog.waitFor({ state: "hidden" });
+  const filterButton = toolbar.getByRole("button", { name: translate("layout.filters"), exact: true });
+  const queryButton = toolbar.getByRole("button", { name: translate("layout.filterQuery.toggle") });
+  const displayButton = toolbar.getByRole("button", { name: translate("layout.display") });
+  // Stacked checkboxes (Display > properties): each answers across its own label row, and the midpoint between two belongs to neither neighbour's overlay.
+  await displayButton.tap();
+  const displayFields = mobilePage.getByRole("dialog", { name: translate("layout.display") }).locator("fieldset");
+  await displayFields.waitFor();
+  const stack = await displayFields.evaluate((fieldset) => {
+    const boxes = [...fieldset.querySelectorAll<HTMLElement>('[role="checkbox"]')];
+    const labelOf = (box: Element) => box.closest("label")!;
+    const stolen: unknown[] = [];
+    boxes.slice(0, -1).forEach((upper, index) => {
+      const lower = boxes[index + 1]!;
+      upper.scrollIntoView({ block: "center" });
+      const a = upper.getBoundingClientRect(), b = lower.getBoundingClientRect();
+      const x = a.left + a.width / 2, labelA = labelOf(upper).getBoundingClientRect();
+      const midpoint = (a.top + a.height / 2 + b.top + b.height / 2) / 2;
+      for (const [name, y, owners] of [["midpoint", midpoint, [upper, lower]], ["upper label bottom", labelA.bottom - 1, [upper]]] as const) {
+        const hit = document.elementFromPoint(x, y);
+        const hitBox = boxes.find((box) => !!hit && labelOf(box).contains(hit));
+        if (!hitBox) continue;
+        const own = labelOf(hitBox).getBoundingClientRect();
+        if (!(owners as readonly HTMLElement[]).includes(hitBox) || y < own.top || y > own.bottom) stolen.push({ pair: index, name, toggles: labelOf(hitBox).textContent, rowOf: labelOf(upper).textContent });
+      }
+    });
+    return { count: boxes.length, stolen };
+  });
+  check(stack.count >= 2 && stack.stolen.length === 0, `390px stacked checkboxes keep their taps to their own row (TouchStackedCheckboxNeighbours): ${JSON.stringify(stack)}`);
+  await mobilePage.keyboard.press("Escape");
+  await displayFields.waitFor({ state: "hidden" });
+  const selectVisual = mobilePage.locator("label").filter({ hasText: translate("bulk.selectShown") }).locator(":scope > span");
+  const secondaryMetrics = await Promise.all([filterButton, queryButton, displayButton, settingsLink, selectVisual].map(async (control) => control.evaluate((element) => {
+    const style = getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return { height: rect.height, borderWidth: style.borderTopWidth, background: style.backgroundColor };
+  })));
+  check(secondaryMetrics.every((metric) => metric.height <= 36 && metric.borderWidth === "1px" && (metric.background === "rgba(0, 0, 0, 0)" || metric.background === "transparent")), "390px secondary toolbar controls share the outline-sm treatment: " + JSON.stringify(secondaryMetrics));
+  // Reads each toolbar control as the user sees it: its accessible label, its text colour and the colour behind it, and the WCAG contrast ratio between them.
+  const readToolbarContrast = () => mobilePage.evaluate(() => {
+    const toolbar = document.querySelector<HTMLElement>('[data-testid="work-items-toolbar"]');
+    // A 2D canvas resolves any computed colour (oklch, color-mix, rgb) to 8-bit sRGB, so the contrast is measured on the colour the browser paints.
+    const context = document.createElement("canvas").getContext("2d", { willReadFrequently: true })!;
+    const parse = (value: string) => {
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = "rgba(0, 0, 0, 0)";
+      context.fillStyle = value;
+      context.fillRect(0, 0, 1, 1);
+      const [r, g, b, a] = context.getImageData(0, 0, 1, 1).data;
+      return { r: r!, g: g!, b: b!, a: a! / 255 };
+    };
+    const luminance = ({ r, g, b }: { r: number; g: number; b: number }) => {
+      const [R, G, B] = [r, g, b].map((channel) => { const s = channel / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; });
+      return 0.2126 * R! + 0.7152 * G! + 0.0722 * B!;
+    };
+    const pageBackground = parse(getComputedStyle(document.body).backgroundColor);
+    const backdrop = (element: HTMLElement) => {
+      for (let node: HTMLElement | null = element; node; node = node.parentElement) {
+        const color = parse(getComputedStyle(node).backgroundColor);
+        if (color.a > 0) return color;
+      }
+      return pageBackground;
+    };
+    const controls = [...(toolbar?.querySelectorAll<HTMLElement>("button, a[href], label") ?? [])].filter((element) => {
+      const style = getComputedStyle(element);
+      return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
+    });
+    return controls.map((element) => {
+      const text = element.textContent?.trim() ?? "";
+      const name = element.getAttribute("aria-label") ?? element.getAttribute("title") ?? text;
+      const foreground = parse(getComputedStyle(element).color);
+      const background = backdrop(element);
+      const [hi, lo] = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+      return { name, text, color: getComputedStyle(element).color, background: `rgb(${background.r}, ${background.g}, ${background.b})`, ratio: Number(((hi! + 0.05) / (lo! + 0.05)).toFixed(2)) };
+    });
+  });
+  const assertToolbarReadable = async (label: string) => {
+    const controls = await readToolbarContrast();
+    check(controls.length >= 6 && controls.every((control) => control.name.trim() !== ""), `${label}: every toolbar control has an accessible label: ${JSON.stringify(controls.filter((control) => control.name.trim() === ""))}`);
+    check(controls.every((control) => control.ratio >= 4.5), `${label}: toolbar text contrast is at least 4.5:1: ${JSON.stringify(controls.filter((control) => control.ratio < 4.5))}`);
+  };
+  for (const theme of ["light", "dark"] as const) {
+    // Stored the way the app stores it (theme.ts): a reload applies the theme before first paint, so the check reads the page a user gets.
+    await mobilePage.evaluate((value) => localStorage.setItem("weft.theme", value), theme);
+    await mobilePage.goto(mobileListUrl);
+    await mobilePage.getByTestId("row-MOB-1").getByRole("button", { name: `${translate("workItems.cycle")}: Sprint 17` }).waitFor();
+    await assertToolbarReadable(`390px ${theme} after reload`);
+    await mobilePage.screenshot({ path: `${evidenceShots}/work-items-list-touch-390-${theme}.png`, fullPage: true });
+  }
+  // The theme picker switches data-theme at runtime (theme.ts applyTheme); the same toolbar must stay readable after that switch too.
+  for (const theme of ["light", "dark"] as const) {
+    await mobilePage.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+    // Colour transitions (transition-colors) still run for a moment after the switch; read the settled colours a user sees.
+    await mobilePage.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished)));
+    await assertToolbarReadable(`390px ${theme} after runtime switch`);
+  }
+  for (const [width, height] of [[390, 844], [844, 390]] as const) {
+    await mobilePage.setViewportSize({ width, height });
+    for (const theme of ["light", "dark"] as const) {
+      await mobilePage.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+      const geometry = await mobilePage.evaluate(() => {
+        const rows = [...document.querySelectorAll<HTMLElement>("[data-list-row]")];
+        const inside = (inner: DOMRect, outer: DOMRect) => inner.left >= outer.left - 0.5 && inner.right <= outer.right + 0.5 && inner.top >= outer.top - 0.5 && inner.bottom <= outer.bottom + 0.5;
+        const measured = rows.map((row) => {
+          const rowBox = row.getBoundingClientRect();
+          const elements = [...row.querySelectorAll<HTMLElement>("[data-phone-property], [data-list-property], button, a[href]")]
+            .filter((element) => {
+              const style = getComputedStyle(element);
+              return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
+            });
+          const elementOverflows = elements.flatMap((element) => {
+            const box = element.getBoundingClientRect();
+            return inside(box, rowBox) ? [] : [{ tag: element.tagName, className: element.className, box: { x: box.x, y: box.y, right: box.right, bottom: box.bottom } }];
+          });
+          const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+          const glyphOverflows: Array<{ text: string; box: { x: number; y: number; right: number; bottom: number } }> = [];
+          while (walker.nextNode()) {
+            const node = walker.currentNode;
+            if (!node.textContent?.trim()) continue;
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            for (const rect of range.getClientRects()) {
+              let left = rect.left, right = rect.right, top = rect.top, bottom = rect.bottom;
+              for (let parent = node.parentElement; parent && parent !== row; parent = parent.parentElement) {
+                const style = getComputedStyle(parent);
+                const clip = parent.getBoundingClientRect();
+                if (style.overflowX !== "visible") { left = Math.max(left, clip.left); right = Math.min(right, clip.right); }
+                if (style.overflowY !== "visible") { top = Math.max(top, clip.top); bottom = Math.min(bottom, clip.bottom); }
+              }
+              const visibleGlyph = { left, right, top, bottom };
+              if (right <= left || bottom <= top || inside(visibleGlyph as DOMRect, rowBox)) continue;
+              glyphOverflows.push({ text: node.textContent.trim(), box: { x: left, y: top, right, bottom } });
+            }
+          }
+          const title = row.querySelector<HTMLElement>("a[href]");
+          const titleLines = title ? (() => {
+            const range = document.createRange();
+            range.selectNodeContents(title);
+            return new Set([...range.getClientRects()].filter((rect) => rect.width > 0 && rect.height > 0).map((rect) => Math.round(rect.top))).size;
+          })() : 0;
+          const propertyRows = new Set([...row.querySelectorAll<HTMLElement>("[data-phone-property], [data-list-property]")]
+            .filter((element) => getComputedStyle(element).display !== "none" && element.getClientRects().length > 0)
+            .map((element) => Math.round(element.getBoundingClientRect().top))).size;
+          return {
+            id: row.dataset.testid,
+            box: { top: rowBox.top, bottom: rowBox.bottom, height: rowBox.height },
+            // Chipless rows reserve no chip line, so "has chips" is part of the data shape.
+            signature: `${titleLines}/${propertyRows}/${[...row.querySelectorAll<HTMLElement>("[data-phone-property]")].some((cell) => getComputedStyle(cell).display !== "none") ? "chips" : "chipless"}`,
+            elementOverflows,
+            glyphOverflows,
+          };
+        });
+        const ordered = measured.slice().sort((a, b) => a.box.top - b.box.top);
+        const siblingOverlaps = ordered.slice(1).flatMap((row, index) => {
+          const previous = ordered[index]!;
+          return previous.box.bottom <= row.box.top + 0.5 ? [] : [{ previous: previous.id, current: row.id, previousBottom: previous.box.bottom, currentTop: row.box.top }];
+        });
+        const heightGroups = new Map<string, number[]>();
+        for (const row of measured) heightGroups.set(row.signature, [...heightGroups.get(row.signature) ?? [], row.box.height]);
+        const equalHeightGroups = [...heightGroups].filter(([, heights]) => heights.length > 1)
+          .map(([signature, heights]) => ({ signature, min: Math.min(...heights), max: Math.max(...heights) }));
+        return {
+          viewportWidth: window.innerWidth,
+          documentWidth: document.documentElement.scrollWidth,
+          rows: measured,
+          siblingOverlaps,
+          equalHeightGroups,
+        };
+      });
+      check(geometry.viewportWidth === width && geometry.documentWidth <= width, `${width}x${height} ${theme} dense list stays within the viewport: ${JSON.stringify({ viewportWidth: geometry.viewportWidth, documentWidth: geometry.documentWidth })}`);
+      check(geometry.rows.length > 0 && geometry.rows.every((row) => row.elementOverflows.length === 0 && row.glyphOverflows.length === 0), `${width}x${height} ${theme} chips and text glyphs stay inside their own row boxes: ${JSON.stringify(geometry.rows.filter((row) => row.elementOverflows.length || row.glyphOverflows.length).map((row) => ({ id: row.id, box: row.box, elements: row.elementOverflows, glyphs: row.glyphOverflows })))}`);
+      check(geometry.siblingOverlaps.length === 0, `${width}x${height} ${theme} sibling list rows do not overlap: ${JSON.stringify(geometry.siblingOverlaps)}`);
+      check(geometry.equalHeightGroups.every((group) => group.max - group.min <= 1), `${width}x${height} ${theme} rows with matching title/property line data have equal heights: ${JSON.stringify(geometry.equalHeightGroups)}`);
+      const denseRows = geometry.rows.filter((row) => row.id === "row-MOB-1" || row.id === "row-MOB-4");
+      check(denseRows.length === 2 && denseRows.every((row) => row.elementOverflows.length === 0 && row.glyphOverflows.length === 0), `${width}x${height} ${theme} dense MOB-1/MOB-4 rows contain every chip and glyph: ${JSON.stringify(denseRows)}`);
+    }
+  }
+  // Touch devices at any width (TouchListAnyWidth): a phone in portrait or landscape, and a phone browser in "Desktop site" mode,
+  // which keeps the touch screen (hover: none, pointer: coarse) but lays the page out about 980px wide, so the wide list grid renders.
+  const assertTouchList = async (target: typeof mobilePage, label: string) => {
+    const media = await target.evaluate(() => ({ hoverNone: matchMedia("(hover: none)").matches, coarse: matchMedia("(pointer: coarse)").matches }));
+    check(media.hoverNone && media.coarse, `${label} runs as a touch device: ${JSON.stringify(media)}`);
+    const touch = await target.evaluate(() => {
+      const shown = (element: Element) => {
+        for (let node: Element | null = element; node; node = node.parentElement) {
+          const style = getComputedStyle(node);
+          if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+        }
+        return element.getClientRects().length > 0;
+      };
+      const box = (element: Element | null | undefined) => { if (!element) return null; const r = element.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height }; };
+      const overlaps = (a: ReturnType<typeof box>, b: ReturnType<typeof box>) => !!a && !!b && a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
+      const rows = [...document.querySelectorAll<HTMLElement>("[data-list-row]")];
+      const measured = rows.map((row) => {
+        const rowBox = row.getBoundingClientRect();
+        const checkbox = row.querySelector<HTMLElement>('[role="checkbox"]');
+        const before = checkbox ? getComputedStyle(checkbox, "::before") : null;
+        const displayId = (row.dataset.testid ?? "").replace(/^row-/, "");
+        const id = [...row.querySelectorAll<HTMLElement>("span")].find((span) => span.children.length === 0 && span.textContent?.trim() === displayId);
+        const title = row.querySelector<HTMLElement>("a[href]");
+        const shownEmpty = [...row.querySelectorAll<HTMLElement>('[data-empty-property="true"]')].filter(shown).map((cell) => cell.dataset.listProperty);
+        const dashes = [...row.querySelectorAll<HTMLElement>("button, span")].filter((element) => element.children.length === 0 && element.textContent?.trim() === "—" && shown(element)).length;
+        const outside = [...row.querySelectorAll<HTMLElement>("button, a[href], [data-list-property], [data-phone-property]")].filter(shown).filter((element) => {
+          const r = element.getBoundingClientRect();
+          return r.left < rowBox.left - 0.5 || r.right > rowBox.right + 0.5 || r.top < rowBox.top - 0.5 || r.bottom > rowBox.bottom + 0.5;
+        }).map((element) => element.getAttribute("aria-label") ?? element.tagName);
+        return {
+          id: row.dataset.testid, height: rowBox.height, shownEmpty, dashes, outside,
+          checkbox: box(checkbox), hitWidth: before ? parseFloat(before.width) : 0, hitHeight: before ? parseFloat(before.height) : 0,
+          checkboxOverId: overlaps(box(checkbox), box(id)), checkboxOverTitle: overlaps(box(checkbox), box(title)),
+          // Rows with the same number of painted properties on the same number of lines, and the same title line count, carry the same data shape, so their heights must match.
+          signature: (() => { const cells = [...row.querySelectorAll<HTMLElement>("[data-list-property], [data-phone-property]")].filter(shown); return `${cells.length}x${new Set(cells.map((cell) => Math.round(cell.getBoundingClientRect().top))).size}/${cells.filter((cell) => cell.hasAttribute("data-phone-property")).length}`; })() + "/" + (title ? new Set([...(() => { const range = document.createRange(); range.selectNodeContents(title); return range.getClientRects(); })()].map((rect) => Math.round(rect.top))).size : 0),
+        };
+      });
+      const selectAll = document.querySelector<HTMLElement>('[data-testid="work-items-toolbar"] [role="checkbox"]');
+      const selectAllBefore = selectAll ? getComputedStyle(selectAll, "::before") : null;
+      const heights = new Map<string, number[]>();
+      for (const row of measured) heights.set(row.signature, [...heights.get(row.signature) ?? [], row.height]);
+      return {
+        viewportWidth: window.innerWidth, documentWidth: document.documentElement.scrollWidth, rows: measured,
+        selectAll: box(selectAll), selectAllHit: selectAllBefore ? { width: parseFloat(selectAllBefore.width), height: parseFloat(selectAllBefore.height) } : null,
+        unequalHeights: [...heights].filter(([, list]) => Math.max(...list) - Math.min(...list) > 1).map(([signature, list]) => ({ signature, list })),
+      };
+    });
+    check(touch.rows.length >= 5, `${label} renders list rows to measure: ${touch.rows.length}`);
+    check(touch.documentWidth <= touch.viewportWidth, `${label} nothing is wider than the viewport (TouchNoHorizontalOverflow): ${touch.documentWidth} > ${touch.viewportWidth}`);
+    check(touch.rows.every((row) => row.shownEmpty.length === 0 && row.dashes === 0), `${label} paints no empty property slot or dash (TouchNoEmptySlots): ${JSON.stringify(touch.rows.filter((row) => row.shownEmpty.length || row.dashes).map((row) => ({ id: row.id, shownEmpty: row.shownEmpty, dashes: row.dashes })))}`);
+    const smallBox = (rect: { width: number; height: number } | null) => !!rect && rect.width >= 12 && rect.width <= 24 && rect.height >= 12 && rect.height <= 24;
+    check(touch.rows.every((row) => smallBox(row.checkbox) && row.hitWidth >= 44 && row.hitHeight >= 44) && smallBox(touch.selectAll) && !!touch.selectAllHit && touch.selectAllHit.width >= 44 && touch.selectAllHit.height >= 44,
+      `${label} checkboxes draw a 12-24px box with a 44px hit area (TouchSmallCheckbox): ${JSON.stringify({ rows: touch.rows.map((row) => ({ id: row.id, checkbox: row.checkbox, hit: [row.hitWidth, row.hitHeight] })), selectAll: touch.selectAll, selectAllHit: touch.selectAllHit })}`);
+    check(touch.rows.every((row) => !row.checkboxOverId && !row.checkboxOverTitle), `${label} the checkbox never covers the ID or title (TouchCheckboxNoOverlap): ${JSON.stringify(touch.rows.filter((row) => row.checkboxOverId || row.checkboxOverTitle))}`);
+    check(touch.rows.every((row) => row.outside.length === 0), `${label} row content stays inside its row (TouchRowContained): ${JSON.stringify(touch.rows.filter((row) => row.outside.length))}`);
+    check(touch.unequalHeights.length === 0, `${label} rows with the same data have equal heights (TouchEqualRowHeights): ${JSON.stringify(touch.unequalHeights)}`);
+    // Detector independent of the app's data attributes: any painted control whose accessible name reads as empty (Priority "No priority", a dash, "No cycle", …).
+    const painted = await target.locator("[data-list-row]").evaluateAll(measureRows, emptyValues);
+    check(painted.rows.every((row) => row.emptyPainted.length === 0), `${label} paints no empty property control, Priority included (TouchNoEmptySlots): ${JSON.stringify(painted.rows.filter((row) => row.emptyPainted.length).map((row) => ({ id: row.id, emptyPainted: row.emptyPainted })))}`);
+    check(painted.rows.every((row) => row.glyphOverflow.length === 0) && painted.siblingOverlaps.length === 0, `${label} no glyph leaves its row and rows do not overlap (TouchRowContained): ${JSON.stringify({ glyphs: painted.rows.filter((row) => row.glyphOverflow.length), overlaps: painted.siblingOverlaps })}`);
+    // An unpainted empty Priority keeps its track, so the ID column starts at the same x in rows with and without a priority.
+    const idLefts = await target.locator("[data-list-row]").evaluateAll((rows) => rows.map((row) => {
+      const displayId = ((row as HTMLElement).dataset.testid ?? "").replace(/^row-/, "");
+      const id = [...row.querySelectorAll<HTMLElement>("span")].find((span) => span.children.length === 0 && span.textContent?.trim() === displayId);
+      return id ? Math.round(id.getBoundingClientRect().left) : null;
+    }));
+    check(idLefts.every((left) => left !== null && Math.abs(left - idLefts[0]!) <= 1), `${label} the ID column stays aligned whether or not a row has a priority (TouchIdColumnAligned): ${JSON.stringify(idLefts)}`);
+    if (await target.evaluate(() => window.innerWidth >= 640)) {
+      const oneLineHeights = painted.rows.filter((row) => row.signature.endsWith("title:1")).map((row) => row.height);
+      check(oneLineHeights.length > 0 && Math.max(...oneLineHeights) - Math.min(...oneLineHeights) <= 1, `${label} one-line grid rows all share one height whatever data they carry (TouchGridEqualHeights): ${JSON.stringify(oneLineHeights)}`);
+    }
+    // Touch hides empty properties in the list (PR #184); they are set in the peek, which one tap on the row title opens (TouchPeekOneTap).
+    const peekRow = target.locator("[data-list-row]").nth(1);
+    await peekRow.locator("a[href]").first().tap();
+    const peek = target.locator("[data-peek]");
+    await peek.waitFor();
+    check(await peek.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}`) }).count() > 0, `${label} one tap on a row title opens the peek with its property controls (TouchPeekOneTap)`);
+    await target.keyboard.press("Escape");
+    await peek.waitFor({ state: "hidden" });
+    const firstRowControls = target.getByTestId("row-MOB-1").locator('button[aria-label], [role="checkbox"]');
+    for (let index = 0; index < await firstRowControls.count(); index += 1) {
+      const control = firstRowControls.nth(index);
+      if (!await control.isVisible()) continue;
+      await control.scrollIntoViewIfNeeded();
+      const misses = await control.evaluate(missedHitPoints);
+      check(misses.length === 0, `${label} ${await control.getAttribute("aria-label")} answers taps across its whole 44px area (TouchHitArea44): ${JSON.stringify(misses)}`);
+    }
+  };
+  const desktopSiteContext = await browser.newContext({ viewport: { width: 980, height: 1800 }, deviceScaleFactor: 2.3, isMobile: false, hasTouch: true, storageState: await context.storageState() });
+  const desktopSitePage = await desktopSiteContext.newPage();
+  for (const theme of ["light", "dark"] as const) {
+    await desktopSitePage.addInitScript((value) => localStorage.setItem("weft.theme", value), theme);
+    await desktopSitePage.goto(mobileListUrl);
+    await desktopSitePage.getByTestId("row-MOB-1").getByRole("link", { name: "Alpha" }).waitFor();
+    await assertTouchList(desktopSitePage, `980px desktop-site touch ${theme}`);
+    await desktopSitePage.screenshot({ path: `${evidenceShots}/work-items-list-touch-desktop-site-980-${theme}.png` });
+  }
+  await desktopSiteContext.close();
+  for (const [width, height] of [[390, 844], [844, 390]] as const) {
+    await mobilePage.setViewportSize({ width, height });
+    for (const theme of ["light", "dark"] as const) {
+      await mobilePage.evaluate((value) => localStorage.setItem("weft.theme", value), theme);
+      await mobilePage.goto(mobileListUrl);
+      await mobilePage.getByTestId("row-MOB-1").getByRole("link", { name: "Alpha" }).waitFor();
+      await assertTouchList(mobilePage, `${width}x${height} touch ${theme}`);
+    }
+  }
+  await mobilePage.setViewportSize({ width: 390, height: 844 });
   await mobileRow.getByRole("button", { name: `${translate("workItems.cycle")}: Sprint 17` }).waitFor();
   const mobileRowLines = await mobileRow.evaluate((row) => {
     const titleLink = row.querySelector("a");
@@ -463,8 +918,7 @@ try {
   }
   check(await page.getByText(translate("bulk.selectShown"), { exact: true }).isVisible(), "select-all has no visible phone label");
   const titleBox = await page.getByRole("heading", { name: /MOB · Mobile/ }).boundingBox();
-  const settingsBox = await page.getByRole("link", { name: translate("projects.settings") }).boundingBox();
-  check(Boolean(titleBox && settingsBox) && Math.abs(titleBox!.y - settingsBox!.y) < 3, "project title and Settings wrap onto separate phone rows");
+  check(!!titleBox && titleBox.x >= 0 && titleBox.x + titleBox.width <= 390, "project title stays within the phone viewport while project actions move to the list toolbar");
   await page.getByRole("button", { name: translate("layout.board") }).click();
   const phoneCard = page.getByTestId("card-MOB-2");
   await phoneCard.getByText(translate("workItems.noAssignee"), { exact: true }).waitFor();
@@ -551,8 +1005,117 @@ try {
     await control.click();
   }
   await page.setViewportSize({ width: 1440, height: 900 });
+  check(await page.evaluate(() => window.innerWidth === 1440 && window.innerHeight === 900), "Cycles sidebar check runs at the desktop viewport after phone screenshots");
+  // Since #210 the shell restores the desktop sidebar when the viewport widens again, so the Cycles link is back without a click.
+  await page.getByRole("button", { name: translate("shell.collapseSidebar") }).waitFor();
+  const cyclesLink = page.getByRole("link", { name: translate("cycles.title"), exact: true });
+  await page.waitForFunction((label) => [...document.querySelectorAll<HTMLAnchorElement>('#desktop-sidebar a')].some((link) => link.textContent.trim() === label && link.getBoundingClientRect().left >= 0), translate("cycles.title"));
+  const cyclesLinkBounds = await cyclesLink.boundingBox();
+  check(!!cyclesLinkBounds && cyclesLinkBounds.x >= 0 && cyclesLinkBounds.x + cyclesLinkBounds.width <= 1440 && cyclesLinkBounds.y >= 0 && cyclesLinkBounds.y + cyclesLinkBounds.height <= 900, `Cycles sidebar link is visible after restoring the desktop sidebar: ${JSON.stringify(cyclesLinkBounds)}`);
   await page.getByRole("link", { name: translate("cycles.title"), exact: true }).click();
+  const activeCyclesTab = page.getByRole("tab", { name: new RegExp(`${translate("cycles.status.active")}\\s+16$`) });
+  await activeCyclesTab.waitFor();
   await assertStableBounds(page.getByRole("tab", { name: new RegExp(translate("cycles.status.active")) }), "Tabs");
+  await assertStableBounds(activeCyclesTab, "Tabs");
+
+  const edgeTapContext = await browser.newContext({ hasTouch: true, isMobile: true, storageState: await context.storageState() });
+  const edgeTapPage = await edgeTapContext.newPage();
+  const compactItem = await call<{ displayId: string }>("create_work_item", { projectId: project!.id, title: "Priority only", priority: "high" });
+  await edgeTapPage.setViewportSize({ width: 390, height: 844 });
+  await edgeTapPage.goto(mobileListUrl);
+  // A compact row with populated Priority must fit both hit areas even without trailing chips.
+  const compactRow = edgeTapPage.getByTestId(`row-${compactItem.displayId}`);
+  const compactPriorityName = `${translate("workItems.priority")}: ${translate("workItems.priority.high")}`;
+  const compactPriority = compactRow.getByRole("button", { name: compactPriorityName });
+  const compactCheckbox = compactRow.getByRole("checkbox");
+  await compactPriority.evaluate((element) => element.scrollIntoView({ block: "center" }));
+  const compactBounds = await compactRow.boundingBox();
+  check(!!compactBounds && compactBounds.height <= 90 && await compactRow.locator("[data-phone-property]").count() === 0,
+    `390px touch row with only leading properties stays within 90px: ${JSON.stringify(compactBounds)}`);
+  for (const target of [compactPriority, compactCheckbox]) {
+    const misses = await target.evaluate(missedHitPoints);
+    check(misses.length === 0, `Compact touch control receives its entire 44px area: ${JSON.stringify(misses)}`);
+  }
+  const priorityBounds = (await compactPriority.boundingBox())!;
+  await edgeTapPage.touchscreen.tap(priorityBounds.x + priorityBounds.width / 2, priorityBounds.y + priorityBounds.height / 2 - 21);
+  const priorityDialog = edgeTapPage.getByRole("dialog", { name: compactPriorityName });
+  await priorityDialog.waitFor();
+  check(await compactCheckbox.getAttribute("aria-checked") === "false", "The upper edge of Priority opens its picker without selecting the row");
+  await edgeTapPage.keyboard.press("Escape");
+  await priorityDialog.waitFor({ state: "hidden" });
+  const checkboxBounds = (await compactCheckbox.boundingBox())!;
+  await edgeTapPage.touchscreen.tap(checkboxBounds.x + checkboxBounds.width / 2, checkboxBounds.y + checkboxBounds.height / 2 + 21);
+  check(await compactCheckbox.getAttribute("aria-checked") === "true" && !await priorityDialog.isVisible(), "The lower edge of the checkbox selects the row without opening Priority");
+  await compactCheckbox.tap();
+  check(await compactCheckbox.getAttribute("aria-checked") === "false", "The compact row checkbox can clear its selection");
+
+  // Use the same member's locale setting the app reads and exercise real taps near the neighbouring layout button.
+  for (const locale of ["en", "th"] as const) {
+    await call("set_my_locale", { locale });
+    for (const [width, height] of [[320, 700], [844, 390]] as const) {
+      await edgeTapPage.setViewportSize({ width, height });
+      await edgeTapPage.goto(mobileListUrl);
+      await edgeTapPage.waitForFunction((value) => document.documentElement.lang === value, locale);
+      const toolbar = edgeTapPage.getByTestId("work-items-toolbar");
+      const switcher = toolbar.getByRole("group", { name: translate("layout.switch", locale) });
+      await switcher.waitFor();
+      await edgeTapPage.evaluate(() => document.fonts.ready);
+      const dimensions = await toolbar.evaluate((element) => ({
+        documentWidth: document.documentElement.scrollWidth,
+        clippedControls: [...element.querySelectorAll<HTMLElement>('button, a[href], [role="checkbox"]')].flatMap((control) => {
+          const { left, right } = control.getBoundingClientRect();
+          return left < 0 || right > window.innerWidth ? [control.getAttribute("aria-label") ?? control.textContent] : [];
+        }),
+      }));
+      check(dimensions.documentWidth <= width && dimensions.clippedControls.length === 0, `${locale} ${width}px toolbar fits: ${JSON.stringify(dimensions)}`);
+      if (width === 320) {
+        const list = edgeTapPage.getByTestId("work-items-list-container");
+        const populatedRow = list.getByTestId("row-MOB-1");
+        await populatedRow.getByRole("button", { name: `${translate("workItems.cycle", locale)}: Sprint 17`, exact: true }).waitFor();
+        await populatedRow.getByRole("button", { name: `${translate("workItems.modules", locale)}: Auth`, exact: true }).waitFor();
+        const widths = await Promise.all([edgeTapPage.locator("#main-content"), list].map((container) =>
+          container.evaluate(({ id, clientWidth, scrollWidth }) => ({ container: id || "work items list", clientWidth, scrollWidth }))));
+        check(widths.every(({ clientWidth, scrollWidth }) => clientWidth > 0 && scrollWidth <= clientWidth + 1),
+          `${locale} 320px main and list content fit inside their scroll containers: ${JSON.stringify(widths)}`);
+      }
+      for (const layout of ["board", "spreadsheet", "calendar", "gantt", "list"] as const) {
+        const control = switcher.getByRole("button", { name: translate(`layout.${layout}`, locale), exact: true });
+        await control.scrollIntoViewIfNeeded();
+        const box = await control.boundingBox();
+        check(!!box && box.width >= 44 && box.height >= 44, `${locale} ${width}px ${layout} occupies its own 44px target: ${JSON.stringify(box)}`);
+        const misses = await control.evaluate(missedHitPoints);
+        check(misses.length === 0, `${locale} ${width}px ${layout} owns its full 44px target: ${JSON.stringify(misses)}`);
+        await edgeTapPage.touchscreen.tap(box!.x + box!.width - 0.5, box!.y + box!.height / 2);
+        await edgeTapPage.waitForURL((url) => (url.searchParams.get("layout") ?? "list") === layout, { timeout: 5000 });
+        check(await control.getAttribute("aria-pressed") === "true", `${locale} ${width}px tapping the right edge selects ${layout}`);
+      }
+      if (width === 320) {
+        const displayName = translate("layout.display", locale);
+        const display = toolbar.getByRole("button", { name: displayName });
+        const displayBox = (await display.boundingBox())!;
+        await edgeTapPage.touchscreen.tap(displayBox.x + displayBox.width / 2, displayBox.y + displayBox.height / 2 + 21);
+        const displayDialog = edgeTapPage.getByRole("dialog", { name: displayName });
+        await displayDialog.waitFor();
+        await edgeTapPage.keyboard.press("Escape");
+        await displayDialog.waitFor({ state: "hidden" });
+        await toolbar.getByRole("button", { name: translate("views.saveAs", locale) }).tap();
+        const saveDialog = edgeTapPage.getByRole("dialog", { name: translate("views.form.saveTitle", locale) });
+        await saveDialog.waitFor();
+        await edgeTapPage.keyboard.press("Escape");
+        await saveDialog.waitFor({ state: "hidden" });
+        const query = toolbar.getByRole("button", { name: translate("layout.filterQuery.toggle", locale) });
+        const background = () => query.evaluate(async (element) => {
+          getComputedStyle(element).backgroundColor;
+          await Promise.all(element.getAnimations().map((animation) => animation.finished));
+          return getComputedStyle(element).backgroundColor;
+        });
+        const closedBackground = await background();
+        await query.tap();
+        check(await query.getAttribute("aria-pressed") === "true" && await background() !== closedBackground, `${locale} Filter Query shows its pressed state`);
+      }
+    }
+  }
+  await edgeTapContext.close();
   console.log("e2e work items list: ok");
   await browser.close();
 } catch (error) {

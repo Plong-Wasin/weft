@@ -103,18 +103,18 @@ try {
   check(activeAfterTabs.label?.startsWith("Priority") || activeAfterTabs.text?.includes("Priority") || false, `Tab should reach the Priority chip (${JSON.stringify(activeAfterTabs)})`);
   console.log("list-chips ok: desktop hides until hover or focus");
 
-  // Touch: there is no hover, so every chip shows.
+  // Touch: there is no hover to reveal an empty chip, so an empty Priority is not painted; its slot keeps its width so the ID column stays aligned.
   const touch = await browser.newContext({ storageState: await context.storageState(), hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
   const touchPage = await touch.newPage();
   await touchPage.goto(listUrl);
   const touchRow = touchPage.getByTestId("row-MOB-1");
   await touchRow.waitFor();
   // The narrow layout removes empty Assignees and Labels slots to preserve room for the title.
-  for (const property of [priority]) {
-    const box = await wrapper(touchRow, property);
-    check(box.opacity === "1" && box.pointerEvents === "auto", `${property} chip should be visible on touch (${JSON.stringify(box)})`);
+  for (const property of ["priority"] as const) {
+    const slot = await touchRow.locator(`[data-list-property="${property}"]`).evaluate((cell) => ({ visibility: getComputedStyle(cell).visibility, width: cell.getBoundingClientRect().width, empty: cell.getAttribute("data-empty-property") }));
+    check(slot.empty === "true" && slot.visibility === "hidden" && slot.width >= 28, `empty ${property} chip is not painted on touch but keeps its slot (${JSON.stringify(slot)})`);
   }
-  console.log("list-chips ok: touch shows the empty Priority chip");
+  console.log("list-chips ok: touch keeps the empty Priority slot without painting it");
   await browser.close();
 } catch (error) {
   failed = true;

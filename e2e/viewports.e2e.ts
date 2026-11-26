@@ -84,7 +84,7 @@ try {
           topControls: [...document.querySelectorAll<HTMLElement>("main button, main a[href], main input:not([type=hidden]), main select")].map((el) => {
             const rect = el.getBoundingClientRect();
             const style = getComputedStyle(el);
-            return { x: rect.x, y: rect.y, right: rect.right, bottom: rect.bottom, visible: style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) !== 0 };
+            return { tag: el.tagName, id: el.id, label: el.getAttribute("aria-label"), text: el.textContent?.trim(), className: el.className, x: rect.x, y: rect.y, right: rect.right, bottom: rect.bottom, visible: style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) !== 0 };
           }).filter((rect) => rect.visible && rect.y < 160 && rect.bottom > 0),
           siblingControlOverlap: [...document.querySelectorAll<HTMLElement>("main [role=group]")].some((group) => {
             const controls = [...group.querySelectorAll<HTMLElement>("button, a[href]")].filter((el) => el.parentElement === group && getComputedStyle(el).display !== "none" && getComputedStyle(el).visibility !== "hidden");
@@ -101,6 +101,34 @@ try {
       check("no-horizontal-page-scroll", measurements.pageWidth <= measurements.viewportWidth, `${route.name} at ${viewport.suffix}: ${measurements.pageWidth}px > ${measurements.viewportWidth}px`);
       check("top-controls-not-clipped", measurements.topControls.every((control) => control.x >= 0 && control.right <= viewport.width && control.bottom <= viewport.height),
         `${route.name} at ${viewport.suffix}: ${JSON.stringify(measurements.topControls.filter((control) => control.x < 0 || control.right > viewport.width || control.bottom > viewport.height))}`);
+      if (route.name === "work-items-list" && (viewport.suffix === "390x844" || viewport.suffix === "844x390")) {
+        const listMetrics = await target.evaluate(() => {
+          const list = document.querySelector<HTMLElement>('[data-testid="work-items-list-container"]');
+          const rows = [...(list?.querySelectorAll<HTMLElement>("[data-list-row]") ?? [])];
+          const metadata = rows.map((row) => row.querySelector<HTMLElement>('[data-testid="work-item-row-metadata"]'));
+          return {
+            documentWidth: document.documentElement.scrollWidth,
+            viewportWidth: window.innerWidth,
+            listRight: list?.getBoundingClientRect().right ?? null,
+            listClientWidth: list?.clientWidth ?? null,
+            listScrollWidth: list?.scrollWidth ?? null,
+            rowsOverflow: rows.map((row) => row.scrollWidth > row.clientWidth + 1),
+            metadataOverflow: metadata.map((item) => item ? item.scrollWidth > item.clientWidth + 1 : true),
+          };
+        });
+        check("work-items-list-page-width-fits", listMetrics.documentWidth <= listMetrics.viewportWidth, `Work items at ${viewport.suffix}: ${JSON.stringify(listMetrics)}`);
+        check("work-items-list-content-fits", listMetrics.listRight !== null && listMetrics.listRight <= listMetrics.viewportWidth && listMetrics.listScrollWidth !== null && listMetrics.listClientWidth !== null && listMetrics.listScrollWidth <= listMetrics.listClientWidth + 1 && listMetrics.rowsOverflow.every((overflow) => !overflow) && listMetrics.metadataOverflow.every((overflow) => !overflow), `Work item rows and property chips at ${viewport.suffix}: ${JSON.stringify(listMetrics)}`);
+      }
+      if (route.name === "work-items-list" && viewport.suffix === "844x390") {
+        // Save as view stays on landscape phones; it must share a toolbar row with another control rather than wrap alone.
+        const saveViewTop = await target.getByRole("button", { name: translate("views.saveAs") }).evaluate((element) => {
+          const box = element.getBoundingClientRect();
+          const toolbar = element.closest('[data-testid="work-items-toolbar"]');
+          const others = [...(toolbar?.querySelectorAll<HTMLElement>("button, a[href]") ?? [])].filter((other) => other !== element && !other.contains(element) && !element.contains(other) && other.getClientRects().length > 0);
+          return { visible: box.width > 0 && getComputedStyle(element).visibility !== "hidden", sharesRow: others.some((other) => { const r = other.getBoundingClientRect(); return Math.abs(r.top + r.height / 2 - (box.top + box.height / 2)) <= 2; }) };
+        });
+        check("work-items-list-save-view-kept", saveViewTop.visible && saveViewTop.sharesRow, `landscape phone keeps Save as view in a shared toolbar row: ${JSON.stringify(saveViewTop)}`);
+      }
       check("no-sibling-control-overlap", !measurements.siblingControlOverlap, `${route.name} at ${viewport.suffix} has overlapping sibling controls`);
       if (route.auth && measurements.primary) {
         check("primary-control-visible", measurements.primary.x >= 0 && measurements.primary.right <= viewport.width && measurements.primary.y < viewport.height && measurements.primary.bottom > 0,
@@ -128,8 +156,22 @@ try {
     const moduleTrigger = firstRow.getByRole("button", { name: /^Modules/ }).first();
     check("touch-empty-module-slot-hidden", !(await moduleTrigger.isVisible()), `empty Module control remains visible at ${viewport.suffix}`);
     const stateTrigger = firstRow.getByRole("button", { name: /^State:/ }).first();
-    const stateBox = await stateTrigger.boundingBox();
-    check("touch-filled-chip-target-44px", !!stateBox && stateBox.height >= 44, `State target is ${stateBox?.height ?? 0}px at ${viewport.suffix}`);
+    const stateMetrics = await stateTrigger.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const hitArea = getComputedStyle(element, "::before");
+      return { visualHeight: rect.height, hitHeight: parseFloat(hitArea.height), hitWidth: parseFloat(hitArea.width) };
+    });
+    check("touch-filled-chip-target-44px", stateMetrics.visualHeight <= 36 && stateMetrics.hitHeight >= 44 && stateMetrics.hitWidth >= 44, `State chip metrics at ${viewport.suffix}: ${JSON.stringify(stateMetrics)}`);
+    // Real hit testing: the 4 corners and 4 edge midpoints, 1px inside the 44x44 square centred on the chip, resolve to the chip.
+    const stateMisses = await stateTrigger.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+      return [[-21, -21], [0, -21], [21, -21], [21, 0], [21, 21], [0, 21], [-21, 21], [-21, 0]].flatMap(([dx, dy]) => {
+        const hit = document.elementFromPoint(cx + dx!, cy + dy!);
+        return hit && (hit === element || element.contains(hit)) ? [] : [{ dx, dy, hit: hit?.tagName ?? null }];
+      });
+    });
+    check("touch-filled-chip-hit-44px", stateMisses.length === 0, `State chip 44px area misses taps at ${viewport.suffix}: ${JSON.stringify(stateMisses)}`);
     const rowBox = await firstRow.boundingBox();
     check("touch-row-present", !!rowBox, `seed row has no visible bounds at ${viewport.suffix}`);
     // The last property slot can contain Assignee at wider widths, so the trailing edge is not reliably blank.

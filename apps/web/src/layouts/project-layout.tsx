@@ -36,11 +36,12 @@ export function ProjectLayout() {
   const { workspace } = useWorkspace();
   const { project, reload } = useRouteProject();
   const onPage = useMatch("/:workspaceSlug/projects/:projectKey/pages/:pageId") !== null;
+  const onWorkItems = useMatch("/:workspaceSlug/projects/:projectKey/issues") !== null;
   if (project === undefined) return null;
   if (project === null) return <section><p role="alert">{translate("projects.notFound")}</p><Link to={paths.home(workspace.slug)}>{translate("projects.back")}</Link></section>;
   if (onPage) return <section className="grid min-w-0 gap-4"><Outlet context={{ project, reload } satisfies ProjectContext} /></section>;
   return <section className="grid min-w-0 gap-4">
-    <PageHeader title={<span className="[overflow-wrap:anywhere]">{project.key} · {project.name}</span>} breadcrumb={<><Link to={paths.home(workspace.slug)} className="text-muted-foreground hover:text-foreground">{translate("projects.back")}</Link><span className="text-muted-foreground" aria-hidden>›</span></>} actions={<Link to={paths.projectSettings(workspace.slug, project.key)} className="secondary no-underline">{translate("projects.settings")}</Link>} />
+    <PageHeader title={<span className="[overflow-wrap:anywhere]">{project.key} · {project.name}</span>} breadcrumb={<><Link to={paths.home(workspace.slug)} className="text-muted-foreground hover:text-foreground">{translate("projects.back")}</Link><span className="text-muted-foreground" aria-hidden>›</span></>} actions={onWorkItems ? undefined : <Link to={paths.projectSettings(workspace.slug, project.key)} className="secondary no-underline">{translate("projects.settings")}</Link>} />
     <Outlet context={{ project, reload } satisfies ProjectContext} />
   </section>;
 }

@@ -1,5 +1,6 @@
-import { Button } from "@/ui/button";
+import { Button, buttonVariants } from "@/ui/button";
 import React from "react";
+import { Link } from "react-router";
 import { Plus } from "lucide-react";
 import { translate } from "@weft/shared";
 import { action, actionResult } from "../api";
@@ -8,6 +9,10 @@ import { useWorkspace } from "../layouts/workspace-layout";
 import { CreateWorkItemModal } from "../create-work-item-modal";
 import { WorkItemLayouts } from "../work-item-layouts";
 import { SaveAsViewButton } from "../views";
+import { paths } from "../routes";
+import { cn } from "../lib/utils";
+
+const toolbarSecondarySm = cn(buttonVariants({ variant: "secondary", size: "sm" }), "bg-transparent text-foreground");
 
 export function ProjectWorkItems() {
   const { workspace } = useWorkspace();
@@ -16,11 +21,14 @@ export function ProjectWorkItems() {
   const [refreshKey, setRefreshKey] = React.useState(0);
   const canWrite = project.role !== "Guest";
   return <section className="grid gap-3">
-    {canWrite && !project.archived && <div className="flex justify-end">
-      <Button type="button" className="flex items-center gap-1.5" onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{translate("workItems.addNew")}</Button>
-    </div>}
     <WorkItemLayouts projectId={project.id} workspaceSlug={workspace.slug} action={action} run={actionResult} refreshKey={refreshKey} cyclesEnabled={project.features.cycles} modulesEnabled={project.features.modules} typesEnabled={project.features.types} canWrite={canWrite} canCreate onAddItem={() => setCreating(true)}
-      toolbarExtra={(params) => canWrite && !project.archived ? <SaveAsViewButton params={params} project={project} workspaceSlug={workspace.slug} /> : null} />
+      toolbarExtra={(params) => <div className="flex items-center gap-2">
+        {canWrite && !project.archived && <>
+          <Button type="button" variant="primary" size="sm" className="gap-1.5" onClick={() => setCreating(true)}><Plus aria-hidden size={14} /><span>{translate("workItems.addNew")}</span></Button>
+          <SaveAsViewButton params={params} project={project} workspaceSlug={workspace.slug} />
+        </>}
+        <Link to={paths.projectSettings(workspace.slug, project.key)} className={`${toolbarSecondarySm} no-underline`}>{translate("projects.settings")}</Link>
+      </div>} />
     {creating && <CreateWorkItemModal project={project} onClose={() => setCreating(false)} onCreated={() => setRefreshKey((key) => key + 1)} />}
   </section>;
 }

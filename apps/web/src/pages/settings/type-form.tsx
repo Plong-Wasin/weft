@@ -50,7 +50,7 @@ export function TypeForm({ idPrefix, initial, submitLabel, onSubmit, onCancel }:
     <div className="flex flex-wrap items-center justify-between gap-3">
       <span data-type-preview className="inline-flex min-w-0 items-center gap-2 rounded-md border border-border bg-card px-2.5 py-1 text-13">
         <TypeIconMark icon={icon} color={color} />
-        <span className={`truncate font-medium ${name.trim() ? "text-foreground" : "text-muted-foreground"}`}>{name.trim() || t("types.previewEmpty")}</span>
+        <span className={`thai-room truncate font-medium ${name.trim() ? "text-foreground" : "text-muted-foreground"}`}>{name.trim() || t("types.previewEmpty")}</span>
       </span>
       <span className="flex flex-wrap gap-2">
         <Button type="submit" disabled={saving}>{submitLabel}</Button>

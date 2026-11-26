@@ -89,7 +89,7 @@ export function ProjectsPanel() {
     {projects !== null && visibleProjects.length > 0 && <ul aria-label={translate("projects.title")} className="m-0 grid list-none gap-1 rounded-xl border border-border bg-card p-1 empty:hidden">{visibleProjects.map((project) => <li key={project.id} data-project-row className="grid min-h-14 min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg px-4 py-2 transition-colors hover:bg-accent">
       <Link to={paths.workItems(workspace.slug, project.key)} aria-label={`${project.key} · ${project.name}`} className="flex min-w-0 items-center gap-3 text-sm font-medium !text-foreground">
         <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 font-code text-xs font-medium text-muted-foreground">{project.key}</span>
-        <span className="truncate" title={project.name}>{project.name}</span>
+        <span className="thai-room truncate" title={project.name}>{project.name}</span>
       </Link>
       <div className="flex min-w-0 shrink-0 items-center">
       {(() => {

@@ -196,9 +196,9 @@ export function CommandPalette({ current, signOut }: { current: Current; signOut
           <CommandList aria-label={translate("palette.results")} className="min-h-0 max-h-none flex-1">
             {grouped.map(({ group, entries }) => <CommandGroup key={group} heading={translate(groupLabel[group])}>
               {entries.map((entry) => <CommandItem key={entry.id} value={entry.id} keywords={[entry.label, entry.hint ?? "", entry.where ?? ""]} onSelect={() => choose(entry)} className="min-h-9 gap-2 rounded-md px-2.5 py-2 text-sm">
-                <span className="min-w-0 flex-1 truncate">{entry.label}</span>
-                {entry.where && <span className="max-w-[40%] shrink-0 truncate rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">{entry.where}</span>}
-                {entry.hint && <span className="max-w-[40%] shrink truncate text-xs text-muted-foreground">{entry.hint}</span>}
+                <span className="min-w-0 flex-1 thai-room truncate">{entry.label}</span>
+                {entry.where && <span className="max-w-[40%] shrink-0 thai-room truncate rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">{entry.where}</span>}
+                {entry.hint && <span className="max-w-[40%] shrink thai-room truncate text-xs text-muted-foreground">{entry.hint}</span>}
               </CommandItem>)}
             </CommandGroup>)}
             {visible.length === 0 && <CommandEmpty role="status">{found.status === "loading" ? translate("palette.searching") : translate("palette.empty")}</CommandEmpty>}

@@ -41,7 +41,7 @@ export function OutlinksPanel({ kind, id, run, refreshKey = 0, updating = false,
   </div>;
 
   return <section aria-label={t("outlinks.title")} className={`grid min-w-0 max-w-full gap-3 ${compact ? "" : "border-t border-border pt-4"}`}>
-    {compact ? <p className="m-0 text-12 text-muted-foreground">{t("outlinks.explanation")}</p> : <div><h3 className="m-0 text-15 font-semibold text-foreground">{t("outlinks.title")}</h3>
+    {compact ? <p className="m-0 text-12 text-muted-foreground">{t("outlinks.explanation")}</p> : <div><h3 className="m-0 text-14 font-semibold text-foreground">{t("outlinks.title")}</h3>
       <p className="m-0 mt-1 text-12 text-muted-foreground">{t("outlinks.explanation")}</p></div>}
     {(updating || refreshing) && <p role="status" data-testid="outlinks-updating" className="m-0 text-12 text-muted-foreground">{t("outlinks.updating")}</p>}
     {failed && <p role="status" className="m-0 text-13 text-muted-foreground">{t("outlinks.loadFailed")}</p>}

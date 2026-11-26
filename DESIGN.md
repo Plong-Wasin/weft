@@ -31,13 +31,14 @@ The web UI follows shadcn/ui's default neutral theme and component styling. Keep
 - Body text follows the app's 14px base. Use the shadcn type scale for new work. `text-9` to `text-40` (defined in `style.css`; 9 to 12 all render at 12px) stay where a screen's alignment and row rhythm depend on them.
 - Weights: regular 400 is the base weight; labels, headings and large counts use the heavier weights the variable face provides. The heavy 800 weight is defined as a token.
 - Text uses theme roles: `foreground` for primary content and `muted-foreground` for secondary labels and metadata.
+- A truncated or clamped element that shows user or translated text also takes `thai-room`, which keeps Thai tone marks inside the clip box. IDs, e-mail addresses and URL hosts do not need it.
 
 ## Spacing and layout
 
 - The spacing base is 4px (`--spacing` is 0.25rem); Tailwind spacing steps are multiples of it. Common steps in the shipped UI: 4, 6, 8, 12, 16, 24px.
 - Page gutter: `--padding-page-x` and `--padding-page-y` are 1.35rem. At phone width no route may scroll the page sideways.
 - Top bar height: `--height-header` (3.25rem). The top bar holds the menu button on phone, the workspace switcher, search, quick actions, notifications, help and the profile avatar.
-- Desktop shell: an icon rail (Work, Wiki, AI, Settings) on the left, a secondary sidebar with the project tree, and the main column. Phone (below 768px): the sidebar becomes a drawer opened from the top bar's menu button; the drawer carries the same navigation.
+- Desktop shell: an icon rail (Work, Wiki, AI, Settings) on the left, a secondary sidebar with the project tree, and the main column. Below 440px the workspace switcher shows only its mark (the name stays readable to assistive technology). Phone (below 768px): the sidebar becomes a drawer opened from the top bar's menu button; the drawer carries the same navigation.
 - Content width: list and form screens fill the main column; settings and single-column forms cap their width so lines stay readable.
 
 ## Radius and elevation
@@ -51,10 +52,10 @@ The web UI follows shadcn/ui's default neutral theme and component styling. Keep
 
 Shared primitives live in `apps/web/src/ui/` and use Base UI 1.9.0 for accessible interaction behavior. Keep Tailwind class names literal and combine conditional classes with `cn()` from `apps/web/src/lib/utils.ts`. Use shadcn's default component styling; override only for a documented Weft behavior.
 
-- Buttons: controls use shadcn's 6px radius and 36px default height; `Button` variants are `primary`, `secondary`, `ghost` and `danger`, chosen with the `variant` prop only. Use primary for the main action, secondary (the default) for other actions, ghost in toolbars and danger only for destructive actions.
-- Text fields and selects use shadcn's `border-input`, `bg-background`, `text-foreground`, `text-muted-foreground`, and `ring-ring` tokens, with a 6px radius and a visible keyboard focus ring. Labels sit above fields. Native `<select>` remains for compact, phone-oriented forms where the platform picker is the more usable control.
+- Buttons: controls use shadcn's 6px radius and 36px default height; `Button` variants are `primary`, `secondary`, `ghost` and `danger`, chosen with the `variant` prop only. Use primary for the main action, secondary (the default) for other actions, ghost in toolbars and danger only for destructive actions. On coarse pointers every Button is at least 44px high, and an icon-only one at least 44px wide; icons never shrink to make room for padding.
+- Text fields and selects use shadcn's `border-input`, `bg-background`, `text-foreground`, `text-muted-foreground`, and `ring-ring` tokens, with a 6px radius and a visible keyboard focus ring. Labels sit above fields. Native `<select>` remains for compact, phone-oriented forms where the platform picker is the more usable control; they share the bordered, 36px (44px on touch) control look.
 - Input and Textarea use shadcn's neutral border, background, placeholder and focus tokens. Inputs stay 36px high on fine pointers and grow to at least 44px on coarse pointers; 16px text below the `md` breakpoint avoids mobile focus zoom. Textarea keeps native resizing and a 64px minimum height.
-- Checkbox uses the Base UI shadcn primitive, including checked, unchecked, indeterminate, disabled and invalid states. It is 16px on fine pointers and a 44px target on coarse pointers. Switch is used for on/off settings and is at least 44px in each dimension on coarse pointers.
+- Checkbox uses the Base UI shadcn primitive, including checked, unchecked, indeterminate, disabled and invalid states. It is 16px on fine pointers; on coarse pointers the element is a 44px target that still paints a 16px box. Switch is used for on/off settings and is at least 44px in each dimension on coarse pointers.
 - Cards and popups: `Card` (`apps/web/src/ui/card.tsx`, with `as` for a section, form or list) is a flat `card` surface with a `border`; dropdown menus use shadcn popover and border tokens with a restrained shadow. Menu rows use shadcn accent hover and focus fills; dialogs and sheets use their primitive defaults.
 - Dialog and Sheet: modal forms and confirmations use the Base UI Dialog primitive styled with shadcn neutral tokens, a dimmed backdrop, focus containment, Escape dismissal and focus return. The mobile navigation uses Sheet as a left-side modal drawer with the same navigation content, a labeled 44px close target and an 85vw width cap. The wide work item peek stays independent.
   - Dialog keeps `rounded-2xl` (16px) as the documented Weft behavior requested for ticket 04, and constrains height to the viewport with internal scrolling.

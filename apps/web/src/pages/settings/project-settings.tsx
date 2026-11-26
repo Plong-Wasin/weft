@@ -100,7 +100,7 @@ export function ProjectMembers() {
     <SettingsHeader title={translate("projects.members")} description={translate("settings.projectMembersDesc")} />
     <RowList>{members.map((member) => <Row key={member.userId}>
       <Avatar name={member.name} id={member.userId} agent={member.isAgent} />
-      <span className="grid min-w-0 flex-1"><span className="truncate font-medium">{member.name}</span><span className="truncate text-sm text-muted-foreground">{member.email}</span></span>
+      <span className="grid min-w-0 flex-1"><span className="thai-room truncate font-medium">{member.name}</span><span className="truncate text-sm text-muted-foreground">{member.email}</span></span>
       {canAdmin && !member.isAgent ? <select aria-label={`${translate("settings.roleOf")} ${member.name}`} value={member.role} onChange={async (event) => guard(await action("change_project_member_role", { projectId: project.id, userId: member.userId, role: event.target.value }))}>
         {roles.map((role) => <option key={role} value={role}>{translate(`projects.role.${role}`)}</option>)}
       </select> : <span className="text-muted-foreground">{translate(`projects.role.${member.role}`)}</span>}
@@ -168,7 +168,7 @@ export function ProjectLabels() {
           <Button>{translate("labels.save")}</Button>
           <Button type="button" onClick={() => setEditing(null)}>{translate("settings.cancel")}</Button>
         </form> : <>
-          <span aria-hidden className="size-3 shrink-0 rounded-full" style={{ background: label.color }} /><span className="flex-1 truncate">{label.name}</span>
+          <span aria-hidden className="size-3 shrink-0 rounded-full" style={{ background: label.color }} /><span className="flex-1 thai-room truncate">{label.name}</span>
           {canAdmin && <>
             <Button type="button" onClick={() => setEditing({ id: label.id, name: label.name, color: label.color })}>{translate("labels.edit")}</Button>
             <Button type="button" onClick={async () => guard(await action("delete_label", { labelId: label.id }))}>{translate("labels.delete")}</Button>
@@ -238,7 +238,7 @@ export function ProjectStates() {
                 <Button className="pointer-coarse:min-h-11">{translate("labels.save")}</Button>
                 <Button type="button" className="pointer-coarse:min-h-11" onClick={() => setEditing(null)}>{translate("settings.cancel")}</Button>
               </form> : <>
-                <span className="min-w-0 flex-1 truncate">{state.name}</span>
+                <span className="min-w-0 flex-1 thai-room truncate">{state.name}</span>
                 {canAdmin && <Popover label={`${translate("sortable.actions")}: ${state.name}`} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-44">
                   {(close) => <>
                     <Button type="button" role="menuitem" className={menuItemClass} disabled={index === 0} onClick={async () => { close(); await guard(await move(index, -1)); }}>{translate("states.moveUp")}</Button>

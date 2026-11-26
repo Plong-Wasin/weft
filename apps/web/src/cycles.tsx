@@ -30,7 +30,7 @@ const t = (key: string) => translate(key as MessageKey);
 const tabs: Status[] = ["upcoming", "active", "completed"];
 /** Which tab opens first when the user has not picked one: the first with Cycles in it. */
 const tabPriority: Status[] = ["active", "upcoming", "completed"];
-const primaryButton = "flex items-center gap-1.5";
+const primaryButton = "flex items-center gap-1.5 pointer-coarse:min-h-11";
 
 const count = (n: number) => formatNumber(n);
 const range = (cycle: Cycle) => `${formatDay(cycle.startDate)} – ${formatDay(cycle.endDate)}`;
@@ -153,14 +153,17 @@ function useCycleCommands(action: Call, reload: () => void, setNote: (note: stri
   };
 }
 
+/** Below xl the name sits over a wrapping line of metadata with the menu beside them; from xl every part has its own column. */
 function CycleRow({ cycle, href, children }: { cycle: Cycle; href: string; children?: React.ReactNode }) {
-  return <li className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 rounded-lg px-3 py-3 transition-colors hover:bg-accent sm:grid-cols-[auto_minmax(0,1fr)_auto_auto] xl:grid-cols-[auto_minmax(10rem,1fr)_auto_minmax(12rem,auto)_auto_minmax(7rem,auto)_auto]" data-testid="cycle-row">
+  return <li className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 rounded-lg px-3 py-3 transition-colors hover:bg-accent xl:grid-cols-[auto_minmax(10rem,1fr)_auto_minmax(12rem,auto)_auto_minmax(7rem,auto)_auto]" data-testid="cycle-row">
     <Ring cycle={cycle} />
-    <Link to={href} title={cycle.name} className="min-w-32 flex-1 truncate text-sm font-medium text-foreground">{cycle.name}</Link>
-    {statusPill(cycle.status)}
-    <span className="flex items-center gap-1.5 text-xs tabular-nums text-muted-foreground"><CalendarDays aria-hidden size={14} />{range(cycle)}</span>
-    <span className="text-xs tabular-nums text-muted-foreground">{t("cycles.itemCount").replace("{count}", count(cycle.itemCount))}</span>
-    {bar(cycle)}
+    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 xl:contents">
+      <Link to={href} title={cycle.name} className="flex w-full min-w-0 items-center text-sm font-medium text-foreground pointer-coarse:min-h-11 xl:w-auto"><span className="min-w-0 [overflow-wrap:anywhere] thai-room max-xl:line-clamp-2 xl:truncate">{cycle.name}</span></Link>
+      {statusPill(cycle.status)}
+      <span className="flex items-center gap-1.5 text-xs tabular-nums text-muted-foreground"><CalendarDays aria-hidden size={14} />{range(cycle)}</span>
+      <span className="text-xs tabular-nums text-muted-foreground">{t("cycles.itemCount").replace("{count}", count(cycle.itemCount))}</span>
+      {bar(cycle)}
+    </div>
     {children}
   </li>;
 }
@@ -178,9 +181,9 @@ export function CyclesPage({ workspaceId, workspaceSlug, projectKey, projectId, 
   const tab = pickedTab ?? tabPriority.find((status) => (cycles ?? []).some((cycle) => cycle.status === status)) ?? "active";
   const shown = (cycles ?? []).filter((cycle) => cycle.status === tab);
   const counts = (status: Status) => (cycles ?? []).filter((cycle) => cycle.status === status).length;
-  return <section className="grid gap-4">
+  return <section className="grid grid-cols-[minmax(0,1fr)] gap-4">
     <PageHeader level={2} title={<><CalendarSync aria-hidden size={20} />{t("cycles.title")}</>} actions={<>
-      <label className="flex items-center gap-2 text-sm text-muted-foreground"><Checkbox checked={archived} onChange={(event) => setArchived(event.target.checked)} /> {t("cycles.showArchived")}</label>
+      <label className="flex items-center gap-2 text-sm text-muted-foreground pointer-coarse:min-h-11"><Checkbox hitArea="overlay" checked={archived} onChange={(event) => setArchived(event.target.checked)} /> {t("cycles.showArchived")}</label>
       {canWrite && <Button type="button" className={primaryButton} onClick={() => setEditing("new")}><Plus aria-hidden size={14} />{t("cycles.new")}</Button>}
     </>} />
     <Tabs value={tab} onValueChange={(value) => setTab(value as Status)}>
@@ -336,9 +339,9 @@ export function CycleDetailPage({ workspaceId, workspaceSlug, projectKey, projec
     setNote(result === null ? t("cycles.failed") : `${t("cycles.transferred").replace("{count}", count(result.transferred.length))}${result.conflicts.length ? ` ${t("cycles.transferConflicts").replace("{count}", count(result.conflicts.length))}` : ""}`);
     await load();
   };
-  return <section className="grid gap-4">
+  return <section className="grid grid-cols-[minmax(0,1fr)] gap-4">
     <header className="flex flex-wrap items-center gap-3 border-b border-border pb-3">
-      <h2 title={cycle.name} className="m-0 min-w-32 flex-1 truncate text-xl font-semibold">{cycle.name}</h2>
+      <h2 title={cycle.name} className="m-0 min-w-32 flex-1 thai-room truncate text-xl font-semibold max-sm:basis-full max-sm:whitespace-normal max-sm:[overflow-wrap:anywhere]">{cycle.name}</h2>
       {statusPill(cycle.status)}{cycle.archived && <span role="status" className="text-xs text-muted-foreground">{t("cycles.archived")}</span>}
       <DetailsPanelToggle open={detailsPanel.open} onToggle={detailsPanel.toggle} panelId="cycle-details-panel" />
       {canWrite && !ended && !cycle.archived && <Button type="button" className={primaryButton} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("cycles.addItems")}</Button>}
@@ -355,7 +358,7 @@ export function CycleDetailPage({ workspaceId, workspaceSlug, projectKey, projec
           </DropdownMenu> : undefined} />
       </div>
       <aside id="cycle-details-panel" aria-label={t("cycles.details")} className={`grid h-fit gap-4 rounded-xl border border-border bg-card p-4 lg:w-[22rem] lg:shrink-0 ${detailsPanel.open ? "" : "lg:hidden"}`}>
-        <section className="grid gap-2" aria-label={t("workItems.description")}><h3 className="m-0 text-sm font-semibold">{t("workItems.description")}</h3><EntityDescription key={cycle.id} action={action} workspaceId={workspaceId} owner={{ ownerType: "cycle", ownerId: cycle.id }} mentionPeople={mentionPeople} initial={cycle.description ?? null} editable={canWrite && !cycle.archived} /></section>
+        <section className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 [overflow-wrap:anywhere]" aria-label={t("workItems.description")}><h3 className="m-0 text-sm font-semibold">{t("workItems.description")}</h3><EntityDescription key={cycle.id} action={action} workspaceId={workspaceId} owner={{ ownerType: "cycle", ownerId: cycle.id }} mentionPeople={mentionPeople} initial={cycle.description ?? null} editable={canWrite && !cycle.archived} /></section>
         <dl className="m-0 grid gap-2 border-y border-border py-3 text-sm">
           <div className="flex items-center justify-between gap-3"><dt className="flex items-center gap-1.5 text-muted-foreground"><CalendarDays aria-hidden size={14} />{t("cycles.start")} – {t("cycles.end")}</dt><dd className="m-0 text-right tabular-nums">{range(cycle)}</dd></div>
           <div className="flex items-center justify-between gap-3"><dt className="text-muted-foreground">{t("cycles.workItems")}</dt><dd className="m-0 tabular-nums">{count(cycle.itemCount)}</dd></div>
@@ -370,7 +373,7 @@ export function CycleDetailPage({ workspaceId, workspaceSlug, projectKey, projec
             {others.map((other) => <option key={other.id} value={other.id}>{other.name}</option>)}
           </select>
           {transferSelection.length === 0 && <p className="m-0 text-xs text-muted-foreground">{t("cycles.noTransferItems")}</p>}
-          <ul className="m-0 grid list-none gap-1 p-0">{everyone.filter((item) => cycle.workItemIds.includes(item.id) && (() => { const group = states.find((state) => state.id === item.stateId)?.group; return group !== "completed" && group !== "cancelled"; })()).map((item) => <li key={item.id} className="flex items-center gap-2 text-sm"><Checkbox aria-label={`${t("cycles.selectTransferItem")} ${item.displayId}`} checked={transferSelection.includes(item.id)} onChange={(event) => setTransferSelection((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))} /><span className="truncate">{item.displayId} · {item.title}</span></li>)}</ul>
+          <ul className="m-0 grid list-none gap-1 p-0">{everyone.filter((item) => cycle.workItemIds.includes(item.id) && (() => { const group = states.find((state) => state.id === item.stateId)?.group; return group !== "completed" && group !== "cancelled"; })()).map((item) => <li key={item.id} className="flex items-center gap-2 text-sm"><Checkbox aria-label={`${t("cycles.selectTransferItem")} ${item.displayId}`} checked={transferSelection.includes(item.id)} onChange={(event) => setTransferSelection((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))} /><span className="thai-room truncate">{item.displayId} · {item.title}</span></li>)}</ul>
           <Button disabled={!target || transferSelection.length === 0} onClick={() => void transfer()}>{t("cycles.transfer")}</Button>
         </div>}
       </aside>
@@ -384,7 +387,7 @@ export function CycleDetailPage({ workspaceId, workspaceSlug, projectKey, projec
       <ul className="m-0 grid max-h-72 list-none gap-1 overflow-auto p-0">{candidates.map((item) => {
         const currentCycle = cycleOf[item.id];
         const disabled = !!currentCycle && (!moveCandidates || currentCycle.archived);
-        return <li key={item.id} className="flex items-center gap-2 text-sm"><Checkbox aria-label={`${t("cycles.selectCandidate")} ${item.displayId}`} disabled={disabled} checked={selectedCandidates.includes(item.id)} onChange={(event) => setSelectedCandidates((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))} /><span className="min-w-0 flex-1 truncate">{item.displayId} · {item.title}</span><span title={currentCycle?.name} className="min-w-0 max-w-[40%] truncate text-muted-foreground">{currentCycle ?t("cycles.currentCycle").replace("{name}", currentCycle.name) : t("cycles.noCurrentCycle")}</span></li>;
+        return <li key={item.id} className="flex items-center gap-2 text-sm"><Checkbox aria-label={`${t("cycles.selectCandidate")} ${item.displayId}`} disabled={disabled} checked={selectedCandidates.includes(item.id)} onChange={(event) => setSelectedCandidates((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id))} /><span className="min-w-0 flex-1 thai-room truncate">{item.displayId} · {item.title}</span><span title={currentCycle?.name} className="min-w-0 max-w-[40%] thai-room truncate text-muted-foreground">{currentCycle ?t("cycles.currentCycle").replace("{name}", currentCycle.name) : t("cycles.noCurrentCycle")}</span></li>;
       })}</ul>
       <div className="flex justify-end"><Button disabled={selectedCandidates.length === 0} onClick={async () => {
         const expectedCycleIds = Object.fromEntries(selectedCandidates.map((id) => [id, cycleOf[id]?.id ?? null]));

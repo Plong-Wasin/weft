@@ -143,7 +143,7 @@ export function ApiTokensPage() {
     if (result) await load();
   }
 
-  return <main className="mx-auto w-full max-w-[900px]">
+  return <main className="mx-auto w-full max-w-[900px] px-[var(--padding-page-x)] py-[var(--padding-page-y)]">
     <SettingsHeader title={translate("tokens.title")} description={translate("tokens.description")}>
       <div className="flex flex-wrap items-center gap-3">
         {workspaceSlug && <Link to={paths.workspaceConnectAi(workspaceSlug)} className="text-sm text-foreground underline">{translate("tokens.connectAiLink")}</Link>}

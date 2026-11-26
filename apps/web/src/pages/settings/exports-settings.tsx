@@ -79,7 +79,7 @@ export function WorkspaceExports() {
           <div className="grid gap-px overflow-hidden rounded-lg border border-border bg-[var(--border)]">
             {projects.map((project) => <label key={project.id} className="flex min-w-0 items-center gap-3 bg-card px-3 py-2 text-sm hover:bg-accent">
               <Checkbox checked={picked.includes(project.id)} onChange={(event) => setPicked(event.target.checked ? [...picked, project.id] : picked.filter((id) => id !== project.id))} />
-              <span className="min-w-0 truncate"><span className="text-muted-foreground">{project.key}</span> · {project.name}</span>
+              <span className="min-w-0 thai-room truncate"><span className="text-muted-foreground">{project.key}</span> · {project.name}</span>
             </label>)}
           </div>
           <p className="m-0 text-sm text-muted-foreground">{picked.length === 0 ? translate("exports.allProjects") : translate("exports.choiceNote")}</p>

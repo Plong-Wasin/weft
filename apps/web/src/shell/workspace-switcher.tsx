@@ -26,7 +26,7 @@ export function WorkspaceSwitcher({ workspace, workspaces, canCreate, refresh }:
   }, [creating]);
   return <Popover label={switchLabel} panelLabel={creating ? translate("workspace.new") : undefined} panelRole={creating ? "dialog" : "menu"} className="rounded-md px-2.5 py-2 text-foreground"
     trigger={<><span className="grid size-6 place-items-center rounded-md bg-primary text-[12px] font-semibold text-primary-foreground">{workspace.name.slice(0, 1).toUpperCase()}</span>
-      <span className="max-w-32 truncate text-[14px] font-medium max-md:max-w-[4.5rem] max-[379px]:hidden">{workspace.name}</span><ChevronDown aria-hidden size={14} /></>}>
+      <span className="max-w-32 thai-room truncate text-[14px] font-medium max-md:max-w-[4.5rem] max-[439px]:sr-only">{workspace.name}</span><ChevronDown aria-hidden size={14} /></>}>
     {(close) => creating
       ? <div ref={form} className="w-72 p-3"><CreateWorkspaceForm onCancel={() => setCreating(false)} onCreated={async (created) => { await refresh(); close(); setCreating(false); navigate(paths.home(created.slug)); }} /></div>
       : <>
@@ -34,7 +34,7 @@ export function WorkspaceSwitcher({ workspace, workspaces, canCreate, refresh }:
         {workspaces.map((item) => <Button type="button" role="menuitemradio" aria-checked={item.slug === workspace.slug} key={item.id} className={menuItemClass}
           onClick={() => { close(); if (item.slug !== workspace.slug) navigate(paths.home(item.slug)); }}>
           <span className="grid size-5 place-items-center rounded bg-muted text-[12px] font-semibold text-muted-foreground">{item.name.slice(0, 1).toUpperCase()}</span>
-          <span className="flex-1 truncate">{item.name}</span>{item.slug === workspace.slug && <Check aria-hidden size={14} />}
+          <span className="flex-1 thai-room truncate">{item.name}</span>{item.slug === workspace.slug && <Check aria-hidden size={14} />}
         </Button>)}
         {canCreate && <Button ref={createButton} type="button" role="menuitem" className={`${menuItemClass} mt-1 border-t border-border`} onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{translate("workspace.new")}</Button>}
       </>}

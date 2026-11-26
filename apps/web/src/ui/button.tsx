@@ -4,7 +4,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4",
+  "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
@@ -24,12 +24,15 @@ const buttonVariants = cva(
   },
 );
 
+/** Touch sizing belongs to real buttons only: `buttonVariants` also styles spans and links inside larger targets. */
+const touchTarget = "pointer-coarse:min-h-11 pointer-coarse:has-[>svg:only-child]:min-w-11";
+
 type ButtonProps = Omit<React.ComponentProps<typeof ButtonPrimitive>, "ref"> & VariantProps<typeof buttonVariants>;
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(function Button({ className, variant, size, type = "submit", ...props }, ref) {
   const mergedClassName = typeof className === "function"
-    ? (state: ButtonPrimitive.State) => cn(buttonVariants({ variant, size }), className(state))
-    : cn(buttonVariants({ variant, size }), className);
+    ? (state: ButtonPrimitive.State) => cn(buttonVariants({ variant, size }), touchTarget, className(state))
+    : cn(buttonVariants({ variant, size }), touchTarget, className);
 
   return <ButtonPrimitive ref={ref} data-slot="button" className={mergedClassName} type={type} {...props} />;
 });

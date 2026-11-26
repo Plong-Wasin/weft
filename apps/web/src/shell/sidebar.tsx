@@ -67,12 +67,12 @@ function ProjectEntry({ workspace, project, current, starred, expanded, canMoveU
     onDragEnd={() => { drag.current = null; }}>
     <div className="transition-colors hover:bg-accent focus-within:bg-accent flex items-center gap-0.5 rounded-lg">
       <span aria-hidden title={translate("sidebar.dragHandle")} className="flex shrink-0 cursor-grab items-center px-0.5 text-muted-foreground max-md:hidden"><GripVertical size={14} /></span>
-      <Button variant="ghost" type="button" aria-pressed={starred} aria-label={`${starLabel}: ${project.name}`} title={starLabel} onClick={() => reorder.star(project.id, !starred)} className="shrink-0 bg-transparent p-1 text-muted-foreground hover:bg-transparent hover:text-foreground">
+      <Button variant="ghost" type="button" aria-pressed={starred} aria-label={`${starLabel}: ${project.name}`} title={starLabel} onClick={() => reorder.star(project.id, !starred)} className="shrink-0 bg-transparent p-1 has-[>svg]:px-1 text-muted-foreground hover:bg-transparent hover:text-foreground">
         <Star aria-hidden size={14} className={starred ? "text-foreground" : undefined} fill={starred ? "currentColor" : "none"} />
       </Button>
       <Button variant="ghost" type="button" data-project-toggle={project.id} aria-expanded={expanded} aria-label={`${translate("sidebar.toggleProject")}: ${project.name}`} title={translate("sidebar.reorderHint")} onKeyDown={onKeyDown} onClick={() => reorder.expand(project.id, !expanded)}
-        className="flex min-w-0 flex-1 items-center gap-2 bg-transparent px-1 text-left text-[14px] font-medium text-foreground hover:bg-transparent max-md:min-h-11">
-        <Folder aria-hidden size={14} className="shrink-0 text-muted-foreground" /><span className="flex-1 truncate">{project.name}</span>
+        className="flex min-w-0 flex-1 items-center gap-2 bg-transparent px-1 has-[>svg]:px-1 text-left text-[14px] font-medium text-foreground hover:bg-transparent max-md:min-h-11">
+        <Folder aria-hidden size={14} className="shrink-0 text-muted-foreground" /><span className="min-w-0 flex-1 thai-room truncate" title={project.name}>{project.name}</span>
         <ChevronRight aria-hidden size={14} className={`shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-90" : ""}`} />
       </Button>
       <Popover label={`${translate("sidebar.projectOptions")}: ${project.name}`} align="right" panelClassName="!min-w-44" trigger={<MoreHorizontal aria-hidden size={14} />} className="!p-1 text-muted-foreground">
@@ -118,7 +118,7 @@ function SettingsProjectList({ workspace, projects, query }: { workspace: Worksp
   const visible = projects.filter((project) => matchesProjectSearch(project, query));
   return <>{visible.length === 0 && query.trim() ? <p role="status" className="m-0 px-2.5 py-2 text-[12px] text-muted-foreground">{translate("projects.noSearchResults")}</p> : null}
   <ul aria-label={translate("projects.title")} className="grid min-w-0 gap-0.5">{visible.map((project) => <li key={project.id} className="min-w-0">
-    <NavLink to={paths.projectSettings(workspace.slug, project.key)} className={itemClass}><Folder aria-hidden size={14} className="shrink-0 text-muted-foreground" /><span className="truncate">{project.name}</span></NavLink>
+    <NavLink to={paths.projectSettings(workspace.slug, project.key)} className={itemClass}><Folder aria-hidden size={14} className="shrink-0 text-muted-foreground" /><span className="thai-room truncate">{project.name}</span></NavLink>
   </li>)}</ul></>;
 }
 
@@ -139,7 +139,7 @@ function ProjectGroups({ workspace, projects, prefs, projectKey, reorder, drag, 
       <ul aria-label={translate("sidebar.starred")} className="grid gap-0.5">{starred.map((project) => entry(project, true))}</ul>
     </>}
     <div className="flex items-center justify-between"><p className={heading}>{translate("projects.title")}</p>
-      <NavLink to={paths.projects(workspace.slug)} end aria-label={translate("sidebar.allProjects")} title={translate("sidebar.allProjects")} className="mt-2 rounded-md p-1 text-muted-foreground hover:bg-accent"><Plus aria-hidden size={14} /></NavLink></div>
+      <NavLink to={paths.projects(workspace.slug)} end aria-label={translate("sidebar.allProjects")} title={translate("sidebar.allProjects")} className="mt-2 inline-flex items-center justify-center rounded-md p-1 text-muted-foreground hover:bg-accent pointer-coarse:min-h-11 pointer-coarse:min-w-11"><Plus aria-hidden size={14} /></NavLink></div>
     <ul aria-label={translate("projects.title")} className="grid gap-0.5">{others.map((project) => entry(project, false))}</ul>
     {query.trim() && starred.length + others.length === 0 && <p role="status" className="m-0 px-2.5 py-2 text-[12px] text-muted-foreground">{translate("projects.noSearchResults")}</p>}
     {prefs.some((pref) => pref.position !== null) && <Button variant="ghost" type="button" title={translate("sidebar.resetOrderTip")} onClick={() => void reorder.reset()} className="mx-2.5 mt-1 justify-self-start bg-transparent px-0 text-[12px] font-medium text-muted-foreground hover:bg-transparent hover:text-foreground">{translate("sidebar.resetOrder")}</Button>}
@@ -214,7 +214,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
   // Favorites sit at the top of Work (under the primary links) and of Wiki (above the page tree); an empty list shows no heading.
   const favoritesBlock = favorites.length > 0 ? <>
     <p className={heading}>{translate("sidebar.favorites")}</p>
-    <ul className="grid gap-0.5">{favorites.map((page) => <li key={page.id}><NavLink to={page.projectId ? paths.page(workspace.slug, (data ?? []).find((project) => project.id === page.projectId)?.key ?? "", page.id) : paths.wikiPage(workspace.slug, page.id)} className={itemClass}><FileText aria-hidden size={14} /><span className="truncate">{page.title}</span></NavLink></li>)}</ul>
+    <ul className="grid gap-0.5">{favorites.map((page) => <li key={page.id}><NavLink to={page.projectId ? paths.page(workspace.slug, (data ?? []).find((project) => project.id === page.projectId)?.key ?? "", page.id) : paths.wikiPage(workspace.slug, page.id)} className={itemClass}><FileText aria-hidden size={14} /><span className="thai-room truncate">{page.title}</span></NavLink></li>)}</ul>
   </> : null;
   return <nav aria-label={translate("shell.sidebar")} className="flex w-64 shrink-0 max-md:w-auto max-md:flex-1 max-md:border-r-0 flex-col gap-1 overflow-y-auto border-r border-border bg-sidebar p-3">
     {section === "work" && <>
@@ -237,7 +237,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
     </>}
     {section === "ai" && <AiOnly><AiSidebar workspace={workspace} activeId={aiChatId} /></AiOnly>}
     {inProjectSettings && projectKey && <>
-      <NavLink to={paths.workspaceSettings(workspace.slug)} aria-label={translate("sidebar.backToWorkspace")} title={translate("sidebar.backToWorkspace")} className={(state) => `${itemClass(state)} mb-2`}><ArrowLeft aria-hidden size={14} className="shrink-0" /><span className="min-w-0 truncate">{translate("settings.workspaceTitle")}</span></NavLink>
+      <NavLink to={paths.workspaceSettings(workspace.slug)} aria-label={translate("sidebar.backToWorkspace")} title={translate("sidebar.backToWorkspace")} className={(state) => `${itemClass(state)} mb-2`}><ArrowLeft aria-hidden size={14} className="shrink-0" /><span className="min-w-0 thai-room truncate">{translate("settings.workspaceTitle")}</span></NavLink>
       <SettingsProjectNav workspace={workspace} projects={[...projectSort.starred, ...projectSort.others]} projectKey={projectKey} />
     </>}
     {section === "settings" && !inProjectSettings && <>

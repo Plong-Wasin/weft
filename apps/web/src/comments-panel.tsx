@@ -74,7 +74,7 @@ function CommentEditor({ workspaceId, workItemId, people, initial, submitLabel, 
     {error && <p role="alert">{error}</p>}
     <input ref={picker} data-testid="comment-image-input" hidden type="file" accept="image/png,image/jpeg,image/gif,image/webp" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !editor) return; const assetId = await uploadFile(file); if (assetId) editor.commands.insertContentAt(editor.state.doc.content.size, { type: "assetImage", attrs: { assetId } }); }} />
     <div className="editor-footer mt-2 flex flex-wrap items-center justify-end gap-2">
-      <Button variant="primary" title={withShortcut(submitLabel, "Enter")} onClick={() => void submit()}>{submitLabel}</Button>
+      <Button variant="primary" className="pointer-coarse:min-h-11" title={withShortcut(submitLabel, "Enter")} onClick={() => void submit()}>{submitLabel}</Button>
       {onCancel && <Button type="button" onClick={onCancel}>{translate("comments.cancel")}</Button>}
     </div>
   </div>;
@@ -171,7 +171,7 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
       ? <CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} initial={row.body} submitLabel={translate("comments.save")} onCancel={() => setEditing(null)} onSubmit={async (body) => { await guard(await actionResult("update_comment", { commentId: row.id, body })); setEditing(null); }} />
       : <CommentBody body={row.body} />}
     <div data-comment-actions={row.id} className="flex flex-wrap items-center gap-2">
-      {editing !== row.id && row.parentId === null && canComment && replying !== row.id && <Button variant="ghost" type="button" className="rounded-md bg-transparent px-1 py-0.5 font-medium text-foreground hover:underline" onClick={() => setReplying(row.id)}>{translate("comments.reply")}</Button>}
+      {editing !== row.id && row.parentId === null && canComment && replying !== row.id && <Button variant="ghost" type="button" className="rounded-md bg-transparent px-1 py-0.5 font-medium text-foreground hover:underline pointer-coarse:min-h-11" onClick={() => setReplying(row.id)}>{translate("comments.reply")}</Button>}
       {editing !== row.id && <Popover label={translate("comments.more")} className="flex items-center rounded-md border border-border bg-card px-2 py-0.5 font-medium text-foreground hover:bg-accent" panelRole="dialog" panelClassName="grid min-w-40 gap-1 p-2" trigger={<span>{translate("comments.more")}</span>}>
         {(close) => <>
           <Button variant="ghost" type="button" className="rounded-md bg-transparent px-2 text-left text-foreground hover:bg-accent" onClick={() => { close(); void copy(row.id); }}>{translate("comments.copyLink")}</Button>
@@ -233,10 +233,10 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
     <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
     <h3>{translate("timeline.title")}</h3>
     <div className="flex flex-wrap items-center gap-2">
-      <label className="flex items-center gap-1 text-11 text-muted-foreground"><span>{translate("timeline.filter")}</span><select aria-label={translate("timeline.filter")} value={filter} onChange={(event) => setFilter(event.target.value as Filter)}>
+      <label className="flex items-center gap-1 text-11 text-muted-foreground"><span>{translate("timeline.filter")}</span><select className="pointer-coarse:min-h-11" aria-label={translate("timeline.filter")} value={filter} onChange={(event) => setFilter(event.target.value as Filter)}>
         <option value="comments">{translate("timeline.comments")}</option><option value="updates">{translate("timeline.activity")}</option><option value="all">{translate("timeline.all")}</option>
       </select></label>
-      <label className="flex items-center gap-1 text-11 text-muted-foreground"><span>{translate("timeline.sort")}</span><select aria-label={translate("timeline.sort")} value={sort} onChange={(event) => setSort(event.target.value as Sort)}>
+      <label className="flex items-center gap-1 text-11 text-muted-foreground"><span>{translate("timeline.sort")}</span><select className="pointer-coarse:min-h-11" aria-label={translate("timeline.sort")} value={sort} onChange={(event) => setSort(event.target.value as Sort)}>
         <option value="oldest">{translate("timeline.oldest")}</option><option value="newest">{translate("timeline.newest")}</option>
       </select></label>
     </div>

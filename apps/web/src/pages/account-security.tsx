@@ -79,7 +79,7 @@ export function SessionsPage() {
     window.location.assign("/");
   };
 
-  return <main className="mx-auto w-full max-w-[900px] px-4">
+  return <main className="mx-auto w-full max-w-[900px] px-[var(--padding-page-x)] py-[var(--padding-page-y)]">
     <SettingsHeader title={translate("account.sessionsTitle")} description={translate("account.sessionsDesc")}>
       <Button type="button" className="hover:!text-destructive" onClick={() => void signOutEverywhere()}>{translate("account.signOutEverywhere")}</Button>
     </SettingsHeader>

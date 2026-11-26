@@ -72,7 +72,7 @@ function WorkspaceSheet({ items, projects, states, labels, people, workspaceSlug
         <tbody>{items.map((item) => <tr key={item.id} data-testid={`row-${item.displayId}`} className="group hover:bg-accent">
           <th scope="row" className={`${cell} sticky left-0 z-10 min-w-64 bg-card font-normal group-hover:bg-muted`}>
             <span className="flex items-center gap-3">{props.includes("id") && <span className="shrink-0 text-12 text-muted-foreground">{item.displayId}</span>}
-              <Link to={paths.workItem(workspaceSlug, item.displayId)} className="max-w-72 truncate text-14 font-medium text-foreground">{item.title}</Link></span>
+              <Link to={paths.workItem(workspaceSlug, item.displayId)} className="max-w-72 thai-room truncate text-14 font-medium text-foreground">{item.title}</Link></span>
           </th>
           <td className={cell}><Link to={paths.workItems(workspaceSlug, item.projectKey)} className="text-muted-foreground hover:text-foreground">{item.projectName}</Link></td>
           {columns.map((property) => <td key={property} className={cell}>{cellOf(item, property)}</td>)}
@@ -157,10 +157,10 @@ export function WorkspaceViewPage({ workspace, selfId, viewId }: { workspace: Wo
         <Layers aria-hidden size={14} /><span>{t("views.title")}</span><ChevronRight aria-hidden size={14} />
         {/* The h1 sits beside the trigger: a heading inside a button is not exposed as a heading. */}
         <h1 className="sr-only">{title}</h1>
-        <Popover label={t("workspaceViews.switch")} className="max-w-full whitespace-nowrap text-14 font-medium text-foreground" panelClassName="max-h-80 w-64 overflow-auto" trigger={<><span aria-hidden className="max-w-[min(60vw,20rem)] truncate">{title}</span><ChevronDown aria-hidden size={14} /></>}>
+        <Popover label={t("workspaceViews.switch")} className="max-w-full whitespace-nowrap text-14 font-medium text-foreground" panelClassName="max-h-80 w-64 overflow-auto" trigger={<><span aria-hidden className="max-w-[min(60vw,20rem)] thai-room truncate">{title}</span><ChevronDown aria-hidden size={14} /></>}>
           {(close) => entries.map((entry) => <Button key={entry.slug} type="button" role="menuitemradio" aria-checked={entry.slug === viewId} className={menuItemClass}
             onClick={() => { close(); navigate(paths.workspaceView(workspace.slug, entry.slug)); }}>
-            <Layers aria-hidden size={14} className="text-muted-foreground" /><span className="flex-1 truncate">{entry.name}</span>{entry.isPrivate && <Lock aria-hidden size={12} className="text-muted-foreground" />}{entry.slug === viewId && <Check aria-hidden size={14} />}</Button>)}
+            <Layers aria-hidden size={14} className="text-muted-foreground" /><span className="flex-1 thai-room truncate">{entry.name}</span>{entry.isPrivate && <Lock aria-hidden size={12} className="text-muted-foreground" />}{entry.slug === viewId && <Check aria-hidden size={14} />}</Button>)}
         </Popover>
         {view && <span title={t(`views.access.${view.access}`)} className="text-12 text-muted-foreground">{t(`views.access.${view.access}`)}</span>}
       </nav>

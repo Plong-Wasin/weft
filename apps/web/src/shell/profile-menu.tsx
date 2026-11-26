@@ -65,7 +65,7 @@ export function ProfileMenu({ user, signOut }: { user: Current["user"]; signOut:
   return <Popover label={translate("profile.menu")} align="right" panelClassName="w-64" className="rounded-full p-2"
     trigger={<Avatar name={user.name} id={user.id} size="md" />}>
     {() => <>
-      <div className="flex items-center gap-2 border-b border-border px-3 py-3"><Avatar name={user.name} id={user.id} size="md" /><div className="min-w-0"><p className="truncate text-[14px] font-medium text-popover-foreground">{user.name}</p><p className="truncate text-[12px] text-muted-foreground">{user.email}</p></div></div>
+      <div className="flex items-center gap-2 border-b border-border px-3 py-3"><Avatar name={user.name} id={user.id} size="md" /><div className="min-w-0"><p className="thai-room truncate text-[14px] font-medium text-popover-foreground">{user.name}</p><p className="truncate text-[12px] text-muted-foreground">{user.email}</p></div></div>
       <p className={heading}>{translate("language.label")}</p>
       {locales.map((code) => <Button type="button" role="menuitemradio" aria-checked={locale === code} key={code} className={menuItemClass} onClick={() => void chooseLocale(code)}>
         <span className="flex-1">{translate(`language.${code}`, code)}</span>{locale === code && <Check aria-hidden size={14} />}</Button>)}

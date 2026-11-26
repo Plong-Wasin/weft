@@ -2,7 +2,7 @@ import { Button, buttonVariants } from "@/ui/button";
 import { accessReasonText } from "./access-reason";
 import React from "react";
 import { Link } from "react-router";
-import { ArrowLeft, ArrowRight, BarChart3, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Columns3, List, Package, Plus, RefreshCw, SlidersHorizontal, Table2, Tag, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, BarChart3, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Columns3, List, Package, Plus, RefreshCw, SlidersHorizontal, Table2, Tag, Users, ChevronsLeft } from "lucide-react";
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
 import { calendarPlacement, completeGroups, displayProperties, effectiveSubGroup, ganttPlacement, groupItems, groupings, moveProperty, parseLayoutParams, serializeLayoutParams, priorityOrder, sortFields, type DisplayProperty, type GanttZoom, type LayoutParams } from "./work-item-layout";
 import { paths } from "./routes";
@@ -454,8 +454,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       case "labels": {
         const labelNames = item.labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ");
         const labelSummary = rowQuiet && item.labelIds.length > 0
-          ? <span className="flex max-w-24 min-w-0 items-center gap-1.5">{item.labelIds.slice(0, 1).map((id) => { const label = labels.find((candidate) => candidate.id === id); return label && <span key={id} className="inline-flex min-w-0 items-center gap-1"><span aria-hidden className="size-2 rounded-full shrink-0" style={{ backgroundColor: label.color }} /><span className="truncate" title={label.name}>{label.name}</span></span>; })}{item.labelIds.length > 1 && <span className="shrink-0">+{formatNumber(item.labelIds.length - 1)}</span>}</span>
-          : item.labelIds.length === 0 ? rowQuiet ? <span className="text-muted-foreground">—</span> : compact ? <span className="hidden text-11 max-sm:inline">{t("layout.noLabel")}</span> : <span className="text-muted-foreground">{t("layout.noLabel")}</span> : <span className="block max-w-28 truncate" title={labelNames}>{labelNames}</span>;
+          ? <span className="flex max-w-24 min-w-0 items-center gap-1.5">{item.labelIds.slice(0, 1).map((id) => { const label = labels.find((candidate) => candidate.id === id); return label && <span key={id} className="inline-flex min-w-0 items-center gap-1"><span aria-hidden className="size-2 rounded-full shrink-0" style={{ backgroundColor: label.color }} /><span className="thai-room truncate" title={label.name}>{label.name}</span></span>; })}{item.labelIds.length > 1 && <span className="shrink-0">+{formatNumber(item.labelIds.length - 1)}</span>}</span>
+          : item.labelIds.length === 0 ? rowQuiet ? <span className="text-muted-foreground">—</span> : compact ? <span className="hidden text-11 max-sm:inline">{t("layout.noLabel")}</span> : <span className="text-muted-foreground">{t("layout.noLabel")}</span> : <span className="block max-w-28 thai-room truncate" title={labelNames}>{labelNames}</span>;
         return <MultiSelect label={t("workItems.labels")} readOnly={readOnly} selected={item.labelIds} quiet={rowQuiet} icon={<Tag aria-hidden size={14} className="text-muted-foreground" />}
           summary={labelSummary}
           options={labels.map((label) => ({ id: label.id, name: label.name, icon: <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: label.color }} /> }))}
@@ -469,7 +469,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       case "modules": {
         const moduleNames = mine.map((id) => moduleOptions.find((module) => module.id === id)?.name).filter(Boolean).join(", ");
         return <MultiSelect label={t("workItems.modules")} readOnly={readOnly} selected={mine} quiet={rowQuiet} icon={<Package aria-hidden size={14} className="text-muted-foreground" />}
-          summary={mine.length === 0 ? rowQuiet ? <span className="text-muted-foreground">—</span> : compact ? <span className="hidden text-11 max-sm:inline">{t("workItems.noModules")}</span> : <span className="text-muted-foreground">{t("workItems.noModules")}</span> : <span className="block max-w-28 truncate" title={moduleNames}>{moduleNames}</span>}
+          summary={mine.length === 0 ? rowQuiet ? <span className="text-muted-foreground">—</span> : compact ? <span className="hidden text-11 max-sm:inline">{t("workItems.noModules")}</span> : <span className="text-muted-foreground">{t("workItems.noModules")}</span> : <span className="block max-w-28 thai-room truncate" title={moduleNames}>{moduleNames}</span>}
           options={moduleOptions.map((module) => ({ id: module.id, name: module.name }))} onToggle={(id, on) => void setModule(item, id, on)} />;
       }
       default: return null;
@@ -490,11 +490,13 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   // On touch the checkbox, Priority and State tracks are 44px wide, so their 44px tap areas sit side by side instead of overlapping.
   const boxTrackPx = hoverNone ? 44 : 16;
   const iconTrackPx = hoverNone ? 44 : 28;
-  const tracksFor = (properties: readonly (typeof allListProperties)[number][]) => [`${boxTrackPx / 16}rem`, ...(leadingProperties.includes("priority") ? [`${iconTrackPx / 16}rem`] : []), "5rem", ...(leadingProperties.includes("state") ? [`${iconTrackPx / 16}rem`] : []), "minmax(7rem,1fr)", ...properties.map((property) => `${slotRem[property]}rem`), ...(rowAction ? ["7rem"] : [])];
+  // The row action is an icon Button: 32px, or 44px on touch.
+  const rowActionPx = hoverNone ? 44 : 32;
+  const tracksFor = (properties: readonly (typeof allListProperties)[number][]) => [`${boxTrackPx / 16}rem`, ...(leadingProperties.includes("priority") ? [`${iconTrackPx / 16}rem`] : []), "5rem", ...(leadingProperties.includes("state") ? [`${iconTrackPx / 16}rem`] : []), "minmax(7rem,1fr)", ...properties.map((property) => `${slotRem[property]}rem`), ...(rowAction ? [`${rowActionPx / 16}rem`] : [])];
   const widthFor = (properties: readonly (typeof allListProperties)[number][]) => {
     const tracks = tracksFor(properties);
     return 40 + boxTrackPx + 80 + 112 + leadingProperties.length * iconTrackPx + properties.reduce((sum, property) => sum + slotRem[property] * 16, 0)
-      + (rowAction ? 112 : 0) + Math.max(0, tracks.length - 1) * gapPx;
+      + (rowAction ? rowActionPx : 0) + Math.max(0, tracks.length - 1) * gapPx;
   };
   const responsiveProperties = [...allListProperties];
   for (const property of ["dates", "modules", "cycle"] as const) {
@@ -537,7 +539,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       )}>
         <div className="flex min-h-10 min-w-0 items-center gap-2 sm:contents [@media(pointer:coarse)]:max-sm:gap-3.5">
           <span className="flex size-4 shrink-0 items-center justify-center sm:order-1 sm:justify-self-center">{checkbox ? React.cloneElement(checkbox, { className: cn(checkbox.props.className, "rounded-sm") }) : <span aria-hidden />}</span>
-          <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} title={item.title} className="min-w-0 flex-1 truncate text-14 font-medium text-foreground sm:order-5">{item.title}</Link>
+          <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} title={item.title} className="min-w-0 flex-1 thai-room truncate text-14 font-medium text-foreground sm:order-5 sm:[@media(hover:none)]:line-clamp-2 sm:[@media(hover:none)]:whitespace-normal sm:[@media(hover:none)]:[overflow-wrap:anywhere]">{item.title}</Link>
         </div>
         <div data-testid="work-item-row-metadata" className={cn(
           "work-item-row-metadata flex min-h-10 min-w-0 flex-wrap items-center justify-end gap-1 [@media(pointer:coarse)]:gap-2 sm:contents max-sm:flex-wrap max-sm:gap-1 max-sm:justify-start max-sm:overflow-visible [@media(hover:none)]:max-sm:gap-y-4",
@@ -634,7 +636,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
           onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setActiveSheetRow(null); }}>
           <th scope="row" style={{ width: "24rem", maxWidth: "24rem" }} className={`${cell} h-12 py-0 sticky left-0 z-10 w-96 min-w-80 max-sm:!w-64 max-sm:!max-w-64 max-sm:min-w-64 bg-card font-normal group-hover:bg-muted pointer-coarse:pl-4`}>
             <span className="flex min-w-0 items-center gap-3 pointer-coarse:gap-3.5">{pickBox(item)}{shows("id") && <span className="shrink-0 text-12 text-muted-foreground">{item.displayId}</span>}
-              <Link title={item.title} to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="block min-w-0 flex-1 truncate text-14 font-medium text-foreground">{item.title}</Link></span>
+              <Link title={item.title} to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="block min-w-0 flex-1 thai-room truncate text-14 font-medium text-foreground">{item.title}</Link></span>
           </th>
           {columns.map((property) => {
             const empty = isEmptyProperty(item, property);
@@ -692,7 +694,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
         })}
         {segments.length > 0 && <div className="pointer-events-none absolute inset-x-0 top-14 grid grid-cols-7 gap-x-px" style={{ gridTemplateRows: `repeat(${lanes}, 1.75rem)` }}>
           {segments.map(({ item, start, span, lane }) => <Link key={item.id} to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} draggable={canWrite} onDragStart={(event) => { event.dataTransfer.setData("text/plain", item.id); event.dataTransfer.effectAllowed = "move"; }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const week = event.currentTarget.closest<HTMLElement>("[data-calendar-week]"); const date = Array.from(week?.querySelectorAll<HTMLElement>("[data-calendar-date]") ?? []).find((cell) => { const box = cell.getBoundingClientRect(); return event.clientX >= box.left && event.clientX <= box.right; })?.dataset.calendarDate; const id = event.dataTransfer.getData("text/plain"); if (id && date) void reschedule(id, date); }} data-testid={`calendar-card-${item.displayId}`}
-            className="pointer-events-auto mx-0.5 block min-w-0 self-center truncate rounded-md border border-border/70 bg-muted px-2 py-1 text-12 font-medium text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ gridColumn: `${start + 1} / span ${span}`, gridRow: lane + 1 }} title={item.title}>{item.title}</Link>)}
+            className="pointer-events-auto mx-0.5 block min-w-0 self-center thai-room truncate rounded-md border border-border/70 bg-muted px-2 py-1 text-12 font-medium text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" style={{ gridColumn: `${start + 1} / span ${span}`, gridRow: lane + 1 }} title={item.title}>{item.title}</Link>)}
         </div>}
       </div>)}
     </div>
@@ -700,7 +702,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       {calendar.days.filter((day) => day.items.length > 0).map((day) => <section key={day.date} className="relative rounded-lg border border-border bg-card p-3" data-calendar-date={day.date}>
         <div className="mb-2 flex items-center justify-between"><time dateTime={day.date} className="text-13 font-medium">{new Intl.DateTimeFormat(undefined, { weekday: "long", month: "short", day: "numeric" }).format(new Date(`${day.date}T12:00:00`))}</time>
           {canCreate && canWrite && <Button type="button" aria-label={t("layout.calendar.add").replace("{date}", day.date)} className="size-11 p-0 text-muted-foreground" onClick={() => { setQuick(day.date); setQuickTitle(""); }}>+</Button>}</div>
-        <div className="grid gap-1">{day.items.map((item) => <Link key={item.id} to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} draggable={canWrite} onDragStart={(event) => { event.dataTransfer.setData("text/plain", item.id); event.dataTransfer.effectAllowed = "move"; }} data-testid={`calendar-agenda-card-${item.displayId}`} className="block truncate rounded-md bg-muted px-3 py-2 text-13 font-medium text-foreground hover:bg-accent">{item.title}</Link>)}</div>
+        <div className="grid gap-1">{day.items.map((item) => <Link key={item.id} to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} draggable={canWrite} onDragStart={(event) => { event.dataTransfer.setData("text/plain", item.id); event.dataTransfer.effectAllowed = "move"; }} data-testid={`calendar-agenda-card-${item.displayId}`} className="block thai-room truncate rounded-md bg-muted px-3 py-2 text-13 font-medium text-foreground hover:bg-accent">{item.title}</Link>)}</div>
         {quick === day.date && <form className="absolute inset-x-3 top-12 z-20 flex gap-1 rounded-md border border-border bg-popover p-1 shadow-sm" onSubmit={(event) => { event.preventDefault(); void createForDate(day.date); }}><Input autoFocus aria-label={t("workItems.titleField")} value={quickTitle} className="min-w-0 w-full" onChange={(event) => setQuickTitle(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setQuick(null); }} /><Button type="submit" aria-label={t("workItems.create")}>+</Button></form>}
       </section>)}
     </div>
@@ -736,7 +738,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
           const shownLeft = drag?.kind === "move" ? left + drag.at : oneSided ? drag!.at : drag?.kind === "start" ? Math.min(drag.at, end - 1) : left;
           const shownWidth = oneSided ? 1 : drag?.kind === "start" ? end - shownLeft : drag?.kind === "due" ? Math.max(1, drag.at - left + 1) : width;
           return <div key={item.id} className="grid min-h-11 grid-cols-[var(--gantt-label)_minmax(0,1fr)] border-b border-border" data-testid={`gantt-row-${item.displayId}`}>
-          <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="truncate px-3 py-3 text-13 font-medium text-foreground">{item.title}</Link>
+          <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="thai-room truncate px-3 py-3 text-13 font-medium text-foreground">{item.title}</Link>
           <div className="relative">
             {gantt.days.map((date, index) => <div key={date} data-gantt-date={date} data-testid={`gantt-drop-${date}`} className={`absolute inset-y-0 ${[0, 6].includes(new Date(`${date}T12:00:00`).getDay()) ? "bg-muted/50" : ""}`} style={{ left: `${index / gantt.days.length * 100}%`, width: `${100 / gantt.days.length}%` }} />)}
             {drag && <div aria-hidden data-testid="gantt-origin" className="pointer-events-none absolute top-2 h-7 rounded border border-dashed border-ring" style={{ left: `${left / gantt.days.length * 100}%`, width: `${Math.max(width / gantt.days.length * 100, 1.2)}%` }} />}
@@ -746,7 +748,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
               {dueClipped(item) && <span aria-hidden data-gantt-overflow="due" className="pointer-events-none absolute inset-y-0 right-0 z-20 flex w-4 items-center justify-center rounded-r-sm bg-card/90 text-muted-foreground"><ChevronRight size={12} /></span>}
               {canWrite && !dueClipped(item) && <span data-gantt-edge role="button" tabIndex={0} aria-keyshortcuts="ArrowLeft ArrowRight" aria-label={`${t("layout.gantt.resizeDue")} ${item.displayId}`} onKeyDown={(event) => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); void ganttResizeByKeyboard(item, "due", event.key === "ArrowLeft" ? -1 : 1); }} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); if (ganttSaving[item.id]) return; event.currentTarget.setPointerCapture(event.pointerId); ganttEdgeStart.current = { x: event.clientX }; }} onPointerMove={(event) => ganttEdgePreview(event, item, "due")} onPointerUp={(event) => ganttResize(event, item, "due")} className="absolute inset-y-0 right-0 z-20 w-1 cursor-ew-resize rounded-r bg-primary" />}
             </div>
-            {(labelOnRight || labelOnLeft) && <span data-testid={`gantt-label-${item.displayId}`} className="pointer-events-none absolute top-2 z-20 h-5 w-14 truncate bg-card px-1 text-12 leading-5 text-foreground" style={{ left: `${(labelOnRight ? end : left - 3) / gantt.days.length * 100}%`, textAlign: labelOnRight ? "left" : "right" }}>{item.displayId}</span>}
+            {(labelOnRight || labelOnLeft) && <span data-testid={`gantt-label-${item.displayId}`} className="pointer-events-none absolute top-2 z-20 h-5 w-14 thai-room truncate bg-card px-1 text-12 leading-5 text-foreground" style={{ left: `${(labelOnRight ? end : left - 3) / gantt.days.length * 100}%`, textAlign: labelOnRight ? "left" : "right" }}>{item.displayId}</span>}
           </div>
         </div>; })}
       </div>
@@ -809,19 +811,22 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
           <span data-testid="card-selection" className={`opacity-0 ${active || selected.includes(item.id) ? "opacity-100" : ""}`}>{pickBox(item)}</span>
           <div className="grid min-w-0 flex-1 gap-1">
             {shows("id") && <span className="text-12 text-muted-foreground">{item.displayId}</span>}
-            <Link title={item.title} to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} draggable={false} data-testid="card-title" className="line-clamp-2 text-14 font-medium text-foreground [overflow-wrap:anywhere]">{item.title}</Link>
+            <Link title={item.title} to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} draggable={false} data-testid="card-title" className="thai-room line-clamp-2 text-14 font-medium text-foreground [overflow-wrap:anywhere]">{item.title}</Link>
           </div>
           {reorderHandle}{rowAction && <span data-no-drag>{rowAction(item)}</span>}
         </div>
-        {cardProperties.length > 0 && <div data-testid="card-properties" className="flex min-w-0 flex-nowrap items-center gap-1.5 overflow-x-auto [@media(pointer:coarse)]:gap-2">
+        {cardProperties.length > 0 && <div className="flex min-w-0 items-center gap-1.5 [@media(pointer:coarse)]:gap-2">
+          {/* The toggle sits before the scrolling strip: Tab goes from it into the chips it reveals, and scrolling never carries it away. */}
+          {hiddenCardProperties.length > 0 && <Button variant="ghost" type="button" data-no-drag aria-expanded={expandedCards.includes(item.id)} aria-label={`${t("workItems.more")}: ${hiddenCardProperties.map((property) => t(`layout.property.${property}`)).join(", ")}`} title={hiddenCardProperties.map((property) => t(`layout.property.${property}`)).join(", ")}
+            className="shrink-0 rounded-md bg-transparent px-1.5 py-0.5 text-12 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => setExpandedCards((list) => list.includes(item.id) ? list.filter((id) => id !== item.id) : [...list, item.id])}>{expandedCards.includes(item.id) ? <ChevronsLeft aria-hidden size={14} /> : `+${hiddenCardProperties.length}`}</Button>}
+          <div data-testid="card-properties" className="flex min-w-0 flex-1 flex-nowrap items-center gap-1.5 overflow-x-auto [@media(pointer:coarse)]:gap-2">
           {visibleCardProperties.map((property) => <React.Fragment key={property}>{cellOf(item, property, true)}</React.Fragment>)}
           {/* Overflow properties stay rendered and in the tab order: a keyboard user reveals each by focusing it, a pointer user opens them all with "+N". */}
           {hiddenCardProperties.length > 0 && <span data-testid="card-overflow-properties" onFocus={(event) => event.target.scrollIntoView({ block: "nearest", inline: "nearest" })} className={`flex shrink-0 items-center gap-1.5 [@media(pointer:coarse)]:gap-2 ${expandedCards.includes(item.id) ? "" : "max-w-0 overflow-hidden focus-within:max-w-none focus-within:overflow-visible"}`}>
             {hiddenCardProperties.map((property) => <React.Fragment key={property}>{cellOf(item, property, true)}</React.Fragment>)}
           </span>}
-          {hiddenCardProperties.length > 0 && !expandedCards.includes(item.id) && <Button variant="ghost" type="button" data-no-drag aria-expanded={false} aria-label={`${t("workItems.more")}: ${hiddenCardProperties.map((property) => t(`layout.property.${property}`)).join(", ")}`} title={hiddenCardProperties.map((property) => t(`layout.property.${property}`)).join(", ")}
-            className="shrink-0 rounded-md bg-transparent px-1.5 py-0.5 text-12 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => setExpandedCards((list) => [...list, item.id])}>+{hiddenCardProperties.length}</Button>}
           {cardProperties.filter((property) => isEmptyProperty(item, property)).map((property) => <span key={property} className={active ? "" : "opacity-0"}>{cellOf(item, property, true)}</span>)}
+          </div>
         </div>}
       </div>;
     }}

@@ -35,7 +35,7 @@ import { Textarea } from "@/ui/textarea";
 type Named = { id: string; name: string; status?: string };
 const t = (key: string) => translate(key as MessageKey);
 const sectionClass = "grid gap-2 [&_form]:my-0 [&_form]:flex [&_form]:flex-wrap [&_form]:items-center [&_form]:gap-2 [&_select]:w-auto [&_button]:w-auto [&_button]:whitespace-nowrap [&_p]:m-0 [&_h3]:m-0 [&_h3]:text-16 [&_h3]:font-semibold [&_h3]:text-foreground [&_ul]:m-0 [&_ul]:pl-5";
-const iconButton = "grid size-8 place-items-center bg-transparent p-0 text-muted-foreground hover:bg-accent hover:text-foreground";
+const iconButton = "grid size-8 place-items-center bg-transparent p-0 text-muted-foreground hover:bg-accent hover:text-foreground pointer-coarse:size-11";
 const propertiesCollapsedKey = "weft:work-item-properties-collapsed";
 // When browser storage is blocked the choice still lasts for the visit: this module outlives the page component, so the memory survives remounts.
 const storedMemory: Record<string, string> = {};
@@ -105,8 +105,8 @@ function TypeRows({ project, item, canWrite, people, onSaved }: { project: Proje
 
 function PropertyRow({ icon, label, children }: { icon: React.ReactNode; label: string; children: React.ReactNode }) {
   return <div data-property-row className="grid min-h-8 grid-cols-[minmax(6.5rem,0.85fr)_minmax(0,1.15fr)] items-center gap-2 rounded-lg px-1 text-13 transition-colors hover:bg-accent">
-    <span className="flex min-w-0 items-center gap-2 text-muted-foreground">{icon}<span className="truncate" title={label}>{label}</span></span>
-    <div className="flex min-w-0 flex-nowrap items-center gap-1 [&>*]:min-w-0 [&>div]:w-full [&>div>button]:w-full [&>div>button]:justify-start">{children}</div>
+    <span className="flex min-w-0 items-center gap-2 text-muted-foreground">{icon}<span className="thai-room truncate" title={label}>{label}</span></span>
+    <div className="flex min-w-0 flex-nowrap items-center gap-1 [&>*]:min-w-0 [&>div]:w-full [&>div>button]:w-full [&>div>button]:justify-start [&_button]:h-auto [&_button]:min-h-9 pointer-coarse:[&_button]:min-h-11">{children}</div>
   </div>;
 }
 
@@ -309,18 +309,18 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   };
   const copy = () => copyText(`${window.location.origin}${itemPath}`, t("workItems.linkCopied"), t("comments.copyFailed"));
 
-  const header = <header className={`flex items-center gap-2 border-b border-border px-4 py-2.5 ${mode === "page" ? "" : "bg-card"}`}>
+  const header = <header className={`flex items-center gap-2 border-b border-border px-4 py-2.5 pointer-coarse:py-1 ${mode === "page" ? "" : "bg-card"}`}>
     {mode === "peek"
       ? <>
         <span aria-hidden className="flex-1" />
-        <Link to={itemPath} className={`${iconButton} rounded-lg max-sm:flex max-sm:h-auto max-sm:w-auto max-sm:items-center max-sm:gap-1 max-sm:px-1.5 max-sm:py-1`} aria-label={t("workItems.peek.expand")} title={t("workItems.peek.expand")}><Maximize2 aria-hidden size={15} /><span className="hidden text-10 max-sm:inline">{t("workItems.peek.expand")}</span></Link>
-        <Button variant="ghost" type="button" className={`${iconButton} max-sm:flex max-sm:h-auto max-sm:w-auto max-sm:items-center max-sm:gap-1 max-sm:px-1.5 max-sm:py-1`} aria-label={t("workItems.peek.close")} title={t("workItems.peek.close")} onClick={onClose}><X aria-hidden size={16} /><span className="hidden text-10 max-sm:inline">{t("workItems.peek.close")}</span></Button>
+        <Link to={itemPath} className={`${iconButton} rounded-lg max-sm:flex max-sm:h-auto max-sm:w-auto pointer-coarse:min-h-11 pointer-coarse:min-w-11 max-sm:pointer-coarse:w-auto max-sm:items-center max-sm:gap-1 max-sm:px-1.5 max-sm:py-1`} aria-label={t("workItems.peek.expand")} title={t("workItems.peek.expand")}><Maximize2 aria-hidden size={15} /><span className="hidden text-10 max-sm:inline">{t("workItems.peek.expand")}</span></Link>
+        <Button variant="ghost" type="button" className={`${iconButton} max-sm:flex max-sm:h-auto max-sm:w-auto pointer-coarse:min-h-11 pointer-coarse:min-w-11 max-sm:pointer-coarse:w-auto max-sm:items-center max-sm:gap-1 max-sm:px-1.5 max-sm:py-1`} aria-label={t("workItems.peek.close")} title={t("workItems.peek.close")} onClick={onClose}><X aria-hidden size={16} /><span className="hidden text-10 max-sm:inline">{t("workItems.peek.close")}</span></Button>
       </>
       : <nav aria-label={t("workItems.breadcrumb")} className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden whitespace-nowrap text-13 text-muted-foreground">
-        {project && <Link to={paths.workItems(workspace.slug, project.key)} className="hidden truncate text-muted-foreground hover:text-foreground sm:inline">{project.name}</Link>}
+        {project && <Link to={paths.workItems(workspace.slug, project.key)} className="hidden thai-room truncate text-muted-foreground hover:text-foreground sm:inline">{project.name}</Link>}
         <span aria-hidden className="hidden sm:inline">›</span>
         <Link to={back} className="hidden text-muted-foreground hover:text-foreground sm:inline">{t("workItems.title")}</Link>
-        <span aria-hidden>›</span>
+        <span aria-hidden className="hidden sm:inline">›</span>
         <span className="shrink-0 font-medium text-foreground">{item.displayId}</span>
       </nav>}
     {mode === "page" && <div className="ml-auto flex items-center gap-2">
@@ -386,7 +386,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
           options={priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> }))} onSelect={(priority) => void change({ priority })} />,
     assignees: <MultiSelect label={t("workItems.assignees")} readOnly={!canWrite} selected={assignees} searchAlways
           onOpen={() => { void action<Member[]>("list_project_members", { projectId: item.projectId }).then((rows) => rows && setPeople(rows)); }}
-          summary={assignees.length === 0 ? <span className="text-muted-foreground">{t("workItems.noAssignee")}</span> : <span className="flex items-center gap-1">{assignees.slice(0, 3).map((id) => <Avatar key={id} name={personName(id)} id={id} agent={isAgentId(id)} />)}<span className="max-w-32 truncate">{assignees.map(personName).join(", ")}</span></span>}
+          summary={assignees.length === 0 ? <span className="text-muted-foreground">{t("workItems.noAssignee")}</span> : <span className="flex items-center gap-1">{assignees.slice(0, 3).map((id) => <Avatar key={id} name={personName(id)} id={id} agent={isAgentId(id)} />)}<span className="max-w-32 thai-room truncate">{assignees.map(personName).join(", ")}</span></span>}
           options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: accessReasonText(person) }))}
           onToggle={(id, on) => void change({ assigneeIds: on ? [...assignees, id] : assignees.filter((other) => other !== id) })} />,
     due: <DateChip label={t("workItems.dueDate")} field="due" range={{ startDate: item.startDate, dueDate: item.dueDate }} stateGroup={stateOf?.group} readOnly={!canWrite} onChange={(dates) => void change(dates)} />,
@@ -422,10 +422,10 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     </Button>}
     <div role="group" className="flex w-full min-w-0 max-w-full flex-wrap gap-2 max-sm:grid max-sm:grid-cols-[auto_auto] max-sm:justify-items-start max-sm:[&>button]:whitespace-nowrap" aria-label={t("workItems.actions")}>
       {canWrite && <>
-        <Button type="button" className="max-sm:min-h-11" onClick={() => openAction("subItems")}>{t("workItems.addSubItemAction")}</Button>
-        <Button type="button" className="max-sm:min-h-11" onClick={() => { setActiveForm("relations"); setCollapsed((current) => current.filter((value) => value !== "relations")); }}>{t("workItems.addRelationAction")}</Button>
-        <Button type="button" className="max-sm:min-h-11" onClick={() => openAction("links")}>{t("workItems.addLinkAction")}</Button>
-        <Button type="button" className="max-sm:min-h-11" onClick={() => { setActiveForm("attachments"); setCollapsed((current) => current.filter((value) => value !== "attachments")); attachmentPicker.current?.click(); }}>{t("workItems.attachAction")}</Button>
+        <Button type="button" className="max-sm:min-h-11 pointer-coarse:min-h-11" onClick={() => openAction("subItems")}>{t("workItems.addSubItemAction")}</Button>
+        <Button type="button" className="max-sm:min-h-11 pointer-coarse:min-h-11" onClick={() => { setActiveForm("relations"); setCollapsed((current) => current.filter((value) => value !== "relations")); }}>{t("workItems.addRelationAction")}</Button>
+        <Button type="button" className="max-sm:min-h-11 pointer-coarse:min-h-11" onClick={() => openAction("links")}>{t("workItems.addLinkAction")}</Button>
+        <Button type="button" className="max-sm:min-h-11 pointer-coarse:min-h-11" onClick={() => { setActiveForm("attachments"); setCollapsed((current) => current.filter((value) => value !== "attachments")); attachmentPicker.current?.click(); }}>{t("workItems.attachAction")}</Button>
       </>}
     </div>
     {section("subItems", t("workItems.subItems"), subItems.length, <>
@@ -446,7 +446,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const mainTail = <>
     <div className={`${sectionClass} mt-2 border-t border-border pt-6`}><TimelinePanel workspaceId={workspace.id} workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canWrite} linkBase={itemPath} refreshKey={timelineKey} action={action} actionResult={actionResult} onChange={() => void load()} /></div>
     <details data-work-item-links className="grid gap-3 border-t border-border pt-4">
-      <summary className="cursor-pointer text-15 font-semibold text-foreground">{t("outlinks.title")}</summary>
+      <summary className="cursor-pointer text-14 font-semibold text-foreground">{t("outlinks.title")}</summary>
       <OutlinksPanel kind="work-item" id={item.id} run={action} compact refreshKey={descriptionOutlinksKey} updating={descriptionSaveState === "saving" || descriptionSaveState === "updating"} onRefreshComplete={onDescriptionOutlinksRefreshComplete} />
     </details>
     {section("links", t("webLinks.title"), sectionCounts.links, <WebLinksPanel personName={personName} workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "links"} onClose={() => setActiveForm(null)} onCount={countCallbacks.links} />)}
@@ -468,7 +468,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     const panelId = `work-item-props-${item.id}-${key}`;
     return <section data-props-section={key} className="grid content-start gap-3">
       <h3 className="m-0 text-13 font-medium">
-        <Button variant="ghost" type="button" aria-expanded={open} aria-controls={panelId} className="flex w-full justify-start items-center gap-1.5 rounded-md bg-transparent p-0 text-left font-medium text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => setSectionOpen(key, !open)}>
+        <Button variant="ghost" type="button" aria-expanded={open} aria-controls={panelId} className="flex w-full justify-start items-center gap-1.5 rounded-md bg-transparent p-0 text-left font-medium text-muted-foreground hover:bg-transparent hover:text-foreground pointer-coarse:min-h-11" onClick={() => setSectionOpen(key, !open)}>
           <ChevronDown aria-hidden size={15} className={`shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} />{t(`workItems.properties.${key}`)}
         </Button>
       </h3>
@@ -494,7 +494,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       </PropertyRow>
       <PropertyRow icon={<Tag aria-hidden size={15} />} label={t("workItems.labels")}>
         <MultiSelect label={t("workItems.labels")} readOnly={!canWrite} selected={item.labelIds} icon={undefined}
-          summary={item.labelIds.length === 0 ? <span className="text-muted-foreground">{t("workItems.noLabels")}</span> : <span className="flex flex-wrap items-center gap-1">{item.labelIds.map((id) => labels.find((label) => label.id === id)).filter((label): label is Label => !!label).map((label) => <span key={label.id} className="flex items-center gap-1"><span aria-hidden className="size-2 rounded-full" style={{ backgroundColor: label.color }} />{label.name}</span>)}</span>}
+          summary={item.labelIds.length === 0 ? <span className="text-muted-foreground">{t("workItems.noLabels")}</span> : <span className="flex min-w-0 flex-wrap items-center gap-1 whitespace-normal text-left">{item.labelIds.map((id) => labels.find((label) => label.id === id)).filter((label): label is Label => !!label).map((label) => <span key={label.id} className="flex min-w-0 max-w-full items-center gap-1"><span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: label.color }} /><span className="thai-room truncate">{label.name}</span></span>)}</span>}
           options={labels.map((label) => ({ id: label.id, name: label.name, icon: <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: label.color }} /> }))}
           onToggle={(id, on) => void change({ labelIds: on ? [...item.labelIds, id] : item.labelIds.filter((other) => other !== id) })} />
       </PropertyRow>
@@ -512,7 +512,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       </PropertyRow>}
       {project?.features.modules && <PropertyRow icon={<Package aria-hidden size={15} />} label={t("workItems.modules")}>
         <MultiSelect label={t("workItems.modules")} readOnly={!canWrite} selected={moduleIds}
-          summary={moduleIds.length === 0 ? <span className="text-muted-foreground">{t("workItems.noModules")}</span> : <span>{moduleIds.map((id) => modules.find((module) => module.id === id)?.name).filter(Boolean).join(", ")}</span>}
+          summary={moduleIds.length === 0 ? <span className="text-muted-foreground">{t("workItems.noModules")}</span> : <span className="min-w-0 thai-room truncate">{moduleIds.map((id) => modules.find((module) => module.id === id)?.name).filter(Boolean).join(", ")}</span>}
           options={modules.map((module) => ({ id: module.id, name: module.name }))} onToggle={(id, on) => void setModule(id, on)} />
       </PropertyRow>}
       <PropertyRow icon={<Layers aria-hidden size={15} />} label={t("workItems.parent")}>
@@ -523,11 +523,11 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     </>)}
     {propSection("details", <>
       <PropertyRow icon={<CircleUserRound aria-hidden size={15} />} label={t("workItems.createdBy")}>
-        <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap px-1 text-13 font-medium text-foreground"><Avatar name={creator} id={item.createdBy} agent={isAgentId(item.createdBy)} /><span className="min-w-0 truncate" title={creator}>{creator}</span></span>
+        <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap px-1 text-13 font-medium text-foreground"><Avatar name={creator} id={item.createdBy} agent={isAgentId(item.createdBy)} /><span className="min-w-0 thai-room truncate" title={creator}>{creator}</span></span>
       </PropertyRow>
       {project && <TypeRows project={project} item={item} canWrite={canWrite} people={people} onSaved={async () => { await load(); onChanged?.(); }} />}
     </>)}
-    {mode === "peek" && <div className="flex flex-wrap gap-2 border-t border-border pt-4" data-peek-actions>
+    {mode === "peek" && <div className="flex flex-wrap gap-2 border-t border-border pt-4 pointer-coarse:[&>button]:min-h-11" data-peek-actions>
       <Button type="button" className="flex items-center gap-1.5 whitespace-nowrap" onClick={() => void copy()}><Link2 aria-hidden size={14} />{t("workItems.copyLink")}</Button>
       {mayArchive && !isArchived && eligible && <Button type="button" className="flex items-center gap-1.5 whitespace-nowrap" onClick={() => void archiveOrRestore("archive_work_item")}><Archive aria-hidden size={14} />{t("workItems.archive")}</Button>}
       {canWrite && <Button type="button" variant="secondary" className="flex items-center gap-1.5 whitespace-nowrap text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => void remove()}><Trash2 aria-hidden size={14} />{t("workItems.delete")}</Button>}

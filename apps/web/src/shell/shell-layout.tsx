@@ -54,7 +54,7 @@ export function Shell({ current, workspace, signOut, refresh }: { current: Curre
     <a href="#main-content" className="skip-link rounded-md bg-primary px-3 py-1.5 text-[14px] font-medium text-primary-foreground">{translate("shell.skipToMain")}</a>
     <TopBar current={current} workspace={workspace} signOut={signOut} refresh={refresh} onOpenDrawer={() => setDrawer(true)} sidebarCollapsed={sidebarCollapsed} onToggleSidebar={() => toggleSidebarRef.current()} onPeekSidebar={setSidebarPeek} />
     <div className="flex min-h-0 flex-1">
-      <div className="max-md:hidden"><AppRail workspaceSlug={workspace.slug} /></div>
+      <div className="flex max-md:hidden"><AppRail workspaceSlug={workspace.slug} /></div>
       <div className={`relative z-10 hidden shrink-0 transition-[width] duration-200 md:block ${sidebarCollapsed ? "w-0" : "w-64"}`} onPointerEnter={() => { if (sidebarCollapsed) setSidebarPeek(true); }} onPointerLeave={() => setSidebarPeek(false)} onFocusCapture={() => { if (sidebarCollapsed) setSidebarPeek(true); }} onBlurCapture={(event) => { if (sidebarCollapsed && !event.currentTarget.contains(event.relatedTarget as Node | null)) setSidebarPeek(false); }}>
         {sidebarCollapsed && <div aria-hidden className="absolute inset-y-0 -left-2 z-20 w-3" />}
         <div id="desktop-sidebar" inert={sidebarCollapsed && !sidebarPeek} style={sidebarCollapsed && !sidebarPeek ? { transform: "translateX(calc(-100% - 4rem))" } : undefined} className={`absolute inset-y-0 left-0 flex w-64 transition-transform duration-200 ${sidebarCollapsed && !sidebarPeek ? "pointer-events-none" : "translate-x-0"}`}>
@@ -62,7 +62,7 @@ export function Shell({ current, workspace, signOut, refresh }: { current: Curre
         </div>
       </div>
       <Sheet open={drawer} onOpenChange={setDrawer}>
-        <SheetContent side="left" closeLabel={translate("shell.closeMenu")} aria-label={translate("shell.sidebar")} className="md:hidden">
+        <SheetContent side="left" closeLabel={translate("shell.closeMenu")} aria-label={translate("shell.sidebar")} className="px-2 pb-4 pt-14 md:hidden">
           <SheetTitle className="sr-only">{translate("shell.sidebar")}</SheetTitle>
           <AppRail workspaceSlug={workspace.slug} horizontal />
           <Button variant="ghost" type="button" onClick={() => { setDrawer(false); window.dispatchEvent(new Event(openPaletteEvent)); }} className="transition-colors hover:bg-accent mx-3 mt-2 flex min-h-11 items-center gap-2 bg-transparent text-left text-[14px] text-foreground"><Command aria-hidden size={16} />{translate("palette.menuLabel")}</Button>

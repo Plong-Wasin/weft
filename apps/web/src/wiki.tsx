@@ -505,7 +505,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
         <TabsContent value={pane} className="grid gap-3">
       {pane === "info" && <div className="grid gap-3">{info}</div>}
       {pane === "outline" && <nav aria-label={translate("wiki.outline")} data-testid="wiki-outline">
-        {headings.length === 0 ? <p className="m-0 text-muted-foreground">{translate("wiki.outlineEmpty")}</p> : <ul className="m-0 grid list-none gap-0.5 p-0">{headings.map((heading, index) => <li key={`${heading.pos}-${index}`} style={{ paddingLeft: `${(heading.level - 1) * 12}px` }}><Button type="button" className="w-full truncate rounded-md !bg-transparent !px-2 !py-1 text-left !font-normal !text-muted-foreground hover:!bg-accent hover:!text-foreground" onClick={() => { editor?.chain().focus().setTextSelection(heading.pos + 1).run(); editor?.view.domAtPos(heading.pos).node.parentElement?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>{heading.text || translate("wiki.outlineUntitled")}</Button></li>)}</ul>}
+        {headings.length === 0 ? <p className="m-0 text-muted-foreground">{translate("wiki.outlineEmpty")}</p> : <ul className="m-0 grid list-none gap-0.5 p-0">{headings.map((heading, index) => <li key={`${heading.pos}-${index}`} style={{ paddingLeft: `${(heading.level - 1) * 12}px` }}><Button type="button" className="w-full thai-room truncate rounded-md !bg-transparent !px-2 !py-1 text-left !font-normal !text-muted-foreground hover:!bg-accent hover:!text-foreground" onClick={() => { editor?.chain().focus().setTextSelection(heading.pos + 1).run(); editor?.view.domAtPos(heading.pos).node.parentElement?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>{heading.text || translate("wiki.outlineUntitled")}</Button></li>)}</ul>}
       </nav>}
       {pane === "links" && <OutlinksPanel kind={page.projectId ? "page" : "wiki"} id={page.id} run={call} />}
       {pane === "comments" && <section aria-label={translate("wiki.comments")} className="grid gap-3">
@@ -542,7 +542,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
         <Activity pageId={page.id} refresh={status} />
         <section aria-label={translate("wiki.history")} className="grid gap-2 border-t border-border pt-3">
           <h3 className="m-0 text-13 font-semibold text-foreground">{translate("wiki.history")}</h3>
-          <ul className="m-0 grid list-none gap-2 p-0">{versions.map((version) => <li key={version.id} className="flex items-center justify-between gap-2 text-muted-foreground"><span className="min-w-0 truncate">{formatDate(version.createdAt)} — {version.title}</span><Button className="!px-2 !py-0.5 !text-12" disabled={!page.canEdit} onClick={() => void restore(version.id)}>{translate("wiki.restore")}</Button></li>)}</ul>
+          <ul className="m-0 grid list-none gap-2 p-0">{versions.map((version) => <li key={version.id} className="flex items-center justify-between gap-2 text-muted-foreground"><span className="min-w-0 thai-room truncate">{formatDate(version.createdAt)} — {version.title}</span><Button className="!px-2 !py-0.5 !text-12" disabled={!page.canEdit} onClick={() => void restore(version.id)}>{translate("wiki.restore")}</Button></li>)}</ul>
         </section>
       </div>}
         </TabsContent>
@@ -603,9 +603,9 @@ function writeListFilter(params: URLSearchParams, key: keyof ListFilters, value:
 }
 function ListControls({ pages, filters, update, shared = false }: { pages: Summary[]; filters: ListFilters; update: (key: keyof ListFilters, value: string) => void; shared?: boolean }) {
   const owners = Array.from(new Map(pages.map((page) => [page.ownerId, page.ownerName ?? page.ownerId])).entries());
-  return <div className="grid gap-3">
+  return <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
     <Tabs value={filters.tab} onValueChange={(value) => update("tab", value)}>
-      <TabsList className="flex h-auto justify-start gap-x-3 overflow-x-auto rounded-none border-b border-border bg-transparent p-0 sm:gap-x-4">
+      <TabsList className="flex h-auto min-w-0 max-w-full justify-start gap-x-3 overflow-x-auto rounded-none border-b border-border bg-transparent p-0 sm:gap-x-4">
         {(["all", "public", "private", "archived", ...(shared ? ["shared" as const] : [])] as const).map((name) => <TabsTrigger key={name} value={name}
           className={`-mb-px whitespace-nowrap border-0 border-b-2 bg-transparent px-1 py-2 text-13 font-medium ${filters.tab === name ? "border-b-[var(--primary)] text-foreground" : "border-b-transparent text-muted-foreground"}`}>{translate(`pages.tab.${name}` as MessageKey)}</TabsTrigger>)}
       </TabsList>
@@ -682,8 +682,8 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
   async function removeCollection(collection: CollectionRow) {
     if (await call("delete_collection", { collectionId: collection.id }) !== null) { setCollectionDialog(null); await refreshCollections(); } else setFailed(true);
   }
-  return <section aria-label={translate("wiki.title")} className="grid gap-4">
-    <header className="flex items-center justify-between gap-3">
+  return <section aria-label={translate("wiki.title")} className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
+    <header className="flex flex-wrap items-center justify-between gap-3">
       <h1 className="text-20 font-semibold text-foreground">{translate("wiki.title")}</h1>
       <div className="flex gap-2"><Button type="button" onClick={() => setCollectionDialog({ kind: "create" })}>{translate("wiki.collection.new")}</Button><Button variant="primary" type="button" onClick={() => void create()} className="inline-flex items-center gap-1.5"><Plus aria-hidden size={14} />{translate("wiki.new")}</Button></div>
     </header>
@@ -693,7 +693,7 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
     {isLoading && <p role="status">{translate("wiki.loading")}</p>}
     {!isLoading && shown.length === 0 && <p className="text-muted-foreground">{translate("wiki.empty")}</p>}
     {(shown.length > 0 || collections.length > 0) && <div className="overflow-x-auto rounded-xl border border-border bg-card p-3 sm:p-4"><table className="w-full table-fixed border-collapse text-left text-13">
-      <thead><tr className="border-b border-border text-12 text-muted-foreground"><th className="w-[45%] py-2 font-medium md:w-auto">{translate("wiki.col.name")}</th><th className="w-[25%] py-2 font-medium md:w-auto">{translate("wiki.access")}</th><th className="hidden py-2 font-medium md:table-cell">{translate("pages.created")}</th><th className="w-[30%] py-2 font-medium md:w-auto">{translate("pages.updated")}</th><th className="hidden py-2 font-medium md:table-cell">{translate("wiki.col.nested")}</th></tr></thead>
+      <thead><tr className="border-b border-border text-12 text-muted-foreground"><th className="w-[45%] py-2 pr-2 font-medium md:w-[40%]">{translate("wiki.col.name")}</th><th className="w-[25%] py-2 font-medium md:w-auto">{translate("wiki.access")}</th><th className="hidden py-2 font-medium md:table-cell">{translate("pages.created")}</th><th className="w-[30%] py-2 font-medium md:w-auto">{translate("pages.updated")}</th><th className="hidden py-2 font-medium md:table-cell">{translate("wiki.col.nested")}</th></tr></thead>
       <tbody>{collections.map((collection) => <React.Fragment key={collection.id}>
         <tr className="border-b border-border"><th colSpan={5} className="pb-2 pr-2 pt-6 text-left font-semibold text-foreground"><div className="flex items-center gap-2"><span>{collection.icon} {collectionLabel(collection)}{collection.visibility === "private" ? ` · ${translate("wiki.access.private")}` : ""}</span><Popover label={`${translate("wiki.collection.actions")}: ${collection.name}`} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-72">
           {(close) => <>
@@ -703,8 +703,8 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
           </>}
         </Popover></div></th></tr>
         {flatten(shown.filter((page) => page.collectionId === collection.id)).map(({ page, depth, nested }) => <tr key={page.id} className="border-b border-border hover:bg-accent">
-        <td className="py-2" style={{ paddingLeft: `${depth * 1.25}rem` }}><Link className={rowLink} to={paths.wikiPage(workspace.slug, page.id)}><FileText aria-hidden size={14} className="shrink-0 text-muted-foreground" /><span className="min-w-0 truncate">{page.title}</span></Link></td>
-        <td className="py-2 align-middle text-muted-foreground"><span className="inline-flex items-center gap-1.5 align-middle">{roleIcon(page)}{translate(`wiki.access.${page.access}` as MessageKey)}</span></td>
+        <td className="py-2" style={{ paddingLeft: `${depth * 1.25}rem` }}><Link className={rowLink} to={paths.wikiPage(workspace.slug, page.id)}><FileText aria-hidden size={14} className="shrink-0 text-muted-foreground" /><span className="min-w-0 thai-room truncate">{page.title}</span></Link></td>
+        <td className="py-2 pr-2 align-middle text-muted-foreground"><span className="flex min-w-0 items-center gap-1.5">{roleIcon(page)}<span className="min-w-0 [overflow-wrap:anywhere]" title={translate(`wiki.access.${page.access}` as MessageKey)}>{translate(`wiki.access.${page.access}` as MessageKey)}</span></span></td>
         <td className="hidden py-2 text-muted-foreground md:table-cell">{formatDay(page.createdAt)}</td><td className="py-2 text-muted-foreground">{formatDay(page.updatedAt)}</td>
         <td className="hidden py-2 text-muted-foreground md:table-cell">{nested}</td>
       </tr>)}

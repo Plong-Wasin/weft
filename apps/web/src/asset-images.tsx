@@ -217,7 +217,7 @@ export function AttachmentsPanel({ workItemId, ownerType = "work_item", canWrite
     {!loading && downloadableRows.length === 0 && !error && <p className="m-0 py-2 text-13 text-muted-foreground">{translate("assets.empty")}</p>}
     <ul className="m-0 grid list-none gap-1.5 !pl-0">{downloadableRows.map((row) => <li key={row.id} className="flex items-center gap-2 rounded-md bg-muted px-2.5 py-1.5 text-13">
       <Paperclip aria-hidden size={13} className="shrink-0 text-muted-foreground" />
-      <span className="min-w-0 truncate text-foreground" title={row.filename}>{row.filename}</span>
+      <span className="min-w-0 thai-room truncate text-foreground" title={row.filename}>{row.filename}</span>
       {row.unverified && <small role="status" className="shrink-0 text-12 text-amber-700 dark:text-amber-400">{translate("assets.unverified")}</small>}
       <small className="shrink-0 text-12 text-muted-foreground">{formatSize(row.size)}</small>
       <span className="ml-auto flex shrink-0 gap-0.5">
@@ -270,7 +270,7 @@ function AttachmentPreviewDialog({ preview, onClose }: { preview: { row: AssetRo
   return <dialog ref={dialog} className="asset-preview-dialog" aria-labelledby={titleId}
     onClose={() => { if (dialog.current?.returnValue !== "unmount") onClose(); }} onClick={(event) => { if (event.target === event.currentTarget) dialog.current?.close(); }}>
     <header className="flex items-center gap-3 border-b border-border px-4 py-3">
-      <h2 id={titleId} className="m-0 min-w-0 flex-1 truncate text-16 font-semibold text-foreground">{row.filename}</h2>
+      <h2 id={titleId} className="m-0 min-w-0 flex-1 thai-room truncate text-16 font-semibold text-foreground">{row.filename}</h2>
       <Button type="button" autoFocus className="rounded-md border border-border bg-card py-2 text-foreground" aria-label={translate("assets.closePreview")} onClick={() => dialog.current?.close()}>{translate("assets.closePreview")}</Button>
     </header>
     <div className="asset-preview-content p-3 sm:p-5">{media}</div>

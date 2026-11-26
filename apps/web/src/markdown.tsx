@@ -26,5 +26,5 @@ const components: Components = {
 
 /** An AI answer as safe Markdown: GFM, raw HTML dropped (react-markdown never parses it), external images and script links neutralised. */
 export function Markdown({ text }: { text: string }) {
-  return <div className="text-16 leading-7 text-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"><ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>{text}</ReactMarkdown></div>;
+  return <div className="min-w-0 [overflow-wrap:anywhere] [&_table]:[overflow-wrap:normal] text-16 leading-7 text-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"><ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>{text}</ReactMarkdown></div>;
 }

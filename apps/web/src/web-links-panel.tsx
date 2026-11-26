@@ -7,7 +7,7 @@ import { copyText } from "./toast";
 import { Input } from "@/ui/input";
 type WebLink = { id: string; url: string; title: string | null; createdBy?: string; createdAt?: string };
 const t = (key: string) => translate(key as never);
-const rowButton = "grid size-7 place-items-center rounded-md !bg-transparent !p-0 text-muted-foreground hover:!bg-accent hover:text-foreground";
+const rowButton = "grid size-7 place-items-center rounded-md !bg-transparent !p-0 text-muted-foreground hover:!bg-accent hover:text-foreground pointer-coarse:size-11 pointer-coarse:!w-11 shrink-0";
 
 /** One form for both adding and editing a Web Link; `link` is set when editing. */
 function LinkDialog({ link, onSubmit, onClose }: { link: WebLink | null; onSubmit: (url: string, title: string | null) => Promise<boolean>; onClose: () => void }) {
@@ -39,9 +39,9 @@ export function WebLinksPanel({ personName, workItemId, canWrite, action, onChan
   const host = (value: string) => { try { return new URL(value).host; } catch { return value; } };
   const close = () => { setEditing(null); onClose(); };
   return <section>
-    {rows.length > 0 && <ul className="m-0 grid list-none gap-1.5 !pl-0">{rows.map((row) => <li key={row.id} className="flex items-center gap-2 rounded-md bg-muted px-2.5 py-1.5 text-13">
+    {rows.length > 0 && <ul className="m-0 grid list-none grid-cols-[minmax(0,1fr)] gap-1.5 !pl-0">{rows.map((row) => <li key={row.id} className="flex items-center gap-2 rounded-md bg-muted px-2.5 py-1.5 text-13">
       <ExternalLink aria-hidden size={13} className="shrink-0 text-muted-foreground" />
-      <a href={row.url} target="_blank" rel="noreferrer" className="min-w-0 truncate text-foreground hover:underline" title={row.url}>{row.title || host(row.url)}</a>
+      <a href={row.url} target="_blank" rel="noreferrer" className="min-w-0 thai-room truncate text-foreground hover:underline" title={row.url}>{row.title || host(row.url)}</a>
       {row.title && <span className="min-w-0 shrink truncate text-muted-foreground">{host(row.url)}</span>}
       {row.createdAt && <span className="hidden shrink-0 text-12 text-muted-foreground sm:inline">{row.createdBy && personName ? `${personName(row.createdBy)} · ` : ""}{formatDate(row.createdAt)}</span>}
       <span className="ml-auto flex shrink-0 gap-0.5">

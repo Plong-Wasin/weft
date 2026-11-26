@@ -176,6 +176,55 @@ try {
   await dialog.waitFor({ state: "detached" });
   console.log("date-picker: keyboard moves and picks, Escape closes");
 
+  // 5. Thai: the calendar shows and takes the same Buddhist-era year as the date text everywhere else; the stored value stays ISO.
+  const th = (key: string) => translate(key as never, "th");
+  const thaiItem = await call<Item>("create_work_item", { projectId, title: "Thai year", dueDate: "2030-05-06" });
+  await call("set_my_locale", { locale: "th" }); // the saved account language wins over the browser copy
+  await page.evaluate(() => localStorage.setItem("weft.locale", "th"));
+  await page.goto(`${web}/${slug}/browse/${thaiItem.displayId}`);
+  const thaiDue = page.getByRole("complementary", { name: th("workItems.properties") }).getByRole("button", { name: new RegExp(`^${th("workItems.dueDate")}:`) });
+  await thaiDue.waitFor();
+  const thaiChipText = (await thaiDue.textContent()) ?? "";
+  check(thaiChipText.includes("2573"), `the Thai Due chip should show 2030 as the Buddhist-era year 2573, shows "${thaiChipText}"`);
+  await thaiDue.click();
+  await dialog.waitFor();
+  const thaiYear = dialog.getByRole("spinbutton", { name: "ปี" });
+  check(await thaiYear.inputValue() === "2573" && thaiChipText.includes(await thaiYear.inputValue()), `the calendar year must equal the year the app shows (2573), shows ${await thaiYear.inputValue()}`);
+  const thaiGridName = await dialog.locator("[data-month]").getAttribute("aria-label") ?? "";
+  check(thaiGridName.includes("2573") && !thaiGridName.includes("2030"), `the Thai calendar grid must be named with the Buddhist-era year, is "${thaiGridName}"`);
+  await thaiYear.fill("2574"); // the next Thai year is 2031
+  check(await dialog.locator("[data-month]").getAttribute("data-month") === "2031-05", "typing the Thai year 2574 must move the calendar to May 2031");
+  await saveAfter(() => dialog.locator('[data-date="2031-05-07"]').click());
+  check((await stored(thaiItem.displayId)).dueDate === "2031-05-07", "a day picked in Thai must store the ISO (Gregorian) date");
+  await page.keyboard.press("Escape");
+  await thaiDue.filter({ hasText: "2574" }).waitFor({ timeout: 5_000 }).catch(async () => check(false, `after the pick the Thai Due chip should show 2574, shows "${await thaiDue.textContent()}"`));
+  await call("set_my_locale", { locale: "en" });
+  await page.evaluate(() => localStorage.setItem("weft.locale", "en"));
+  console.log("date-picker: Thai calendar shows and takes the Buddhist-era year");
+
+  // 6. Time zones far from UTC: the chip shows the stored calendar day, and a picked day is stored as that same day.
+  for (const [timezoneId, picked] of [["America/Los_Angeles", "2031-05-09"], ["Pacific/Kiritimati", "2031-05-11"]] as const) {
+    const zoned = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US", timezoneId, storageState: await context.storageState() });
+    const zonedPage = await zoned.newPage();
+    await zonedPage.goto(`${web}/${slug}/browse/${thaiItem.displayId}`);
+    const zonedDue = zonedPage.getByRole("complementary", { name: t("workItems.properties") }).getByRole("button", { name: new RegExp(`^${t("workItems.dueDate")}:`) });
+    await zonedDue.waitFor();
+    const before = (await stored(thaiItem.displayId)).dueDate!;
+    check(((await zonedDue.textContent()) ?? "").includes(shortOf(before)), `${timezoneId}: the Due chip should show ${shortOf(before)}, shows "${await zonedDue.textContent()}"`);
+    await zonedDue.click();
+    const zonedPanel = zonedPage.locator("[data-popover-panel]");
+    await zonedPanel.waitFor();
+    const zonedSaved = zonedPage.waitForResponse((response) => response.url().includes("update_work_item") && response.ok());
+    await zonedPanel.locator(`[data-date="${picked}"]`).click();
+    await zonedSaved;
+    check((await stored(thaiItem.displayId)).dueDate === picked, `${timezoneId}: picking ${picked} must store ${picked}`);
+    await zonedPage.reload();
+    await zonedDue.waitFor();
+    check(((await zonedDue.textContent()) ?? "").includes(shortOf(picked)), `${timezoneId}: after reload the Due chip should show ${shortOf(picked)}`);
+    await zoned.close();
+  }
+  console.log("date-picker: far time zones keep the calendar day");
+
   // A read-only Work item keeps the Due field context and overdue name without relying on a button role.
   const readOnlyItem = await call<Item>("create_work_item", { projectId, title: "Read-only overdue", dueDate: localDay(-2) });
   await page.route("**/actions/list_projects", async (route) => {

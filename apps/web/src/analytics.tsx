@@ -10,6 +10,7 @@ import type { Project } from "./types";
 
 import { Checkbox } from "@/ui/checkbox";
 import { Input } from "@/ui/input";
+import { Select, SelectContent, SelectItem, SelectItemText, SelectTrigger, SelectValue } from "@/ui/select";
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
 const t = (key: string, values: Record<string, string | number> = {}) => Object.entries(values).reduce((text, [name, value]) => text.replace(`{${name}}`, String(value)), translate(key as MessageKey));
@@ -23,7 +24,6 @@ type Overview = { summary: Summary; projects: OverviewProject[] };
 type Month = { month: string; created: number; resolved: number };
 type Insights = { x: Axis; groupBy: Axis | null; buckets: Array<Bucket & { groups: Bucket[] }> };
 
-const selectClass = "min-w-0 max-w-full pl-2 pr-7 py-1.5 text-sm text-foreground";
 const palette = ["#3f76ff", "#f59e0b", "#16a34a", "#e11d48", "#8b5cf6", "#0ea5e9", "#f97316", "#14b8a6", "#a3a3a3", "#d946ef"];
 const colorOf = (index: number) => palette[index % palette.length]!;
 const chartColorOf = (index: number) => `color-mix(in srgb, ${colorOf(index)} 86%, var(--background))`;
@@ -210,10 +210,15 @@ export function AnalyticsPage({ workspaceId, workspaceSlug, action, run }: { wor
         <h2 className="m-0 text-base font-semibold">{t("analytics.insights")}</h2>
         <div className="flex flex-wrap items-center gap-3">
           <label className="flex items-center gap-2 text-sm text-muted-foreground">{t("analytics.xAxis")}
-            <select value={x} onChange={(event) => pickX(event.target.value as Axis)} className={selectClass}>{axes.map((axis) => <option key={axis} value={axis}>{t(`analytics.axis.${axis}`)}</option>)}</select></label>
+            <Select value={x} items={axes.map((axis) => ({ value: axis, label: t(`analytics.axis.${axis}`) }))} onValueChange={(value) => { if (value) pickX(value as Axis); }}>
+              <SelectTrigger aria-label={t("analytics.xAxis")} className="w-44"><SelectValue /></SelectTrigger>
+              <SelectContent>{axes.map((axis) => <SelectItem key={axis} value={axis}><SelectItemText>{t(`analytics.axis.${axis}`)}</SelectItemText></SelectItem>)}</SelectContent>
+            </Select></label>
           <label className="flex items-center gap-2 text-sm text-muted-foreground">{t("analytics.groupBy")}
-            <select value={groupBy} onChange={(event) => setGroupBy(event.target.value as Axis | "")} className={selectClass}>
-              <option value="">{t("analytics.groupNone")}</option>{axes.filter((axis) => axis !== x).map((axis) => <option key={axis} value={axis}>{t(`analytics.axis.${axis}`)}</option>)}</select></label>
+            <Select value={groupBy || "none"} items={[{ value: "none", label: t("analytics.groupNone") }, ...axes.filter((axis) => axis !== x).map((axis) => ({ value: axis, label: t(`analytics.axis.${axis}`) }))]} onValueChange={(value) => { if (value) setGroupBy(value === "none" ? "" : value as Axis); }}>
+              <SelectTrigger aria-label={t("analytics.groupBy")} className="w-44"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="none"><SelectItemText>{t("analytics.groupNone")}</SelectItemText></SelectItem>{axes.filter((axis) => axis !== x).map((axis) => <SelectItem key={axis} value={axis}><SelectItemText>{t(`analytics.axis.${axis}`)}</SelectItemText></SelectItem>)}</SelectContent>
+            </Select></label>
           <ProjectFilter projects={projects} selected={selected} onChange={setSelected} />
         </div>
         {state.insights.buckets.length === 0 ? <p className="m-0 text-muted-foreground">{t("analytics.noData")}</p> : <Chart insights={state.insights} />}

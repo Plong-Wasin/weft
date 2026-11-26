@@ -6,6 +6,7 @@ import { eq, like } from "drizzle-orm";
 import { createDatabase, projectMembers, projects as dbProjects, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { chooseDate, expectDate as expectTriggerDate } from "../tools/choose-date";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3108);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5208);
@@ -37,6 +38,9 @@ try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
   const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
   const page = await browser.newPage();
+  const dateTrigger = (scope: Locator) => scope.getByRole("button", { name: new RegExp(`^${translate("workItems.dueDate")}:`) });
+  const setDate = async (scope: Locator, value: string) => await chooseDate(dateTrigger(scope), value);
+  const expectDate = async (scope: Locator, expected: string, label: string) => await expectTriggerDate(dateTrigger(scope), expected, label);
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   await page.goto(web);
@@ -84,7 +88,7 @@ try {
       await page.getByRole("searchbox", { name: translate("picker.search"), exact: true }).fill("E2E label");
       await page.getByRole("menuitemcheckbox", { name: "E2E label", exact: true }).click();
       await dialog.getByRole("button", { name: new RegExp(`^${translate("workItems.labels")}: .*E2E label`) }).waitFor();
-      await dialog.getByLabel(translate("workItems.dueDate")).fill("2030-05-06");
+      await setDate(dialog, "2030-05-06");
     }
     if (attach) {
       await dialog.getByTestId("intake-attach-input").setInputFiles(attach);
@@ -189,6 +193,28 @@ try {
   await page.mouse.click(0, 0);
   await backdropDialog.waitFor({ state: "detached" });
   check(await add.evaluate((element) => document.activeElement === element), "backdrop click did not restore focus to the Intake trigger");
+  // A Select inside a showModal() dialog opens in that dialog's top layer and takes a click, even as the first thing
+  // done in the modal. The modal's member and label loads are held until after the pick, so no data arrival
+  // re-renders the modal first; a popup portalled to the inert <body> would sit under the modal.
+  let releaseModalData = () => {};
+  const modalDataHeld = new Promise<void>((resolve) => { releaseModalData = resolve; });
+  const holdModalData = async (route: import("playwright").Route) => { await modalDataHeld; await route.continue(); };
+  await page.route("**/actions/list_project_members", holdModalData);
+  await page.route("**/actions/list_labels", holdModalData);
+  await add.click();
+  const selectDialog = page.getByRole("dialog", { name: translate("intake.modalTitle") });
+  const firstPriority = selectDialog.getByRole("combobox", { name: translate("intake.priority") });
+  await firstPriority.click();
+  const highOption = page.getByRole("option", { name: translate("workItems.priority.high"), exact: true });
+  await highOption.waitFor();
+  check(await highOption.evaluate((node) => !!node.closest("dialog[open]")), "the Priority options must render inside the open Intake dialog, not under it");
+  await highOption.click({ timeout: 5_000 });
+  check((await firstPriority.innerText()).trim() === translate("workItems.priority.high"), "clicking High in the Select inside the dialog must set the Priority");
+  releaseModalData();
+  await page.unroute("**/actions/list_project_members", holdModalData);
+  await page.unroute("**/actions/list_labels", holdModalData);
+  await selectDialog.getByRole("button", { name: translate("intake.cancel"), exact: true }).last().click();
+  await selectDialog.waitFor({ state: "detached" });
   await submit("Dark mode please", "Users want a dark theme", true, [
     { name: "evidence.txt", mimeType: "text/plain", buffer: Buffer.from("evidence") },
     { name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("saved") },
@@ -238,7 +264,7 @@ try {
   await detail.getByRole("button", { name: translate("comments.add"), exact: true }).click();
   await detail.getByText("Keep the draft", { exact: true }).waitFor();
   await detail.getByRole("button", { name: new RegExp(`^${translate("workItems.labels")}: .*E2E label`) }).waitFor();
-  await detail.getByLabel(translate("workItems.dueDate")).fill("2030-05-07");
+  await setDate(detail, "2030-05-07");
   await page.reload();
   await page.getByTestId("intake-MOB-1").click();
   await detail.locator("header").getByText("MOB-1", { exact: true }).waitFor();
@@ -264,22 +290,22 @@ try {
   check(afterEditorTitle === "Dark theme please", `switching items discarded the title draft: ${afterEditorTitle}`);
   await page.route("**/actions/update_intake_item", async (route) => { await Bun.sleep(500); await route.abort(); });
   await detail.getByRole("button", { name: translate("intake.save"), exact: true }).click();
-  await detail.getByLabel(translate("workItems.dueDate")).fill("2030-05-09");
+  await setDate(detail, "2030-05-09");
   await detail.getByRole("alert").waitFor();
-  await expectValue(detail.getByLabel(translate("workItems.dueDate")), "2030-05-09", "edit during failed save");
+  await expectDate(detail, "2030-05-09", "edit during failed save");
   const retainedTitle = await detail.getByLabel(translate("intake.titleField")).inputValue();
   check(retainedTitle === "Dark theme please", `failed save discarded title draft: ${retainedTitle}`);
   await detail.getByTestId("description-editor").locator('[contenteditable="true"]').getByText("Updated request").waitFor();
   await page.unroute("**/actions/update_intake_item");
   await page.route("**/actions/update_intake_item", async (route) => { const response = await route.fetch(); await Bun.sleep(500); await route.fulfill({ response }); }, { times: 1 });
   await detail.getByRole("button", { name: translate("intake.save"), exact: true }).click();
-  await detail.getByLabel(translate("workItems.dueDate")).fill("2030-05-08");
+  await setDate(detail, "2030-05-08");
   await detail.getByRole("button", { name: translate("intake.save"), exact: true }).waitFor({ state: "visible" });
-  await expectValue(detail.getByLabel(translate("workItems.dueDate")), "2030-05-08", "edit during save");
+  await expectDate(detail, "2030-05-08", "edit during save");
   await detail.getByRole("button", { name: translate("intake.save"), exact: true }).click();
   await detail.getByLabel(translate("intake.titleField")).waitFor();
   await expectValue(detail.getByLabel(translate("intake.titleField")), "Dark theme please", "saved title");
-  await expectValue(detail.getByLabel(translate("workItems.dueDate")), "2030-05-08", "saved due date");
+  await expectDate(detail, "2030-05-08", "saved due date");
   await page.reload();
   await page.getByRole("link", { name: translate("intake.title") }).click();
   const reopened = page.getByRole("region", { name: translate("intake.detail") });
@@ -287,7 +313,7 @@ try {
   await reopened.locator("header").getByText("MOB-1", { exact: true }).waitFor();
   await expectValue(reopened.getByLabel(translate("intake.titleField")), "Dark theme please", "reopened title");
   check((await reopened.getByRole("combobox", { name: translate("intake.priority") }).innerText()).trim() === translate("workItems.priority.high"), "reopened priority was not High");
-  await expectValue(reopened.getByLabel(translate("workItems.dueDate")), "2030-05-08", "reopened due date");
+  await expectDate(reopened, "2030-05-08", "reopened due date");
   await assigneePicker(reopened).waitFor();
   await assigneePicker(reopened).click();
   const selectedAssignee = page.getByRole("menuitemcheckbox", { name: "Intake Tester", exact: true });
@@ -331,14 +357,15 @@ try {
   await page.getByTestId("intake-MOB-1").click();
   await detail.getByRole("button", { name: translate("intake.accept"), exact: true }).click();
   const acceptDialog = page.getByRole("dialog", { name: translate("intake.acceptIntoState") });
-  const targetState = acceptDialog.getByLabel(translate("workItems.state"));
-  await page.waitForFunction(() => {
-    const select = document.querySelector<HTMLSelectElement>('dialog select[aria-label="State"]');
-    return select?.options.length && [...select.options].some((option) => option.textContent === "Backlog") && [...select.options].some((option) => option.textContent === "Done") && [...select.options].some((option) => option.textContent === "Cancelled");
-  });
-  const backlogId = await targetState.locator("option", { hasText: "Backlog" }).getAttribute("value");
-  check(await targetState.inputValue() === backlogId, "accept did not default to the first Backlog State");
-  await targetState.selectOption({ label: "Done" });
+  const targetState = acceptDialog.getByRole("combobox", { name: translate("workItems.state") });
+  await targetState.click();
+  const backlogOption = page.getByRole("option", { name: "Backlog", exact: true });
+  await backlogOption.waitFor();
+  await page.getByRole("option", { name: "Done", exact: true }).waitFor();
+  await page.getByRole("option", { name: "Cancelled", exact: true }).waitFor();
+  const backlogId = await backlogOption.getAttribute("data-value");
+  check(!!backlogId && await targetState.getAttribute("data-value") === backlogId, "accept did not default to the first Backlog State");
+  await page.getByRole("option", { name: "Done", exact: true }).click();
   await acceptDialog.getByRole("button", { name: translate("intake.accept"), exact: true }).click();
   await acceptDialog.waitFor({ state: "detached" });
   await page.getByTestId("intake-MOB-1").waitFor({ state: "detached" });
@@ -351,8 +378,16 @@ try {
   await page.getByRole("menuitem", { name: translate("intake.snooze"), exact: true }).click();
   const tomorrow = new Date(Date.now() + 86_400_000);
   const pad = (n: number) => String(n).padStart(2, "0");
-  await page.getByRole("dialog").getByLabel(translate("intake.snoozeTill")).fill(`${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())}T10:00`);
+  const snoozeDialog = page.getByRole("dialog");
+  await chooseDate(snoozeDialog.getByRole("button", { name: new RegExp(`^${translate("intake.snoozeTill")}:`) }), `${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())}`);
+  // Minute precision, as the old datetime-local field had: 10:17 must reach the API as 10:17 local time.
+  const snoozeTime = snoozeDialog.getByLabel("Time", { exact: true });
+  await snoozeTime.fill("10:17");
+  check(await snoozeTime.inputValue() === "10:17", "snooze time must hold 10:17 before saving");
+  const snoozeRequest = page.waitForRequest((request) => request.url().includes("/actions/snooze_intake_item"));
   await page.getByRole("dialog").getByRole("button", { name: translate("intake.snooze"), exact: true }).click();
+  const snoozedTill = new Date((await snoozeRequest).postDataJSON().snoozedTill as string);
+  check(snoozedTill.getDate() === tomorrow.getDate() && snoozedTill.getHours() === 10 && snoozedTill.getMinutes() === 17, `snooze must send tomorrow 10:17 local, sent ${snoozedTill.toISOString()}`);
   await page.getByRole("dialog").waitFor({ state: "detached" });
   await page.getByTestId("intake-MOB-3").getByTestId("intake-status").getByText(translate("intake.status.snoozed")).waitFor();
   await page.getByTestId("intake-MOB-3").click();

@@ -1,11 +1,12 @@
 // Browser end-to-end flow: Modules pages (list and grid, create, edit, properties sidebar, add and remove work items, archive, delete).
 // Run with `bun run e2e` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
-import { chromium, type Page } from "playwright";
+import { chromium, type Locator, type Page } from "playwright";
 import { mkdir } from "node:fs/promises";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { chooseDate } from "../tools/choose-date";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31137);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52137);
@@ -35,6 +36,11 @@ try {
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const call = async <T>(name: string, body: unknown) => { const response = await context.request.post(`${api}/actions/${name}`, { data: body }); if (!response.ok()) throw new Error(`${name} failed: ${response.status()}`); return await response.json() as T; };
   const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
+  const setDate = (scope: Page | Locator, label: string, value: string) => chooseDate(scope.getByRole("button", { name: new RegExp(`^${label}:`) }), value);
+  const chooseSelect = async (label: string, option: string) => {
+    await page.getByRole("combobox", { name: label }).click();
+    await page.getByRole("option", { name: option, exact: true }).click();
+  };
   await page.goto(web);
   await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
   await page.getByLabel(translate("auth.name")).fill("Modules Tester");
@@ -110,12 +116,17 @@ try {
   await reopenedModal.getByRole("toolbar", { name: t("wiki.toolbar") }).getByRole("button", { name: t("editor.sourceMode") }).click();
   const status = reopenedModal.getByRole("button", { name: new RegExp(`^${t("modules.status")}:`) });
   await status.click();
-  const dates = await reopenedModal.getByLabel(t("modules.start")).evaluate((element) => {
-    const row = element.closest("div.flex");
-    return row?.getBoundingClientRect().toJSON();
-  });
-  const statusMenu = await page.locator('[role="menu"]').last().boundingBox();
-  check(Boolean(dates && statusMenu && (statusMenu.y + statusMenu.height <= dates.top || statusMenu.y >= dates.bottom)), "Status options should not cover the date row");
+  await page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished.catch(() => undefined))));
+  const dates = await reopenedModal.getByTestId("module-date-fields").boundingBox();
+  // The menu animates open; measure it once its box stops moving, or a mid-animation box makes the overlap check flaky.
+  let statusMenu = await page.locator('[role="menu"]').last().boundingBox();
+  for (let settle = 0; settle < 40; settle++) {
+    await Bun.sleep(100);
+    const next = await page.locator('[role="menu"]').last().boundingBox();
+    if (next && statusMenu && next.y === statusMenu.y && next.height === statusMenu.height) break;
+    statusMenu = next;
+  }
+  check(Boolean(dates && statusMenu && (statusMenu.y + statusMenu.height <= dates.y || statusMenu.y >= dates.y + dates.height)), "Status options should not cover the date row");
   check(await reopenedModal.evaluate((element) => element.scrollHeight <= element.clientHeight), "Opening Status should not add a dialog scrollbar");
   await page.getByRole("menuitemradio", { name: t("modules.status.in-progress") }).click();
   await reopenedModal.getByRole("button", { name: new RegExp(`^${t("modules.lead")}:`) }).click();
@@ -123,8 +134,8 @@ try {
   await reopenedModal.getByRole("button", { name: new RegExp(`^${t("modules.members")}:`) }).click();
   await page.getByRole("menuitemcheckbox", { name: "Modules Tester" }).click();
   await page.keyboard.press("Escape");
-  await reopenedModal.getByLabel(t("modules.start")).fill("2026-01-01");
-  await reopenedModal.getByLabel(t("modules.end")).fill("2026-03-01");
+  await setDate(reopenedModal, t("modules.start"), "2026-01-01");
+  await setDate(reopenedModal, t("modules.end"), "2026-03-01");
   await reopenedModal.getByRole("button", { name: t("modules.create"), exact: true }).click();
   await reopenedModal.waitFor({ state: "detached" });
   const row = page.getByTestId("module-row-Auth");
@@ -151,10 +162,14 @@ try {
   await page.screenshot({ path: `${shots}/modules-list-1440.png` });
   await page.screenshot({ path: `${auditAfter}/modules-1440-light.png`, fullPage: true });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+  await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition).map((animation) => animation.finished))); // colour transitions must settle before the shot
   await page.screenshot({ path: `${auditAfter}/modules-1440-dark.png`, fullPage: true });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
-  const filterHeights = await page.getByTestId("module-filters").locator("input, [role=combobox]").evaluateAll((controls) => controls.map((control) => control.getBoundingClientRect().height));
+  // Visible controls only: Base UI keeps 1px aria-hidden inputs behind its selects, which are not touch targets.
+  const filterHeights = await page.getByTestId("module-filters").locator(`input, [role=combobox], button[aria-label^="${t("modules.dateFrom")}:"], button[aria-label^="${t("modules.dateTo")}:"]`).evaluateAll((controls) => controls.filter((control) => !control.closest('[aria-hidden="true"]')).map((control) => control.getBoundingClientRect().height));
   check(filterHeights.every((height) => height >= 44), `Module filter controls should meet the 44px touch target: ${filterHeights.join(", ")}`);
+  const filterBoxes = await page.getByTestId("module-filters").locator(`input, [role=combobox], button[aria-label^="${t("modules.dateFrom")}:"], button[aria-label^="${t("modules.dateTo")}:"]`).evaluateAll((controls) => controls.filter((control) => !control.closest('[aria-hidden="true"]')).map((control) => { const box = control.getBoundingClientRect(); return { height: box.height, centerY: box.top + box.height / 2 }; }));
+  check(filterBoxes.every((box) => Math.abs(box.height - filterBoxes[0]!.height) <= 1 && Math.abs(box.centerY - filterBoxes[0]!.centerY) <= 1), `Module filter controls should share one height and centre line: ${JSON.stringify(filterBoxes)}`);
 
   // Grid display.
   await page.getByRole("button", { name: t("modules.display.grid"), exact: true }).click();
@@ -177,8 +192,8 @@ try {
     await page.getByRole("combobox", { name: label }).click();
     await page.getByRole("option", { name: option, exact: true }).click();
   }
-  await page.locator('input[type="date"]').nth(0).fill("2026-02-01");
-  await page.locator('input[type="date"]').nth(1).fill("2026-02-28");
+  await setDate(page, t("modules.dateFrom"), "2026-02-01");
+  await setDate(page, t("modules.dateTo"), "2026-02-28");
   await page.getByTestId("module-row-Authentication").waitFor();
   await page.getByRole("button", { name: t("modules.display.grid"), exact: true }).click();
   await page.getByTestId("module-card-Authentication").waitFor();
@@ -216,9 +231,9 @@ try {
   check((await page.getByTestId("module-items-count").innerText()) === "0/2", "count should be 0/2");
   await page.getByText(`${t("modules.blocked")} · 0`, { exact: true }).waitFor();
   await page.getByText(`${t("modules.overdue")} · 0`, { exact: true }).waitFor();
-  await page.getByLabel(t("modules.breakdown"), { exact: true }).selectOption("assignee");
+  await chooseSelect(t("modules.breakdown"), t("modules.breakdown.assignee"));
   await page.getByText("Unassigned", { exact: true }).waitFor();
-  await page.getByLabel(t("modules.breakdown"), { exact: true }).selectOption("state");
+  await chooseSelect(t("modules.breakdown"), t("modules.breakdown.state"));
 
   // Module details panel: click, Mod+I, reload persistence, and full-width reflow without horizontal page scroll.
   const moduleToggle = () => page.getByRole("button", { name: t("detailsPanel.hide") });
@@ -249,10 +264,9 @@ try {
   await side.getByRole("button", { name: new RegExp(`^${t("modules.status")}:`) }).click();
   await page.getByRole("menuitemradio", { name: t("modules.status.completed") }).click();
   await side.getByRole("button", { name: `${t("modules.status")}: ${t("modules.status.completed")}` }).waitFor();
-  await side.getByLabel(t("modules.end")).fill("2026-04-01");
-  await side.getByLabel(t("modules.end")).evaluate((el) => el.blur());
+  await chooseDate(side.getByRole("button", { name: new RegExp(`^${t("modules.end")}:`) }), "2026-04-01");
   await page.reload();
-  check((await page.getByRole("complementary", { name: t("modules.properties") }).getByLabel(t("modules.end")).inputValue()) === "2026-04-01", "end date not saved");
+  check((await page.getByRole("complementary", { name: t("modules.properties") }).getByRole("button", { name: new RegExp(`^${t("modules.end")}:`) }).locator("[data-date-value]").getAttribute("data-date-value")) === "2026-04-01", "end date not saved");
   await page.getByRole("button", { name: new RegExp(`^${t("modules.lead")}:`) }).click();
   await page.getByRole("menuitemradio", { name: t("modules.noLead") }).click();
   await page.getByRole("button", { name: `${t("modules.lead")}: ${t("modules.noLead")}` }).waitFor();

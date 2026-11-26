@@ -12,6 +12,7 @@ import type { Option } from "./property-dropdowns";
 
 import { Checkbox } from "@/ui/checkbox";
 import { Input } from "@/ui/input";
+import { DatePicker } from "@/ui/date-picker";
 import { Textarea } from "@/ui/textarea";
 const t = (key: string) => translate(key as MessageKey);
 const ghost = "flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-sm font-medium text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-sm:min-h-9";
@@ -69,8 +70,8 @@ export function FilterPicker({ sections, filters, count, onChange, onClear }: { 
             <span>{t(`layout.filter.${key}`)}</span>{(range.from || range.to) && <span className="rounded bg-muted px-1.5 text-xs text-muted-foreground">1</span>}</Button>
           {expanded && <fieldset className="m-0 grid gap-1 border-0 p-0 px-2" aria-label={t(`layout.filter.${key}`)}>
             <legend className="sr-only">{t(`layout.filter.${key}`)}</legend>
-            <label className="my-0 grid gap-1 text-xs text-muted-foreground">{t("layout.filter.from")}<Input type="date" value={range.from} className="min-h-9 rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring" onChange={(event) => onChange({ ...filters, [key]: { ...range, from: event.target.value } })} /></label>
-            <label className="my-0 grid gap-1 text-xs text-muted-foreground">{t("layout.filter.to")}<Input type="date" value={range.to} className="min-h-9 rounded-md border border-input bg-background px-2 py-1.5 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring" onChange={(event) => onChange({ ...filters, [key]: { ...range, to: event.target.value } })} /></label>
+            <label className="my-0 grid gap-1 text-xs text-muted-foreground">{t("layout.filter.from")}<DatePicker label={t("layout.filter.from")} value={range.from} onChange={(value) => onChange({ ...filters, [key]: { ...range, from: value } })} /></label>
+            <label className="my-0 grid gap-1 text-xs text-muted-foreground">{t("layout.filter.to")}<DatePicker label={t("layout.filter.to")} value={range.to} field="due" onChange={(value) => onChange({ ...filters, [key]: { ...range, to: value } })} /></label>
           </fieldset>}
         </div>;
       })}

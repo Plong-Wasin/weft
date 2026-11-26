@@ -47,7 +47,7 @@ export function formatDay(value: string) {
   return new Intl.DateTimeFormat(getLocale() === "th" ? "th-TH" : "en-US", { dateStyle: "medium", timeZone: "UTC" }).format(new Date(`${value}T00:00:00Z`));
 }
 
-function Trigger({ label, children }: { label: string; children: React.ReactNode }) { return <span title={label} className="flex items-center gap-1.5">{children}</span>; }
+function Trigger({ label, children }: { label: string; children: React.ReactNode }) { return <span title={label} className="flex min-w-0 items-center gap-1.5">{children}</span>; }
 
 /** A read-only property chip that can reveal its full value without requiring hover. */
 function Static({ label, children, quiet, className }: { label: string; children: React.ReactNode; quiet?: boolean; className?: string }) {
@@ -105,11 +105,11 @@ function PickerBody({ label, options, onPick, searchAlways, children }: { label:
 }
 
 /** Inline dropdown that picks one option (state, priority, cycle). */
-export function SingleSelect({ label, summary, display, options, value, onSelect, readOnly, icon, iconOnly, hideIconOnlyTextOnPhone, quiet }: { label: string; summary: string; /** Visible text when it differs from the accessible value (a muted dash for an empty list cell). */ display?: string; options: Option[]; value: string; onSelect: (id: string) => void; readOnly?: boolean; icon?: React.ReactNode; iconOnly?: boolean; hideIconOnlyTextOnPhone?: boolean; quiet?: boolean }) {
+export function SingleSelect({ label, summary, display, options, value, onSelect, readOnly, icon, iconOnly, hideIconOnlyTextOnPhone, quiet, className: triggerClass }: { label: string; summary: string; /** Visible text when it differs from the accessible value (a muted dash for an empty list cell). */ display?: string; options: Option[]; value: string; onSelect: (id: string) => void; readOnly?: boolean; icon?: React.ReactNode; iconOnly?: boolean; hideIconOnlyTextOnPhone?: boolean; quiet?: boolean; className?: string }) {
   const name = `${label}: ${summary}`;
-  const className = chipClass(quiet, iconOnly);
-  if (readOnly) return <Static label={name} quiet={quiet} className={className}>{icon}{!iconOnly && <span className={`max-w-32 truncate ${display ? "text-muted-foreground" : ""}`} title={summary}>{display ?? summary}</span>}</Static>;
-  return <Popover label={name} className={className} panelRole="dialog" panelClassName="max-h-72 w-52 overflow-auto" trigger={<Trigger label={name}>{icon}<span className={`${iconOnly ? hideIconOnlyTextOnPhone ? "hidden" : "hidden text-11 max-sm:inline" : "max-w-32 truncate"} ${display ? "text-muted-foreground" : ""}`}>{display ?? summary}</span></Trigger>}>
+  const buttonClass = triggerClass ? `${chipClass(quiet, iconOnly)} ${triggerClass}` : chipClass(quiet, iconOnly);
+  if (readOnly) return <Static label={name} quiet={quiet} className={buttonClass}>{icon}{!iconOnly && <span className={`max-w-32 truncate ${display ? "text-muted-foreground" : ""}`} title={summary}>{display ?? summary}</span>}</Static>;
+  return <Popover label={name} className={buttonClass} panelRole="dialog" panelClassName="max-h-72 w-52 overflow-auto" trigger={<Trigger label={name}>{icon}<span className={`${iconOnly ? hideIconOnlyTextOnPhone ? "hidden" : "hidden text-11 max-sm:inline" : "min-w-0 flex-1 max-w-32 truncate"} ${display ? "text-muted-foreground" : ""}`}>{display ?? summary}</span></Trigger>}>
     {(close) => <PickerBody label={label} options={options} onPick={(option) => { close(); if (option.id !== value) onSelect(option.id); }}>
       {(visible, activeId, optionId) => visible.map((option) => <Button key={option.id} id={optionId(option)} type="button" role="menuitemradio" aria-checked={option.id === value} data-active={option.id === activeId || undefined} className={cn(optionClass, "data-[active=true]:bg-accent")}
         onClick={() => { close(); if (option.id !== value) onSelect(option.id); }}>
@@ -120,20 +120,21 @@ export function SingleSelect({ label, summary, display, options, value, onSelect
 }
 
 /** Picks, changes or clears the Estimate point of a work item. Renders nothing while the project has no turned-on Estimate. */
-export function EstimateSelect({ estimate, pointId, onSelect, readOnly, iconOnlyWhenEmpty, quiet, emptyLabel }: { estimate: Estimate | null; pointId: string | null; onSelect: (pointId: string | null) => void; readOnly?: boolean; iconOnlyWhenEmpty?: boolean; quiet?: boolean; emptyLabel?: string }) {
+export function EstimateSelect({ estimate, pointId, onSelect, readOnly, iconOnlyWhenEmpty, quiet, emptyLabel, className }: { estimate: Estimate | null; pointId: string | null; onSelect: (pointId: string | null) => void; readOnly?: boolean; iconOnlyWhenEmpty?: boolean; quiet?: boolean; emptyLabel?: string; className?: string }) {
   if (!estimate?.enabled) return null;
   const point = estimate.points.find((candidate) => candidate.id === pointId)?.value;
   const summary = point ?? t("workItems.noEstimate");
   const icon = <Sigma aria-hidden size={14} className="text-muted-foreground" />;
-  return <SingleSelect label={t("workItems.estimate")} summary={summary} display={point === undefined ? emptyLabel : undefined} value={pointId ?? ""} readOnly={readOnly} quiet={quiet} icon={icon} iconOnly={iconOnlyWhenEmpty && !pointId}
+  return <SingleSelect label={t("workItems.estimate")} summary={summary} display={point === undefined ? emptyLabel : undefined} value={pointId ?? ""} readOnly={readOnly} quiet={quiet} icon={icon} iconOnly={iconOnlyWhenEmpty && !pointId} className={className}
     options={[{ id: "", name: t("workItems.noEstimate") }, ...estimate.points.map((point) => ({ id: point.id, name: point.value }))]} onSelect={(id) => onSelect(id || null)} />;
 }
 
 /** Inline dropdown that toggles any number of options (assignees, labels, modules); it stays open while picking. */
-export function MultiSelect({ label, summary, options, selected, onToggle, readOnly, icon, onOpen, searchAlways, quiet }: { label: string; summary: React.ReactNode; options: Option[]; selected: string[]; onToggle: (id: string, on: boolean) => void; readOnly?: boolean; icon?: React.ReactNode; onOpen?: () => void; /** Shows the search field whatever the number of options (the Assignee picker). */ searchAlways?: boolean; quiet?: boolean }) {
+export function MultiSelect({ label, summary, options, selected, onToggle, readOnly, icon, onOpen, searchAlways, quiet, className: triggerClass }: { label: string; summary: React.ReactNode; options: Option[]; selected: string[]; onToggle: (id: string, on: boolean) => void; readOnly?: boolean; icon?: React.ReactNode; onOpen?: () => void; /** Shows the search field whatever the number of options (the Assignee picker). */ searchAlways?: boolean; quiet?: boolean; className?: string }) {
   const name = `${label}: ${selected.map((id) => options.find((option) => option.id === id)?.name ?? "").filter(Boolean).join(", ") || "—"}`;
-  if (readOnly) return <Static label={name} quiet={quiet}>{icon}{summary}</Static>;
-  return <Popover label={name} className={chipClass(quiet)} panelRole="dialog" panelClassName="max-h-72 w-52 !min-w-0 overflow-auto" onOpen={onOpen} trigger={<Trigger label={name}>{icon}{summary}</Trigger>}>
+  const buttonClass = triggerClass ? `${chipClass(quiet)} ${triggerClass}` : chipClass(quiet);
+  if (readOnly) return <Static label={name} quiet={quiet} className={buttonClass}>{icon}{summary}</Static>;
+  return <Popover label={name} className={buttonClass} panelRole="dialog" panelClassName="max-h-72 w-52 !min-w-0 overflow-auto" onOpen={onOpen} trigger={<Trigger label={name}>{icon}{summary}</Trigger>}>
     {() => options.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-muted-foreground">—</p> : <PickerBody label={label} options={options} searchAlways={searchAlways} onPick={(option) => { if (isPickable(option)) onToggle(option.id, !selected.includes(option.id)); }}>
       {(visible, activeId, optionId) => <>{[false, true].map((agents) => {
       const group = visible.filter((option) => !!option.isAgent === agents);

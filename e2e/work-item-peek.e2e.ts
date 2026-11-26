@@ -5,6 +5,7 @@ import { mkdirSync } from "node:fs";
 import { translate } from "../packages/shared/src";
 import { comments, createDatabase } from "../packages/db/src";
 import { reviewShots } from "../tools/visual/paths";
+import { chooseDate, expectDate } from "../tools/choose-date";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3107);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5207);
@@ -62,6 +63,7 @@ try {
   const [project] = await call<Array<{ id: string }>>("list_projects", { workspaceId: me.workspaces[0]!.id, archived: false });
   const projectId = project!.id;
   const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+  const setDate = async (scope: import("playwright").Locator, label: string, value: string) => await chooseDate(scope.getByRole("button", { name: new RegExp(`^${label}:`) }), value);
   const label = await call<{ id: string }>("create_label", { projectId, name: "Bug" });
   const cycle = await call<{ id: string }>("create_cycle", { projectId, name: "Sprint 1", startDate: day(-1), endDate: day(6) });
   const module = await call<{ id: string }>("create_module", { projectId, name: "Auth" });
@@ -314,6 +316,7 @@ try {
   for (const [theme, width, height] of [["light", 1440, 900], ["dark", 1440, 900], ["light", 768, 900], ["dark", 768, 900], ["light", 390, 844], ["dark", 390, 844]] as const) {
     await page.setViewportSize({ width, height });
     await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+    await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition).map((animation) => animation.finished))); // colour transitions must settle before the shot
     await page.screenshot({ path: `${shots}/ticket13-work-item-page-${theme}-${width}.png`, fullPage: true });
   }
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -420,6 +423,35 @@ try {
   await page.getByRole("button", { name: translate("workItems.addNew"), exact: true }).first().click();
   const modal = page.getByRole("dialog", { name: translate("workItems.modal.title") });
   await modal.waitFor();
+  const propertyGrid = modal.getByTestId("create-property-grid");
+  const propertyLayout = await propertyGrid.evaluate((grid) => {
+    const buttons = [...grid.querySelectorAll<HTMLButtonElement>(":scope > * button")];
+    const rects = buttons.map((button) => ({ ...button.getBoundingClientRect().toJSON(), parent: Boolean(button.closest('[data-testid="create-parent-control"]')) }));
+    const glyphs = buttons.flatMap((button) => {
+      const walker = document.createTreeWalker(button, NodeFilter.SHOW_TEXT);
+      const ranges: Array<{ left: number; right: number; top: number; bottom: number; width: number; height: number; text: string }> = [];
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (!node.textContent?.trim() || node.parentElement?.closest('[aria-hidden="true"]')) continue;
+        const range = document.createRange(); range.selectNodeContents(node);
+        ranges.push(...[...range.getClientRects()].map((rect) => ({ ...rect.toJSON(), text: node.textContent?.trim() ?? "" })));
+      }
+      const bounds = button.getBoundingClientRect();
+      return ranges.map((rect) => ({ inside: rect.left >= bounds.left + 4 && rect.right <= bounds.right - 4 && rect.top >= bounds.top && rect.bottom <= bounds.bottom, width: rect.width, height: rect.height, text: rect.text, left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, buttonLeft: bounds.left, buttonRight: bounds.right }));
+    });
+    return { rects, glyphs };
+  });
+  check(propertyLayout.rects.length >= 6, "create property grid lost one or more work-item property controls");
+  check(propertyLayout.rects.every((rect, index, all) => Math.abs(rect.height - all[0]!.height) < 1), "create property controls do not have equal heights");
+  const standardWidths = propertyLayout.rects.filter((rect) => !rect.parent).map((rect) => rect.width);
+  check(standardWidths.every((width) => Math.abs(width - standardWidths[0]!) < 1), "create property controls do not have equal column widths");
+  check(propertyLayout.rects.filter((rect) => rect.parent).every((rect) => rect.width >= standardWidths[0]!), "the parent control does not have enough width for its visible label");
+  check(propertyLayout.rects.every((rect, _, all) => all.filter((other) => Math.abs(other.y - rect.y) < 1).every((other) => Math.abs((rect.y + rect.height / 2) - (other.y + other.height / 2)) < 1)), "create property controls are not center-aligned within each row");
+  check(propertyLayout.rects.every((rect, index, all) => all.every((other, otherIndex) => index === otherIndex || rect.right <= other.x + 1 || other.right <= rect.x + 1 || rect.bottom <= other.y + 1 || other.bottom <= rect.y + 1)), "create property controls overlap sibling boxes");
+  check(propertyLayout.glyphs.every((glyph) => glyph.inside && glyph.width > 0 && glyph.height > 0), `create property label glyphs are clipped by their controls: ${JSON.stringify(propertyLayout.glyphs.filter((glyph) => !glyph.inside))}`);
+  const primaryColor = await modal.getByRole("button", { name: translate("workItems.modal.submit") }).evaluate((element) => getComputedStyle(element).backgroundColor);
+  const cancelColor = await modal.getByRole("button", { name: translate("workItems.modal.cancel"), exact: true }).last().evaluate((element) => getComputedStyle(element).backgroundColor);
+  check(primaryColor !== cancelColor, "Create work item should be visually primary to Cancel");
   const titleField = modal.getByRole("textbox", { name: translate("workItems.titleField") });
   check(await titleField.evaluate((element) => element === document.activeElement), "create dialog did not focus the first field");
   await page.keyboard.press("Shift+Tab");
@@ -439,11 +471,60 @@ try {
   await modalPick(translate("workItems.cycle"), "Sprint 1");
   await modalPick(translate("workItems.modules"), "Auth", "menuitemcheckbox");
   await modalPick(translate("workItems.modal.parent"), "MOB-2 Bravo");
-  await modal.getByLabel(translate("workItems.startDate")).fill(day(2));
-  await modal.getByLabel(translate("workItems.dueDate")).fill(day(5));
+  // Keyboard-only Due date while the 1st of the shown month is out of bounds: Start on the 15th disables the 1st-14th,
+  // and the grid must still hold exactly one Tab stop on a pickable day (WAI-ARIA date picker keys).
+  const keyDay = (value: string, days: number) => { const date = new Date(`${value}T00:00:00Z`); date.setUTCDate(date.getUTCDate() + days); return date.toISOString().slice(0, 10); };
+  const keyMonth = (value: string, months: number) => { const [y, m, d] = value.split("-").map(Number); const last = new Date(Date.UTC(y!, m! - 1 + months + 1, 0)).getUTCDate(); return new Date(Date.UTC(y!, m! - 1 + months, Math.min(d!, last))).toISOString().slice(0, 10); };
+  const now = new Date();
+  const localToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const boundStart = `${localToday.slice(0, 7)}-15`;
+  const startTrigger = modal.getByRole("button", { name: new RegExp(`^${translate("workItems.startDate")}:`) });
+  const dueTrigger = modal.getByRole("button", { name: new RegExp(`^${translate("workItems.dueDate")}:`) });
+  await chooseDate(startTrigger, boundStart);
+  await dueTrigger.focus();
+  await page.keyboard.press("Enter");
+  const duePanel = page.locator('[data-popover-panel][role="dialog"]').filter({ has: page.locator("[data-date-picker]") }).last();
+  await duePanel.waitFor();
+  check(await duePanel.locator(`[data-date="${localToday.slice(0, 7)}-01"]`).getAttribute("aria-disabled") === "true", "the 1st must be out of bounds (before Start) for this keyboard check");
+  check(await duePanel.locator('[data-date][tabindex="0"]').count() === 1, "the calendar grid must keep exactly one Tab stop when the 1st is out of bounds");
+  const focusedDay = async () => await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.date ?? null);
+  for (let tab = 0; tab < 20 && !(await focusedDay()); tab++) await page.keyboard.press("Tab");
+  const firstStop = await focusedDay();
+  const expectedStop = localToday >= boundStart ? localToday : boundStart;
+  check(firstStop === expectedStop, `Tab must reach the calendar on ${expectedStop} (today or the first pickable day), reached ${firstStop}`);
+  const press = async (key: string, expected: string) => {
+    await page.keyboard.press(key);
+    for (let attempt = 0; attempt < 30 && await focusedDay() !== expected; attempt++) await Bun.sleep(50);
+    check(await focusedDay() === expected, `${key} must move calendar focus to ${expected}, focus is on ${await focusedDay()}`);
+  };
+  await press("ArrowRight", keyDay(firstStop!, 1));
+  await press("ArrowDown", keyDay(firstStop!, 8));
+  await press("ArrowUp", keyDay(firstStop!, 1));
+  await press("ArrowLeft", firstStop!);
+  await press("PageDown", keyMonth(firstStop!, 1));
+  await press("PageUp", firstStop!);
+  const weekday = (new Date(`${firstStop}T00:00:00Z`).getUTCDay() + 6) % 7;
+  await press("Home", keyDay(firstStop!, -weekday));
+  await press("End", keyDay(firstStop!, 6 - weekday));
+  const keyboardDue = keyDay(firstStop!, 6 - weekday);
+  await page.keyboard.press("Enter");
+  await expectDate(dueTrigger, keyboardDue, "keyboard-only Due date");
+  await duePanel.waitFor({ state: "hidden" });
+  check(await dueTrigger.evaluate((element) => element === document.activeElement), "picking a day must return focus to the Due date trigger");
+  await page.keyboard.press("Enter");
+  await duePanel.waitFor();
+  await page.keyboard.press("Escape");
+  await duePanel.waitFor({ state: "hidden" });
+  check(await dueTrigger.evaluate((element) => element === document.activeElement), "Escape must close the calendar and return focus to the Due date trigger");
+  check(await modal.isVisible(), "Escape in the calendar must not also close the Create dialog");
+  await chooseDate(dueTrigger, "");
+  await chooseDate(startTrigger, "");
+  await setDate(modal, translate("workItems.startDate"), day(2));
+  await setDate(modal, translate("workItems.dueDate"), day(5));
   await page.screenshot({ path: `${shots}/create-modal-1440-light.png` });
   await page.screenshot({ path: `${shadcnShots}/dialog-1440-light.png` });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+  await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition).map((animation) => animation.finished))); // colour transitions must settle before the shot
   await page.screenshot({ path: `${shadcnShots}/dialog-1440-dark.png` });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   await modal.getByRole("button", { name: translate("workItems.modal.submit") }).click();
@@ -501,6 +582,7 @@ try {
   for (const [theme, width, height] of [["light", 1440, 900], ["dark", 1440, 900], ["light", 768, 900], ["dark", 768, 900], ["light", 390, 844], ["dark", 390, 844]] as const) {
     await page.setViewportSize({ width, height });
     await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+    await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition).map((animation) => animation.finished))); // colour transitions must settle before the shot
     await page.screenshot({ path: `${shots}/ticket13-work-item-peek-${theme}-${width}.png` });
   }
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
@@ -518,6 +600,7 @@ try {
   await page.screenshot({ path: `${shots}/create-modal-390-light.png` });
   await page.screenshot({ path: `${shadcnShots}/dialog-390-light.png` });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+  await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition).map((animation) => animation.finished))); // colour transitions must settle before the shot
   await page.screenshot({ path: `${shadcnShots}/dialog-390-dark.png` });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   for (const [width, height] of [[1440, 900], [1024, 768], [820, 1180], [768, 1024], [844, 390], [667, 375], [390, 844]] as const) {
@@ -552,6 +635,8 @@ try {
   await peek.getByRole("button", { name: translate("workItems.delete"), exact: true }).click();
   await peek.waitFor({ state: "detached" });
   await page.goto(`${base}/issues`);
+  const itemsAfterDelete = await call<Item[]>("list_work_items", { projectId });
+  check(itemsAfterDelete.some((item) => item.displayId === "MOB-1"), `MOB-1 disappeared after deleting the modal item: ${JSON.stringify(itemsAfterDelete.map((item) => item.displayId))}`);
   await page.getByTestId("row-MOB-1").getByRole("link").waitFor();
   check(await page.getByRole("link", { name: "From the modal" }).count() === 0, "accepting the delete confirmation kept the work item");
   void t;

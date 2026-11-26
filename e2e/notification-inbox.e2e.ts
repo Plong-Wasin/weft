@@ -74,7 +74,7 @@ try {
   check(await page.getByText(translate("inbox.secretOutputBlockedDetail")).count() === 1, "Runtime secret alert did not render a generic retry message");
   await page.getByRole("link", { name: translate("topbar.notifications") }).waitFor();
   await page.getByRole("button", { name: translate("inbox.markAllRead") }).waitFor();
-  await page.getByRole("button", { name: new RegExp(translate("inbox.unreadTab")) }).waitFor();
+  await page.getByRole("tab", { name: new RegExp(translate("inbox.unreadTab")) }).waitFor();
   await page.screenshot({ path: `${shots}/inbox-1440.png`, fullPage: true });
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "desktop Inbox overflows horizontally");
 
@@ -194,7 +194,7 @@ try {
   await targetEntry().getByRole("button", { name: translate("inbox.markRead") }).waitFor();
   await assertUnread(1, "second manual mark unread");
   await page.waitForFunction((countLabel) => [...document.querySelectorAll('a[href$="/notifications"]')].some((link) => link.textContent?.includes("Inbox") && link.getAttribute("aria-label")?.includes(countLabel)), translate("inbox.unread").replace("{count}", "1"));
-  await page.getByRole("button", { name: new RegExp(translate("inbox.unreadTab")) }).click();
+  await page.getByRole("tab", { name: new RegExp(translate("inbox.unreadTab")) }).click();
   await page.getByRole("link", { name: /MOB-1 Inbox destination/ }).waitFor();
   await page.getByRole("button", { name: translate("inbox.markAllRead") }).click();
   await page.waitForFunction(() => [...document.querySelectorAll('a[href$="/notifications"]')].some((link) => link.textContent?.includes("Inbox") && link.getAttribute("aria-label") === "Inbox"));

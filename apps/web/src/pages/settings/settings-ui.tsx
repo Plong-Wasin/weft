@@ -2,7 +2,7 @@ import React from "react";
 import { translate, type MessageKey } from "@weft/shared";
 
 /** The destructive entry point: outlined, so the filled danger button is kept for a confirmation. */
-export const dangerOutline = "rounded-md border border-destructive px-3 py-1.5 text-sm font-medium text-destructive hover:bg-destructive/10 max-sm:min-h-11";
+export const dangerOutline = "rounded-md border border-destructive/40 px-3 py-1.5 text-sm font-medium text-destructive hover:border-destructive/60 hover:bg-destructive/10 pointer-coarse:min-h-11";
 export const dangerButton = "rounded-md bg-destructive px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-destructive/90";
 const InSettingsBlock = React.createContext(false);
 
@@ -41,7 +41,7 @@ export function Row({ children }: { children: React.ReactNode }) {
 
 /** Danger zone: a red-ruled block holding the destructive Actions of a settings page. */
 export function DangerZone({ heading, description, children }: { heading: MessageKey; description: string; children: React.ReactNode }) {
-  return <section aria-label={translate("settings.dangerZone")} className="mt-10 grid gap-3 rounded-xl border border-destructive bg-destructive/10/20 p-4 sm:p-5">
+  return <section aria-label={translate("settings.dangerZone")} className="mt-10 grid gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 sm:p-5">
     <h2 className="text-sm font-medium text-destructive">{translate("settings.dangerZone")}</h2>
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="grid gap-0.5"><p className="text-sm font-medium text-foreground">{translate(heading)}</p><p className="text-sm text-muted-foreground">{description}</p></div>

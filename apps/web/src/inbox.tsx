@@ -10,6 +10,8 @@ import { inboxNotificationIdFromSearch, notificationTarget, notificationTargetWi
 import { autoRuleReasonText } from "./auto-rule-reason";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { PageHeader } from "./shell/page-header";
+import { EmptyState } from "./empty-state";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 
 
 type Workspace = { id: string; slug: string; name: string };
@@ -91,15 +93,17 @@ export function InboxPanel({ workspace }: { workspace: Workspace }) {
   return <section aria-labelledby="inbox-title" className="w-full max-w-5xl">
     <PageHeader title={<span id="inbox-title">{translate("inbox.title")}</span>} actions={data ? <span className="text-sm text-muted-foreground">{translate("inbox.unread").replace("{count}", formatNumber(data.unreadCount))}</span> : undefined} className="mb-5" />
     {isError && <p role="alert">{translate("inbox.failed")}</p>}
-    <div className="mb-4 flex flex-wrap items-center gap-2">
-      <div role="group" aria-label={translate("inbox.title")} className="inline-flex rounded-lg border border-border bg-muted p-1">
-        <Button type="button" aria-pressed={unreadOnly} className={unreadOnly ? "primary" : "secondary"} onClick={() => setUnreadOnly(true)}>{translate("inbox.unreadTab")}{data ? ` (${formatNumber(data.unreadCount)})` : ""}</Button>
-        <Button type="button" aria-pressed={!unreadOnly} className={!unreadOnly ? "primary" : "secondary"} onClick={() => setUnreadOnly(false)}>{translate("inbox.all")}</Button>
+    <Tabs value={unreadOnly ? "unread" : "all"} onValueChange={(value) => setUnreadOnly(value === "unread")}>
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <TabsList aria-label={translate("inbox.title")}>
+          <TabsTrigger value="unread">{translate("inbox.unreadTab")}{data ? ` (${formatNumber(data.unreadCount)})` : ""}</TabsTrigger>
+          <TabsTrigger value="all">{translate("inbox.all")}</TabsTrigger>
+        </TabsList>
+        <Button type="button" variant="ghost" className="pointer-coarse:min-h-11" disabled={!data || data.unreadCount === 0 || markAll.isPending} onClick={() => markAll.mutate()}>{translate("inbox.markAllRead")}</Button>
       </div>
-      <Button className="secondary" disabled={!data || data.unreadCount === 0 || markAll.isPending} onClick={() => markAll.mutate()}>{translate("inbox.markAllRead")}</Button>
-    </div>
-    {data && shown.length === 0 && <p className="rounded-xl border border-border bg-card px-5 py-8 text-center text-[14px] text-muted-foreground">{translate("inbox.empty")}</p>}
-    <ul className="m-0 grid list-none gap-2 p-0">
+      <TabsContent value={unreadOnly ? "unread" : "all"} className="mt-0">
+      {data && shown.length === 0 && <EmptyState title={translate("inbox.empty")} icon={<Bell aria-hidden size={18} />} className="mx-0 max-w-none rounded-xl border border-border bg-card" />}
+      <ul className="m-0 grid list-none gap-2 p-0">
       {shown.map((item) => {
         const descriptionId = `notification-description-${item.id}`;
         const actionLabelId = `notification-action-${item.id}`;
@@ -114,6 +118,8 @@ export function InboxPanel({ workspace }: { workspace: Workspace }) {
         <Button type="button" aria-labelledby={`${actionLabelId} ${descriptionId}`} className="secondary col-start-2 min-h-11 justify-self-start sm:col-start-auto sm:min-h-9 sm:justify-self-end" disabled={markRead.isPending || markUnread.isPending} onClick={() => item.readAt ? markUnread.mutate(item.id) : markRead.mutate(item.id)}><span id={actionLabelId}>{actionLabel}</span></Button>
       </li>;
       })}
-    </ul>
+      </ul>
+      </TabsContent>
+    </Tabs>
   </section>;
 }

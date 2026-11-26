@@ -11,9 +11,9 @@ import { useWorkspace } from "../../layouts/workspace-layout";
 import { Avatar } from "../../avatar";
 import { SortableList, SortMenu } from "../../sortable-list";
 import { Popover, menuItemClass } from "../../shell/popover";
-import { roles, stateGroups, type Label, type Member, type Project, type WorkState } from "../../types";
+import { roles, stateGroupColors, stateGroups, type Label, type Member, type Project, type WorkState } from "../../types";
 import { ProjectMergeSetting } from "./project-merge-setting";
-import { DangerZone, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
+import { dangerOutline, DangerZone, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 import { WorkItemTypesSettings } from "./project-work-item-types";
 
 import { Checkbox } from "@/ui/checkbox";
@@ -25,7 +25,7 @@ export function ProjectSettingsLayout() {
   const { project, reload } = useRouteProject();
   if (project === undefined) return null;
   if (project === null) return <section><p role="alert">{translate("projects.notFound")}</p><Link to={paths.workspaceSettings(workspace.slug)}>{translate("settings.workspaceTitle")}</Link></section>;
-  return <div className="mx-auto w-full max-w-[900px]">
+  return <div className="w-full min-w-0">
     <p className="mb-2 flex items-center gap-2 text-sm text-muted-foreground"><Link to={paths.workItems(workspace.slug, project.key)}>{project.key} · {project.name}</Link>
       {project.archived && <span className="rounded-sm bg-muted px-1.5 py-0.5 text-xs">{translate("projects.archivedBadge")}</span>}</p>
     <Outlet context={{ project, reload } satisfies ProjectContext} />
@@ -75,7 +75,7 @@ export function ProjectGeneral() {
     </SettingsBlock>
     <Note note={note} error={failed} />
     {canAdmin && <DangerZone heading={project.archived ? "projects.unarchive" : "projects.archive"} description={translate(project.archived ? "settings.unarchiveDesc" : "settings.archiveDesc")}>
-      <Button type="button" variant={project.archived ? "secondary" : "danger"} onClick={async () => done(await action(project.archived ? "unarchive_project" : "archive_project", { projectId: project.id }))}>
+      <Button type="button" className={project.archived ? "secondary" : dangerOutline} onClick={async () => done(await action(project.archived ? "unarchive_project" : "archive_project", { projectId: project.id }))}>
         {translate(project.archived ? "projects.unarchive" : "projects.archive")}</Button>
     </DangerZone>}
   </section>;
@@ -181,21 +181,41 @@ export function ProjectLabels() {
   </section>;
 }
 
-const groupDot: Record<(typeof stateGroups)[number], string> = { backlog: "#a3a3a3", unstarted: "#737373", started: "#f59e0b", completed: "#16a34a", cancelled: "#dc2626" };
 
 export function ProjectStates() {
   const { project } = useProject();
+  const groupLabelId = React.useId();
+  const addStateButton = React.useRef<HTMLButtonElement>(null);
   const canAdmin = canAdminOf(project);
   const [states, setStates] = React.useState<WorkState[]>([]);
-  const [newName, setNewName] = React.useState<Record<string, string>>({});
-  const [adding, setAdding] = React.useState<Record<string, boolean>>({});
+  const [newName, setNewName] = React.useState("");
+  const [newGroup, setNewGroup] = React.useState<(typeof stateGroups)[number] | "">("");
+  const [adding, setAdding] = React.useState(false);
   const [editing, setEditing] = React.useState<{ id: string; name: string } | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
   const load = React.useCallback(async () => setStates(await action<WorkState[]>("list_states", { projectId: project.id }) ?? []), [project.id]);
   React.useEffect(() => { void load(); }, [load]);
   const guard = async (result: unknown) => { setNote(result === null ? translate("states.failed") : null); await load(); return result !== null; };
+  // The form unmounts on close, so focus goes back to the Add state button instead of falling to <body>.
+  const closeAdd = () => { setNewName(""); setNewGroup(""); setAdding(false); requestAnimationFrame(() => addStateButton.current?.focus()); };
+  const createState = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (newGroup && await guard(await action("create_state", { projectId: project.id, group: newGroup, name: newName }))) closeAdd();
+  };
   return <section>
     <SettingsHeader title={translate("states.title")} description={translate("settings.statesDesc")} />
+    {canAdmin && <div className="mb-5 grid justify-items-start gap-3">
+      <Button ref={addStateButton} type="button" data-testid="add-state" className="secondary pointer-coarse:min-h-11" aria-expanded={adding} onClick={() => setAdding(!adding)}>{translate("states.add")}</Button>
+      {adding && <form className="my-0 flex flex-wrap items-end gap-3" onSubmit={(event) => void createState(event)}>
+        <label><span id={groupLabelId}>{translate("analytics.axis.stateGroup")}</span><select aria-labelledby={groupLabelId} required autoFocus className="h-9 min-w-40 pointer-coarse:min-h-11" value={newGroup} onChange={(event) => setNewGroup(event.target.value as (typeof stateGroups)[number])}>
+          <option value="" disabled hidden />
+          {stateGroups.map((group) => <option key={group} value={group}>{translate(`states.group.${group}`)}</option>)}
+        </select></label>
+        <label>{translate("states.name")}<Input required value={newName} onChange={(event) => setNewName(event.target.value)} /></label>
+        <Button className="pointer-coarse:min-h-11">{translate("states.create")}</Button>
+        <Button type="button" className="secondary pointer-coarse:min-h-11" onClick={closeAdd}>{translate("settings.cancel")}</Button>
+      </form>}
+    </div>}
     {stateGroups.map((group) => {
       const inGroup = states.filter((state) => state.group === group);
       const reorder = (ids: string[]) => action("reorder_states", { projectId: project.id, group, stateIds: ids });
@@ -204,9 +224,9 @@ export function ProjectStates() {
         [ids[index], ids[index + delta]] = [ids[index + delta]!, ids[index]!];
         return reorder(ids);
       };
-      return <SettingsBlock key={group}>
-        <h2 className="flex items-center gap-2 text-sm font-medium text-muted-foreground"><span aria-hidden className="size-2.5 rounded-full" style={{ background: groupDot[group] }} />{translate(`states.group.${group}`)}</h2>
-        {inGroup.length > 0 && <SortableList ids={inGroup.map((state) => state.id)} disabled={!canAdmin || editing !== null} label={(id) => inGroup.find((state) => state.id === id)?.name ?? ""}
+      return <section key={group} className="mb-6 grid gap-2">
+        <h2 className="m-0 flex items-center gap-2 text-sm font-medium text-muted-foreground"><span aria-hidden className="size-2.5 rounded-full" style={{ background: stateGroupColors[group] }} />{translate(`states.group.${group}`)}</h2>
+        {inGroup.length > 0 && <SortableList ids={inGroup.map((state) => state.id)} disabled={!canAdmin || editing !== null} gripClassName="border-0 shadow-none pointer-coarse:size-11" label={(id) => inGroup.find((state) => state.id === id)?.name ?? ""}
           onReorder={async (ids) => { setStates((current) => [...current.filter((state) => state.group !== group), ...ids.map((id) => current.find((state) => state.id === id)!)]); await guard(await reorder(ids)); }}
           renderRow={(id, grip) => {
             const state = inGroup.find((candidate) => candidate.id === id)!;
@@ -215,8 +235,8 @@ export function ProjectStates() {
               {canAdmin && grip}
               {editing?.id === state.id ? <form className="my-0 flex flex-1 flex-wrap items-center gap-2" onSubmit={async (event) => { event.preventDefault(); if (await guard(await action("update_state", { stateId: state.id, name: editing.name }))) setEditing(null); }}>
                 <Input required aria-label={translate("states.name")} value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} />
-                <Button>{translate("labels.save")}</Button>
-                <Button type="button" className="secondary" onClick={() => setEditing(null)}>{translate("settings.cancel")}</Button>
+                <Button className="pointer-coarse:min-h-11">{translate("labels.save")}</Button>
+                <Button type="button" className="secondary pointer-coarse:min-h-11" onClick={() => setEditing(null)}>{translate("settings.cancel")}</Button>
               </form> : <>
                 <span className="min-w-0 flex-1 truncate">{state.name}</span>
                 {canAdmin && <Popover label={`${translate("sortable.actions")}: ${state.name}`} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-44">
@@ -230,18 +250,7 @@ export function ProjectStates() {
               </>}
             </>;
           }} />}
-        {canAdmin && <div className="grid justify-items-start gap-3">
-          <Button type="button" className="secondary" aria-expanded={adding[group] === true} onClick={() => setAdding({ ...adding, [group]: !adding[group] })}>{translate("states.add")}</Button>
-          {adding[group] && <form className="my-0 flex flex-wrap items-end gap-3" onSubmit={async (event) => {
-            event.preventDefault();
-            if (await guard(await action("create_state", { projectId: project.id, group, name: newName[group] ?? "" }))) { setNewName({ ...newName, [group]: "" }); setAdding({ ...adding, [group]: false }); }
-          }}>
-            <label>{translate("states.name")}<Input required autoFocus value={newName[group] ?? ""} onChange={(event) => setNewName({ ...newName, [group]: event.target.value })} /></label>
-            <Button>{translate("states.create")}</Button>
-            <Button type="button" className="secondary" onClick={() => setAdding({ ...adding, [group]: false })}>{translate("settings.cancel")}</Button>
-          </form>}
-        </div>}
-      </SettingsBlock>;
+      </section>;
     })}
     <Note note={note} error />
   </section>;

@@ -1,6 +1,7 @@
 // Browser end-to-end flow: submit a work item to Intake, accept it, check it leaves Triage and shows in the project list.
 // Run with `bun run e2e` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
 import { chromium, type Locator, type Page } from "playwright";
+import { mkdir } from "node:fs/promises";
 import { eq, like } from "drizzle-orm";
 import { createDatabase, projectMembers, projects as dbProjects, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -77,7 +78,7 @@ try {
       await dialog.getByRole("toolbar").getByRole("button", { name: translate("wiki.tool.bold") }).click();
     }
     if (properties) {
-      await dialog.getByLabel(translate("workItems.assignees")).selectOption(userRow!.id);
+      await chooseAssignee(dialog);
       const labels = dialog.getByRole("button", { name: new RegExp(`^${translate("workItems.labels")}:`) });
       await labels.click();
       await page.getByRole("searchbox", { name: translate("picker.search"), exact: true }).fill("E2E label");
@@ -93,6 +94,44 @@ try {
     await dialog.waitFor({ state: "detached" });
   };
   const detail = page.getByRole("region", { name: translate("intake.detail") });
+  const assigneePicker = (scope: Locator) => scope.getByRole("button", { name: new RegExp(`^${translate("workItems.assignees")}:`) });
+  const chooseAssignee = async (scope: Locator) => {
+    await assigneePicker(scope).click();
+    const member = page.getByRole("menuitemcheckbox", { name: "Intake Tester", exact: true });
+    await member.waitFor();
+    if (await member.getAttribute("aria-checked") !== "true") await member.click();
+    await page.keyboard.press("Escape");
+  };
+  const choosePriority = async (scope: Locator, value: string) => {
+    await scope.getByRole("combobox", { name: translate("intake.priority") }).click();
+    await page.getByRole("option", { name: translate(`workItems.priority.${value}`), exact: true }).click();
+  };
+  const assertRowsStable = async () => {
+    const rows = page.getByRole("list", { name: translate("intake.list") }).locator("li > button");
+    const metrics = await rows.evaluateAll((buttons) => buttons.map((button) => {
+      const bounds = button.getBoundingClientRect();
+      const title = button.querySelector<HTMLElement>("[title]");
+      if (!title) throw new Error("Intake row has no titled item text");
+      const range = document.createRange();
+      range.selectNodeContents(title);
+      const titleBounds = title.getBoundingClientRect();
+      return {
+        x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
+        titleText: title.textContent ?? "", titleTooltip: title.title,
+        titleBounds: { x: titleBounds.x, right: titleBounds.right, top: titleBounds.top, bottom: titleBounds.bottom },
+        glyphs: [...range.getClientRects()].map((rect) => ({ x: rect.x, right: rect.right, top: rect.top, bottom: rect.bottom })),
+      };
+    }));
+    check(metrics.length >= 2, `Intake row assertion needs at least two rows, got ${metrics.length}`);
+    for (let index = 0; index < metrics.length; index += 1) {
+      const row = metrics[index]!;
+      check(Math.abs(row.height - metrics[0]!.height) <= 1, `Intake rows have unequal heights: ${metrics.map(({ height }) => height).join(", ")}`);
+      const next = metrics[index + 1];
+      if (next) check(row.y + row.height <= next.y + 1, `Intake rows overlap vertically: ${JSON.stringify(row)} vs ${JSON.stringify(next)}`);
+      check(row.titleTooltip === row.titleText, `Intake title does not expose its full text: ${row.titleText}`);
+      check(row.glyphs.length > 0 && row.glyphs.every((glyph) => glyph.x >= row.titleBounds.x - 1 && glyph.right <= row.titleBounds.right + 1 && glyph.top >= row.titleBounds.top - 1 && glyph.bottom <= row.titleBounds.bottom + 1), `Intake title glyphs escape or clip inside their text box: ${JSON.stringify(row)}`);
+    }
+  };
   const decide = async (key: string, label: string) => {
     await page.getByTestId(`intake-${key}`).click();
     await detail.getByRole("button", { name: label, exact: true }).click();
@@ -158,6 +197,13 @@ try {
   await page.getByTestId("intake-MOB-1").waitFor();
   await detail.getByLabel(translate("intake.titleField")).waitFor();
   check(await detail.getByLabel(translate("intake.titleField")).inputValue() === "Dark mode please", "created title was not available for inline editing");
+  for (const fieldLabel of [translate("intake.priority"), translate("workItems.assignees"), translate("workItems.labels"), translate("workItems.dueDate")]) {
+    check(await detail.locator("dl").getByText(fieldLabel, { exact: true }).count() === 0, `Editable Intake field is repeated in the read-only summary: ${fieldLabel}`);
+  }
+  const acceptAction = detail.getByRole("button", { name: translate("intake.accept"), exact: true });
+  const rejectAction = detail.getByRole("button", { name: translate("intake.reject"), exact: true });
+  const [acceptBackground, rejectBackground] = await Promise.all([acceptAction.evaluate((element) => getComputedStyle(element).backgroundColor), rejectAction.evaluate((element) => getComputedStyle(element).backgroundColor)]);
+  check(acceptBackground !== rejectBackground, "Accept does not have primary emphasis over Reject");
   await detail.getByTestId("comment-editor").locator('[contenteditable="true"]').fill("Review discussion before acceptance");
   await detail.getByRole("button", { name: translate("comments.add"), exact: true }).click();
   await detail.getByText("Review discussion before acceptance", { exact: true }).waitFor();
@@ -181,13 +227,13 @@ try {
   await page.reload();
   await page.getByTestId("intake-MOB-1").click();
   await detail.getByLabel(translate("intake.titleField")).waitFor();
-  await submit("Secondary draft");
+  await submit("ขอเพิ่มฟังก์ชันส่งออก PDF ให้รองรับไฟล์ขนาดใหญ่", "Please add PDF export support");
   await detail.locator("header").getByText("MOB-2", { exact: true }).waitFor();
   await page.getByTestId("intake-MOB-1").click();
   await detail.locator("header").getByText("MOB-1", { exact: true }).waitFor();
   await detail.getByLabel(translate("intake.titleField")).fill("Dark theme please");
-  await detail.getByLabel(translate("intake.priority")).selectOption("high");
-  await detail.getByLabel(translate("workItems.assignees")).selectOption(userRow!.id);
+  await choosePriority(detail, "high");
+  await chooseAssignee(detail);
   await detail.getByTestId("comment-editor").locator('[contenteditable="true"]').fill("Keep the draft");
   await detail.getByRole("button", { name: translate("comments.add"), exact: true }).click();
   await detail.getByText("Keep the draft", { exact: true }).waitFor();
@@ -196,7 +242,7 @@ try {
   await page.reload();
   await page.getByTestId("intake-MOB-1").click();
   await detail.locator("header").getByText("MOB-1", { exact: true }).waitFor();
-  await detail.getByLabel(translate("intake.priority")).selectOption("high");
+  await choosePriority(detail, "high");
   check(await detail.getByLabel(translate("intake.titleField")).inputValue() === "Dark theme please", "editing after reload discarded the draft");
   const editing = detail.getByTestId("description-editor").locator('[contenteditable="true"]');
   await editing.fill("Updated request");
@@ -240,16 +286,39 @@ try {
   await page.getByTestId("intake-MOB-1").click();
   await reopened.locator("header").getByText("MOB-1", { exact: true }).waitFor();
   await expectValue(reopened.getByLabel(translate("intake.titleField")), "Dark theme please", "reopened title");
-  await expectValue(reopened.getByLabel(translate("intake.priority")), "high", "reopened priority");
+  check((await reopened.getByRole("combobox", { name: translate("intake.priority") }).innerText()).trim() === translate("workItems.priority.high"), "reopened priority was not High");
   await expectValue(reopened.getByLabel(translate("workItems.dueDate")), "2030-05-08", "reopened due date");
-  check(JSON.stringify(await reopened.getByLabel(translate("workItems.assignees")).evaluate((node: HTMLSelectElement) => [...node.selectedOptions].map((option) => option.value))) === JSON.stringify([userRow!.id]), "assignee did not survive reload");
+  await assigneePicker(reopened).waitFor();
+  await assigneePicker(reopened).click();
+  const selectedAssignee = page.getByRole("menuitemcheckbox", { name: "Intake Tester", exact: true });
+  await selectedAssignee.waitFor();
+  check(await selectedAssignee.getAttribute("aria-checked") === "true", "assignee did not survive reload");
+  await page.keyboard.press("Escape");
   check((await reopened.getByRole("button", { name: new RegExp(`^${translate("workItems.labels")}: .*E2E label`) }).count()) === 1, `label did not survive reload (${createdLabel.id})`);
   await reopened.getByTestId("description-editor").locator("strong").getByText("Updated request").waitFor();
   await submit("Export to CSV");
   await submit("Slow search");
   await page.getByTestId("intake-MOB-4").waitFor();
   await page.getByTestId("intake-open-count").getByText("4", { exact: true }).waitFor();
+  await assertRowsStable();
   await page.screenshot({ path: `${shots}/intake-1440-light.png` });
+  const auditShots = "/tmp/weft-ui-audit/after/intake";
+  await mkdir(auditShots, { recursive: true });
+  const captureIntake = async (name: string, width: number, height: number, colorScheme: "light" | "dark") => {
+    await page.setViewportSize({ width, height });
+    await page.emulateMedia({ colorScheme });
+    await page.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, colorScheme);
+    await page.screenshot({ path: `${auditShots}/${name}.png` });
+  };
+  await captureIntake("1440x900-light-en", 1440, 900, "light");
+  await captureIntake("1440x900-dark-en", 1440, 900, "dark");
+  await captureIntake("1024x768-light-en", 1024, 768, "light");
+  await captureIntake("820x1180-dark-en", 820, 1180, "dark");
+  await captureIntake("844x390-light-en", 844, 390, "light");
+  await captureIntake("390x844-light-en", 390, 844, "light");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
 
   // Triage items stay out of the normal list and out of search.
   await page.goto(`${web}/${slug}/projects/MOB/issues`);

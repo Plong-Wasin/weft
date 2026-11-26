@@ -1,4 +1,4 @@
-import { Button } from "@/ui/button";
+import { Button, buttonVariants } from "@/ui/button";
 import React from "react";
 import { Bot, Code2, Filter, Search, Sparkles, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -14,7 +14,7 @@ import { Checkbox } from "@/ui/checkbox";
 import { Input } from "@/ui/input";
 import { Textarea } from "@/ui/textarea";
 const t = (key: string) => translate(key as MessageKey);
-const ghost = "flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-sm font-medium text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-sm:min-h-9";
+const secondarySm = `${buttonVariants({ variant: "secondary", size: "sm" })} bg-transparent`;
 const chipClass = "flex items-center gap-1.5 rounded-md border border-transparent bg-muted py-0.5 pl-2 pr-1 text-12 text-foreground";
 
 export type FilterSection = { key: NamedFilter; options: Option[] };
@@ -35,7 +35,7 @@ export function FilterPicker({ sections, filters, count, onChange, onClear }: { 
   });
   const hasMatches = matchingSections.length > 0 || matchingDates.length > 0;
   const toggle = (key: NamedFilter, id: string, on: boolean) => onChange({ ...filters, [key]: on ? [...filters[key], id] : filters[key].filter((other) => other !== id) });
-  return <Popover label={label} className={ghost} panelRole="dialog" panelClassName="grid w-72 max-w-[calc(100vw-2rem)] max-h-[min(32rem,calc(100dvh-2rem))] gap-1 overflow-auto p-2" trigger={<><Filter aria-hidden size={14} /><span>{label}</span></>}>
+  return <Popover label={label} className={secondarySm} panelRole="dialog" panelClassName="grid w-72 max-w-[calc(100vw-2rem)] max-h-[min(32rem,calc(100dvh-2rem))] gap-1 overflow-auto p-2" trigger={<><Filter aria-hidden size={14} /><span>{label}</span></>}>
     {() => <>
       <label className="relative my-0 block"><span className="sr-only">{t("layout.filter.search")}</span>
         <Search aria-hidden size={14} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -136,12 +136,12 @@ function FilterQueryGenerate({ scope, onQuery }: { scope: FilterQueryScope; onQu
       <span className="flex items-center gap-2">
         <Input type="text" value={request} maxLength={1000} placeholder={t("layout.filterQuery.generate.placeholder")} className="min-w-0 flex-1 text-13" onChange={(event) => setRequest(event.target.value)}
           onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); void run(); } }} />
-        <Button type="button" disabled={busy || request.trim() === ""} className={ghost} onClick={() => void run()}><Sparkles aria-hidden size={14} /><span>{busy ? t("layout.filterQuery.generate.busy") : t("layout.filterQuery.generate.button")}</span></Button>
+        <Button type="button" variant="secondary" size="sm" className="bg-transparent" disabled={busy || request.trim() === ""} onClick={() => void run()}><Sparkles aria-hidden size={14} /><span>{busy ? t("layout.filterQuery.generate.busy") : t("layout.filterQuery.generate.button")}</span></Button>
       </span></label>
     {failure && <p role="alert" data-testid="filter-query-generate-error" className="my-0 text-13 text-destructive">{failure}</p>}
   </div>;
 }
 
 export function FilterQueryToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
-  return <Button type="button" aria-pressed={open} aria-label={t("layout.filterQuery.toggle")} title={t("layout.filterQuery.toggle")} className={`${ghost} ${open ? "bg-muted" : ""}`} onClick={onToggle}><Code2 aria-hidden size={14} /><span className="max-sm:sr-only">{t("layout.filterQuery.button")}</span></Button>;
+  return <Button type="button" variant="secondary" size="sm" className="bg-transparent" aria-pressed={open} aria-label={t("layout.filterQuery.toggle")} title={t("layout.filterQuery.toggle")} onClick={onToggle}><Code2 aria-hidden size={14} /><span className="max-sm:sr-only">{t("layout.filterQuery.button")}</span></Button>;
 }

@@ -101,6 +101,27 @@ try {
       check("no-horizontal-page-scroll", measurements.pageWidth <= measurements.viewportWidth, `${route.name} at ${viewport.suffix}: ${measurements.pageWidth}px > ${measurements.viewportWidth}px`);
       check("top-controls-not-clipped", measurements.topControls.every((control) => control.x >= 0 && control.right <= viewport.width && control.bottom <= viewport.height),
         `${route.name} at ${viewport.suffix}: ${JSON.stringify(measurements.topControls.filter((control) => control.x < 0 || control.right > viewport.width || control.bottom > viewport.height))}`);
+      if (route.name === "work-items-list" && (viewport.suffix === "390x844" || viewport.suffix === "844x390")) {
+        const listMetrics = await target.evaluate(() => {
+          const list = document.querySelector<HTMLElement>('[data-testid="work-items-list-container"]');
+          const rows = [...(list?.querySelectorAll<HTMLElement>("[data-list-row]") ?? [])];
+          const metadata = rows.map((row) => row.querySelector<HTMLElement>('[data-testid="work-item-row-metadata"]'));
+          return {
+            documentWidth: document.documentElement.scrollWidth,
+            viewportWidth: window.innerWidth,
+            listRight: list?.getBoundingClientRect().right ?? null,
+            listClientWidth: list?.clientWidth ?? null,
+            listScrollWidth: list?.scrollWidth ?? null,
+            rowsOverflow: rows.map((row) => row.scrollWidth > row.clientWidth + 1),
+            metadataOverflow: metadata.map((item) => item ? item.scrollWidth > item.clientWidth + 1 : true),
+          };
+        });
+        check("work-items-list-page-width-fits", listMetrics.documentWidth <= listMetrics.viewportWidth, `Work items at ${viewport.suffix}: ${JSON.stringify(listMetrics)}`);
+        check("work-items-list-content-fits", listMetrics.listRight !== null && listMetrics.listRight <= listMetrics.viewportWidth && listMetrics.listScrollWidth !== null && listMetrics.listClientWidth !== null && listMetrics.listScrollWidth <= listMetrics.listClientWidth + 1 && listMetrics.rowsOverflow.every((overflow) => !overflow) && listMetrics.metadataOverflow.every((overflow) => !overflow), `Work item rows and property chips at ${viewport.suffix}: ${JSON.stringify(listMetrics)}`);
+      }
+      if (route.name === "work-items-list" && viewport.suffix === "844x390") {
+        check("work-items-list-no-orphan-save-view", !(await target.getByRole("button", { name: translate("views.saveAs") }).isVisible()), "landscape phone hides the icon-only Save view control");
+      }
       check("no-sibling-control-overlap", !measurements.siblingControlOverlap, `${route.name} at ${viewport.suffix} has overlapping sibling controls`);
       if (route.auth && measurements.primary) {
         check("primary-control-visible", measurements.primary.x >= 0 && measurements.primary.right <= viewport.width && measurements.primary.y < viewport.height && measurements.primary.bottom > 0,

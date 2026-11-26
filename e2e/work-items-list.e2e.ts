@@ -301,7 +301,7 @@ try {
       check(titleWidth >= 140, `390px list title gets at least 140px (ListPhoneTitleWidth140): ${titleWidth}`);
       check(await firstRow.locator("[data-testid=list-property-wrap]").count() === 0, "390px list omits the empty property row (ListNoEmptySecondLine)");
       const denseRowMetadata = page.getByTestId("row-MOB-4").locator(":scope > div > div").nth(1);
-      check(await denseRowMetadata.evaluate((element) => element.scrollWidth > element.clientWidth), "390px list keeps the populated property chips in one horizontally scrollable metadata line (ListPhonePropertiesSingleLine)");
+      check(await denseRowMetadata.evaluate((element) => element.scrollWidth <= element.clientWidth + 1), "390px list wraps or truncates populated property chips inside the row (ListPhonePropertiesFitInsideRow)");
       for (const property of ["priority", "state"] as const) {
         const control = firstRow.getByRole("button", { name: new RegExp(`^${translate(`workItems.${property}`)}:`) });
         const visibleLabel = await control.evaluate((element) => element.innerText.trim() !== "");
@@ -433,6 +433,23 @@ try {
   const mobileContext = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, isMobile: true, hasTouch: true, storageState: await context.storageState() });
   const mobilePage = await mobileContext.newPage();
   await mobilePage.goto(mobileListUrl);
+  await mobilePage.getByTestId("row-MOB-1").waitFor();
+  const mobileListMetrics = await mobilePage.evaluate(() => {
+    const list = document.querySelector<HTMLElement>('[data-testid="work-items-list-container"]');
+    const rows = [...(list?.querySelectorAll<HTMLElement>("[data-list-row]") ?? [])];
+    const metadata = rows.map((row) => row.querySelector<HTMLElement>('[data-testid="work-item-row-metadata"]'));
+    return {
+      documentWidth: document.documentElement.scrollWidth,
+      viewportWidth: window.innerWidth,
+      listRight: list?.getBoundingClientRect().right ?? null,
+      listClientWidth: list?.clientWidth ?? null,
+      listScrollWidth: list?.scrollWidth ?? null,
+      rowsOverflow: rows.map((row) => row.scrollWidth > row.clientWidth + 1),
+      metadataOverflow: metadata.map((item) => item ? item.scrollWidth > item.clientWidth + 1 : true),
+    };
+  });
+  check(mobileListMetrics.documentWidth <= mobileListMetrics.viewportWidth, `390px phone list keeps the document within the viewport: ${JSON.stringify(mobileListMetrics)}`);
+  check(mobileListMetrics.listRight !== null && mobileListMetrics.listRight <= mobileListMetrics.viewportWidth && mobileListMetrics.listScrollWidth !== null && mobileListMetrics.listClientWidth !== null && mobileListMetrics.listScrollWidth <= mobileListMetrics.listClientWidth + 1 && mobileListMetrics.rowsOverflow.every((overflow) => !overflow) && mobileListMetrics.metadataOverflow.every((overflow) => !overflow), `390px work item rows and property chips fit inside the list card: ${JSON.stringify(mobileListMetrics)}`);
   const mobileRow = mobilePage.getByTestId("row-MOB-1");
   await mobileRow.getByRole("link", { name: "Alpha" }).waitFor();
   const rowCheckbox = mobileRow.getByRole("checkbox");
@@ -461,8 +478,18 @@ try {
   const addWorkItem = toolbar.getByRole("button", { name: translate("workItems.addNew"), exact: true });
   const saveView = toolbar.getByRole("button", { name: translate("views.saveAs") });
   const settingsLink = toolbar.getByRole("link", { name: translate("projects.settings"), exact: true });
-  const [addBox, saveBox, settingsControlBox] = await Promise.all([addWorkItem.boundingBox(), saveView.boundingBox(), settingsLink.boundingBox()]);
-  check(!!addBox && !!saveBox && !!settingsControlBox && Math.abs(addBox.y + addBox.height / 2 - (saveBox.y + saveBox.height / 2)) <= 1 && Math.abs(addBox.y + addBox.height / 2 - (settingsControlBox.y + settingsControlBox.height / 2)) <= 1, `390px Add work item, Save view and Settings stay in one control row without an orphan: ${JSON.stringify({ add: addBox, save: saveBox, settings: settingsControlBox })}`);
+  const [addBox, settingsBox, saveViewVisible] = await Promise.all([addWorkItem.boundingBox(), settingsLink.boundingBox(), saveView.isVisible()]);
+  check(!!addBox && !!settingsBox && Math.abs(addBox.y + addBox.height / 2 - (settingsBox.y + settingsBox.height / 2)) <= 1 && !saveViewVisible, "390px Add work item and Settings share one row and Save view leaves no orphan icon: " + JSON.stringify({ add: addBox, settings: settingsBox, saveViewVisible }));
+  const filterButton = toolbar.getByRole("button", { name: translate("layout.filters"), exact: true });
+  const queryButton = toolbar.getByRole("button", { name: translate("layout.filterQuery.toggle") });
+  const displayButton = toolbar.getByRole("button", { name: translate("layout.display") });
+  const selectVisual = mobilePage.locator("label").filter({ hasText: translate("bulk.selectShown") }).locator(":scope > span");
+  const secondaryMetrics = await Promise.all([filterButton, queryButton, displayButton, settingsLink, selectVisual].map(async (control) => control.evaluate((element) => {
+    const style = getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return { height: rect.height, borderWidth: style.borderTopWidth, background: style.backgroundColor };
+  })));
+  check(secondaryMetrics.every((metric) => metric.height <= 36 && metric.borderWidth === "1px" && (metric.background === "rgba(0, 0, 0, 0)" || metric.background === "transparent")), "390px secondary toolbar controls share the outline-sm treatment: " + JSON.stringify(secondaryMetrics));
   for (const theme of ["light", "dark"] as const) {
     await mobilePage.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
     await mobilePage.screenshot({ path: `${evidenceShots}/work-items-list-touch-390-${theme}.png`, fullPage: true });
@@ -584,8 +611,18 @@ try {
     await control.click();
   }
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.getByRole("link", { name: translate("cycles.title"), exact: true }).click();
-  await assertStableBounds(page.getByRole("tab", { name: new RegExp(translate("cycles.status.active")) }), "Tabs");
+  check(await page.evaluate(() => window.innerWidth === 1440 && window.innerHeight === 900), "Cycles sidebar check runs at the desktop viewport after phone screenshots");
+  // Shrinking below 1100px collapses the desktop sidebar; the shell intentionally keeps it collapsed after widening.
+  await page.getByRole("button", { name: translate("shell.expandSidebar") }).click();
+  await page.getByRole("button", { name: translate("shell.collapseSidebar") }).waitFor();
+  const cyclesLink = page.getByRole("link", { name: translate("cycles.title"), exact: true });
+  await page.waitForFunction((label) => [...document.querySelectorAll<HTMLAnchorElement>('#desktop-sidebar a')].some((link) => link.textContent.trim() === label && link.getBoundingClientRect().left >= 0), translate("cycles.title"));
+  const cyclesLinkBounds = await cyclesLink.boundingBox();
+  check(!!cyclesLinkBounds && cyclesLinkBounds.x >= 0 && cyclesLinkBounds.x + cyclesLinkBounds.width <= 1440 && cyclesLinkBounds.y >= 0 && cyclesLinkBounds.y + cyclesLinkBounds.height <= 900, `Cycles sidebar link is visible after restoring the desktop sidebar: ${JSON.stringify(cyclesLinkBounds)}`);
+  await cyclesLink.click();
+  const activeCyclesTab = page.getByRole("tab", { name: new RegExp(`${translate("cycles.status.active")}\\s+16$`) });
+  await activeCyclesTab.waitFor();
+  await assertStableBounds(activeCyclesTab, "Tabs");
   console.log("e2e work items list: ok");
   await browser.close();
 } catch (error) {

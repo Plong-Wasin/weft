@@ -20,7 +20,7 @@ export function chipClass(quiet = false, iconOnly = false) {
   if (quiet) return iconOnly ? quietIconChip : quietChip;
   return iconOnly ? outlinedIconChip : outlinedChip;
 }
-const optionClass = "flex min-h-9 w-full items-center gap-2 rounded-md bg-transparent px-2.5 py-1.5 text-left text-sm text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11";
+const optionClass = "flex h-auto min-h-9 w-full items-center gap-2 rounded-md bg-transparent px-2.5 py-1.5 text-left text-sm text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11";
 
 export type Option = { id: string; name: string; icon?: React.ReactNode; isAgent?: boolean; codeCapable?: boolean; hasAccess?: boolean; accessReason?: string | null };
 

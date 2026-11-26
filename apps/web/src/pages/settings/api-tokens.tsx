@@ -160,7 +160,7 @@ export function ApiTokensPage() {
           <span className="text-xs text-muted-foreground">{translate("tokens.expiry")} {device.expiresAt ? formatDate(device.expiresAt) : translate("tokens.never")}</span>
         </span>
         <span className={`rounded-full px-2 py-0.5 text-xs ${device.status === "active" ? "bg-accent text-foreground" : "bg-card text-muted-foreground"}`}>{translate(`devices.status.${device.status}`)}</span>
-        <Button type="button" className="secondary hover:!text-destructive" onClick={() => void revokeDevice(device)}>{translate("devices.revoke")}</Button>
+        <Button type="button" className="hover:!text-destructive" onClick={() => void revokeDevice(device)}>{translate("devices.revoke")}</Button>
       </Row>)}</RowList>}
       {deviceHistoryCount > 0 && <details className="mt-3 border-t border-border pt-3">
         <summary className="cursor-pointer text-sm font-medium">{translate("devices.history").replace("{count}", String(deviceHistoryCount))}</summary>
@@ -168,9 +168,9 @@ export function ApiTokensPage() {
           <span className="grid min-w-0 flex-1 gap-0.5"><span className="font-medium">{device.hostname} <span className="font-mono text-xs text-muted-foreground">· {device.id.slice(0, 8)}</span></span>
             <span className="text-xs text-muted-foreground"><span data-testid="device-history-status">{translate(`devices.status.${device.status}`)}</span> · {translate(device.status === "revoked" ? "devices.revokedAt" : "devices.expiredAt")} {device.status === "revoked" ? formatDate(device.revokedAt ?? device.createdAt) : formatDate(device.expiresAt ?? device.createdAt)}</span>
           </span>
-          {device.status !== "revoked" && <Button type="button" className="secondary hover:!text-destructive" onClick={() => void revokeDevice(device)}>{translate("devices.revoke")}</Button>}
+          {device.status !== "revoked" && <Button type="button" className="hover:!text-destructive" onClick={() => void revokeDevice(device)}>{translate("devices.revoke")}</Button>}
         </Row>)}</RowList></div>
-        {deviceHistoryHasMore && <Button type="button" className="secondary mt-3" onClick={() => void loadMoreDevices()}>{translate("devices.loadMore")}</Button>}
+        {deviceHistoryHasMore && <Button type="button" className="mt-3" onClick={() => void loadMoreDevices()}>{translate("devices.loadMore")}</Button>}
       </details>}
     </SettingsBlock>
     <SettingsHeader level={2} title={translate("tokens.activeTitle")} description={translate("tokens.activeDescription")} />
@@ -182,23 +182,23 @@ export function ApiTokensPage() {
           <span className="text-xs text-muted-foreground">{token.prefix} · {translate("tokens.created")} {formatDate(token.createdAt)} · {translate("tokens.expiry")} {token.expiresAt ? formatDate(token.expiresAt) : translate("tokens.never")}</span>
           <span className="text-xs text-muted-foreground">{translate("tokens.lastUsed")} {token.lastUsedAt ? formatDate(token.lastUsedAt) : translate("tokens.notUsed")}</span>
         </span>
-        <Button type="button" className="secondary" onClick={() => void revoke(token)}>{translate("tokens.revoke")}</Button>
+        <Button type="button" onClick={() => void revoke(token)}>{translate("tokens.revoke")}</Button>
       </Row>)}</RowList>}
       <h3 className="mb-2 mt-5 text-sm font-semibold">{translate("tokens.unassociatedTitle")}</h3>
       <p className="mb-3 text-sm text-muted-foreground">{translate("tokens.unassociatedDescription")}</p>
       {tokens.filter((token) => token.kind === "daemon").length === 0 && !failed && <p className="text-sm text-muted-foreground">{translate("tokens.legacyEmpty")}</p>}
       {tokens.filter((token) => token.kind === "daemon").length > 0 && <RowList>{tokens.filter((token) => token.kind === "daemon").map((token) => <Row key={token.id}>
         <span className="grid min-w-0 flex-1 gap-0.5"><span className="font-medium">{token.name}</span><span className="text-xs text-muted-foreground">{token.prefix} · {translate("tokens.created")} {formatDate(token.createdAt)} · {translate("tokens.expiry")} {token.expiresAt ? formatDate(token.expiresAt) : translate("tokens.never")}</span></span>
-        <Button type="button" className="secondary hover:!text-destructive" onClick={() => void revoke(token)}>{translate("tokens.revoke")}</Button>
+        <Button type="button" className="hover:!text-destructive" onClick={() => void revoke(token)}>{translate("tokens.revoke")}</Button>
       </Row>)}</RowList>}
       {tokenHistoryCount > 0 && <details className="mt-3 border-t border-border pt-3">
         <summary className="cursor-pointer text-sm font-medium">{translate("tokens.history").replace("{count}", String(tokenHistoryCount))}</summary>
         <div className="mt-2"><RowList>{tokenHistory.map((token) => <Row key={token.id}>
           <span className="grid min-w-0 flex-1 gap-0.5"><span className="font-medium">{token.name} <span className="text-xs text-muted-foreground"><span data-testid="credential-history-status">{translate(`tokens.status.${token.status}`)}</span></span></span>
             <span className="text-xs text-muted-foreground">{token.prefix} · {translate("tokens.created")} {formatDate(token.createdAt)} · {translate(token.status === "revoked" ? "tokens.revokedAt" : "tokens.expiredAt")} {formatDate(token.status === "revoked" ? token.revokedAt ?? token.createdAt : token.expiresAt ?? token.createdAt)}</span></span>
-          {token.status !== "revoked" && <Button type="button" className="secondary hover:!text-destructive" onClick={() => void revokeHistoricalToken(token)}>{translate("tokens.revoke")}</Button>}
+          {token.status !== "revoked" && <Button type="button" className="hover:!text-destructive" onClick={() => void revokeHistoricalToken(token)}>{translate("tokens.revoke")}</Button>}
         </Row>)}</RowList></div>
-        {tokenHistoryHasMore && <Button type="button" className="secondary mt-3" onClick={() => void loadMoreTokenHistory()}>{translate("tokens.loadMore")}</Button>}
+        {tokenHistoryHasMore && <Button type="button" className="mt-3" onClick={() => void loadMoreTokenHistory()}>{translate("tokens.loadMore")}</Button>}
       </details>}
       {failed && <Note note={translate("tokens.failed")} error />}
     </SettingsBlock>
@@ -207,7 +207,7 @@ export function ApiTokensPage() {
       {apps.length === 0 ? <p className="text-sm text-muted-foreground">{translate("apps.empty")}</p> : <RowList>{apps.map((app) => <Row key={app.id}>
         <span className="grid min-w-0 flex-1 gap-0.5"><span className="font-medium">{app.name}</span>
           <span className="text-xs text-muted-foreground">{translate("apps.allowed")} {formatDate(app.allowedAt)} · {translate("apps.lastIssued")} {app.lastUsedAt ? formatDate(app.lastUsedAt) : translate("tokens.notUsed")}</span>
-        </span><Button type="button" className="secondary" onClick={() => void revokeApp(app)}>{translate("apps.revoke")}</Button>
+        </span><Button type="button" onClick={() => void revokeApp(app)}>{translate("apps.revoke")}</Button>
       </Row>)}</RowList>}
     </SettingsBlock>
     <Note note={note} />
@@ -215,12 +215,12 @@ export function ApiTokensPage() {
       <section role="dialog" aria-modal="true" aria-labelledby="token-dialog-title" className="grid w-full max-w-lg gap-4 rounded-xl border border-border bg-card p-5 shadow-xl">
         <header className="flex items-start justify-between gap-3"><div><h2 id="token-dialog-title" className="text-lg font-semibold">{secret ? translate("tokens.createdTitle") : translate("tokens.add")}</h2>
           <p className="mt-1 text-sm text-muted-foreground">{secret ? translate("tokens.secretOnce") : translate("tokens.dialogDescription")}</p></div>
-          <Button type="button" className="secondary" onClick={closeDialog}>{translate("settings.cancel")}</Button></header>
+          <Button type="button" onClick={closeDialog}>{translate("settings.cancel")}</Button></header>
         {secret ? <div className="grid gap-3">
           <label>{translate("tokens.secret")}<Input readOnly value={secret.token} className="font-mono" /></label>
           <p role="alert" className="m-0 rounded-md border border-destructive px-3 py-2 text-sm text-destructive">{translate("tokens.secretWarning")}</p>
-          <Button type="button" className="primary w-full !py-3 !text-base" onClick={async () => { if (await copyText(secret.token, translate("tokens.copied"), translate("comments.copyFailed"))) setNote(translate("tokens.copied")); }}>{translate("tokens.copy")}</Button>
-          <div className="flex justify-end gap-2"><Button type="button" className="secondary" onClick={closeDialog}>{translate("settings.cancel")}</Button></div>
+          <Button variant="primary" type="button" className="w-full !py-3 !text-base" onClick={async () => { if (await copyText(secret.token, translate("tokens.copied"), translate("comments.copyFailed"))) setNote(translate("tokens.copied")); }}>{translate("tokens.copy")}</Button>
+          <div className="flex justify-end gap-2"><Button type="button" onClick={closeDialog}>{translate("settings.cancel")}</Button></div>
         </div> : <form className="grid gap-3" onSubmit={(event) => void create(event)}>
           <label>{translate("tokens.presetLabel")}<select value={preset} onChange={(event) => choosePreset(event.target.value as TokenPreset)}>
             {tokenPresets.map((item) => <option key={item} value={item}>{translate(`tokens.preset.${item}`)}</option>)}
@@ -229,7 +229,7 @@ export function ApiTokensPage() {
           <label>{translate("tokens.fieldDescription")}<Textarea maxLength={500} value={description} onChange={(event) => setDescription(event.target.value)} /></label>
           <label>{translate("tokens.customDate")}<Input required={!neverExpires} type="date" min={todayTomorrow()} value={expiresAt} disabled={neverExpires} onChange={(event) => setExpiresAt(event.target.value)} /></label>
           <label className="flex items-center gap-2"><Checkbox checked={neverExpires} onChange={(event) => setNeverExpires(event.target.checked)} />{translate("tokens.neverExpires")}</label>
-          <div className="flex justify-end gap-2"><Button type="button" className="secondary" onClick={closeDialog}>{translate("settings.cancel")}</Button><Button type="submit" disabled={!hasValidTokenExpiry(expiresAt, neverExpires)}>{translate("tokens.create")}</Button></div>
+          <div className="flex justify-end gap-2"><Button type="button" onClick={closeDialog}>{translate("settings.cancel")}</Button><Button type="submit" disabled={!hasValidTokenExpiry(expiresAt, neverExpires)}>{translate("tokens.create")}</Button></div>
           {failed && <Note note={translate("tokens.failed")} error />}
         </form>}
       </section>

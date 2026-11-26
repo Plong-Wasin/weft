@@ -122,7 +122,7 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
       <form className="my-0 grid gap-5 p-6 max-sm:gap-4 max-sm:p-4 pointer-coarse:[&_button]:min-h-11 pointer-coarse:[&_input]:min-h-11" onSubmit={submit}>
         <div className="flex items-center gap-2">
           <DialogTitle className="m-0 flex-1">{t("workItems.modal.title")}</DialogTitle>
-          <Button type="button" className="size-11 rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent hover:text-accent-foreground" aria-label={t("workItems.modal.cancel")} onClick={onClose}><X aria-hidden size={16} /></Button>
+          <Button variant="ghost" type="button" className="size-11 rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent hover:text-accent-foreground" aria-label={t("workItems.modal.cancel")} onClick={onClose}><X aria-hidden size={16} /></Button>
         </div>
         <Input autoFocus required aria-label={t("workItems.titleField")} placeholder={t("workItems.titleField")} value={title} maxLength={500} className="w-full text-16" onChange={(event) => setTitle(event.target.value)} />
         <Textarea aria-label={t("workItems.description")} placeholder={t("workItems.descriptionHint")} rows={4} value={description} className="w-full resize-none text-14" onChange={(event) => setDescription(event.target.value)} />
@@ -162,7 +162,7 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
         </div>
         {note && <p role="alert" className="m-0 text-destructive">{note}</p>}
         <div className="sticky bottom-0 z-10 flex justify-end gap-2 border-t border-border bg-background -mb-6 pb-6 pt-4 max-sm:-mb-4 max-sm:pb-4">
-          <Button type="button" className="secondary" onClick={onClose}>{t("workItems.modal.cancel")}</Button>
+          <Button type="button" onClick={onClose}>{t("workItems.modal.cancel")}</Button>
           <Button type="submit" variant="primary" disabled={busy}>{t("workItems.modal.submit")}</Button>
         </div>
       </form>

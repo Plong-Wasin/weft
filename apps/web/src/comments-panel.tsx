@@ -74,8 +74,8 @@ function CommentEditor({ workspaceId, workItemId, people, initial, submitLabel, 
     {error && <p role="alert">{error}</p>}
     <input ref={picker} data-testid="comment-image-input" hidden type="file" accept="image/png,image/jpeg,image/gif,image/webp" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !editor) return; const assetId = await uploadFile(file); if (assetId) editor.commands.insertContentAt(editor.state.doc.content.size, { type: "assetImage", attrs: { assetId } }); }} />
     <div className="editor-footer mt-2 flex flex-wrap items-center justify-end gap-2">
-      <Button className="primary pointer-coarse:min-h-11" title={withShortcut(submitLabel, "Enter")} onClick={() => void submit()}>{submitLabel}</Button>
-      {onCancel && <Button type="button" className="secondary" onClick={onCancel}>{translate("comments.cancel")}</Button>}
+      <Button variant="primary" className="pointer-coarse:min-h-11" title={withShortcut(submitLabel, "Enter")} onClick={() => void submit()}>{submitLabel}</Button>
+      {onCancel && <Button type="button" onClick={onCancel}>{translate("comments.cancel")}</Button>}
     </div>
   </div>;
 }
@@ -171,28 +171,28 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
       ? <CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} initial={row.body} submitLabel={translate("comments.save")} onCancel={() => setEditing(null)} onSubmit={async (body) => { await guard(await actionResult("update_comment", { commentId: row.id, body })); setEditing(null); }} />
       : <CommentBody body={row.body} />}
     <div data-comment-actions={row.id} className="flex flex-wrap items-center gap-2">
-      {editing !== row.id && row.parentId === null && canComment && replying !== row.id && <Button type="button" className="rounded-md bg-transparent px-1 py-0.5 text-13 font-medium text-foreground hover:underline pointer-coarse:min-h-11" onClick={() => setReplying(row.id)}>{translate("comments.reply")}</Button>}
-      {editing !== row.id && <Popover label={translate("comments.more")} className="flex items-center rounded-md border border-border bg-card px-2 py-0.5 text-13 font-medium text-foreground hover:bg-accent" panelRole="dialog" panelClassName="grid min-w-40 gap-1 p-2" trigger={<span>{translate("comments.more")}</span>}>
+      {editing !== row.id && row.parentId === null && canComment && replying !== row.id && <Button variant="ghost" type="button" className="rounded-md bg-transparent px-1 py-0.5 font-medium text-foreground hover:underline pointer-coarse:min-h-11" onClick={() => setReplying(row.id)}>{translate("comments.reply")}</Button>}
+      {editing !== row.id && <Popover label={translate("comments.more")} className="flex items-center rounded-md border border-border bg-card px-2 py-0.5 font-medium text-foreground hover:bg-accent" panelRole="dialog" panelClassName="grid min-w-40 gap-1 p-2" trigger={<span>{translate("comments.more")}</span>}>
         {(close) => <>
-          <Button type="button" className="rounded-md bg-transparent px-2 py-1 text-left text-13 text-foreground hover:bg-accent" onClick={() => { close(); void copy(row.id); }}>{translate("comments.copyLink")}</Button>
-          {row.editedAt && <Button type="button" className="rounded-md bg-transparent px-2 py-1 text-left text-13 text-foreground hover:bg-accent" onClick={() => { close(); void showVersions(row.id); }}>{translate("comments.history")}</Button>}
+          <Button variant="ghost" type="button" className="rounded-md bg-transparent px-2 text-left text-foreground hover:bg-accent" onClick={() => { close(); void copy(row.id); }}>{translate("comments.copyLink")}</Button>
+          {row.editedAt && <Button variant="ghost" type="button" className="rounded-md bg-transparent px-2 text-left text-foreground hover:bg-accent" onClick={() => { close(); void showVersions(row.id); }}>{translate("comments.history")}</Button>}
           {row.authorId === selfId && <>
-            <Button type="button" className="rounded-md bg-transparent px-2 py-1 text-left text-13 text-foreground hover:bg-accent" onClick={() => { close(); setEditing(row.id); }}>{translate("comments.edit")}</Button>
-            <Button type="button" className="rounded-md bg-transparent px-2 py-1 text-left text-13 text-destructive hover:bg-accent" onClick={() => { close(); setConfirmDelete(row.id); }}>{translate("comments.delete")}</Button>
+            <Button variant="ghost" type="button" className="rounded-md bg-transparent px-2 text-left text-foreground hover:bg-accent" onClick={() => { close(); setEditing(row.id); }}>{translate("comments.edit")}</Button>
+            <Button variant="ghost" type="button" className="rounded-md bg-transparent px-2 text-left text-destructive hover:bg-accent" onClick={() => { close(); setConfirmDelete(row.id); }}>{translate("comments.delete")}</Button>
           </>}
         </>}
       </Popover>}
     </div>
     {confirmDelete === row.id && <div role="alertdialog" aria-label={translate("comments.deleteConfirm")} className="flex flex-wrap items-center gap-2 text-13 text-foreground">
       <span>{translate("comments.deleteConfirm")}</span>
-      <Button type="button" className="rounded-md bg-destructive px-3 py-1 text-13 font-medium text-primary-foreground hover:bg-destructive" onClick={async () => { setConfirmDelete(null); guard(await action("delete_comment", { commentId: row.id })); }}>{translate("comments.delete")}</Button>
-      <Button type="button" className="secondary" autoFocus onClick={() => { setConfirmDelete(null); requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-comment-actions="${row.id}"] button[aria-haspopup]`)?.focus()); }}>{translate("comments.cancel")}</Button>
+      <Button type="button" className="rounded-md bg-destructive font-medium text-primary-foreground hover:bg-destructive" onClick={async () => { setConfirmDelete(null); guard(await action("delete_comment", { commentId: row.id })); }}>{translate("comments.delete")}</Button>
+      <Button type="button" autoFocus onClick={() => { setConfirmDelete(null); requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-comment-actions="${row.id}"] button[aria-haspopup]`)?.focus()); }}>{translate("comments.cancel")}</Button>
     </div>}
     {versions?.commentId === row.id && <ol aria-label={translate("comments.history")}>
       {versions.rows.length === 0 && <li>{translate("comments.historyEmpty")}</li>}
       {versions.rows.map((version) => <li key={version.id}><small>{formatDate(version.writtenAt)}</small> {version.bodyText}</li>)}
       {versions.failed && <li role="alert" data-testid="older-comment-versions-error">{translate("workItems.olderVersionsFailed")}</li>}
-      {versions.more && <li><Button type="button" className="secondary" data-testid="show-older-comment-versions" disabled={versions.loading} aria-busy={versions.loading} onClick={() => void showOlderVersions()}>{versions.loading ? translate("workItems.loadingOlderVersions") : versions.failed ? translate("workItems.retryOlderVersions") : translate("workItems.showOlderVersions")}</Button></li>}
+      {versions.more && <li><Button type="button" data-testid="show-older-comment-versions" disabled={versions.loading} aria-busy={versions.loading} onClick={() => void showOlderVersions()}>{versions.loading ? translate("workItems.loadingOlderVersions") : versions.failed ? translate("workItems.retryOlderVersions") : translate("workItems.showOlderVersions")}</Button></li>}
     </ol>}
     {row.parentId === null && row.replyCount > 0 && <small>{translate(row.replyCount === 1 ? "comments.repliesOne" : "comments.repliesMany").replace("{count}", String(row.replyCount))} · {row.participants.map((person) => person.name).join(", ")}</small>}
     {replies.length > 0 && <ul className="m-0 grid list-none gap-2 border-l-2 border-border !pl-3">{replies.map((reply) => item(reply, []))}</ul>}
@@ -226,7 +226,7 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
   </span> : null;
   const renderActivity = (row: ActivityRow) => row.source === "auto_rule" ? <>
     <strong className="font-medium text-foreground">{translate("autoRules.systemActor")}</strong> {autoRuleReasonText(row.reason ?? null, translate) ?? activityText(row)}{transition(row)}{" "}
-    {canComment && undoable.has(row.id) && <Button type="button" className="secondary ml-1 !px-2 !py-0.5 text-12" onClick={() => void undoAutoRule(row)}>{translate("autoRules.undo")}</Button>}{" "}
+    {canComment && undoable.has(row.id) && <Button type="button" className="ml-1 !px-2 !py-0.5 text-12" onClick={() => void undoAutoRule(row)}>{translate("autoRules.undo")}</Button>}{" "}
     <small className="text-12 text-muted-foreground">{formatDate(row.createdAt)}</small></> : <>{actor(row)} {row.field === "recurrence_created" ? translate("workItems.activity.fromRecurrence").replace("{name}", String((row.newValue as { name?: string } | null)?.name ?? "")) : activityText(row)}{transition(row)}{wokenByText(row)}{" "}
     <small className="text-12 text-muted-foreground">{["agent", "agent_autopilot"].includes(row.source) && row.originatorName ? translate(row.source === "agent_autopilot" ? "activity.byAutopilotAgent" : "activity.byAgent").replace("{originator}", row.originatorName) : translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${row.source}`) ?? row.source)} · {formatDate(row.createdAt)}</small></>;
   return <section className="min-w-0 max-w-full">
@@ -241,7 +241,7 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
       </select></label>
     </div>
     </div>
-    {entries.some((entry) => entry.activity) && <Button type="button" className="secondary mb-3" aria-pressed={showAllChanges} onClick={() => setShowAllChanges((value) => !value)}>{translate(showAllChanges ? "timeline.showGrouped" : "timeline.showAllChanges")}</Button>}
+    {entries.some((entry) => entry.activity) && <Button type="button" className="mb-3" aria-pressed={showAllChanges} onClick={() => setShowAllChanges((value) => !value)}>{translate(showAllChanges ? "timeline.showGrouped" : "timeline.showAllChanges")}</Button>}
     {entries.length === 0 && <p>{translate("timeline.empty")}</p>}
     <ul className="m-0 grid min-w-0 max-w-full list-none gap-2 !pl-0">{entries.map((entry) => entry.comment
       ? item(entry.comment, entry.comment.replies)
@@ -255,7 +255,7 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
         const latest = group.activities.reduce((a, b) => Date.parse(b.createdAt) > Date.parse(a.createdAt) ? b : a);
         const expanded = expandedActivityId === group.id;
         return <li key={group.id} className="list-none min-w-0 max-w-full rounded-lg bg-muted px-2 py-1.5 text-13 text-muted-foreground">
-          <Button type="button" aria-expanded={expanded} aria-controls={`activity-group-${group.id}`} onClick={() => setExpandedActivityId((current) => current === group.id ? null : group.id)} className="grid w-full min-w-0 max-w-full box-border grid-cols-[0.75rem_minmax(0,1fr)] items-start gap-x-1.5 gap-y-1 whitespace-normal border-0 bg-transparent p-1 text-left text-muted-foreground">
+          <Button variant="ghost" type="button" aria-expanded={expanded} aria-controls={`activity-group-${group.id}`} onClick={() => setExpandedActivityId((current) => current === group.id ? null : group.id)} className="grid w-full min-w-0 max-w-full box-border grid-cols-[0.75rem_minmax(0,1fr)] items-start gap-x-1.5 gap-y-1 whitespace-normal border-0 bg-transparent p-1 text-left text-muted-foreground">
             <span aria-hidden className="inline-block w-3 shrink-0">{expanded ? "▾" : "▸"}</span><span className="flex min-w-0 flex-wrap items-center gap-x-1.5">{actor(latest)}<span className="activity-group-summary min-w-0">{activityText(group.activities[0]!)} · {translate("timeline.changeCount").replace("{count}", String(group.count))}</span></span>
             {oldText !== null && newText !== null && <span className="activity-group-summary col-span-2 min-w-0 pl-4">{oldText}<br />{translate("timeline.valueNewLabel")} {newText}</span>}
             <small className="activity-group-summary col-span-2 min-w-0 pl-4 text-12 text-muted-foreground">{latest.source === "agent" && latest.originatorName ? translate("activity.byAgent").replace("{originator}", latest.originatorName) : translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${latest.source}`) ?? latest.source)} · {formatDate(latest.createdAt)}</small>

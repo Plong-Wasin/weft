@@ -10,15 +10,14 @@ test("cn merges conflicting Tailwind classes while retaining conditional classes
   expect(cn("rounded-sm px-2", false && "hidden", "rounded-lg px-3")).toBe("rounded-lg px-3");
 });
 
-test("shadcn light and dark theme tokens use their own defaults without overriding legacy text utilities", () => {
+test("shadcn light and dark theme tokens use their own defaults and map the role utilities", () => {
   const tokens = readFileSync(join(import.meta.dir, "../src/tokens.css"), "utf8");
   const style = readFileSync(join(import.meta.dir, "../src/style.css"), "utf8");
 
   expect(tokens).toContain("--background: oklch(1 0 0)");
   expect(tokens).toContain("--background: oklch(0.145 0 0)");
   expect(tokens).toContain("--radius: 0.625rem");
-  expect(tokens).not.toContain("--background: var(--bg-canvas)");
-  expect(style).not.toContain("--color-secondary: var(--secondary)");
+  expect(style).toContain("--color-secondary: var(--secondary)");
 });
 
 test("Tooltip proof component renders an accessible trigger and composes its content", () => {

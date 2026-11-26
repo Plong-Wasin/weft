@@ -19,7 +19,7 @@ export function Dialog({ title, onClose, children }: { title: string; onClose: (
 /** Cancel on the left of the primary action, as every form dialog ends. */
 export function DialogActions({ onClose, submit }: { onClose: () => void; submit: string }) {
   return <div className="flex justify-end gap-2">
-    <Button type="button" className="secondary pointer-coarse:min-h-11" onClick={onClose}>{translate("comments.cancel")}</Button>
+    <Button type="button" className="pointer-coarse:min-h-11" onClick={onClose}>{translate("comments.cancel")}</Button>
     <Button type="submit" className="pointer-coarse:min-h-11">{submit}</Button>
   </div>;
 }

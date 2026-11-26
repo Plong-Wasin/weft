@@ -81,13 +81,13 @@ export function SessionsPage() {
 
   return <main className="mx-auto w-full max-w-[900px] px-4">
     <SettingsHeader title={translate("account.sessionsTitle")} description={translate("account.sessionsDesc")}>
-      <Button type="button" className="secondary hover:!text-destructive" onClick={() => void signOutEverywhere()}>{translate("account.signOutEverywhere")}</Button>
+      <Button type="button" className="hover:!text-destructive" onClick={() => void signOutEverywhere()}>{translate("account.signOutEverywhere")}</Button>
     </SettingsHeader>
     <SettingsBlock>
       {sessions === null ? null : sessions.length === 0 ? <p className="text-muted-foreground">{translate("account.sessionsNone")}</p> : <RowList>{sessions.map((row) => <Row key={row.id}>
         <span className="grid min-w-0 flex-1"><span className="font-medium">{row.device}{row.current && <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">{translate("account.thisDevice")}</span>}</span>
           <span className="text-sm text-muted-foreground">{translate("account.signedInAt")} {formatDate(row.createdAt)} · {translate("account.lastSeen")} {formatDate(row.lastSeenAt)}</span></span>
-        <Button type="button" className="secondary hover:!text-destructive" onClick={() => void revoke(row)}>{row.current ? translate("account.signOutThis") : translate("account.signOutDevice")}</Button>
+        <Button type="button" className="hover:!text-destructive" onClick={() => void revoke(row)}>{row.current ? translate("account.signOutThis") : translate("account.signOutDevice")}</Button>
       </Row>)}</RowList>}
       <Note note={note} error={failed} />
     </SettingsBlock>

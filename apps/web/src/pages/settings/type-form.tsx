@@ -54,7 +54,7 @@ export function TypeForm({ idPrefix, initial, submitLabel, onSubmit, onCancel }:
       </span>
       <span className="flex flex-wrap gap-2">
         <Button type="submit" disabled={saving}>{submitLabel}</Button>
-        {onCancel && <Button type="button" className="secondary" onClick={onCancel}>{t("types.cancel")}</Button>}
+        {onCancel && <Button type="button" onClick={onCancel}>{t("types.cancel")}</Button>}
       </span>
     </div>
   </form>;

@@ -97,20 +97,20 @@ try {
   await page.getByRole("heading", { name: new RegExp(translate("inbox.title")) }).waitFor();
   check(page.url() === `${web}/${slug}/notifications`, `legacy inbox URL went to ${page.url()}`);
 
-  // Tokens: Plane's values, light and dark, defined once as CSS variables. Values are the ones Plane serves.
+  // Tokens: shadcn's default neutral roles, light and dark, defined once as CSS variables.
   const tokens = () => page.evaluate(() => {
     const style = getComputedStyle(document.documentElement);
     const read = (name: string) => style.getPropertyValue(name).trim();
-    return { theme: document.documentElement.getAttribute("data-theme"), canvas: read("--bg-canvas"), surface: read("--bg-surface-1"), text: read("--txt-primary"), accent: read("--bg-accent-primary"), border: read("--border-subtle"), bodyBg: getComputedStyle(document.body).backgroundColor, bodyColor: getComputedStyle(document.body).color, radius: read("--radius-md"), header: read("--height-header"), size: read("--text-14") };
+    return { theme: document.documentElement.getAttribute("data-theme"), background: read("--background"), card: read("--card"), foreground: read("--foreground"), primary: read("--primary"), border: read("--border"), bodyBg: getComputedStyle(document.body).backgroundColor, bodyColor: getComputedStyle(document.body).color, radius: read("--radius-md"), header: read("--height-header"), size: read("--text-14") };
   });
-  const light = { canvas: "oklch(95.43% .001 230.67)", surface: "oklch(100% 0 0)", text: "oklch(23.78% .0029 230.83)", accent: "oklch(47.99% .1158 242.91)", border: "oklch(93.89% .0014 230.68)" };
-  const dark = { canvas: "oklch(16.89% .0021 230.81)", surface: "oklch(19.32% .002 230.81)", text: "oklch(92.35% .001733 230.685)", accent: "oklch(63.11% .126281 238.01)", border: "oklch(25.93% .0033 230.84)" };
+  const light = { background: "oklch(1 0 0)", card: "oklch(1 0 0)", foreground: "oklch(0.145 0 0)", primary: "oklch(0.205 0 0)", border: "oklch(0.922 0 0)" };
+  const dark = { background: "oklch(0.145 0 0)", card: "oklch(0.205 0 0)", foreground: "oklch(0.985 0 0)", primary: "oklch(0.922 0 0)", border: "oklch(1 0 0 / 10%)" };
   await page.emulateMedia({ colorScheme: "light" });
   await page.goto(`${web}/${slug}`);
   await page.getByRole("heading", { name: translate("projects.title") }).waitFor();
   const lightTokens = await tokens();
   for (const key of Object.keys(light) as Array<keyof typeof light>) check(lightTokens[key] === light[key], `light ${key}: ${lightTokens[key]}`);
-  check(lightTokens.theme === "light" && lightTokens.radius === ".375rem" && lightTokens.header === "3.25rem" && lightTokens.size === ".875rem", `light scale tokens: ${JSON.stringify(lightTokens)}`);
+  check(lightTokens.theme === "light" && lightTokens.radius === "0.375rem" && lightTokens.header === "3.25rem" && lightTokens.size === ".875rem", `light scale tokens: ${JSON.stringify(lightTokens)}`);
   // System theme follows the OS preference.
   await page.emulateMedia({ colorScheme: "dark" });
   await page.reload();

@@ -76,7 +76,7 @@ export function ViewFormModal({ mode, view, target, settings, onClose, onSaved }
   };
   return <ViewDialog title={title} onClose={onClose} className="max-w-lg">
       <form className="my-0 grid gap-4" onSubmit={(event) => void submit(event)}>
-        <Button type="button" className="absolute right-4 top-4 rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent" aria-label={t("views.cancel")} onClick={onClose}><X aria-hidden size={16} /></Button>
+        <Button variant="ghost" type="button" className="absolute right-4 top-4 rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent" aria-label={t("views.cancel")} onClick={onClose}><X aria-hidden size={16} /></Button>
         <label className="grid gap-1 text-13 text-muted-foreground">{t("views.name")}<Input required maxLength={100} value={name} className="w-full text-14" onChange={(event) => setName(event.target.value)} /></label>
         <label className="grid gap-1 text-13 text-muted-foreground">{t("views.description")}<Textarea rows={3} maxLength={2000} value={description} className="w-full text-14" onChange={(event) => setDescription(event.target.value)} /></label>
         <label className="grid gap-1 text-13 text-muted-foreground">{t("views.access")}
@@ -85,7 +85,7 @@ export function ViewFormModal({ mode, view, target, settings, onClose, onSaved }
           </select></label>
         {note && <p role="alert" className="m-0 text-13 text-destructive">{note}</p>}
         <div className="flex justify-end gap-2">
-          <Button type="button" className="secondary" onClick={onClose}>{t("views.cancel")}</Button>
+          <Button type="button" onClick={onClose}>{t("views.cancel")}</Button>
           <Button type="submit" variant="primary" disabled={busy || name.trim() === ""}>{t(mode === "edit" ? "views.save" : "views.create")}</Button>
         </div>
       </form>
@@ -99,7 +99,7 @@ export function DeleteViewModal({ view, onClose, onDeleted }: { view: SavedView;
       <p id="delete-view-description" className="m-0 text-14 text-muted-foreground">{t("views.deleteConfirm").replace("{name}", view.name)}</p>
       {note && <p role="alert" className="m-0 text-13 text-destructive">{note}</p>}
       <div className="flex justify-end gap-2">
-        <Button type="button" data-safe-action className="secondary" onClick={onClose}>{t("views.cancel")}</Button>
+        <Button type="button" data-safe-action onClick={onClose}>{t("views.cancel")}</Button>
         <Button type="button" variant="primary" onClick={async () => { if ((await action("delete_view", { viewId: view.id })) === null) setNote(t("views.failed")); else onDeleted(); }}>{t("views.deleteAction")}</Button>
       </div>
   </ViewDialog>;

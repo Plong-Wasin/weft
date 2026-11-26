@@ -122,13 +122,13 @@ function SidecarPanel({ workspace, userId, open, context, onClose }: { workspace
     <header className="flex shrink-0 items-center gap-1 border-b border-border px-3 py-2">
       <Sparkles aria-hidden size={16} className="text-muted-foreground" />
       <h2 className="m-0 mr-auto text-[14px] font-medium text-foreground">{translate("sidecar.title")}</h2>
-      <Tooltip><TooltipTrigger render={<Button type="button" className={headerButton} aria-label={translate("ai.new")} onClick={() => { setChat(freshChat()); setStarted(false); }}><SquarePen aria-hidden size={15} /></Button>} /><TooltipContent>{translate("ai.new")}</TooltipContent></Tooltip>
+      <Tooltip><TooltipTrigger render={<Button variant="ghost" type="button" className={headerButton} aria-label={translate("ai.new")} onClick={() => { setChat(freshChat()); setStarted(false); }}><SquarePen aria-hidden size={15} /></Button>} /><TooltipContent>{translate("ai.new")}</TooltipContent></Tooltip>
       <Popover label={translate("sidecar.history")} align="right" trigger={<History aria-hidden size={15} />} className="p-1.5" panelClassName="max-h-72 w-64 overflow-y-auto">
         {(close) => recents.length === 0 ? <p className="m-0 px-2.5 py-1.5 text-[14px] text-muted-foreground">{translate("sidecar.noHistory")}</p>
           : recents.map((recent) => <Button key={recent.id} type="button" role="menuitem" className={`${menuItemClass} truncate`} onClick={() => { close(); void pick(recent.id); }}>{recent.title}</Button>)}
       </Popover>
       {started && <Tooltip><TooltipTrigger render={<Link to={paths.aiChat(workspace.slug, chat.id)} onClick={onClose} className={headerButton} aria-label={translate("sidecar.openPage")}><Maximize2 aria-hidden size={15} /></Link>} /><TooltipContent>{translate("sidecar.openPage")}</TooltipContent></Tooltip>}
-      <Tooltip><TooltipTrigger render={<Button type="button" className={headerButton} aria-label={translate("sidecar.close")} onClick={onClose}><X aria-hidden size={16} /></Button>} /><TooltipContent>{translate("sidecar.close")}</TooltipContent></Tooltip>
+      <Tooltip><TooltipTrigger render={<Button variant="ghost" type="button" className={headerButton} aria-label={translate("sidecar.close")} onClick={onClose}><X aria-hidden size={16} /></Button>} /><TooltipContent>{translate("sidecar.close")}</TooltipContent></Tooltip>
     </header>
     <Conversation key={chat.id} workspace={workspace} chatId={chat.id} initial={chat.initial} initialMode={chat.mode} context={context} onSent={() => setStarted(true)} />
   </aside>;
@@ -140,13 +140,13 @@ const headerButton = "inline-flex size-7 items-center justify-center rounded-md 
 export function SidecarTrigger({ context }: { context: SidecarContext }) {
   const { setContext, show } = useSidecar();
   React.useEffect(() => { setContext(context); return () => setContext(undefined); }, [context.type, context.id, context.title]);
-  return <Button type="button" className="secondary inline-flex items-center gap-1.5 whitespace-nowrap" onClick={show}><Sparkles aria-hidden size={14} />{translate("sidecar.open")}</Button>;
+  return <Button type="button" className="inline-flex items-center gap-1.5 whitespace-nowrap" onClick={show}><Sparkles aria-hidden size={14} />{translate("sidecar.open")}</Button>;
 }
 
 /** Top bar button: opens or closes the Sidecar with whatever the current page offers as context. */
 export function SidecarToggle() {
   const { open, toggle } = useSidecar();
   const label = translate("sidecar.open");
-  return <Tooltip><TooltipTrigger render={<Button type="button" aria-label={label} aria-expanded={open} onClick={toggle}
+  return <Tooltip><TooltipTrigger render={<Button variant={open ? "secondary" : "ghost"} type="button" aria-label={label} aria-expanded={open} onClick={toggle}
     className={`rounded-md border-0 p-1.5 hover:bg-accent hover:text-foreground pointer-coarse:min-h-11 pointer-coarse:min-w-11 ${open ? "bg-accent text-foreground" : "bg-transparent text-muted-foreground"}`}><Sparkles aria-hidden size={18} /></Button>} /><TooltipContent>{label}</TooltipContent></Tooltip>;
 }

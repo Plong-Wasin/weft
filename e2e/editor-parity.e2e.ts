@@ -288,7 +288,7 @@ try {
   check(await page.getByTestId("comment-editor").getByRole("button", { name: translate("callout.options"), exact: true }).count() === 0 && await page.getByTestId("comment-editor").getByLabel(translate("editor.codeLanguage"), { exact: true }).count() === 0, "fresh Comment editor shows node-specific controls");
   check(await page.getByTestId("comment-toolbar").locator("button").evaluateAll((buttons) => buttons.every((button) => button.classList.contains("editor-tool")))
     && await page.getByRole("button", { name: translate("wiki.insert.image"), exact: true }).last().evaluate((button) => button.classList.contains("editor-tool"))
-    && await page.getByRole("button", { name: translate("comments.add"), exact: true }).evaluate((button) => button.classList.contains("primary")), "Comment toolbar, image, or Comment button is missing its design-system style");
+    && await page.getByRole("button", { name: translate("comments.add"), exact: true }).evaluate((button) => button.classList.contains("bg-primary")), "Comment toolbar, image, or Comment button is missing its design-system style");
   const commentToolbar = page.getByTestId("comment-toolbar");
   for (const key of ["wiki.tool.bold", "wiki.tool.italic", "wiki.tool.strike", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.code", "wiki.tool.link"]) {
     const label = translate(key as never), button = commentToolbar.getByRole("button", { name: label, exact: true });
@@ -490,7 +490,7 @@ try {
     check(await link.getAttribute("target") === "_blank", `link ${text} does not target a new tab`);
     check((await link.getAttribute("rel") ?? "").split(/\s+/).includes("noopener") && (await link.getAttribute("rel") ?? "").split(/\s+/).includes("noreferrer"), `link ${text} is missing noopener noreferrer`);
     const style = await link.evaluate((element) => {
-      const reference = document.createElement("span"); reference.style.color = "var(--txt-link-primary)"; document.body.append(reference);
+      const reference = document.createElement("span"); reference.style.color = "var(--primary)"; document.body.append(reference);
       const expectedColor = getComputedStyle(reference).color; reference.remove();
       return { color: getComputedStyle(element).color, expectedColor, decoration: getComputedStyle(element).textDecorationLine };
     });

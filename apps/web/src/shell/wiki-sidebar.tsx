@@ -14,7 +14,7 @@ type PageRow = { id: string; title: string; parentId: string | null; collectionI
 type Collection = { id: string; name: string; icon: string; visibility: "public" | "private"; isDefault: boolean };
 
 const row = (active: boolean) => `transition-colors flex min-h-9 max-md:min-h-11 min-w-0 items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] ${active ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground"}`;
-const heading = "transition-colors flex min-h-9 max-md:min-h-11 w-full items-center gap-1 rounded-lg !bg-transparent px-3 py-1.5 text-left text-[12px] font-medium text-muted-foreground";
+const heading = "transition-colors flex max-md:min-h-11 w-full items-center gap-1 !bg-transparent text-left text-[12px] font-medium text-muted-foreground";
 
 /** Pages of one level, each with its children below it when it is open; the path to the open page is always open. */
 function PageTree({ workspace, pages, parentId, activeId, open, toggle, depth, dragging, over, dragStart, overKind, moveBeside }: { workspace: Workspace; pages: PageRow[]; parentId: string | null; activeId: string; open: Set<string>; toggle: (id: string) => void; depth: number; dragging: string | null; over: string | null; dragStart: (id: string, event: React.PointerEvent) => void; overKind: string | null; moveBeside: (page: PageRow, sibling: PageRow, position: "before" | "after") => void }) {
@@ -28,7 +28,7 @@ function PageTree({ workspace, pages, parentId, activeId, open, toggle, depth, d
         {over === `page:${page.id}` && overKind === "before" && <span aria-hidden data-wiki-drop-line="before" className="pointer-events-none absolute inset-x-0 -top-px h-0.5 rounded bg-primary" />}
         {over === `page:${page.id}` && overKind === "after" && <span aria-hidden data-wiki-drop-line="after" className="pointer-events-none absolute inset-x-0 -bottom-px h-0.5 rounded bg-primary" />}
         {children.length > 0
-          ? <Button type="button" aria-expanded={expanded} aria-label={`${translate("wikiSidebar.toggle")}: ${page.title}`} onClick={() => toggle(page.id)} className="grid size-5 max-md:size-11 shrink-0 place-items-center rounded !bg-transparent !p-0 text-muted-foreground hover:!bg-accent"><ChevronRight aria-hidden size={12} className={`transition-transform ${expanded ? "rotate-90" : ""}`} /></Button>
+          ? <Button type="button" aria-expanded={expanded} aria-label={`${translate("wikiSidebar.toggle")}: ${page.title}`} onClick={() => toggle(page.id)} className="grid size-5 max-md:size-11 shrink-0 place-items-center !bg-transparent !p-0 text-muted-foreground hover:!bg-accent"><ChevronRight aria-hidden size={12} className={`transition-transform ${expanded ? "rotate-90" : ""}`} /></Button>
           : <span className="size-5 shrink-0" />}
         <NavLink to={paths.wikiPage(workspace.slug, page.id)} className={({ isActive }) => `${row(isActive)} min-w-0 flex-1`}><FileText aria-hidden size={13} className="shrink-0" /><span className="truncate">{page.title}</span></NavLink>
         {over === `page:${page.id}` && <span className="px-1 text-[12px] font-medium text-foreground">{translate(overKind === "before" ? "wikiSidebar.dropBefore" : overKind === "after" ? "wikiSidebar.dropAfter" : "wikiSidebar.dropNest")}</span>}
@@ -41,7 +41,7 @@ function PageTree({ workspace, pages, parentId, activeId, open, toggle, depth, d
           if (!neighbour) return;
           event.preventDefault();
           moveBeside(page, neighbour, event.key === "ArrowUp" ? "before" : "after");
-        }} className="grid size-5 max-md:size-11 shrink-0 touch-none place-items-center rounded !bg-transparent !p-0 text-muted-foreground hover:!bg-accent hover:text-foreground cursor-grab"><GripVertical aria-hidden size={12} /></Button>}
+        }} className="grid size-5 max-md:size-11 shrink-0 touch-none place-items-center !bg-transparent !p-0 text-muted-foreground hover:!bg-accent hover:text-foreground cursor-grab"><GripVertical aria-hidden size={12} /></Button>}
       </div>
       {expanded && children.length > 0 && <PageTree workspace={workspace} pages={pages} parentId={page.id} activeId={activeId} open={open} toggle={toggle} depth={depth + 1} dragging={dragging} over={over} dragStart={dragStart} overKind={overKind} moveBeside={moveBeside} />}
     </li>;

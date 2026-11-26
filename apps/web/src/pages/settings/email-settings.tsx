@@ -64,7 +64,7 @@ export function AccountNotificationsPage() {
           {prefs.emailVerified
             ? <span className="text-sm text-muted-foreground">{translate("email.confirmed")}</span>
             : <span className="text-sm text-muted-foreground">{translate("email.unconfirmed")}</span>}
-          {!prefs.emailVerified && emailEnabled && <Button type="button" className="h-8 rounded-md border border-border px-3 text-sm font-medium text-foreground hover:bg-accent" onClick={() => void sendConfirmation()}>{translate("email.sendConfirmation")}</Button>}
+          {!prefs.emailVerified && emailEnabled && <Button type="button" className="h-8 rounded-md border border-border text-sm font-medium text-foreground hover:bg-accent" onClick={() => void sendConfirmation()}>{translate("email.sendConfirmation")}</Button>}
         </Row>
       </RowList>
     </SettingsBlock>
@@ -79,7 +79,7 @@ export function AccountNotificationsPage() {
     </SettingsBlock>
     <SettingsBlock>
       <div className="grid gap-1">
-        <div><Button type="button" className="h-9 rounded-md border border-border px-3 text-sm font-medium text-foreground hover:bg-accent disabled:opacity-50" disabled={prefs.kinds.length === 0} onClick={() => void save([])}>{translate("email.turnOffAll")}</Button></div>
+        <div><Button type="button" className="h-9 rounded-md border border-border text-sm font-medium text-foreground hover:bg-accent disabled:opacity-50" disabled={prefs.kinds.length === 0} onClick={() => void save([])}>{translate("email.turnOffAll")}</Button></div>
         <p className="m-0 text-sm text-muted-foreground">{translate("email.turnOffHelp")}</p>
       </div>
       <Note note={note} error={noteError} />

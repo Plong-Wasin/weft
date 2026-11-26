@@ -7,13 +7,13 @@ const read = (name: string) => readFileSync(join(src, name), "utf8");
 
 test("tokens are defined once, for light and dark, and Tailwind maps them", () => {
   const tokens = read("tokens.css");
-  for (const name of ["--bg-canvas", "--bg-surface-1", "--txt-primary", "--border-subtle", "--bg-accent-primary"]) {
+  for (const name of ["--background", "--foreground", "--primary", "--muted-foreground", "--border"]) {
     expect(tokens.match(new RegExp(`^\\s*${name}:`, "gm"))?.length).toBe(2); // once per theme
   }
   expect(tokens).toContain(':root[data-theme="dark"]');
   const style = read("style.css");
   expect(style).toContain('@import "tailwindcss"');
-  expect(style).toContain("--color-canvas: var(--bg-canvas)");
+  expect(style).toContain("--color-background: var(--background)");
 });
 
 test("the app stylesheet has no unlayered element selectors that fight Tailwind", () => {
@@ -36,6 +36,6 @@ test("the app stylesheet has no unlayered element selectors that fight Tailwind"
 
 test("classless buttons use the neutral design-system style", () => {
   const style = read("style.css");
-  expect(style).toMatch(/:where\(button:not\(\[class\]\)\)\s*\{[^}]*bg-surface-1/s);
-  expect(style).toMatch(/:where\(button:not\(\[class\]\)\)\s*\{[^}]*text-primary/s);
+  expect(style).toMatch(/:where\(button:not\(\[class\]\)\)\s*\{[^}]*bg-card/s);
+  expect(style).toMatch(/:where\(button:not\(\[class\]\)\)\s*\{[^}]*text-foreground/s);
 });

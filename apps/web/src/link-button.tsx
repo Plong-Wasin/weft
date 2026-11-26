@@ -62,9 +62,9 @@ export function LinkButton({ editor, disabled = false }: { editor: Editor | null
       <label>{translate("wiki.linkUrl")}<Input autoFocus type="text" inputMode="url" autoCapitalize="off" autoCorrect="off" spellCheck={false} value={url} placeholder={translate("wiki.linkPlaceholder")} onChange={(event) => setUrl(event.target.value)} /></label>
       <small className="text-12 text-muted-foreground">{translate("wiki.linkHelp")}</small>
       <div className="flex flex-wrap gap-2">
-        <Button type="submit" className="primary">{translate("wiki.linkSave")}</Button>
-        {active && <Button type="button" className="secondary" onClick={() => { editor.chain().focus().unsetLink().run(); close(); }}>{translate("wiki.linkRemove")}</Button>}
-        <Button type="button" className="secondary" onClick={() => { close(); editor.commands.focus(); }}>{translate("comments.cancel")}</Button>
+        <Button variant="primary" type="submit">{translate("wiki.linkSave")}</Button>
+        {active && <Button type="button" onClick={() => { editor.chain().focus().unsetLink().run(); close(); }}>{translate("wiki.linkRemove")}</Button>}
+        <Button type="button" onClick={() => { close(); editor.commands.focus(); }}>{translate("comments.cancel")}</Button>
       </div>
     </form>}
   </div>;

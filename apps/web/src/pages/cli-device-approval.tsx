@@ -62,7 +62,7 @@ export function CliDeviceApprovalPage() {
       <p className="mt-4 text-14 text-muted-foreground">{translate("cliDevice.warning")}</p>
       <div className="mt-6 grid gap-3">
         <Button className={primaryButton} disabled={submitting} onClick={() => void decide("approve")}>{translate("cliDevice.approve")}</Button>
-        <Button type="button" className="min-h-11 rounded-md border border-border bg-transparent px-3 text-14 font-medium text-foreground hover:bg-accent focus-visible:outline focus-visible:outline-2" disabled={submitting} onClick={() => void decide("deny")}>{translate("cliDevice.deny")}</Button>
+        <Button variant="ghost" type="button" className="min-h-11 rounded-md border border-border bg-transparent font-medium text-foreground hover:bg-accent focus-visible:outline focus-visible:outline-2" disabled={submitting} onClick={() => void decide("deny")}>{translate("cliDevice.deny")}</Button>
       </div>
     </>}
   </AuthShell>;

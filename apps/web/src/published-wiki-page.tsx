@@ -17,7 +17,7 @@ export function PublishedPageStatus({ state, onRetry }: { state: LoadState; onRe
   const shell = "grid min-h-screen place-items-center p-8";
   if (state === "loading") return <main className={`${shell} text-muted-foreground`}><p role="status" className="m-0 text-14">{translate("published.loading")}</p></main>;
   if (state === "missing") return <main className={shell}><EmptyState title={translate("published.notFound")} /></main>;
-  return <main className={shell}><EmptyState title={translate("published.loadFailed")} action={<Button type="button" className="secondary !min-h-11" onClick={onRetry}>{translate("published.retry")}</Button>} /></main>;
+  return <main className={shell}><EmptyState title={translate("published.loadFailed")} action={<Button type="button" className="!min-h-11" onClick={onRetry}>{translate("published.retry")}</Button>} /></main>;
 }
 
 export function PublishedWikiPage() {

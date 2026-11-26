@@ -76,7 +76,7 @@ export function ProfileMenu({ user, signOut }: { user: Current["user"]; signOut:
         <label className="grid gap-1 text-[12px] text-muted-foreground">{translate("auth.newPassword")}<Input className="h-9 rounded-md border border-input bg-background px-3 text-foreground" type="password" required minLength={passwordMinimum} maxLength={256} autoComplete="new-password" aria-describedby="change-password-hint" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label>
         <p id="change-password-hint" className="m-0 text-[12px] text-muted-foreground">{translate("auth.passwordHint").replace("{min}", String(passwordMinimum))}</p>
         {passwordIssue && <p role="alert" className="m-0 text-[12px] text-destructive">{passwordIssue}</p>}
-        <Button type="submit" className="h-8 rounded-md bg-primary px-3 text-[12px] font-medium text-primary-foreground">{translate("auth.savePassword")}</Button>
+        <Button type="submit" className="h-8 rounded-md bg-primary text-[12px] font-medium text-primary-foreground">{translate("auth.savePassword")}</Button>
       </form>}
       {microsoftEnabled && <>
         <Button type="button" role="menuitem" className={`${menuItemClass} mt-1 border-t border-border`} onClick={() => void linkMicrosoft()}>{translate("auth.linkMicrosoft")}</Button>

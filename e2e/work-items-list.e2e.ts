@@ -296,7 +296,28 @@ try {
     if (width === 390) {
       check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "390px list has no horizontal page scroll (ListNoHorizontalScroll390)");
       const phoneHeights = await page.locator('[data-testid^="row-"]').evaluateAll((rows) => rows.map((item) => item.getBoundingClientRect().height));
-      check(phoneHeights.length > 0 && phoneHeights.every((height) => height < 100), `390px list keeps rows below 100px (ListPhoneRowsBelow100px): ${JSON.stringify(phoneHeights)}`);
+      const rowBounds = await page.locator('[data-testid^="row-"]').evaluateAll((rows) => {
+        const measured = rows.map((row) => {
+          const box = row.getBoundingClientRect();
+          const content = [...row.querySelectorAll<HTMLElement>("[data-phone-property], [data-list-property], button, a[href]")]
+            .filter((element) => {
+              const style = getComputedStyle(element);
+              return style.display !== "none" && style.visibility !== "hidden";
+            })
+            .filter((element) => {
+              const rect = element.getBoundingClientRect();
+              return rect.left < box.left - 0.5 || rect.right > box.right + 0.5 || rect.top < box.top - 0.5 || rect.bottom > box.bottom + 0.5;
+            })
+            .map((element) => element.tagName);
+          return { top: box.top, bottom: box.bottom, content };
+        });
+        const ordered = measured.slice().sort((a, b) => a.top - b.top);
+        return {
+          contentOutsideRows: measured.flatMap((row, index) => row.content.length ? [{ index, elements: row.content }] : []),
+          siblingOverlaps: ordered.slice(1).flatMap((row, index) => ordered[index]!.bottom <= row.top + 0.5 ? [] : [index]),
+        };
+      });
+      check(phoneHeights.length > 0 && rowBounds.contentOutsideRows.length === 0 && rowBounds.siblingOverlaps.length === 0, `390px list lets taller rows contain their chips without overlapping siblings: ${JSON.stringify({ heights: phoneHeights, ...rowBounds })}`);
       const titleWidth = await firstRow.getByRole("link", { name: "Alpha" }).evaluate((element) => element.getBoundingClientRect().width);
       check(titleWidth >= 140, `390px list title gets at least 140px (ListPhoneTitleWidth140): ${titleWidth}`);
       check(await firstRow.locator("[data-testid=list-property-wrap]").count() === 0, "390px list omits the empty property row (ListNoEmptySecondLine)");
@@ -494,8 +515,87 @@ try {
     await mobilePage.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
     await mobilePage.screenshot({ path: `${evidenceShots}/work-items-list-touch-390-${theme}.png`, fullPage: true });
   }
-  const phoneRowHeights = await mobilePage.locator('[data-testid^="row-"]').evaluateAll((rows) => rows.map((row) => row.getBoundingClientRect().height));
-  check(phoneRowHeights.length > 0 && Math.max(...phoneRowHeights) - Math.min(...phoneRowHeights) <= 1, `390px touch list rows have equal heights: ${JSON.stringify(phoneRowHeights)}`);
+  for (const [width, height] of [[390, 844], [844, 390]] as const) {
+    await mobilePage.setViewportSize({ width, height });
+    for (const theme of ["light", "dark"] as const) {
+      await mobilePage.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+      const geometry = await mobilePage.evaluate(() => {
+        const rows = [...document.querySelectorAll<HTMLElement>("[data-list-row]")];
+        const inside = (inner: DOMRect, outer: DOMRect) => inner.left >= outer.left - 0.5 && inner.right <= outer.right + 0.5 && inner.top >= outer.top - 0.5 && inner.bottom <= outer.bottom + 0.5;
+        const measured = rows.map((row) => {
+          const rowBox = row.getBoundingClientRect();
+          const elements = [...row.querySelectorAll<HTMLElement>("[data-phone-property], [data-list-property], button, a[href]")]
+            .filter((element) => {
+              const style = getComputedStyle(element);
+              return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
+            });
+          const elementOverflows = elements.flatMap((element) => {
+            const box = element.getBoundingClientRect();
+            return inside(box, rowBox) ? [] : [{ tag: element.tagName, className: element.className, box: { x: box.x, y: box.y, right: box.right, bottom: box.bottom } }];
+          });
+          const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+          const glyphOverflows: Array<{ text: string; box: { x: number; y: number; right: number; bottom: number } }> = [];
+          while (walker.nextNode()) {
+            const node = walker.currentNode;
+            if (!node.textContent?.trim()) continue;
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            for (const rect of range.getClientRects()) {
+              let left = rect.left, right = rect.right, top = rect.top, bottom = rect.bottom;
+              for (let parent = node.parentElement; parent && parent !== row; parent = parent.parentElement) {
+                const style = getComputedStyle(parent);
+                const clip = parent.getBoundingClientRect();
+                if (style.overflowX !== "visible") { left = Math.max(left, clip.left); right = Math.min(right, clip.right); }
+                if (style.overflowY !== "visible") { top = Math.max(top, clip.top); bottom = Math.min(bottom, clip.bottom); }
+              }
+              const visibleGlyph = { left, right, top, bottom };
+              if (right <= left || bottom <= top || inside(visibleGlyph as DOMRect, rowBox)) continue;
+              glyphOverflows.push({ text: node.textContent.trim(), box: { x: left, y: top, right, bottom } });
+            }
+          }
+          const title = row.querySelector<HTMLElement>("a[href]");
+          const titleLines = title ? (() => {
+            const range = document.createRange();
+            range.selectNodeContents(title);
+            return new Set([...range.getClientRects()].filter((rect) => rect.width > 0 && rect.height > 0).map((rect) => Math.round(rect.top))).size;
+          })() : 0;
+          const propertyRows = new Set([...row.querySelectorAll<HTMLElement>("[data-phone-property], [data-list-property]")]
+            .filter((element) => getComputedStyle(element).display !== "none" && element.getClientRects().length > 0)
+            .map((element) => Math.round(element.getBoundingClientRect().top))).size;
+          return {
+            id: row.dataset.testid,
+            box: { top: rowBox.top, bottom: rowBox.bottom, height: rowBox.height },
+            signature: `${titleLines}/${propertyRows}`,
+            elementOverflows,
+            glyphOverflows,
+          };
+        });
+        const ordered = measured.slice().sort((a, b) => a.box.top - b.box.top);
+        const siblingOverlaps = ordered.slice(1).flatMap((row, index) => {
+          const previous = ordered[index]!;
+          return previous.box.bottom <= row.box.top + 0.5 ? [] : [{ previous: previous.id, current: row.id, previousBottom: previous.box.bottom, currentTop: row.box.top }];
+        });
+        const heightGroups = new Map<string, number[]>();
+        for (const row of measured) heightGroups.set(row.signature, [...heightGroups.get(row.signature) ?? [], row.box.height]);
+        const equalHeightGroups = [...heightGroups].filter(([, heights]) => heights.length > 1)
+          .map(([signature, heights]) => ({ signature, min: Math.min(...heights), max: Math.max(...heights) }));
+        return {
+          viewportWidth: window.innerWidth,
+          documentWidth: document.documentElement.scrollWidth,
+          rows: measured,
+          siblingOverlaps,
+          equalHeightGroups,
+        };
+      });
+      check(geometry.viewportWidth === width && geometry.documentWidth <= width, `${width}x${height} ${theme} dense list stays within the viewport: ${JSON.stringify({ viewportWidth: geometry.viewportWidth, documentWidth: geometry.documentWidth })}`);
+      check(geometry.rows.length > 0 && geometry.rows.every((row) => row.elementOverflows.length === 0 && row.glyphOverflows.length === 0), `${width}x${height} ${theme} chips and text glyphs stay inside their own row boxes: ${JSON.stringify(geometry.rows.filter((row) => row.elementOverflows.length || row.glyphOverflows.length).map((row) => ({ id: row.id, box: row.box, elements: row.elementOverflows, glyphs: row.glyphOverflows })))}`);
+      check(geometry.siblingOverlaps.length === 0, `${width}x${height} ${theme} sibling list rows do not overlap: ${JSON.stringify(geometry.siblingOverlaps)}`);
+      check(geometry.equalHeightGroups.every((group) => group.max - group.min <= 1), `${width}x${height} ${theme} rows with matching title/property line data have equal heights: ${JSON.stringify(geometry.equalHeightGroups)}`);
+      const denseRows = geometry.rows.filter((row) => row.id === "row-MOB-1" || row.id === "row-MOB-4");
+      check(denseRows.length === 2 && denseRows.every((row) => row.elementOverflows.length === 0 && row.glyphOverflows.length === 0), `${width}x${height} ${theme} dense MOB-1/MOB-4 rows contain every chip and glyph: ${JSON.stringify(denseRows)}`);
+    }
+  }
+  await mobilePage.setViewportSize({ width: 390, height: 844 });
   await mobileRow.getByRole("button", { name: `${translate("workItems.cycle")}: Sprint 17` }).waitFor();
   const mobileRowLines = await mobileRow.evaluate((row) => {
     const titleLink = row.querySelector("a");
@@ -556,7 +656,7 @@ try {
     if (layout === "board") {
       await page.setViewportSize({ width: 1440, height: 900 });
       await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
-      // The board now shows three populated properties and summarizes the rest; use the visible State chip for focus coverage.
+      // The board shows the first three populated properties (state hidden when grouped by state); Module sits in the "+N" overflow for MOB-1, so use the visible State chip for focus coverage.
       const boardStateChip = page.getByTestId("card-MOB-1").getByRole("button", { name: `${translate("workItems.state")}: In Progress` });
       await boardStateChip.waitFor();
       await page.evaluate(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
@@ -620,9 +720,10 @@ try {
   await page.waitForFunction((label) => [...document.querySelectorAll<HTMLAnchorElement>('#desktop-sidebar a')].some((link) => link.textContent.trim() === label && link.getBoundingClientRect().left >= 0), translate("cycles.title"));
   const cyclesLinkBounds = await cyclesLink.boundingBox();
   check(!!cyclesLinkBounds && cyclesLinkBounds.x >= 0 && cyclesLinkBounds.x + cyclesLinkBounds.width <= 1440 && cyclesLinkBounds.y >= 0 && cyclesLinkBounds.y + cyclesLinkBounds.height <= 900, `Cycles sidebar link is visible after restoring the desktop sidebar: ${JSON.stringify(cyclesLinkBounds)}`);
-  await cyclesLink.click();
+  await page.getByRole("link", { name: translate("cycles.title"), exact: true }).click();
   const activeCyclesTab = page.getByRole("tab", { name: new RegExp(`${translate("cycles.status.active")}\\s+16$`) });
   await activeCyclesTab.waitFor();
+  await assertStableBounds(page.getByRole("tab", { name: new RegExp(translate("cycles.status.active")) }), "Tabs");
   await assertStableBounds(activeCyclesTab, "Tabs");
   console.log("e2e work items list: ok");
   await browser.close();

@@ -7,6 +7,7 @@ import { projectsKey } from "../shell/sidebar";
 import { paths } from "../routes";
 import type { Project } from "../types";
 import { useWorkspace } from "./workspace-layout";
+import { PageHeader } from "../shell/page-header";
 
 export type ProjectContext = { project: Project; reload: () => Promise<void> };
 export const useProject = () => useOutletContext<ProjectContext>();
@@ -39,12 +40,7 @@ export function ProjectLayout() {
   if (project === null) return <section><p role="alert">{translate("projects.notFound")}</p><Link to={paths.home(workspace.slug)}>{translate("projects.back")}</Link></section>;
   if (onPage) return <section className="grid min-w-0 gap-4"><Outlet context={{ project, reload } satisfies ProjectContext} /></section>;
   return <section className="grid min-w-0 gap-4">
-    <header className="flex flex-wrap items-center gap-x-3 gap-y-1">
-      <Link to={paths.home(workspace.slug)} className="text-13 text-secondary hover:text-primary max-sm:w-full">{translate("projects.back")}</Link>
-      <span aria-hidden className="text-secondary max-sm:hidden">›</span>
-      <h1 className="min-w-0 truncate text-20 font-semibold max-sm:flex-1">{project.key} · {project.name}</h1>
-      <Link to={paths.projectSettings(workspace.slug, project.key)} className="secondary ml-auto no-underline max-sm:ml-0">{translate("projects.settings")}</Link>
-    </header>
+    <PageHeader title={<span className="[overflow-wrap:anywhere]">{project.key} · {project.name}</span>} breadcrumb={<><Link to={paths.home(workspace.slug)} className="hover:text-foreground">{translate("projects.back")}</Link><span aria-hidden>›</span></>} actions={<Link to={paths.projectSettings(workspace.slug, project.key)} className="secondary no-underline">{translate("projects.settings")}</Link>} />
     <Outlet context={{ project, reload } satisfies ProjectContext} />
   </section>;
 }

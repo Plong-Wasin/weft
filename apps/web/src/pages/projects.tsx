@@ -10,6 +10,7 @@ import { matchesProjectSearch, preferenceOf, useProjectPreferences } from "../sh
 import { paths } from "../routes";
 import { useWorkspace } from "../layouts/workspace-layout";
 import { EmptyState } from "../empty-state";
+import { PageHeader } from "../shell/page-header";
 import type { Project } from "../types";
 
 import { Checkbox } from "@/ui/checkbox";
@@ -76,12 +77,11 @@ export function ProjectsPanel() {
       {note && <p role="alert" className="m-0 text-sm text-destructive">{note}</p>}
     </form>;
   return <section className="grid gap-4">
-    <header className="flex flex-wrap items-center gap-3">
-      <h1 className="m-0 flex-1 text-xl font-semibold text-foreground">{translate("projects.title")}</h1>
-      <label className="w-full max-w-sm text-sm font-medium text-muted-foreground">{translate("projects.find")}<Input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={translate("projects.searchPlaceholder")} /></label>
+    <PageHeader title={translate("projects.title")} actions={<>
+      <Input aria-label={translate("projects.find")} type="search" className="w-full sm:w-64" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={translate("projects.searchPlaceholder")} />
       <label className="secondary flex items-center gap-2 text-sm"><Checkbox checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />{translate("projects.showArchived")}</label>
       {!creating && <Button type="button" className="flex items-center gap-1.5" onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{translate("projects.new")}</Button>}
-    </header>
+    </>} />
     {form}
     {projects !== null && projects.length === 0 && <EmptyState title={translate(showArchived ? "projects.noArchived" : "projects.empty")} description={showArchived ? undefined : translate("projects.emptyHint")}
       action={showArchived || creating ? undefined : <Button type="button" onClick={() => setCreating(true)}>{translate("projects.createFirst")}</Button>} />}

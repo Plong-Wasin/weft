@@ -97,10 +97,10 @@ function RunCard({ run, workspaceId, highlighted, canControl, action, tick, onCh
       <RunUsage run={run} />
       <RunSession run={run} />
       <RunWokenBy run={run} />
-      {canControl && canCancelRun(run) && <Button type="button" className="secondary" onClick={() => void control("cancel_run")}>{translate("runs.cancel")}</Button>}
-      {canControl && canRerunRun(run) && <Button type="button" className="secondary" onClick={() => void control("rerun_run")}>{translate("runs.rerun")}</Button>}
-      {canControl && canRerunRun(run) && <Button type="button" className="secondary" onClick={() => void control("rerun_run", { newSession: true })}>{translate("runs.rerunNewSession")}</Button>}
-      {!waiting && <Button type="button" className="secondary" aria-expanded={open} onClick={() => setOpen(!open)}>{translate(open ? "runs.hideTranscript" : "runs.showTranscript")}</Button>}
+      {canControl && canCancelRun(run) && <Button type="button" onClick={() => void control("cancel_run")}>{translate("runs.cancel")}</Button>}
+      {canControl && canRerunRun(run) && <Button type="button" onClick={() => void control("rerun_run")}>{translate("runs.rerun")}</Button>}
+      {canControl && canRerunRun(run) && <Button type="button" onClick={() => void control("rerun_run", { newSession: true })}>{translate("runs.rerunNewSession")}</Button>}
+      {!waiting && <Button type="button" aria-expanded={open} onClick={() => setOpen(!open)}>{translate(open ? "runs.hideTranscript" : "runs.showTranscript")}</Button>}
     </div>
     {(failureText || run.failureMessage) && <div role="alert" className="grid gap-0.5 text-13 text-destructive">
       {failureText && <p className="m-0">{failureText}</p>}

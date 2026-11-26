@@ -72,7 +72,7 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
     }} className="fixed left-1/2 top-[10dvh] z-50 m-0 max-h-[80dvh] w-[calc(100vw-1.5rem)] max-w-lg -translate-x-1/2 overflow-auto rounded-lg border border-border bg-card p-5 text-foreground shadow-lg backdrop:bg-black/30">
       <div className="mb-3 flex items-center gap-2">
         <h2 id={titleId} className="m-0 flex-1 text-lg font-semibold text-foreground">{title}</h2>
-        <Button type="button" className="rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent" aria-label={t("cycles.close")} onClick={onClose}><X aria-hidden size={16} /></Button>
+        <Button variant="ghost" type="button" className="rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent" aria-label={t("cycles.close")} onClick={onClose}><X aria-hidden size={16} /></Button>
       </div>
       {children}
     </dialog>
@@ -106,7 +106,7 @@ function CycleModal({ action, projectId, workspaceId, cycle, onClose, onSaved }:
       {overlap.length > 0 && <p role="status" data-testid="cycle-overlap" className="m-0 rounded-md bg-amber-500/10 px-3 py-2 text-sm text-foreground">{t("cycles.overlap").replace("{names}", overlap.join(", "))}</p>}
       {note && <p role="alert" className="m-0 text-destructive">{note}</p>}
       <div className="flex justify-end gap-2 border-t border-border pt-3">
-        <Button type="button" className="secondary" onClick={onClose}>{t("cycles.cancel")}</Button>
+        <Button type="button" onClick={onClose}>{t("cycles.cancel")}</Button>
         <Button type="submit">{t(cycle ? "cycles.save" : "cycles.create")}</Button>
       </div>
     </form>

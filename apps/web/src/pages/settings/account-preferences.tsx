@@ -34,7 +34,7 @@ function AiPreferencesForm() {
     <SettingsHeader title={translate("accountPrefs.title")} description={translate("accountPrefs.description")} />
     {data === null && <div className="flex flex-wrap items-center gap-2">
       <Note note={translate("accountPrefs.loadFailed")} error />
-      <Button type="button" className="secondary" disabled={isFetching} onClick={() => void refetch()}>{translate("account.retry")}</Button>
+      <Button type="button" disabled={isFetching} onClick={() => void refetch()}>{translate("account.retry")}</Button>
     </div>}
     {data === undefined && <p role="status" className="text-sm text-muted-foreground">{translate("account.loading")}</p>}
     {data && <SettingsBlock>

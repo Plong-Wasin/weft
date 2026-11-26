@@ -23,11 +23,11 @@ const DropdownMenuContent = React.forwardRef<HTMLDivElement, MenuPrimitive.Popup
 });
 
 function DropdownMenuItem({ className, ...props }: MenuPrimitive.Item.Props) {
-  return <MenuPrimitive.Item nativeButton data-slot="dropdown-menu-item" className={cn("inset-row-hover flex w-full cursor-default items-center gap-2 px-2.5 py-1.5 text-left text-sm outline-none select-none focus:bg-accent focus:text-accent-foreground data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 pointer-coarse:min-h-11", className)} {...props} />;
+  return <MenuPrimitive.Item nativeButton data-slot="dropdown-menu-item" className={cn("rounded-[var(--radius)] transition-colors duration-[120ms] hover:bg-accent focus-visible:bg-accent flex w-full cursor-default items-center gap-2 px-2.5 py-1.5 text-left text-sm outline-none select-none focus:bg-accent focus:text-accent-foreground data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 pointer-coarse:min-h-11", className)} {...props} />;
 }
 
 function DropdownMenuCheckboxItem({ className, children, ...props }: MenuPrimitive.CheckboxItem.Props) {
-  return <MenuPrimitive.CheckboxItem data-slot="dropdown-menu-checkbox-item" className={cn("inset-row-hover relative flex w-full cursor-default items-center gap-2 py-1.5 pr-2.5 pl-8 text-sm outline-none select-none focus:bg-accent focus:text-accent-foreground data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 pointer-coarse:min-h-11", className)} {...props}>{children}</MenuPrimitive.CheckboxItem>;
+  return <MenuPrimitive.CheckboxItem data-slot="dropdown-menu-checkbox-item" className={cn("rounded-[var(--radius)] transition-colors duration-[120ms] hover:bg-accent focus-visible:bg-accent relative flex w-full cursor-default items-center gap-2 py-1.5 pr-2.5 pl-8 text-sm outline-none select-none focus:bg-accent focus:text-accent-foreground data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 pointer-coarse:min-h-11", className)} {...props}>{children}</MenuPrimitive.CheckboxItem>;
 }
 
 function DropdownMenuRadioGroup({ ...props }: MenuPrimitive.RadioGroup.Props) {
@@ -35,7 +35,7 @@ function DropdownMenuRadioGroup({ ...props }: MenuPrimitive.RadioGroup.Props) {
 }
 
 function DropdownMenuRadioItem({ className, children, ...props }: MenuPrimitive.RadioItem.Props) {
-  return <MenuPrimitive.RadioItem data-slot="dropdown-menu-radio-item" className={cn("inset-row-hover relative flex w-full cursor-default items-center gap-2 py-1.5 pr-2.5 pl-8 text-sm outline-none select-none focus:bg-accent focus:text-accent-foreground data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 pointer-coarse:min-h-11", className)} {...props}>{children}</MenuPrimitive.RadioItem>;
+  return <MenuPrimitive.RadioItem data-slot="dropdown-menu-radio-item" className={cn("rounded-[var(--radius)] transition-colors duration-[120ms] hover:bg-accent focus-visible:bg-accent relative flex w-full cursor-default items-center gap-2 py-1.5 pr-2.5 pl-8 text-sm outline-none select-none focus:bg-accent focus:text-accent-foreground data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 pointer-coarse:min-h-11", className)} {...props}>{children}</MenuPrimitive.RadioItem>;
 }
 
 function DropdownMenuLabel({ className, ...props }: MenuPrimitive.GroupLabel.Props) {

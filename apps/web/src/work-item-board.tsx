@@ -300,7 +300,7 @@ export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag
     void processKeyboardQueue();
   };
 
-  const reorderHandle = (item: T, column: string) => <Button type="button" data-reorder={item.id} data-reorder-column={column} disabled={!canDrag}
+  const reorderHandle = (item: T, column: string) => <Button variant="ghost" type="button" data-reorder={item.id} data-reorder-column={column} disabled={!canDrag}
     aria-label={`${t("sortable.reorder")}: ${item.displayId}`} aria-keyshortcuts={reorderWithinColumn ? "ArrowLeft ArrowRight ArrowUp ArrowDown" : "ArrowLeft ArrowRight"} title={t(reorderWithinColumn ? "board.reorderHint" : "board.reorderColumnsHint")}
     className="grid size-7 shrink-0 touch-none cursor-grab place-items-center rounded-md bg-transparent p-0 text-muted-foreground hover:bg-accent hover:text-foreground"
     onKeyDown={(event) => { moveByKeyboard(item.id, column, event); }}>
@@ -320,7 +320,7 @@ export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag
       const over = drag?.over?.column === column.key;
       if (closed) return <section key={column.key} data-column={column.key} data-testid={`column-${column.name}`} aria-label={column.name} data-collapsed
         className={`flex w-11 shrink-0 flex-col items-center gap-2 rounded-xl border border-border py-2 ${over ? "bg-accent" : "bg-card"}`}>
-        <Button type="button" aria-expanded={false} aria-label={`${t("layout.toggleGroup")}: ${column.name}`} title={t("layout.toggleGroup")} className="grid size-8 place-items-center rounded-md bg-transparent p-0 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => onToggle(column.key)}><ChevronsRight aria-hidden size={14} /></Button>
+        <Button variant="ghost" type="button" aria-expanded={false} aria-label={`${t("layout.toggleGroup")}: ${column.name}`} title={t("layout.toggleGroup")} className="grid size-8 place-items-center rounded-md bg-transparent p-0 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => onToggle(column.key)}><ChevronsRight aria-hidden size={14} /></Button>
         {column.icon}
         <span className="text-13 font-medium text-foreground [writing-mode:vertical-rl]">{column.name}</span>
         <span className="text-12 text-muted-foreground">{formatNumber(column.items.length)}</span>
@@ -330,8 +330,8 @@ export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag
         <header className="flex items-center gap-2 px-1 py-0.5">
           {column.icon}
           <h4 className="m-0 flex-1 truncate text-16 font-medium text-foreground">{column.name} <span className="font-normal text-muted-foreground">{formatNumber(column.items.length)}</span></h4>
-          <Button type="button" aria-expanded aria-label={`${t("layout.toggleGroup")}: ${column.name}`} title={t("layout.toggleGroup")} className="grid size-8 shrink-0 place-items-center rounded-md bg-transparent p-0 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => onToggle(column.key)}><ChevronsLeft aria-hidden size={14} /></Button>
-          {canAdd && <Button type="button" aria-label={t("layout.addToGroup").replace("{group}", column.name)} title={t("layout.addToGroup").replace("{group}", column.name)} className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md bg-transparent px-1 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => onAdd(column.key)}><Plus aria-hidden size={14} /><span className="hidden text-11 max-sm:inline">{t("layout.addShort")}</span></Button>}
+          <Button variant="ghost" type="button" aria-expanded aria-label={`${t("layout.toggleGroup")}: ${column.name}`} title={t("layout.toggleGroup")} className="grid size-8 shrink-0 place-items-center rounded-md bg-transparent p-0 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => onToggle(column.key)}><ChevronsLeft aria-hidden size={14} /></Button>
+          {canAdd && <Button variant="ghost" type="button" aria-label={t("layout.addToGroup").replace("{group}", column.name)} title={t("layout.addToGroup").replace("{group}", column.name)} className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md bg-transparent px-1 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => onAdd(column.key)}><Plus aria-hidden size={14} /><span className="hidden text-11 max-sm:inline">{t("layout.addShort")}</span></Button>}
         </header>
         <div className="flex min-h-12 flex-col gap-2">
           {column.items.map((item) => <React.Fragment key={item.id}>
@@ -349,7 +349,7 @@ export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag
           {drag?.over?.column === column.key && drag.over.before === null && <div aria-hidden className="h-0.5 rounded-full bg-primary" />}
         </div>
         {quick === column.key && quickForm(column.key)}
-        {canAdd && quick !== column.key && <Button type="button" className="flex items-center gap-2 rounded-md bg-transparent px-2 py-1.5 text-left text-13 font-medium text-muted-foreground hover:bg-accent" onClick={() => onAdd(column.key)}><Plus aria-hidden size={14} />{t("workItems.new")}</Button>}
+        {canAdd && quick !== column.key && <Button variant="ghost" type="button" className="flex items-center gap-2 rounded-md bg-transparent px-2 text-left font-medium text-muted-foreground hover:bg-accent" onClick={() => onAdd(column.key)}><Plus aria-hidden size={14} />{t("workItems.new")}</Button>}
       </section>;
     })}
     {drag && dragged && <div aria-hidden data-testid="drag-ghost" className="pointer-events-none fixed z-50 rotate-1 rounded-lg border border-ring bg-card p-3 shadow-xl"

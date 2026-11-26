@@ -194,7 +194,7 @@ try {
     await Bun.sleep(150);
     const expected = await page.evaluate(() => {
       const probe = document.createElement("div");
-      probe.style.background = "var(--bg-surface-1)"; probe.style.boxShadow = "var(--shadow-menu)";
+      probe.style.background = "var(--muted)"; probe.style.boxShadow = "var(--shadow-md)";
       document.body.append(probe);
       const style = getComputedStyle(probe);
       const result = { background: style.backgroundColor, shadow: style.boxShadow };
@@ -202,8 +202,8 @@ try {
       return result;
     });
     const actual = await bubble.evaluate((node) => { const style = getComputedStyle(node); return { background: style.backgroundColor, shadow: style.boxShadow }; });
-    check(actual.background === expected.background && expected.background !== "" , `${theme}: toolbar background is not the surface token (${actual.background} vs ${expected.background})`);
-    check(actual.shadow === expected.shadow && actual.shadow !== "none", `${theme}: toolbar shadow is not the menu token (${actual.shadow} vs ${expected.shadow})`);
+    check(actual.background === expected.background && expected.background !== "" , `${theme}: toolbar background is not the muted token (${actual.background} vs ${expected.background})`);
+    check(actual.shadow === expected.shadow && actual.shadow !== "none", `${theme}: toolbar shadow is not the shadow token (${actual.shadow} vs ${expected.shadow})`);
   }
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   console.log("PASS toolbar surface and shadow come from theme tokens in light and dark");

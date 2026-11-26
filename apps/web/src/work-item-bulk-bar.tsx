@@ -17,8 +17,8 @@ type Named = { id: string; name: string; status?: string };
 
 const t = (key: string) => translate(key as MessageKey);
 const fill = (key: string, count: number) => t(key).replace("{count}", formatNumber(count));
-const chip = "flex items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1 text-12 font-medium text-foreground hover:bg-accent";
-const optionClass = "flex w-full items-center gap-2 rounded-md bg-transparent px-2.5 py-1.5 text-left text-13 text-foreground hover:bg-accent";
+const chip = "flex items-center gap-1.5 rounded-md border border-border bg-card px-2 text-12 font-medium text-foreground hover:bg-accent";
+const optionClass = "flex w-full items-center gap-2 rounded-md bg-transparent px-2.5 text-left text-foreground hover:bg-accent";
 
 /** Add or remove values of a set-valued property (assignees, labels, modules) on every selected work item; each pick applies at once. */
 function SetMenu({ label, icon, options, present, onApply }: { label: string; icon: React.ReactNode; options: Option[]; present: Set<string>; onApply: (mode: "add" | "remove", id: string) => Promise<boolean> }) {
@@ -29,13 +29,13 @@ function SetMenu({ label, icon, options, present, onApply }: { label: string; ic
   return <Popover label={label} className={chip} panelRole="dialog" panelClassName="grid w-60 max-h-80 gap-1 overflow-auto p-2" trigger={<span className="flex items-center gap-1.5">{icon}<span>{label}</span></span>}>
     {(close) => <>
       <div role="group" aria-label={label} className="grid grid-cols-2 gap-1 pb-1">
-        {(["add", "remove"] as const).map((value) => <Button key={value} type="button" aria-pressed={mode === value} className={`rounded-md px-2 py-1 text-13 ${mode === value ? "bg-muted font-medium text-foreground" : "bg-transparent text-muted-foreground hover:bg-accent"}`} onClick={() => setMode(value)}>{t(`bulk.${value}`)}</Button>)}
+        {(["add", "remove"] as const).map((value) => <Button key={value} type="button" aria-pressed={mode === value} variant={mode === value ? "secondary" : "ghost"} className={`rounded-md px-2 ${mode === value ? "bg-muted font-medium text-foreground" : "bg-transparent text-muted-foreground hover:bg-accent"}`} onClick={() => setMode(value)}>{t(`bulk.${value}`)}</Button>)}
       </div>
       <label className="grid gap-1 text-13 text-muted-foreground">{t("picker.search")}<Input type="search" autoComplete="off" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
       {available.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-muted-foreground">{mode === "remove" ? t("bulk.nothingToRemove") : "—"}</p> : shown.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-muted-foreground">{t("picker.noMatches")}</p> : <>{[false, true].map((agents) => {
         const group = shown.filter((option) => !!option.isAgent === agents);
         if (!group.length) return null;
-        return <React.Fragment key={String(agents)}>{shown.some((option) => option.isAgent) && <p className="px-2.5 pb-1 pt-2 text-11 font-semibold uppercase tracking-wide text-muted-foreground">{agents ? t("agents.group") : t("members.group")}</p>}{group.map((option) => { const unavailable = option.isAgent && option.hasAccess === false; return <Button key={option.id} type="button" aria-disabled={unavailable || undefined} title={unavailable ? option.accessReason ?? undefined : undefined} className={`${optionClass} ${option.codeCapable ? "flex-wrap" : ""} ${unavailable ? "cursor-not-allowed opacity-45" : ""}`} onClick={() => !unavailable && void onApply(mode, option.id).then((ok) => ok && close())}>
+        return <React.Fragment key={String(agents)}>{shown.some((option) => option.isAgent) && <p className="px-2.5 pb-1 pt-2 text-11 font-semibold uppercase tracking-wide text-muted-foreground">{agents ? t("agents.group") : t("members.group")}</p>}{group.map((option) => { const unavailable = option.isAgent && option.hasAccess === false; return <Button key={option.id} type="button" aria-disabled={unavailable || undefined} title={unavailable ? option.accessReason ?? undefined : undefined} variant="ghost" className={`${optionClass} ${option.codeCapable ? "flex-wrap" : ""} ${unavailable ? "cursor-not-allowed opacity-45" : ""}`} onClick={() => !unavailable && void onApply(mode, option.id).then((ok) => ok && close())}>
           {option.isAgent ? <span title={t("comments.agent")}><Bot aria-hidden size={14} className="text-muted-foreground" /></span> : option.icon}<span className={option.codeCapable ? "min-w-0" : "flex-1 truncate"}>{option.name}{option.isAgent && <> <span className="ml-1.5 text-11 text-muted-foreground">{t("comments.agent")}</span></>}</span>{option.codeCapable && <span className="inline-flex items-center gap-1 whitespace-nowrap rounded bg-muted px-1.5 py-0.5 text-10 text-muted-foreground" title={t("agents.codeCapable")}><Code2 aria-hidden size={13} className="text-amber-700 dark:text-amber-400" />{t("agents.canEditCode")}</span>}
         {unavailable && <span className="w-full pl-5 text-11 text-muted-foreground">{option.accessReason}</span>}</Button>; })}</React.Fragment>;
       })}</>}
@@ -101,13 +101,13 @@ export function BulkBar({ projectId, selected, states, people, labels, estimate,
         onApply={(mode, id) => apply(mode === "add" ? "add_module_items" : "remove_module_items", { moduleId: id, workItemIds: ids }, "bulk.updated")} />}
       <Button type="button" className={`${chip} disabled:opacity-50`} disabled={!archivable} title={archivable ? undefined : t("bulk.archiveBlocked")} onClick={() => void apply("bulk_archive_work_items", { projectId, workItemIds: ids }, "bulk.archived").then((ok) => ok && onClear())}><Archive aria-hidden size={14} className="text-muted-foreground" />{t("bulk.archive")}</Button>
       <Button type="button" className={`${chip} text-destructive`} onClick={() => setConfirmDelete(true)}><Trash2 aria-hidden size={14} />{t("bulk.delete")}</Button>
-      <Button type="button" aria-label={t("bulk.clear")} title={t("bulk.clear")} className="rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={onClear}><X aria-hidden size={16} /></Button>
+      <Button variant="ghost" type="button" aria-label={t("bulk.clear")} title={t("bulk.clear")} className="rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={onClear}><X aria-hidden size={16} /></Button>
     </div>
     {error && <p role="alert" className="m-0 px-1 text-13 text-destructive">{error}</p>}
     {confirmDelete && <Dialog title={fill("bulk.deleteTitle", count)} onClose={() => setConfirmDelete(false)}>
       <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); void apply("delete_work_items", { projectId, workItemIds: ids }, "bulk.deleted").then((ok) => { setConfirmDelete(false); if (ok) onClear(); }); }}>
         <p className="m-0 text-14 text-muted-foreground">{t("bulk.deleteBody")}</p>
-        <div className="flex justify-end gap-2"><Button type="button" className="secondary" onClick={() => setConfirmDelete(false)}>{t("comments.cancel")}</Button><Button type="submit">{t("bulk.delete")}</Button></div>
+        <div className="flex justify-end gap-2"><Button type="button" onClick={() => setConfirmDelete(false)}>{t("comments.cancel")}</Button><Button type="submit">{t("bulk.delete")}</Button></div>
       </form>
     </Dialog>}
   </div>;

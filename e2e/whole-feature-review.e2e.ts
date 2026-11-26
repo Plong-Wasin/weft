@@ -156,7 +156,7 @@ try {
     const warningCallout = wikiEditor.getByRole("alert");
     await warningCallout.getByText(sourceWarning, { exact: true }).waitFor();
     const warningClasses = await warningCallout.getAttribute("class");
-    check(warningClasses?.includes("text-warning-text") && warningClasses.includes("border-warning-strong") && await warningCallout.locator("svg").count() === 1, "source conversion warning should use warning contrast, a left border, and a warning icon");
+    check(warningClasses?.includes("text-amber-800") && warningClasses.includes("border-amber-600") && await warningCallout.locator("svg").count() === 1, "source conversion warning should use warning contrast, a left border, and a warning icon");
     check(await wikiEditor.locator(".ProseMirror").evaluate((element) => element.textContent?.includes("unsupported formatting") ?? false), "unsupported HTML text should remain visible as plain text with a warning");
     for (const width of [1280, 390] as const) await capture("source-retained", locale, width);
 

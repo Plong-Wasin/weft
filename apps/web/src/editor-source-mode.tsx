@@ -107,6 +107,6 @@ export function EditorSourceMode({ editor, initialWarnings = [], onSourceDraftCh
     {initialWarnings.includes("alignment") && <p role="status" className="m-0 text-13 text-muted-foreground">{translate("editor.removedAlignment")}</p>}
     {initialWarnings.includes("cellBackground") && <p role="status" className="m-0 text-13 text-muted-foreground">{translate("editor.removedCellBackground")}</p>}
     {sourceLoss && <div role="status" className="flex min-w-0 items-start gap-2 rounded-r-md border-l-4 border-destructive bg-destructive/10 px-3 py-2 text-13 text-destructive"><CircleAlert aria-hidden size={16} className="mt-0.5 shrink-0" /><p className="m-0 min-w-0">{translate("editor.sourceLoss")}</p></div>}
-    {warnings.length > 0 && <div role="alert" className="flex min-w-0 items-start gap-2 rounded-r-md border-l-4 border-warning-strong bg-muted px-3 py-2 text-13 text-warning-text"><CircleAlert aria-hidden size={16} className="mt-0.5 shrink-0" /><p className="m-0 min-w-0">{warnings.join(" ")}</p></div>}
+    {warnings.length > 0 && <div role="alert" className="flex min-w-0 items-start gap-2 rounded-r-md border-l-4 border-amber-600 bg-muted px-3 py-2 text-13 text-amber-800 dark:border-amber-400 dark:text-amber-300"><CircleAlert aria-hidden size={16} className="mt-0.5 shrink-0" /><p className="m-0 min-w-0">{warnings.join(" ")}</p></div>}
   </div>;
 }

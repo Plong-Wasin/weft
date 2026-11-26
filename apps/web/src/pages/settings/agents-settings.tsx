@@ -61,7 +61,7 @@ function AgentForm({ draft, onChange, onSubmit, onCancel, runtimes, allowAutopil
         {number("timeoutSeconds", "agents.timeoutSeconds")}{number("monthlyTokenBudget", "agents.monthlyBudget")}
       </div>
     </details>
-    <div className="flex gap-2"><Button type="submit">{translate("agents.save")}</Button>{onCancel && <Button type="button" className="secondary" onClick={onCancel}>{translate("agents.cancel")}</Button>}</div>
+    <div className="flex gap-2"><Button type="submit">{translate("agents.save")}</Button>{onCancel && <Button type="button" onClick={onCancel}>{translate("agents.cancel")}</Button>}</div>
   </form>;
 }
 
@@ -128,7 +128,7 @@ function MemberAgentSettings({ agent, onSaved, onFailed }: { agent: ManagedAgent
       <label>{translate("agents.timeoutSeconds")}<Input type="number" min={1} max={3600} value={draft.timeoutSeconds} onChange={set("timeoutSeconds")} /></label>
       <label>{translate("agents.monthlyBudget")}<Input type="number" min={1} value={draft.monthlyTokenBudget} onChange={set("monthlyTokenBudget")} /></label>
     </div>
-    <div className="flex flex-wrap gap-2"><Button type="submit" disabled={saving}>{translate("agents.save")}</Button><Button type="button" className="secondary" onClick={async () => {
+    <div className="flex flex-wrap gap-2"><Button type="submit" disabled={saving}>{translate("agents.save")}</Button><Button type="button" onClick={async () => {
       const result = await action(agent.enabled ? "disable_agent" : "enable_agent", { agentId: agent.id });
       result === null ? onFailed() : onSaved();
     }}>{translate(agent.enabled ? "agents.disable" : "agents.enable")}</Button><Button type="button" className={dangerOutline} data-retire-trigger={agent.id} onClick={async () => {
@@ -183,7 +183,7 @@ function AgentRuntimeProfile({ agent, onSaved, onFailed }: { agent: Pick<AgentRe
   return <fieldset className="grid min-w-0 gap-1 border-0 p-0"><legend className="text-sm font-medium text-muted-foreground">{translate("agents.runtimeProfile")}</legend>
     <p className="text-xs text-muted-foreground">{translate("agents.runtimeProfileHelp")}</p>
     <div className="flex min-w-0 flex-wrap items-center gap-2"><select className="max-w-full min-w-0" aria-label={translate("agents.runtimeProfile")} value={selected} onChange={(event) => setSelected(event.target.value)}>{!agent.runtimeProfileId && <option value="">{translate("agents.profileDefault")}</option>}{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {translate(`runtimes.sandbox.${profile.sandbox}` as never)}{profile.sandbox === "full" ? ` · ${translate("runtimes.fullAccessWarning")}` : ""}</option>)}</select>
-      <Button type="button" className="secondary" disabled={!selected || selected === agent.runtimeProfileId} onClick={async () => { const result = await action("set_agent_runtime_profile", { agentId: agent.id, profileId: selected }); result === null ? onFailed() : onSaved(); }}>{translate("agents.saveProfile")}</Button></div>
+      <Button type="button" disabled={!selected || selected === agent.runtimeProfileId} onClick={async () => { const result = await action("set_agent_runtime_profile", { agentId: agent.id, profileId: selected }); result === null ? onFailed() : onSaved(); }}>{translate("agents.saveProfile")}</Button></div>
   </fieldset>;
 }
 
@@ -232,12 +232,12 @@ function AgentRuntimeEnvironment({ agent, onFailed }: { agent: Pick<AgentRecord,
             <label className="min-w-[12rem] flex-1 text-xs">{translate("agents.environmentValue")}<Input id={`environment-value-${agent.id}`} type="password" autoComplete="new-password" aria-describedby={`environment-value-help-${agent.id}`} value={value} onChange={(event) => setValue(event.target.value)} /></label>
             <small id={`environment-value-help-${agent.id}`} className="text-muted-foreground">{translate("agents.environmentUnchanged")}</small>
             <Button type="button" onClick={() => void apply({ [name]: value })}>{translate("agents.environmentUpdate")}</Button>
-            <Button type="button" className="secondary" onClick={() => { setEditing(null); setValue(""); }}>{translate("agents.cancel")}</Button>
-          </> : <Button type="button" className="secondary" disabled={classificationDirty} onClick={() => { setEditing(name); setValue(""); }}>{translate("agents.environmentChangeValue")}</Button>}
-          <Button type="button" className="secondary" disabled={classificationDirty} onClick={() => void apply({}, [name])}>{translate("agents.environmentRemove")}</Button>
+            <Button type="button" onClick={() => { setEditing(null); setValue(""); }}>{translate("agents.cancel")}</Button>
+          </> : <Button type="button" disabled={classificationDirty} onClick={() => { setEditing(name); setValue(""); }}>{translate("agents.environmentChangeValue")}</Button>}
+          <Button type="button" disabled={classificationDirty} onClick={() => void apply({}, [name])}>{translate("agents.environmentRemove")}</Button>
         </div>
       </div>)}
-      <Button type="button" className="secondary justify-self-start" disabled={!classificationDirty} onClick={async () => {
+      <Button type="button" className="justify-self-start" disabled={!classificationDirty} onClick={async () => {
         const result = await action<{ variables: typeof classifications }>("classify_agent_runtime_environment", { agentId: agent.id, classifications: Object.fromEntries(classifications.map(({ name, classification }) => [name, classification])) });
         if (!result) { onFailed(); return; }
         setClassifications(result.variables); setSavedClassifications(result.variables);
@@ -272,7 +272,7 @@ function RetirePanel({ agent, counts, onClose, onDisable }: { agent: { id: strin
     <p className="m-0 text-sm text-muted-foreground">{translate(agent.enabled ? "agents.retire.help" : "agents.retire.helpDisabled")}</p>
     <div className="flex flex-wrap gap-2">
       {agent.enabled && <Button type="button" onClick={() => { onDisable(); document.querySelector<HTMLElement>(`[data-retire-trigger="${agent.id}"]`)?.focus(); }}>{translate("agents.disable")}</Button>}
-      <Button type="button" className="secondary" onClick={close}>{translate("agents.retire.close")}</Button>
+      <Button type="button" onClick={close}>{translate("agents.retire.close")}</Button>
     </div>
   </div>;
 }
@@ -405,8 +405,8 @@ export function WorkspaceAgents() {
           <AgentRuns agent={agent} />
           <p className="text-sm text-muted-foreground">{translate("agents.retire.hint")}</p>
           <div className="flex flex-wrap gap-2">
-            {editing?.id !== agent.id && <Button type="button" className="secondary" onClick={() => setEditing({ id: agent.id, draft: toDraft(agent) })}>{translate("agents.edit")}</Button>}
-            <Button type="button" className="secondary" onClick={async () => { setRetiring(null); await guard(await action(agent.enabled ? "disable_agent" : "enable_agent", { agentId: agent.id })); }}>{translate(agent.enabled ? "agents.disable" : "agents.enable")}</Button>
+            {editing?.id !== agent.id && <Button type="button" onClick={() => setEditing({ id: agent.id, draft: toDraft(agent) })}>{translate("agents.edit")}</Button>}
+            <Button type="button" onClick={async () => { setRetiring(null); await guard(await action(agent.enabled ? "disable_agent" : "enable_agent", { agentId: agent.id })); }}>{translate(agent.enabled ? "agents.disable" : "agents.enable")}</Button>
             <Button type="button" className={dangerOutline} data-retire-trigger={agent.id} onClick={async () => {
               // The same counts the server refuses with: a refused Agent gets the dialog instead of a failed request.
               const check = await action<{ blocked: boolean; counts: Record<string, number> }>("get_agent_content_counts", { agentId: agent.id });
@@ -458,8 +458,8 @@ function TriggerSection({ agent, projects, projectsLoaded }: { agent: AgentRecor
       : availableProjects.length === 0 ? <p role="status" className="m-0 text-xs text-muted-foreground">{translate(projects.length === 0 ? "triggers.noProjects" : "triggers.noAccessibleProjectsHelp")}</p> : null}
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
     {rows.map((trigger) => <div key={trigger.id} className="flex gap-2 text-sm"><span>{projects.find((p) => p.id === trigger.projectId)?.key} · {trigger.schedule ? `${translate(`triggers.${trigger.schedule}`)}${trigger.expression ? ` (${trigger.expression})` : ""}` : translate(`triggers.${trigger.eventType ?? "work_item_created"}`)}</span>
-      <Button type="button" className="secondary" onClick={async () => { await action("pause_trigger", { triggerId: trigger.id, paused: !trigger.paused }); await reload(); }}>{translate(trigger.paused ? "triggers.resume" : "triggers.pause")}</Button>
-      <Button type="button" className="secondary" onClick={async () => { await action("delete_trigger", { triggerId: trigger.id }); await reload(); }}>{translate("triggers.delete")}</Button></div>)}
+      <Button type="button" onClick={async () => { await action("pause_trigger", { triggerId: trigger.id, paused: !trigger.paused }); await reload(); }}>{translate(trigger.paused ? "triggers.resume" : "triggers.pause")}</Button>
+      <Button type="button" onClick={async () => { await action("delete_trigger", { triggerId: trigger.id }); await reload(); }}>{translate("triggers.delete")}</Button></div>)}
   </fieldset>;
 }
 
@@ -499,7 +499,7 @@ function AgentRuns({ agent }: { agent: AgentRecord }) {
   return <fieldset data-testid="agent-log" aria-busy={rows === null && !loadFailed} className="grid gap-2 border-0 p-0">
     <legend className="text-sm font-medium text-muted-foreground">{translate("agents.logTitle")}</legend>
     {rows === null && !loadFailed && <p role="status" className="m-0 text-sm text-muted-foreground">{translate("agents.logLoading")}</p>}
-    {loadFailed && <p role="alert" className="m-0 text-sm text-destructive">{translate("agents.logFailed")} <Button type="button" className="secondary" onClick={() => void reload()}>{translate("agents.logRetry")}</Button></p>}
+    {loadFailed && <p role="alert" className="m-0 text-sm text-destructive">{translate("agents.logFailed")} <Button type="button" onClick={() => void reload()}>{translate("agents.logRetry")}</Button></p>}
     {rows?.length === 0 && <p role="status" className="m-0 text-sm text-muted-foreground">{translate("agents.runsEmpty")}</p>}
     {rows?.map((run) => <details key={run.id} data-agent-log-run className="min-w-0 rounded-md border border-border bg-card px-3 py-2" onToggle={(event) => { if ((event.currentTarget as HTMLDetailsElement).open && !transcript[run.id] && !transcriptLoading[run.id]) void loadTranscript(run.id); }}>
       <summary className="flex min-w-0 cursor-pointer flex-wrap items-center gap-x-2 gap-y-1 text-sm">
@@ -509,7 +509,7 @@ function AgentRuns({ agent }: { agent: AgentRecord }) {
       </summary>
       <div className="mt-2 border-t border-border pt-2 text-sm">
         {transcriptLoading[run.id] && <p role="status" className="m-0 text-muted-foreground">{translate("agents.logTranscriptLoading")}</p>}
-        {transcriptFailed[run.id] && <p role="alert" className="m-0 text-destructive">{translate("agents.logTranscriptFailed")} <Button type="button" className="secondary" onClick={() => void loadTranscript(run.id)}>{translate("agents.logRetry")}</Button></p>}
+        {transcriptFailed[run.id] && <p role="alert" className="m-0 text-destructive">{translate("agents.logTranscriptFailed")} <Button type="button" onClick={() => void loadTranscript(run.id)}>{translate("agents.logRetry")}</Button></p>}
         {transcript[run.id]?.runtimeProfile && <p className="m-0 text-xs text-muted-foreground"><strong>{translate("agents.logRuntimeProfile")}:</strong> {transcript[run.id]!.runtimeProfile!.name} · {translate(transcript[run.id]!.runtimeProfile!.sandbox === "full" ? "runtimes.fullAccessWarning" : "runtimes.sandboxEnabled")} · {translate(transcript[run.id]!.runtimeProfile!.enforceSandbox ? "agents.logSandboxEnforced" : "agents.logSandboxNotEnforced")}</p>}
         {transcript[run.id]?.failureReason && <div role="alert" className="text-destructive"><strong>{translate("agents.logFailure")}:</strong> {runFailureText(transcript[run.id]!.failureReason) ?? translate("runs.failed")}{transcript[run.id]!.failureMessage && <p className="m-0 text-muted-foreground">{translate("runs.failureDetail").replace("{detail}", () => transcript[run.id]!.failureMessage!)}</p>}</div>}
         {transcript[run.id]?.steps.length === 0 && <p className="m-0 text-muted-foreground">{translate("runs.noSteps")}</p>}

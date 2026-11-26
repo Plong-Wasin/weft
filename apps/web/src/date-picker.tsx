@@ -78,20 +78,20 @@ export function DatePanel({ range, field: initialField, onChange, today = todayK
   return <div className="grid gap-2">
     {!single && <div className="grid grid-cols-2 gap-1" role="group" aria-label={t("datePicker.calendar")}>
       {(["start", "due"] as const).map((name) => <Button key={name} type="button" aria-pressed={field === name} onClick={() => setField(name)}
-        className={`grid min-h-11 gap-0.5 rounded-md border px-2 py-1.5 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${field === name ? "border-ring bg-accent text-accent-foreground" : "border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground"}`}>
+        className={`grid min-h-11 gap-0.5 rounded-md border px-2 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${field === name ? "border-ring bg-accent text-accent-foreground" : "border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground"}`}>
         <span>{t(name === "start" ? "workItems.startDate" : "workItems.dueDate")}</span>
         <span className="font-medium text-foreground">{fieldValue(name) ? shortDay(fieldValue(name)!) : t("datePicker.noDate")}</span>
       </Button>)}
     </div>}
     <div className="flex flex-wrap gap-1">
-      {quickPicks.filter((quick) => clearable || quick !== "none").map((quick) => <Button key={quick} type="button" disabled={quick !== "none" && !inBounds(applyQuickPick(draft, field, quick, today)[field === "start" ? "startDate" : "dueDate"]!)} className="min-h-9 rounded-md border border-input bg-background px-2 py-1.5 text-xs font-medium text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11"
+      {quickPicks.filter((quick) => clearable || quick !== "none").map((quick) => <Button key={quick} type="button" disabled={quick !== "none" && !inBounds(applyQuickPick(draft, field, quick, today)[field === "start" ? "startDate" : "dueDate"]!)} className="rounded-md border border-input bg-background px-2 text-xs font-medium text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11"
         onClick={() => {
           if (single && quick === "none") commit({ ...draft, [field === "start" ? "startDate" : "dueDate"]: null });
           else commit(applyQuickPick(draft, field, quick, today));
         }}>{t(quickPickKeys[quick])}</Button>)}
     </div>
     <div className="flex items-center justify-between gap-1">
-      <Button type="button" aria-label={t("datePicker.previousMonth")} className="grid size-9 place-items-center rounded-md bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-11" onClick={() => setMonth(shiftMonth(month, -1))}><ChevronLeft aria-hidden size={16} /></Button>
+      <Button variant="ghost" type="button" aria-label={t("datePicker.previousMonth")} className="grid size-9 place-items-center rounded-md bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-11" onClick={() => setMonth(shiftMonth(month, -1))}><ChevronLeft aria-hidden size={16} /></Button>
       <span className="flex min-w-0 items-center justify-center gap-1.5 text-sm font-semibold text-foreground">
         <span aria-live="polite" className="sr-only">{title}</span>
         <span aria-hidden>{monthName}</span>
@@ -106,7 +106,7 @@ export function DatePanel({ range, field: initialField, onChange, today = todayK
             setMonth(`${String(year).padStart(4, "0")}-${month.slice(5, 7)}`);
           }} />
       </span>
-      <Button type="button" aria-label={t("datePicker.nextMonth")} className="grid size-9 place-items-center rounded-md bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-11" onClick={() => setMonth(shiftMonth(month, 1))}><ChevronRight aria-hidden size={16} /></Button>
+      <Button variant="ghost" type="button" aria-label={t("datePicker.nextMonth")} className="grid size-9 place-items-center rounded-md bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-11" onClick={() => setMonth(shiftMonth(month, 1))}><ChevronRight aria-hidden size={16} /></Button>
     </div>
     <div className="grid grid-cols-7 gap-0.5 text-center text-xs text-muted-foreground" aria-hidden>{weekdays.map((name, index) => <span key={index}>{name}</span>)}</div>
     <div ref={grid} role="group" aria-label={label ? `${label}: ${title}` : title} data-month={month} onKeyDown={onGridKey} className="grid grid-cols-7 gap-0.5">
@@ -118,7 +118,7 @@ export function DatePanel({ range, field: initialField, onChange, today = todayK
         const tone = selected ? "bg-[var(--primary)] text-primary-foreground hover:bg-[var(--primary)]/90" : inRange ? "bg-accent text-accent-foreground" : "text-foreground hover:bg-accent hover:text-accent-foreground";
         return <Button key={day} type="button" data-date={day} aria-label={longDay(day)} aria-pressed={selected} aria-current={day === today ? "date" : undefined} aria-disabled={!inBounds(day) || undefined}
           tabIndex={day === tabStop ? 0 : -1} onClick={() => pick(day)}
-          className={`grid h-9 place-items-center rounded-md bg-transparent text-center text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-11 aria-disabled:cursor-not-allowed aria-disabled:opacity-40 aria-disabled:hover:bg-transparent ${tone} ${day === today ? "font-semibold underline underline-offset-4" : ""}`}>{Number(day.slice(8))}</Button>;
+          variant="ghost" className={`grid h-9 place-items-center rounded-md bg-transparent text-center text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-11 aria-disabled:cursor-not-allowed aria-disabled:opacity-40 aria-disabled:hover:bg-transparent ${tone} ${day === today ? "font-semibold underline underline-offset-4" : ""}`}>{Number(day.slice(8))}</Button>;
       })}
     </div>
   </div>;

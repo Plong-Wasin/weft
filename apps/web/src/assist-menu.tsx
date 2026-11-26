@@ -10,7 +10,7 @@ import { useShowAiSelectionMenu } from "./ai-preferences";
 import { ASSIST_OPEN_EVENT, ASSIST_TASKS, createAssistSession, hasNonTextContent, insertBelow, markAssistRange, replaceSelection, getAssistRange, type AssistTask, type AssistView } from "./editor-assist";
 
 import { Input } from "@/ui/input";
-const buttonClass = "secondary !px-2 !py-1 !text-12";
+const buttonClass = "!px-2 !py-1 !text-12";
 
 /** The six tasks; Translate asks for a target language first. Used by the menu and, to rerun, by the preview. When `unavailable` is set the tasks stay visible: pressing one calls `onUnavailable` instead of running, and the text shows as its tooltip. */
 function TaskPicker({ current, initialLanguage, onRun, unavailable, onUnavailable }: { current?: AssistTask; initialLanguage?: string; onRun: (task: AssistTask, targetLanguage?: string) => void; unavailable?: string; onUnavailable?: () => void }) {
@@ -44,8 +44,8 @@ export function AssistPreview({ view, canReplace = true, onRun, onReplace, onIns
     {view.status === "result" && !canReplace && <p role="note" className="m-0 text-12 text-muted-foreground">{translate("assist.replaceBlocked")}</p>}
     <div className="flex flex-wrap gap-1">
       {view.status === "result" && <Button type="button" onClick={onReplace} disabled={!canReplace}>{translate("assist.replace")}</Button>}
-      {view.status === "result" && <Button type="button" className="secondary" onClick={onInsertBelow}>{translate("assist.insertBelow")}</Button>}
-      <Button type="button" className="secondary" onClick={onDiscard}>{translate("assist.discard")}</Button>
+      {view.status === "result" && <Button type="button" onClick={onInsertBelow}>{translate("assist.insertBelow")}</Button>}
+      <Button type="button" onClick={onDiscard}>{translate("assist.discard")}</Button>
     </div>
     <details className="text-12 text-muted-foreground">
       <summary>{translate("assist.rerun")}</summary>

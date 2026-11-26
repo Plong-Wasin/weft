@@ -67,15 +67,15 @@ export function ProjectGeneral() {
         if (result) { setRenaming(false); navigate(paths.projectSettings(workspace.slug, result.key), { replace: true }); } else await done(null);
       }}>
         <label>{translate("projects.key")}<Input required autoFocus pattern="[A-Z][A-Z0-9]{1,11}" title={translate("projects.keyHint")} value={newKey} onChange={(event) => setNewKey(event.target.value.toUpperCase())} /></label>
-        <div className="mt-3 flex flex-wrap gap-2"><Button>{translate("projects.renameConfirm")}</Button><Button type="button" className="secondary" onClick={cancelRename}>{translate("settings.cancel")}</Button></div>
+        <div className="mt-3 flex flex-wrap gap-2"><Button>{translate("projects.renameConfirm")}</Button><Button type="button" onClick={cancelRename}>{translate("settings.cancel")}</Button></div>
       </form> : <div className="flex flex-wrap items-center gap-3">
         <span className="font-mono text-sm text-foreground">{project.key}</span>
-        {canAdmin && <Button type="button" className="secondary" onClick={() => setRenaming(true)}>{translate("projects.renameKey")}</Button>}
+        {canAdmin && <Button type="button" onClick={() => setRenaming(true)}>{translate("projects.renameKey")}</Button>}
       </div>}
     </SettingsBlock>
     <Note note={note} error={failed} />
     {canAdmin && <DangerZone heading={project.archived ? "projects.unarchive" : "projects.archive"} description={translate(project.archived ? "settings.unarchiveDesc" : "settings.archiveDesc")}>
-      <Button type="button" className={project.archived ? "secondary" : dangerOutline} onClick={async () => done(await action(project.archived ? "unarchive_project" : "archive_project", { projectId: project.id }))}>
+      <Button type="button" className={project.archived ? undefined : dangerOutline} onClick={async () => done(await action(project.archived ? "unarchive_project" : "archive_project", { projectId: project.id }))}>
         {translate(project.archived ? "projects.unarchive" : "projects.archive")}</Button>
     </DangerZone>}
   </section>;
@@ -104,7 +104,7 @@ export function ProjectMembers() {
       {canAdmin && !member.isAgent ? <select aria-label={`${translate("settings.roleOf")} ${member.name}`} value={member.role} onChange={async (event) => guard(await action("change_project_member_role", { projectId: project.id, userId: member.userId, role: event.target.value }))}>
         {roles.map((role) => <option key={role} value={role}>{translate(`projects.role.${role}`)}</option>)}
       </select> : <span className="text-muted-foreground">{translate(`projects.role.${member.role}`)}</span>}
-      {canAdmin && !member.isAgent && <Button type="button" className="secondary hover:!text-destructive" onClick={async () => guard(await action("remove_project_member", { projectId: project.id, userId: member.userId }))}>{translate("members.remove")}</Button>}
+      {canAdmin && !member.isAgent && <Button type="button" className="hover:!text-destructive" onClick={async () => guard(await action("remove_project_member", { projectId: project.id, userId: member.userId }))}>{translate("members.remove")}</Button>}
     </Row>)}</RowList>
     {canAdmin && <SettingsBlock title={translate("projects.addMember")} description={translate("projects.addMemberDesc")}>
       <div className="flex flex-wrap items-center gap-3">
@@ -166,12 +166,12 @@ export function ProjectLabels() {
           <Input required aria-label={translate("labels.name")} value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} />
           <input type="color" aria-label={translate("labels.color")} value={editing.color} onChange={(event) => setEditing({ ...editing, color: event.target.value })} className="h-8 w-10 rounded-md border border-border bg-card p-0.5" />
           <Button>{translate("labels.save")}</Button>
-          <Button type="button" className="secondary" onClick={() => setEditing(null)}>{translate("settings.cancel")}</Button>
+          <Button type="button" onClick={() => setEditing(null)}>{translate("settings.cancel")}</Button>
         </form> : <>
           <span aria-hidden className="size-3 shrink-0 rounded-full" style={{ background: label.color }} /><span className="flex-1 truncate">{label.name}</span>
           {canAdmin && <>
-            <Button type="button" className="secondary" onClick={() => setEditing({ id: label.id, name: label.name, color: label.color })}>{translate("labels.edit")}</Button>
-            <Button type="button" className="secondary" onClick={async () => guard(await action("delete_label", { labelId: label.id }))}>{translate("labels.delete")}</Button>
+            <Button type="button" onClick={() => setEditing({ id: label.id, name: label.name, color: label.color })}>{translate("labels.edit")}</Button>
+            <Button type="button" onClick={async () => guard(await action("delete_label", { labelId: label.id }))}>{translate("labels.delete")}</Button>
             <SortMenu name={label.name} canUp={reorderable && index > 0} canDown={reorderable && index < labels.length - 1} onMove={moveLabel} />
           </>}
         </>}
@@ -205,7 +205,7 @@ export function ProjectStates() {
   return <section>
     <SettingsHeader title={translate("states.title")} description={translate("settings.statesDesc")} />
     {canAdmin && <div className="mb-5 grid justify-items-start gap-3">
-      <Button ref={addStateButton} type="button" data-testid="add-state" className="secondary pointer-coarse:min-h-11" aria-expanded={adding} onClick={() => setAdding(!adding)}>{translate("states.add")}</Button>
+      <Button ref={addStateButton} type="button" data-testid="add-state" className="pointer-coarse:min-h-11" aria-expanded={adding} onClick={() => setAdding(!adding)}>{translate("states.add")}</Button>
       {adding && <form className="my-0 flex flex-wrap items-end gap-3" onSubmit={(event) => void createState(event)}>
         <label><span id={groupLabelId}>{translate("analytics.axis.stateGroup")}</span><select aria-labelledby={groupLabelId} required autoFocus className="h-9 min-w-40 pointer-coarse:min-h-11" value={newGroup} onChange={(event) => setNewGroup(event.target.value as (typeof stateGroups)[number])}>
           <option value="" disabled hidden />
@@ -213,7 +213,7 @@ export function ProjectStates() {
         </select></label>
         <label>{translate("states.name")}<Input required value={newName} onChange={(event) => setNewName(event.target.value)} /></label>
         <Button className="pointer-coarse:min-h-11">{translate("states.create")}</Button>
-        <Button type="button" className="secondary pointer-coarse:min-h-11" onClick={closeAdd}>{translate("settings.cancel")}</Button>
+        <Button type="button" className="pointer-coarse:min-h-11" onClick={closeAdd}>{translate("settings.cancel")}</Button>
       </form>}
     </div>}
     {stateGroups.map((group) => {
@@ -236,7 +236,7 @@ export function ProjectStates() {
               {editing?.id === state.id ? <form className="my-0 flex flex-1 flex-wrap items-center gap-2" onSubmit={async (event) => { event.preventDefault(); if (await guard(await action("update_state", { stateId: state.id, name: editing.name }))) setEditing(null); }}>
                 <Input required aria-label={translate("states.name")} value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} />
                 <Button className="pointer-coarse:min-h-11">{translate("labels.save")}</Button>
-                <Button type="button" className="secondary pointer-coarse:min-h-11" onClick={() => setEditing(null)}>{translate("settings.cancel")}</Button>
+                <Button type="button" className="pointer-coarse:min-h-11" onClick={() => setEditing(null)}>{translate("settings.cancel")}</Button>
               </form> : <>
                 <span className="min-w-0 flex-1 truncate">{state.name}</span>
                 {canAdmin && <Popover label={`${translate("sortable.actions")}: ${state.name}`} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-44">
@@ -291,7 +291,7 @@ export function ProjectFeatures() {
           <span className="text-sm text-muted-foreground">{translate("features.confirmOffInUse")} {pending.names.join(", ")}</span>
           <span className="flex flex-wrap gap-2">
             <Button type="button" onClick={() => void save(feature, false).then(() => setPending(null))}>{translate("features.confirmTurnOff")}</Button>
-            <Button type="button" className="secondary" onClick={() => setPending(null)}>{translate("features.confirmKeep")}</Button>
+            <Button type="button" onClick={() => setPending(null)}>{translate("features.confirmKeep")}</Button>
           </span>
         </span>}
       </span>
@@ -373,7 +373,7 @@ export function ProjectAutomation() {
       </SettingsBlock>
       {preview && <p role="status" className="text-sm text-foreground">{translate("autoRules.previewResult").replace("{close}", String(preview.toClose)).replace("{archive}", String(preview.toArchive))}</p>}
       {canAdmin && <div className="flex flex-wrap gap-3">
-        <Button type="button" className="secondary" onClick={async () => {
+        <Button type="button" onClick={async () => {
           const result = await action<{ toClose: number; toArchive: number }>("preview_auto_rules", payload());
           setPreview(result);
           setFailed(result === null);

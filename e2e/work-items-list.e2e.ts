@@ -950,8 +950,7 @@ try {
   }
   await page.setViewportSize({ width: 1440, height: 900 });
   check(await page.evaluate(() => window.innerWidth === 1440 && window.innerHeight === 900), "Cycles sidebar check runs at the desktop viewport after phone screenshots");
-  // Shrinking below 1100px collapses the desktop sidebar; the shell intentionally keeps it collapsed after widening.
-  await page.getByRole("button", { name: translate("shell.expandSidebar") }).click();
+  // Since #210 the shell restores the desktop sidebar when the viewport widens again, so the Cycles link is back without a click.
   await page.getByRole("button", { name: translate("shell.collapseSidebar") }).waitFor();
   const cyclesLink = page.getByRole("link", { name: translate("cycles.title"), exact: true });
   await page.waitForFunction((label) => [...document.querySelectorAll<HTMLAnchorElement>('#desktop-sidebar a')].some((link) => link.textContent.trim() === label && link.getBoundingClientRect().left >= 0), translate("cycles.title"));

@@ -25,7 +25,7 @@ type Insights = { x: Axis; groupBy: Axis | null; buckets: Array<Bucket & { group
 const selectClass = "min-w-0 max-w-full pl-2 pr-7 py-1.5 text-14 text-primary";
 const palette = ["#3f76ff", "#f59e0b", "#16a34a", "#e11d48", "#8b5cf6", "#0ea5e9", "#f97316", "#14b8a6", "#a3a3a3", "#d946ef"];
 const colorOf = (index: number) => palette[index % palette.length]!;
-const chartColorOf = (index: number) => `color-mix(in srgb, ${colorOf(index)} 86%, var(--bg-canvas))`;
+const chartColorOf = (index: number) => `color-mix(in srgb, ${colorOf(index)} 86%, var(--background))`;
 
 /** The text of a bucket: enums and months are formatted here, names come from the data, and a null key is "none". */
 export function bucketLabel(axis: Axis, bucket: Bucket): string {

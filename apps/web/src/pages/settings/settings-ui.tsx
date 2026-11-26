@@ -29,8 +29,8 @@ export function SettingsBlock({ title, description, children }: { title?: string
 export function RowList({ children }: { children: React.ReactNode }) {
   const inSettingsBlock = React.useContext(InSettingsBlock);
   const classes = inSettingsBlock
-    ? "m-0 grid list-none divide-y divide-[var(--border-subtle)] p-0"
-    : "card-surface m-0 grid list-none divide-y divide-[var(--border-subtle)] rounded-xl p-0";
+    ? "m-0 grid list-none divide-y divide-[var(--border)] p-0"
+    : "card-surface m-0 grid list-none divide-y divide-[var(--border)] rounded-xl p-0";
   return <ul className={classes}>{children}</ul>;
 }
 

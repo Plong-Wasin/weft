@@ -53,7 +53,7 @@ export function LinkButton({ editor, disabled = false }: { editor: Editor | null
   };
   return <div ref={root} className="relative inline-flex">
     <Button type="button" aria-label={label} title={withShortcut(label, "K")} aria-haspopup="dialog" aria-expanded={open} aria-pressed={active} disabled={disabled}
-      className={`editor-tool${active ? " bg-layer-1-selected text-primary" : ""}`}
+      className={`editor-tool !size-7 !p-0${active ? " bg-layer-1-selected text-primary" : ""}`}
       onMouseDown={(event) => event.preventDefault()}
       onClick={() => { if (open) setOpen(false); else openForm(); }}>
       <Link2 aria-hidden size={14} />

@@ -248,7 +248,7 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
       : (() => {
         const display = displayByActivityId.get(entry.activity!.id);
         if (!display) return null;
-        const listClass = "flex list-none flex-wrap items-baseline gap-x-1.5 rounded-lg px-2 py-1.5 text-13 text-secondary before:mr-1 before:size-1.5 before:self-center before:rounded-full before:bg-[var(--border-strong)] before:content-['']";
+        const listClass = "flex list-none flex-wrap items-baseline gap-x-1.5 rounded-lg px-2 py-1.5 text-13 text-secondary before:mr-1 before:size-1.5 before:self-center before:rounded-full before:bg-[var(--border)] before:content-['']";
         if (display.kind === "activity") return <li key={entry.activity!.id} className={listClass}>{renderActivity(display.activity)}</li>;
         const group = display.group;
         const oldText = readableActivityValue(group.oldValue); const newText = readableActivityValue(group.newValue);

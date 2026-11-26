@@ -116,7 +116,7 @@ function CycleModal({ action, projectId, workspaceId, cycle, onClose, onSaved }:
 function Ring({ cycle }: { cycle: Cycle }) {
   const value = percent(cycle);
   return <span role="img" aria-label={`${t("cycles.progress")} ${value}%`} className="grid size-10 shrink-0 place-items-center rounded-full text-11 font-semibold text-secondary"
-    style={{ background: `conic-gradient(var(--bg-success-primary) ${value * 3.6}deg, var(--bg-layer-1-selected) 0)` }}><span className="grid size-8 place-items-center rounded-full bg-surface-1">{value}%</span></span>;
+    style={{ background: `conic-gradient(var(--chart-2) ${value * 3.6}deg, var(--accent) 0)` }}><span className="grid size-8 place-items-center rounded-full bg-surface-1">{value}%</span></span>;
 }
 
 const bar = (cycle: Cycle) => <progress className="h-1.5 w-28" value={cycle.progress.completed} max={Math.max(cycle.progress.total, 1)} aria-label={t("cycles.progress")} data-testid="cycle-progress"
@@ -271,13 +271,13 @@ export function BurndownChart({ action, name, body, projectId, refreshKey, testI
     {data.days.some((day) => day.date >= new Date().toISOString().slice(0, 10)) && <p className="m-0 text-12 text-secondary">{t("cycles.history.future")}</p>}
     {data.reason ? <p className="m-0 text-13 text-secondary" role="status">{t(`cycles.burndownReason.${data.reason}`)}</p> : !values.some((value) => value !== null) ? <p className="m-0 text-13 text-secondary" role="status">{data.days.some((day) => day.unknown) ? t("cycles.history.noCoverage") : t("cycles.burndownEmpty")}</p> : <>
       <svg viewBox={`0 0 ${w} ${h}`} role="img" aria-label={t(mode === "points" ? "cycles.burndownLabelPoints" : "cycles.burndownLabel")} className="h-auto w-full max-w-full">
-        <line x1={pad.l} y1={y(0)} x2={w - pad.r} y2={y(0)} stroke="var(--border-subtle)" />
-        <text x={pad.l - 4} y={y(max) + 4} textAnchor="end" fontSize="10" fill="var(--txt-secondary)">{data.total === null ? t("cycles.history.unknown") : count(data.total)}</text>
-        <text x={pad.l - 4} y={y(0) + 4} textAnchor="end" fontSize="10" fill="var(--txt-secondary)">0</text>
-        {lineSegments(data.days.map((day) => mode === "points" ? (day.idealPoints ?? day.ideal) : day.ideal)).map((points, index) => <polyline key={`ideal-${index}`} fill="none" stroke="var(--border-strong)" strokeDasharray="4 3" strokeWidth="1.5" points={points} />)}
-        {lineSegments(values).map((points, index) => <polyline key={`actual-${index}`} fill="none" stroke="var(--bg-accent-primary)" strokeWidth="2" points={points} />)}
-        {first && <text x={pad.l} y={h - 4} fontSize="10" fill="var(--txt-secondary)">{formatDay(first)}</text>}
-        {end && end !== first && <text x={w - pad.r} y={h - 4} textAnchor="end" fontSize="10" fill="var(--txt-secondary)">{formatDay(end)}</text>}
+        <line x1={pad.l} y1={y(0)} x2={w - pad.r} y2={y(0)} stroke="var(--border)" />
+        <text x={pad.l - 4} y={y(max) + 4} textAnchor="end" fontSize="10" fill="var(--muted-foreground)">{data.total === null ? t("cycles.history.unknown") : count(data.total)}</text>
+        <text x={pad.l - 4} y={y(0) + 4} textAnchor="end" fontSize="10" fill="var(--muted-foreground)">0</text>
+        {lineSegments(data.days.map((day) => mode === "points" ? (day.idealPoints ?? day.ideal) : day.ideal)).map((points, index) => <polyline key={`ideal-${index}`} fill="none" stroke="var(--border)" strokeDasharray="4 3" strokeWidth="1.5" points={points} />)}
+        {lineSegments(values).map((points, index) => <polyline key={`actual-${index}`} fill="none" stroke="var(--primary)" strokeWidth="2" points={points} />)}
+        {first && <text x={pad.l} y={h - 4} fontSize="10" fill="var(--muted-foreground)">{formatDay(first)}</text>}
+        {end && end !== first && <text x={w - pad.r} y={h - 4} textAnchor="end" fontSize="10" fill="var(--muted-foreground)">{formatDay(end)}</text>}
       </svg>
       <div className="flex gap-3 text-12 text-secondary"><span>— {t("cycles.burndownRemaining")}</span><span>- - {t("cycles.burndownIdeal")}</span></div>
     </>}

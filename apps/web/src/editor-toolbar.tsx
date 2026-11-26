@@ -18,7 +18,7 @@ export function EditorToolbar({ editor, label, testId, onImage, source, end }: {
   const run = (action: (chain: ReturnType<NonNullable<Editor>["chain"]>) => unknown) => () => { if (editor) action(editor.chain().focus()); };
   const tool = (name: string, shortcut: string | null, Icon: typeof Bold, onClick: () => void, active?: boolean) => {
     const text = shortcut ? withShortcut(name, shortcut) : name;
-    return <Button key={name} type="button" className="editor-tool" aria-label={name} title={text} aria-pressed={active} onMouseDown={(event) => event.preventDefault()} onClick={onClick}><Icon aria-hidden size={14} /></Button>;
+    return <Button key={name} type="button" className="editor-tool !size-7 !p-0" aria-label={name} title={text} aria-pressed={active} onMouseDown={(event) => event.preventDefault()} onClick={onClick}><Icon aria-hidden size={14} /></Button>;
   };
   const separator = (id: string) => <span key={id} aria-hidden className="editor-tool-sep" />;
   const ed = editor;

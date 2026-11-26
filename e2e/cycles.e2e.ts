@@ -251,7 +251,7 @@ try {
         probe.remove();
         return color;
       };
-      return { labels: labels.map((label) => getComputedStyle(label).fill), expectedLabel: tokenColor("--txt-secondary"), actualLine: actualLine ? getComputedStyle(actualLine).stroke : null, expectedLine: tokenColor("--bg-accent-primary") };
+      return { labels: labels.map((label) => getComputedStyle(label).fill), expectedLabel: tokenColor("--muted-foreground"), actualLine: actualLine ? getComputedStyle(actualLine).stroke : null, expectedLine: tokenColor("--primary") };
     });
     check(colors.labels.length > 0 && colors.labels.every((color) => color === colors.expectedLabel), `${theme} Cycle burndown labels do not use the readable secondary text token: ${JSON.stringify(colors)}`);
     check(colors.actualLine === colors.expectedLine, `${theme} Cycle burndown actual line does not use the accent token: ${JSON.stringify(colors)}`);

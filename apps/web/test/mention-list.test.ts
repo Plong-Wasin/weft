@@ -58,7 +58,7 @@ test("structured mentions render with an at sign and shared styling while plain 
   expect(html).toEqual(["span", expect.objectContaining({ class: "mention" }), "@Ada"]);
 
   const styles = src("style.css");
-  expect(styles).toMatch(/\.mention\s*\{[^}]*color:\s*var\(--txt-accent-primary\)[^}]*font-weight:\s*600/s);
+  expect(styles).toMatch(/\.mention\s*\{[^}]*color:\s*var\(--primary\)[^}]*font-weight:\s*600/s);
   expect(styles).not.toMatch(/(?:\.ProseMirror\s+)?\.mention[^}]*cursor:\s*pointer/);
   expect(src("comments-panel.tsx")).toContain('Mention.configure({ HTMLAttributes: { class: "mention" } })');
 });

@@ -215,8 +215,8 @@ export function TableControls({ editor, editable }: { editor: Editor | null; edi
     const grips: React.ReactNode[] = [];
     const dragged = drag?.el === el ? drag : null;
     const dragLine = dragged && dragged.boundary !== null ? (dragged.axis === "row"
-      ? <div key="drop-line" data-testid="table-drop-line" aria-hidden="true" className="pointer-events-none absolute h-0.5 rounded-full" style={{ left: box.left, top: dragged.boundary - frame.top - 1, width: box.right - box.left, background: "var(--bg-accent-primary)" }} />
-      : <div key="drop-line" data-testid="table-drop-line" aria-hidden="true" className="pointer-events-none absolute w-0.5 rounded-full" style={{ left: dragged.boundary - frame.left - 1, top: box.top, height: box.bottom - box.top, background: "var(--bg-accent-primary)" }} />) : null;
+      ? <div key="drop-line" data-testid="table-drop-line" aria-hidden="true" className="pointer-events-none absolute h-0.5 rounded-full" style={{ left: box.left, top: dragged.boundary - frame.top - 1, width: box.right - box.left, background: "var(--primary)" }} />
+      : <div key="drop-line" data-testid="table-drop-line" aria-hidden="true" className="pointer-events-none absolute w-0.5 rounded-full" style={{ left: dragged.boundary - frame.left - 1, top: box.top, height: box.bottom - box.top, background: "var(--primary)" }} />) : null;
     columns.forEach((_, index) => {
       if (!(hovered?.col === index || here?.col === index || (here_open?.axis === "column" && here_open.index === index))) return;
       const cell = columnBox(index)!;

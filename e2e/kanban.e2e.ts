@@ -57,6 +57,8 @@ try {
   await modal.getByRole("button", { name: translate("workItems.modal.submit"), exact: true }).click();
   await page.getByRole("link", { name: /Alpha/ }).waitFor();
   await page.getByRole("button", { name: translate("layout.addToGroup").replace("{group}", "Backlog") }).click();
+  const longEnglishTitle = "Coordinate authentication rollout across every supported region while preserving service availability and updating every runbook";
+  const longThaiTitle = "ปรับปรุงประสบการณ์การใช้งานระบบติดตามงานให้รองรับภาษาไทยและข้อความยาวโดยไม่ล้นการ์ดบนกระดาน";
   for (const title of ["Bravo", "Charlie"]) {
     await page.getByRole("textbox", { name: translate("workItems.titleField") }).fill(title);
     await page.getByRole("button", { name: translate("workItems.create") }).click();
@@ -386,6 +388,48 @@ try {
   // The timeline opens on Comments; the state change is an Activity entry.
   await page.getByRole("combobox", { name: translate("timeline.filter", "en"), exact: true }).selectOption("all");
   await page.getByText(translate("workItems.activity.changed").replace("{field}", "state")).waitFor();
+
+  // Long English and Thai titles stay inside the card at desktop and phone widths.
+  await page.goto(`${web}/${slug}/projects/MOB/issues?layout=board`);
+  await page.getByTestId("card-MOB-1").waitFor();
+  for (const title of [longEnglishTitle, longThaiTitle]) {
+    await page.getByRole("button", { name: translate("layout.addToGroup").replace("{group}", "Backlog") }).first().click();
+    await page.getByRole("textbox", { name: translate("workItems.titleField") }).fill(title);
+    await page.getByRole("button", { name: translate("workItems.create") }).click();
+    await page.getByTestId("card-title").filter({ hasText: title }).waitFor();
+  }
+  const boardColumn = await page.getByTestId("column-Backlog").boundingBox();
+  check(!!boardColumn && boardColumn.width >= 344 && boardColumn.width <= 360, `expanded board columns should use the intended 352px width (344–360px bounds): ${boardColumn?.width}`);
+  const assertClampedCardTitle = async (title: string) => {
+    const link = page.getByTestId("card-title").filter({ hasText: title });
+    const metrics = await link.evaluate((element) => {
+      const card = element.closest("article")!;
+      const titleBox = element.getBoundingClientRect();
+      const cardBox = card.getBoundingClientRect();
+      const range = document.createRange(); range.selectNodeContents(element);
+      const glyphs = [...range.getClientRects()];
+      const visibleGlyphs = glyphs.filter((rect) => rect.bottom > titleBox.top && rect.top < titleBox.bottom);
+      const lines = new Set(visibleGlyphs.map((rect) => Math.round(rect.top)));
+      const glyphsInsideTitle = visibleGlyphs.every((rect) => rect.left >= titleBox.left - 1 && rect.right <= titleBox.right + 1 && rect.top >= titleBox.top - 1 && rect.bottom <= titleBox.bottom + 1);
+      const titleInsideCard = titleBox.left >= cardBox.left - 1 && titleBox.right <= cardBox.right + 1 && titleBox.top >= cardBox.top - 1 && titleBox.bottom <= cardBox.bottom + 1;
+      const properties = card.querySelector<HTMLElement>("[data-testid='card-properties']");
+      return {
+        visibleLines: lines.size,
+        clamp: getComputedStyle(element).webkitLineClamp,
+        horizontalOverflow: element.scrollWidth > element.clientWidth + 1,
+        glyphsInsideTitle,
+        titleInsideCard,
+        titleAndPropertiesOverlap: !!properties && titleBox.bottom > properties.getBoundingClientRect().top + 1,
+      };
+    });
+    check(metrics.clamp === "2" && metrics.visibleLines === 2, `board title should visibly occupy the two-line clamp for ${title}: ${JSON.stringify(metrics)}`);
+    check(!metrics.horizontalOverflow && metrics.glyphsInsideTitle && metrics.titleInsideCard && !metrics.titleAndPropertiesOverlap, `board title glyphs should stay inside the card without clipping or overlap for ${title}: ${JSON.stringify(metrics)}`);
+  };
+  await assertClampedCardTitle(longEnglishTitle);
+  await assertClampedCardTitle(longThaiTitle);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await assertClampedCardTitle(longEnglishTitle);
+  await assertClampedCardTitle(longThaiTitle);
   console.log("e2e kanban: ok");
   await browser.close();
 } catch (error) {

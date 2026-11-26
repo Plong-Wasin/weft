@@ -85,7 +85,7 @@ try {
   check(await page.getByRole("row").count() === 5, "expected header + 4 rows");
   const scroll = page.getByTestId("sheet-scroll");
   const workItemColumn = await page.getByRole("columnheader", { name: translate("layout.sheet.workItem") }).boundingBox();
-  check(!!workItemColumn && workItemColumn.width >= 350 && workItemColumn.width <= 450, `Work item column should stay within its readable width bounds: ${workItemColumn?.width}`);
+  check(!!workItemColumn && workItemColumn.width >= 376 && workItemColumn.width <= 392, `desktop Work item column should stay within the intended 384px width (376–392px bounds): ${workItemColumn?.width}`);
   for (const [property, minimum] of [["state", 112], ["priority", 112], ["assignee", 112], ["labels", 128], ["dates", 128], ["cycle", 112], ["modules", 128]] as const) {
     const width = await page.getByRole("columnheader", { name: translate(`layout.property.${property}`) }).evaluate((element) => element.getBoundingClientRect().width);
     check(width >= minimum && width <= 200, `${property} column should stay within ${minimum}–200px bounds, found ${width}`);
@@ -184,7 +184,7 @@ try {
   check(await scroll.evaluate((el) => el.scrollWidth > el.clientWidth), "no horizontal scroll at 390px");
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "page itself scrolls sideways at 390px");
   const phoneWorkItemColumn = await page.getByRole("rowheader").first().boundingBox();
-  check(!!phoneWorkItemColumn && phoneWorkItemColumn.width >= 190 && phoneWorkItemColumn.width <= 220, `phone Work item column should leave room for other cells: ${phoneWorkItemColumn?.width}`);
+  check(!!phoneWorkItemColumn && phoneWorkItemColumn.width >= 248 && phoneWorkItemColumn.width <= 264, `phone Work item column should stay within the intended 256px width (248–264px bounds): ${phoneWorkItemColumn?.width}`);
   await page.screenshot({ path: `${shots}/sheet-390-left-light.png` });
   await scroll.focus();
   const beforeKeyboardScroll = await scroll.evaluate((el) => el.scrollLeft);
@@ -212,7 +212,7 @@ try {
   await touchPage.goto(sheetUrl.toString());
   const touchRow = touchPage.getByTestId(`row-${longItem.displayId}`);
   const touchWorkItemColumn = await touchRow.getByRole("rowheader").boundingBox();
-  check(!!touchWorkItemColumn && touchWorkItemColumn.width <= 220, `touch Work item column leaves too little room for properties: ${touchWorkItemColumn?.width}`);
+  check(!!touchWorkItemColumn && touchWorkItemColumn.width >= 248 && touchWorkItemColumn.width <= 264, `touch Work item column should stay within the intended 256px width (248–264px bounds): ${touchWorkItemColumn?.width}`);
   const touchScroll = touchPage.getByTestId("sheet-scroll");
   for (const [label, role, name] of [
     [translate("workItems.state"), "menuitemradio", longStateName], [translate("workItems.cycle"), "menuitemradio", longCycleName],

@@ -162,6 +162,16 @@ try {
       return { visualHeight: rect.height, hitHeight: parseFloat(hitArea.height), hitWidth: parseFloat(hitArea.width) };
     });
     check("touch-filled-chip-target-44px", stateMetrics.visualHeight <= 36 && stateMetrics.hitHeight >= 44 && stateMetrics.hitWidth >= 44, `State chip metrics at ${viewport.suffix}: ${JSON.stringify(stateMetrics)}`);
+    // Real hit testing: the 4 corners and 4 edge midpoints, 1px inside the 44x44 square centred on the chip, resolve to the chip.
+    const stateMisses = await stateTrigger.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+      return [[-21, -21], [0, -21], [21, -21], [21, 0], [21, 21], [0, 21], [-21, 21], [-21, 0]].flatMap(([dx, dy]) => {
+        const hit = document.elementFromPoint(cx + dx!, cy + dy!);
+        return hit && (hit === element || element.contains(hit)) ? [] : [{ dx, dy, hit: hit?.tagName ?? null }];
+      });
+    });
+    check("touch-filled-chip-hit-44px", stateMisses.length === 0, `State chip 44px area misses taps at ${viewport.suffix}: ${JSON.stringify(stateMisses)}`);
     const rowBox = await firstRow.boundingBox();
     check("touch-row-present", !!rowBox, `seed row has no visible bounds at ${viewport.suffix}`);
     // The last property slot can contain Assignee at wider widths, so the trailing edge is not reliably blank.

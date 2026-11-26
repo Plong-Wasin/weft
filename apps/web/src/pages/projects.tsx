@@ -57,7 +57,7 @@ export function ProjectsPanel() {
         }} /></label>
       </div>
       <p id="project-key-help" className="m-0 text-sm text-muted-foreground">{translate("projects.keyHelp")}</p>
-      <label className="w-full max-w-xs text-sm font-medium text-muted-foreground">{translate("projects.visibility")}<select className="text-base md:text-sm" value={visibility} onChange={(event) => setVisibility(event.target.value as Visibility)}>
+      <label className="w-full max-w-xs text-sm font-medium text-muted-foreground">{translate("projects.visibility")}<select className="text-base md:text-sm pointer-coarse:min-h-11" value={visibility} onChange={(event) => setVisibility(event.target.value as Visibility)}>
         <option value="public">{translate("projects.visibility.public")}</option>
         <option value="private">{translate("projects.visibility.private")}</option>
       </select></label>
@@ -71,36 +71,38 @@ export function ProjectsPanel() {
         </div>
       </fieldset>
       <div className="flex flex-wrap gap-2">
-        <Button>{translate("projects.create")}</Button>
-        <Button type="button" className="secondary" onClick={() => { setCreating(false); setNote(null); }}>{translate("projects.cancel")}</Button>
+        <Button className="pointer-coarse:min-h-11">{translate("projects.create")}</Button>
+        <Button type="button" className="secondary pointer-coarse:min-h-11" onClick={() => { setCreating(false); setNote(null); }}>{translate("projects.cancel")}</Button>
       </div>
       {note && <p role="alert" className="m-0 text-sm text-destructive">{note}</p>}
     </form>;
   return <section className="grid gap-4">
-    <PageHeader title={translate("projects.title")} actions={<>
-      <Input aria-label={translate("projects.find")} type="search" className="w-full sm:w-64" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={translate("projects.searchPlaceholder")} />
-      <label className="secondary flex items-center gap-2 text-sm"><Checkbox checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />{translate("projects.showArchived")}</label>
-      {!creating && <Button type="button" className="flex items-center gap-1.5" onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{translate("projects.new")}</Button>}
-    </>} />
+    <PageHeader title={translate("projects.title")} actions={<div className="flex w-[calc(100vw-2.75rem)] flex-wrap items-center gap-2 sm:w-[38rem] sm:flex-nowrap sm:justify-end">
+      <Input aria-label={translate("projects.find")} type="search" className="w-full max-w-80 sm:w-64 sm:max-w-none" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={translate("projects.searchPlaceholder")} />
+      <label className="secondary flex items-center gap-2 text-sm pointer-coarse:min-h-11"><Checkbox checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />{translate("projects.showArchived")}</label>
+      {!creating && <Button type="button" className="flex items-center gap-1.5 pointer-coarse:min-h-11" onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{translate("projects.new")}</Button>}
+    </div>} />
     {form}
     {projects !== null && projects.length === 0 && <EmptyState title={translate(showArchived ? "projects.noArchived" : "projects.empty")} description={showArchived ? undefined : translate("projects.emptyHint")}
       action={showArchived || creating ? undefined : <Button type="button" onClick={() => setCreating(true)}>{translate("projects.createFirst")}</Button>} />}
     {projects !== null && projects.length > 0 && visibleProjects.length === 0 && <p role="status" className="m-0 text-sm text-muted-foreground">{search.trim() ? translate("projects.noSearchResults") : translate("projects.empty")}</p>}
-    {projects !== null && visibleProjects.length > 0 && <ul aria-label={translate("projects.title")} className="m-0 grid list-none gap-1 rounded-xl border border-border bg-card p-1 empty:hidden">{visibleProjects.map((project) => <li key={project.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg px-4 py-3 transition-colors hover:bg-accent">
-      <Link to={paths.workItems(workspace.slug, project.key)} aria-label={`${project.key} · ${project.name}`} className="flex min-w-40 flex-1 items-center gap-3 text-sm font-medium !text-foreground">
+    {projects !== null && visibleProjects.length > 0 && <ul aria-label={translate("projects.title")} className="m-0 grid list-none gap-1 rounded-xl border border-border bg-card p-1 empty:hidden">{visibleProjects.map((project) => <li key={project.id} data-project-row className="grid min-h-14 min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg px-4 py-2 transition-colors hover:bg-accent">
+      <Link to={paths.workItems(workspace.slug, project.key)} aria-label={`${project.key} · ${project.name}`} className="flex min-w-0 items-center gap-3 text-sm font-medium !text-foreground">
         <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 font-code text-xs font-medium text-muted-foreground">{project.key}</span>
-        <span className="truncate">{project.name}</span>
+        <span className="truncate" title={project.name}>{project.name}</span>
       </Link>
+      <div className="flex min-w-0 shrink-0 items-center">
       {(() => {
         const starred = preferenceOf(prefs, project.id)?.starred ?? false;
         const label = translate(starred ? "sidebar.unstar" : "sidebar.star");
-        return <Button type="button" aria-pressed={starred} aria-label={`${label}: ${project.name}`} title={label} onClick={() => void setPreference(project.id, { starred: !starred })} className="bg-transparent p-1 text-muted-foreground hover:bg-transparent hover:text-foreground">
+        return <Button type="button" aria-pressed={starred} aria-label={`${label}: ${project.name}`} title={label} onClick={() => void setPreference(project.id, { starred: !starred })} className="border-l border-border bg-transparent px-3 text-muted-foreground hover:bg-transparent hover:text-foreground pointer-coarse:min-h-11 pointer-coarse:min-w-11">
           <Star aria-hidden size={14} className={starred ? "text-foreground" : undefined} fill={starred ? "currentColor" : "none"} />
         </Button>;
       })()}
-      <span className="flex items-center gap-1.5 text-sm text-muted-foreground">{project.visibility === "private" ? <Lock aria-hidden size={13} /> : <Globe aria-hidden size={13} />}{translate(`projects.visibility.${project.visibility}`)}</span>
-      {project.archived && <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">{translate("projects.archivedBadge")}</span>}
-      {project.role === null && !project.archived && project.visibility === "public" && <Button type="button" className="secondary" onClick={async () => { await action("join_project", { projectId: project.id }); await load(); }}>{translate("projects.join")}</Button>}
+      <span className="flex min-h-9 items-center gap-1.5 whitespace-nowrap border-l border-border pl-3 text-sm text-muted-foreground">{project.visibility === "private" ? <Lock aria-hidden size={13} /> : <Globe aria-hidden size={13} />}{translate(`projects.visibility.${project.visibility}`)}</span>
+      {project.archived && <span className="whitespace-nowrap border-l border-border pl-3 text-xs font-medium text-muted-foreground">{translate("projects.archivedBadge")}</span>}
+      {project.role === null && !project.archived && project.visibility === "public" && <Button type="button" className="secondary ml-3 pointer-coarse:min-h-11" onClick={async () => { await action("join_project", { projectId: project.id }); await load(); }}>{translate("projects.join")}</Button>}
+      </div>
     </li>)}</ul>}
   </section>;
 }

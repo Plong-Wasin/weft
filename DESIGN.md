@@ -86,7 +86,12 @@ Shared primitives live in `apps/web/src/ui/` and use Base UI 1.9.0 for accessibl
 - Screen header: a back link ("Back to projects") above a title; the title row carries the project key and name, then page actions at the right (Settings, Add work item, Add page).
 - Lists grouped by state or by section, with counts in the group header; collapsed groups stay visible as headers.
 - Settings: a left list of sections inside the project settings area, each section a heading with a short description, then a form, then Danger zone last.
-- Inline creation: settings lists (States, Labels, Estimates) show an existing list then a name field with an Add button below each group.
+- Inline creation: settings lists show existing rows first, then one creation action for the page. States keep their workflow groups as plain section headings and choose the target group in the shared add form.
+- Settings navigation: workspace settings put the project picker before the Workspace section links; workspace and project section links share the same row height, type and selected treatment. Keep the cross-surface Inbox link in Work only. The Workspace links split into two blocks by a divider; the second block has no heading until a copy key exists for one.
+- Project directory: keep one finder in the page header, with its visible title row aligned to the shared PageHeader. Project rows have one compact, equal-height rhythm, truncate long names with the full name available as a title, and separate star and visibility metadata with quiet dividers.
+- Inbox: use shared Tabs for All and Unread, a ghost action for Mark all read, and the shared EmptyState when the selected filter has no notifications. Populated notifications remain a readable stream with full text and reachable read-state actions.
+- Analytics: use shared Select controls with stacked labels, right-aligned numeric table headers and tabular figures. On phone, project names clamp to two lines with the full name in a title, so every row keeps the same minimum height. State charts use the state group colours (including distinct completed and cancelled colours) rather than one colour for every status.
+- Danger zones: use a muted destructive surface and an outlined destructive action; reserve the filled destructive button for a confirmation step.
 - Wiki and pages: a left tree (Inbox, All pages, Collections) and an editor column; page actions sit in the top right of the page (favourite, Ask AI, more menu).
 - AI: an assistant page with suggested prompts, an input with a mode selector (Build) and a send button; an AI disclaimer line sits below the input.
 - Phone: the same content stacks in one column; filters wrap into rows; wide tables keep their columns and do not scroll the page.

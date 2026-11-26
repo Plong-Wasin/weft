@@ -10,7 +10,7 @@ import { useAiOffReason, useAiState } from "../../ai-flag";
 import { useWorkspace } from "../../layouts/workspace-layout";
 import { roles, type Member } from "../../types";
 import { Avatar, AgentLabel } from "../../avatar";
-import { dangerButton, DangerZone, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
+import { dangerOutline, DangerZone, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 import { adminState } from "../../admin-state";
 import { AuditLogPage, MemberSecurityList } from "./member-security";
 
@@ -20,7 +20,7 @@ const fillMessage = (message: string, values: Record<string, string>) => Object.
 
 /** Settings area: the contextual sidebar holds the section links, this layout holds the routed section page. */
 export function SettingsLayout() {
-  return <div className="mx-auto w-full max-w-[900px]"><Outlet /></div>;
+  return <div className="w-full min-w-0"><Outlet /></div>;
 }
 
 /** The members of the current workspace and whether the viewer administers it. */
@@ -51,8 +51,8 @@ export function WorkspaceGeneral() {
   return <section>
     <SettingsHeader title={translate("settings.workspaceTitle")} description={translate("settings.workspaceGeneralDesc")} />
     <SettingsBlock>
-      <label className="max-w-md">{translate("settings.workspaceName")}<Input readOnly value={workspace.name} className="bg-muted" /></label>
-      <label className="max-w-md">{translate("settings.workspaceUrl")}<Input readOnly value={workspace.slug} className="bg-muted" /></label>
+      <label className="max-w-md">{translate("settings.workspaceName")}<Input readOnly value={workspace.name} /></label>
+      <label className="max-w-md">{translate("settings.workspaceUrl")}<Input readOnly value={workspace.slug} /></label>
     </SettingsBlock>
     <SettingsBlock title={translate("settings.autopilot")}>
       <label className="flex items-center gap-2"><Checkbox checked={autopilot?.allowAutopilot ?? false} disabled={!isAdmin || !autopilot} onChange={async (event) => {
@@ -64,14 +64,14 @@ export function WorkspaceGeneral() {
       <p className="text-13 text-muted-foreground">{translate("settings.runtimeRunLimitsDesc")}</p>
       <label className="max-w-xs">{translate("settings.runsPerPersonPerHour")}<Input type="number" min={1} max={10000} disabled={!isAdmin} value={(runLimitDraft ?? runLimits)?.runsPerPersonPerHour ?? 30} onChange={(event) => setRunLimitDraft({ ...(runLimitDraft ?? runLimits ?? { runsPerPersonPerHour: 30, runsPerAgentPerHour: 30 }), runsPerPersonPerHour: Number(event.target.value) })} /></label>
       <label className="max-w-xs">{translate("settings.runsPerAgentPerHour")}<Input type="number" min={1} max={10000} disabled={!isAdmin} value={(runLimitDraft ?? runLimits)?.runsPerAgentPerHour ?? 30} onChange={(event) => setRunLimitDraft({ ...(runLimitDraft ?? runLimits ?? { runsPerPersonPerHour: 30, runsPerAgentPerHour: 30 }), runsPerAgentPerHour: Number(event.target.value) })} /></label>
-      {isAdmin && <Button type="button" className="secondary w-fit" disabled={!runLimitDraft || runLimitDraft.runsPerPersonPerHour < 1 || runLimitDraft.runsPerAgentPerHour < 1} onClick={async () => {
+      {isAdmin && <Button type="button" className="secondary w-fit pointer-coarse:min-h-11" disabled={!runLimitDraft || runLimitDraft.runsPerPersonPerHour < 1 || runLimitDraft.runsPerAgentPerHour < 1} onClick={async () => {
         if (!runLimitDraft) return;
         const updated = await action("set_runtime_run_limits", { workspaceId: workspace.id, ...runLimitDraft });
         if (updated === null) setNote(translate("members.failed")); else { setNote(null); setRunLimitDraft(null); await reloadRunLimits(); }
       }}>{translate("settings.saveRunLimits")}</Button>}
     </SettingsBlock>
     <DangerZone heading="settings.leaveWorkspace" description={translate(isAdmin ? "settings.leaveWorkspaceAdminDesc" : "settings.leaveWorkspaceDesc")}>
-      <Button type="button" className={dangerButton} onClick={leave}>{translate("settings.leave")}</Button>
+      <Button type="button" className={dangerOutline} onClick={leave}>{translate("settings.leave")}</Button>
     </DangerZone>
     <Note note={note} error />
   </section>;

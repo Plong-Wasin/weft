@@ -6,10 +6,11 @@ import { formatNumber, getLocale, translate, type MessageKey } from "@weft/share
 import { Popover } from "./shell/popover";
 import { PageHeader } from "./shell/page-header";
 import { paths } from "./routes";
-import type { Project } from "./types";
+import type { Project, WorkState } from "./types";
 
 import { Checkbox } from "@/ui/checkbox";
 import { Input } from "@/ui/input";
+import { Select, SelectContent, SelectItem, SelectItemText, SelectTrigger, SelectValue } from "@/ui/select";
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
 const t = (key: string, values: Record<string, string | number> = {}) => Object.entries(values).reduce((text, [name, value]) => text.replace(`{${name}}`, String(value)), translate(key as MessageKey));
@@ -23,10 +24,12 @@ type Overview = { summary: Summary; projects: OverviewProject[] };
 type Month = { month: string; created: number; resolved: number };
 type Insights = { x: Axis; groupBy: Axis | null; buckets: Array<Bucket & { groups: Bucket[] }> };
 
-const selectClass = "min-w-0 max-w-full pl-2 pr-7 py-1.5 text-sm text-foreground";
 const palette = ["#3f76ff", "#f59e0b", "#16a34a", "#e11d48", "#8b5cf6", "#0ea5e9", "#f97316", "#14b8a6", "#a3a3a3", "#d946ef"];
 const colorOf = (index: number) => palette[index % palette.length]!;
 const chartColorOf = (index: number) => `color-mix(in srgb, ${colorOf(index)} 86%, var(--background))`;
+const stateGroupColor: Record<WorkState["group"], string> = {
+  backlog: "var(--muted-foreground)", unstarted: "var(--chart-3)", started: "var(--chart-4)", completed: "var(--chart-2)", cancelled: "var(--destructive)",
+};
 
 /** The text of a bucket: enums and months are formatted here, names come from the data, and a null key is "none". */
 export function bucketLabel(axis: Axis, bucket: Bucket): string {
@@ -50,7 +53,7 @@ function ProjectFilter({ projects, selected, onChange }: { projects: Project[]; 
   const [query, setQuery] = React.useState("");
   const shown = projects.filter((project) => `${project.key} ${project.name}`.toLowerCase().includes(query.trim().toLowerCase()));
   const toggle = (id: string) => onChange(selected.includes(id) ? selected.filter((item) => item !== id) : [...selected, id]);
-  return <Popover label={t("analytics.projects")} panelRole="dialog" panelClassName="w-72 max-w-[85vw] rounded-xl p-2" className="border border-border px-2.5 py-1.5 text-sm"
+  return <div className="grid min-w-40 gap-1 text-sm font-medium text-foreground"><span>{t("analytics.projects")}</span><Popover label={t("analytics.projects")} panelRole="dialog" panelClassName="w-72 max-w-[85vw] rounded-xl p-2" className="h-9 w-full justify-between border border-input bg-background px-3 text-sm text-foreground shadow-xs hover:bg-accent"
     trigger={<><span className="truncate">{selected.length === 0 ? t("analytics.allProjects") : t("analytics.projectsSelected", { count: selected.length })}</span><ChevronDown aria-hidden size={14} /></>}>
     {() => <div className="grid gap-1">
       <Input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("analytics.searchProjects")} aria-label={t("analytics.searchProjects")} className="rounded-lg border border-border px-3 py-1.5 text-sm" />
@@ -61,34 +64,54 @@ function ProjectFilter({ projects, selected, onChange }: { projects: Project[]; 
           {selected.includes(project.id) && <Check aria-hidden size={12} className="ml-auto shrink-0" />}
         </label></li>)}
       </ul>
-      {selected.length > 0 && <Button type="button" onClick={() => onChange([])} className="text-left text-sm">{t("analytics.clearProjects")}</Button>}
+      {selected.length > 0 && <Button type="button" onClick={() => onChange([])} className="text-left text-sm pointer-coarse:min-h-11">{t("analytics.clearProjects")}</Button>}
     </div>}
-  </Popover>;
+  </Popover></div>;
 }
 
 /** Horizontal bars, one per X value; with a Group-by each bar is split into coloured segments with a shared legend. Plain HTML, so it shrinks to 390px. */
-export function Chart({ insights }: { insights: Insights }) {
+export function Chart({ insights, stateGroupsByName = {} }: { insights: Insights; stateGroupsByName?: Record<string, WorkState["group"] | null> }) {
   const max = Math.max(1, ...insights.buckets.map((bucket) => bucket.count));
   const groupKeys: Array<Bucket> = [];
   for (const bucket of insights.buckets) for (const group of bucket.groups) if (!groupKeys.some((known) => known.key === group.key)) groupKeys.push(group);
   const groupIndex = (key: string | null) => groupKeys.findIndex((known) => known.key === key);
+  const colorFor = (axis: Axis, bucket: Bucket, fallback: number) => {
+    const group = axis === "stateGroup" ? bucket.key as WorkState["group"] | null : axis === "state" ? stateGroupsByName[bucket.label ?? bucket.key ?? ""] : null;
+    return group && stateGroupColor[group] ? stateGroupColor[group] : chartColorOf(fallback);
+  };
   return <figure className="m-0 grid gap-3 rounded-xl border border-border bg-card p-4" aria-label={t("analytics.chart", { axis: t(`analytics.axis.${insights.x}`) })}>
     {insights.groupBy && <ul className="m-0 flex list-none flex-wrap gap-x-3 gap-y-1 p-0 text-xs text-muted-foreground">
-      {groupKeys.map((group, index) => <li key={group.key ?? "none"} className="flex items-center gap-1.5"><span aria-hidden className="size-2.5 rounded-sm" style={{ background: chartColorOf(index) }} />{bucketLabel(insights.groupBy!, group)}</li>)}
+      {groupKeys.map((group, index) => <li key={group.key ?? "none"} className="flex items-center gap-1.5"><span aria-hidden className="size-2.5 rounded-sm" style={{ background: colorFor(insights.groupBy!, group, index) }} />{bucketLabel(insights.groupBy!, group)}</li>)}
     </ul>}
     <ul className="m-0 grid list-none gap-2 p-0">
       {insights.buckets.map((bucket) => <li key={bucket.key ?? "none"} className="grid grid-cols-[minmax(0,9rem)_minmax(0,1fr)_auto] items-center gap-3 text-sm max-md:grid-cols-[minmax(0,6rem)_minmax(0,1fr)_auto]">
         <span className="truncate text-muted-foreground" title={bucketLabel(insights.x, bucket)}>{bucketLabel(insights.x, bucket)}</span>
         <span className="flex h-5 overflow-hidden rounded-sm bg-muted" role="img" aria-label={`${bucketLabel(insights.x, bucket)}: ${bucket.count}`}>
           {insights.groupBy
-            ? bucket.groups.map((group) => <span key={group.key ?? "none"} title={`${bucketLabel(insights.groupBy!, group)}: ${group.count}`} style={{ width: `${(group.count / max) * 100}%`, background: chartColorOf(groupIndex(group.key)) }} />)
-            : <span style={{ width: `${(bucket.count / max) * 100}%`, background: chartColorOf(0) }} />}
+            ? bucket.groups.map((group) => <span key={group.key ?? "none"} title={`${bucketLabel(insights.groupBy!, group)}: ${group.count}`} style={{ width: `${(group.count / max) * 100}%`, background: colorFor(insights.groupBy!, group, groupIndex(group.key)) }} />)
+            : <span style={{ width: `${(bucket.count / max) * 100}%`, background: colorFor(insights.x, bucket, 0) }} />}
         </span>
         <span className="tabular-nums text-foreground">{formatNumber(bucket.count)}</span>
         {insights.groupBy && <span className="sr-only">{t("analytics.groupBy")}: {bucket.groups.map((group) => `${bucketLabel(insights.groupBy!, group)}: ${formatNumber(group.count)}`).join(", ")}</span>}
       </li>)}
     </ul>
   </figure>;
+}
+
+async function groupsByStateName(action: Call, projects: Project[]) {
+  const kinds = Object.create(null) as Record<string, WorkState["group"] | null>;
+  let nextProject = 0;
+  await Promise.all(Array.from({ length: Math.min(8, projects.length) }, async () => {
+    while (nextProject < projects.length) {
+      const project = projects[nextProject++]!;
+      const states = await action<WorkState[]>("list_states", { projectId: project.id });
+      for (const state of states ?? []) {
+        if (!(state.name in kinds)) kinds[state.name] = state.group;
+        else if (kinds[state.name] !== state.group) kinds[state.name] = null;
+      }
+    }
+  }));
+  return kinds;
 }
 
 const monthText = (month: string) => new Intl.DateTimeFormat(getLocale() === "th" ? "th-TH" : "en-US", { month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${month}-01T00:00:00Z`));
@@ -143,20 +166,21 @@ export function AnalyticsOverviewPage({ workspaceId, workspaceSlug, run }: { wor
       <SummaryCards summary={state.summary} />
       {state.projects.length === 0 ? <p className="m-0 text-muted-foreground">{t("analytics.noProjects")}</p> : <div className="grid min-w-0 gap-3 rounded-xl border border-border bg-card p-4">
         <h2 className="m-0 text-base font-semibold">{t("analytics.projectList")}</h2>
-        <table className="w-full table-fixed border-collapse text-sm">
+        <div className="min-w-0">
+        <table className="w-full min-w-0 table-fixed border-separate border-spacing-x-1.5 border-spacing-y-0 text-sm sm:border-spacing-x-3">
           <caption className="sr-only">{t("analytics.projectList")}</caption>
           <thead>
             <tr className="text-xs text-muted-foreground">
-              <th scope="col" className="w-auto py-2 text-left font-medium">{t("analytics.projects")}</th>
-              <th scope="col" className="w-[3.5rem] whitespace-nowrap py-2 text-right font-medium sm:w-[4rem]"><span className="sr-only">{t("analytics.total")}</span><span aria-hidden="true" className="max-md:hidden">{t("analytics.total")}</span><span aria-hidden="true" className="md:hidden">{t("analytics.totalShort")}</span></th>
-              <th scope="col" className="w-[3.5rem] whitespace-nowrap py-2 text-right font-medium sm:w-[4rem]">{t("analytics.open")}</th>
-              <th scope="col" className="w-[4.5rem] whitespace-nowrap py-2 text-right font-medium sm:w-[5rem]">{t("analytics.completed")}</th>
+              <th scope="col" className="w-[42%] min-w-0 py-2 text-left font-medium sm:min-w-40 sm:w-auto">{t("analytics.projects")}</th>
+              <th scope="col" className="w-[18%] whitespace-nowrap py-2 text-right font-medium sm:w-auto"><span className="sr-only">{t("analytics.total")}</span><span aria-hidden="true" className="hidden sm:inline">{t("analytics.total")}</span><span aria-hidden="true" className="sm:hidden">{t("analytics.totalShort")}</span></th>
+              <th scope="col" className="w-[15%] whitespace-nowrap py-2 text-right font-medium sm:w-auto">{t("analytics.open")}</th>
+              <th scope="col" className="w-[25%] whitespace-nowrap py-2 text-right font-medium sm:w-auto">{t("analytics.completed")}</th>
             </tr>
           </thead>
           <tbody>
             {state.projects.map((project) => <tr key={project.id} className="border-t border-border text-sm">
               <th scope="row" className="py-2 pr-2 text-left font-normal">
-                <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1"><span className="shrink-0 rounded-md bg-muted px-1.5 text-xs text-muted-foreground">{project.key}</span><span className="min-w-0 break-words" title={project.name}>{project.name}</span></span>
+                <span className="flex min-w-0 items-center gap-x-2"><span className="shrink-0 rounded-md bg-muted px-1.5 text-xs text-muted-foreground">{project.key}</span><span className="line-clamp-2 min-h-10 min-w-0 break-words leading-5 sm:line-clamp-none sm:min-h-0 sm:truncate" title={project.name}>{project.name}</span></span>
               </th>
               <td className="py-2 text-right tabular-nums">{formatNumber(project.total)}</td>
               <td className="py-2 text-right tabular-nums">{formatNumber(project.open)}</td>
@@ -164,6 +188,7 @@ export function AnalyticsOverviewPage({ workspaceId, workspaceSlug, run }: { wor
             </tr>)}
           </tbody>
         </table>
+        </div>
       </div>}
     </>}
   </section>;
@@ -171,12 +196,20 @@ export function AnalyticsOverviewPage({ workspaceId, workspaceSlug, run }: { wor
 
 /** Workspace Analytics, Work items tab: summary cards, Created vs Resolved and Customized insights (X axis, optional Group-by, project filter). */
 export function AnalyticsPage({ workspaceId, workspaceSlug, action, run }: { workspaceId: string; workspaceSlug: string; action: Call; run: Run }) {
+  const axisLabelId = React.useId();
+  const groupLabelId = React.useId();
   const [projects, setProjects] = React.useState<Project[]>([]);
+  const [stateGroupsByName, setStateGroupsByName] = React.useState<Record<string, WorkState["group"] | null>>({});
   const [selected, setSelected] = React.useState<string[]>([]);
   const [x, setX] = React.useState<Axis>("state");
   const [groupBy, setGroupBy] = React.useState<Axis | "">("");
   const [state, setState] = React.useState<{ summary: Summary; insights: Insights; months: Month[] } | "forbidden" | "failed" | null>(null);
   React.useEffect(() => { void action<Project[]>("list_projects", { workspaceId, archived: false }).then((rows) => setProjects(rows ?? [])); }, [action, workspaceId]);
+  React.useEffect(() => {
+    let current = true;
+    void groupsByStateName(action, projects).then((kinds) => { if (current) setStateGroupsByName(kinds); });
+    return () => { current = false; };
+  }, [action, projects]);
   React.useEffect(() => {
     let current = true;
     const filter = selected.length > 0 ? { projectIds: selected } : {};
@@ -208,15 +241,15 @@ export function AnalyticsPage({ workspaceId, workspaceSlug, action, run }: { wor
       </div>
       <div className="grid min-w-0 gap-3">
         <h2 className="m-0 text-base font-semibold">{t("analytics.insights")}</h2>
-        <div className="flex flex-wrap items-center gap-3">
-          <label className="flex items-center gap-2 text-sm text-muted-foreground">{t("analytics.xAxis")}
-            <select value={x} onChange={(event) => pickX(event.target.value as Axis)} className={selectClass}>{axes.map((axis) => <option key={axis} value={axis}>{t(`analytics.axis.${axis}`)}</option>)}</select></label>
-          <label className="flex items-center gap-2 text-sm text-muted-foreground">{t("analytics.groupBy")}
-            <select value={groupBy} onChange={(event) => setGroupBy(event.target.value as Axis | "")} className={selectClass}>
-              <option value="">{t("analytics.groupNone")}</option>{axes.filter((axis) => axis !== x).map((axis) => <option key={axis} value={axis}>{t(`analytics.axis.${axis}`)}</option>)}</select></label>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="grid min-w-40 gap-1 text-sm font-medium text-foreground"><span id={axisLabelId}>{t("analytics.xAxis")}</span>
+            <Select value={x} onValueChange={(value) => value && pickX(value as Axis)}><SelectTrigger className="pointer-coarse:min-h-11" aria-labelledby={axisLabelId} aria-label={t("analytics.xAxis")}><SelectValue /></SelectTrigger><SelectContent>{axes.map((axis) => <SelectItem key={axis} value={axis}><SelectItemText>{t(`analytics.axis.${axis}`)}</SelectItemText></SelectItem>)}</SelectContent></Select></div>
+          <div className="grid min-w-40 gap-1 text-sm font-medium text-foreground"><span id={groupLabelId}>{t("analytics.groupBy")}</span>
+            <Select value={groupBy || "none"} onValueChange={(value) => setGroupBy(!value || value === "none" ? "" : value as Axis)}><SelectTrigger className="pointer-coarse:min-h-11" aria-labelledby={groupLabelId} aria-label={t("analytics.groupBy")}><SelectValue /></SelectTrigger><SelectContent>
+              <SelectItem value="none"><SelectItemText>{t("analytics.groupNone")}</SelectItemText></SelectItem>{axes.filter((axis) => axis !== x).map((axis) => <SelectItem key={axis} value={axis}><SelectItemText>{t(`analytics.axis.${axis}`)}</SelectItemText></SelectItem>)}</SelectContent></Select></div>
           <ProjectFilter projects={projects} selected={selected} onChange={setSelected} />
         </div>
-        {state.insights.buckets.length === 0 ? <p className="m-0 text-muted-foreground">{t("analytics.noData")}</p> : <Chart insights={state.insights} />}
+        {state.insights.buckets.length === 0 ? <p className="m-0 text-muted-foreground">{t("analytics.noData")}</p> : <Chart insights={state.insights} stateGroupsByName={stateGroupsByName} />}
       </div></>}
     </>}
   </section>;

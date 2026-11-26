@@ -62,14 +62,15 @@ try {
     await menuItem().click();
   };
 
-  // 1440px, panel closed: the body column is about 760px, aligned with the breadcrumb, with no box.
+  // 1440px, panel closed: the body column is about 760px and centred in its grid, with no box.
   await openPage(`${web}/${slug}/wiki/${wikiPage.id}`);
   check(await page.getByRole("heading", { level: 1, name: "Column handbook", exact: true }).count() === 1, "the editable Wiki title must be the page's accessible h1");
   const closedColumn = await box(column());
   const closedGrid = await box(grid());
   check(closedColumn.width >= 700 && closedColumn.width <= 780, `the text column must be about 760px wide at 1440px, found ${closedColumn.width}`);
   const leftGap = closedColumn.x - closedGrid.x;
-  check(Math.abs(leftGap) <= 2, `the text column must align with the breadcrumb, left gap ${leftGap}`);
+  const rightGap = closedGrid.x + closedGrid.width - (closedColumn.x + closedColumn.width);
+  check(Math.abs(leftGap - rightGap) <= 2, `the text column must be centred, gaps ${leftGap} and ${rightGap}`);
 
   // Panel open: the column still reads well, about 760px or less, and does not overlap the panel.
   await page.getByTestId("wiki-details-toggle").click();

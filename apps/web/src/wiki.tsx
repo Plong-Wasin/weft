@@ -29,7 +29,6 @@ import { Select, SelectContent, SelectItem, SelectItemText, SelectTrigger, Selec
 import { addRowAfter, goToNextCell } from "@tiptap/pm/tables";
 import { PluginKey, TextSelection } from "@tiptap/pm/state";
 import type { WikiPaperSize } from "./wiki-pdf";
-import type { Project } from "./types";
 import { WikiBubbleMenu } from "./wiki-bubble-menu";
 import { WikiBlockControls } from "./wiki-block-controls";
 import { CalloutControls } from "./callout-controls";
@@ -48,7 +47,7 @@ const autosaveMs = 1_500;
 const live = liveUrl(import.meta.env.VITE_LIVE_URL, window.location);
 const favoritesKey = (workspaceId: string) => ["favorite-wiki-pages", workspaceId] as const;
 
-export type Summary = { id: string; archived: boolean; locked?: boolean; projectId?: string | null; projectName?: string; collectionId?: string | null; parentId: string | null; title: string; access: "public" | "private"; ownerId: string; ownerName?: string | null; createdAt: string; updatedAt: string };
+export type Summary = { id: string; archived: boolean; locked?: boolean; projectId?: string | null; collectionId?: string | null; parentId: string | null; title: string; access: "public" | "private"; ownerId: string; ownerName?: string | null; createdAt: string; updatedAt: string };
 type MarkdownWarning = { code: string; message: string };
 type Page = Summary & { published?: boolean; content: unknown; contentMarkdownWarnings?: string[]; contentMarkdownWarningDetails?: MarkdownWarning[]; canEdit: boolean; canLock?: boolean; canArchive?: boolean };
 type Member = { userId: string; name: string; isAgent?: boolean; codeCapable?: boolean };
@@ -408,7 +407,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
   ];
   const mutedButton = "grid size-7 shrink-0 place-items-center rounded-md !bg-transparent !p-0 text-muted-foreground hover:!bg-accent hover:text-foreground";
   return <div className={wide && panelOpen ? "grid gap-6 grid-cols-[minmax(0,1fr)_minmax(0,20rem)]" : "grid gap-6"}>
-    <section aria-label={title} className={`min-w-0 w-full ${fullWidth ? "" : "max-w-[760px]"}`}>
+    <section aria-label={title} className={`min-w-0 ${fullWidth ? "" : "mx-auto w-full max-w-[760px]"}`}>
     <div className="wiki-print-document">
     <h1 aria-hidden="true" className="wiki-print-title">{title}</h1>
     <div className="flex flex-wrap items-center gap-2">
@@ -660,21 +659,12 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
     const next = writeListFilter(paramsRef.current, key, value); paramsRef.current = next; setParams(next, { replace: true });
   }, [setParams]);
   const filters = readListFilters(params);
-  const { data: pages = [], isLoading, isError } = useQuery({ queryKey: ["wiki-pages", workspace.id, filters.tab], queryFn: async () => {
-    if (filters.tab === "shared") return await call<Summary[]>("list_shared_wiki_pages", { workspaceId: workspace.id }) ?? [];
-    const archived = filters.tab === "archived";
-    const [workspacePages, projects] = await Promise.all([
-      call<Summary[]>("list_wiki_pages", { workspaceId: workspace.id, archived }),
-      call<Project[]>("list_projects", { workspaceId: workspace.id, archived: false }),
-    ]);
-    const projectPages = await Promise.all((projects ?? []).filter((project) => project.features.pages).map(async (project) =>
-      (await call<Summary[]>("list_project_wiki_pages", { projectId: project.id, archived }) ?? []).map((page) => ({ ...page, projectName: `${project.key} · ${project.name}` }))));
-    return [...(workspacePages ?? []), ...projectPages.flat()];
-  } });
+  const { data: pages = [], isLoading, isError } = useQuery({ queryKey: ["wiki-pages", workspace.id, filters.tab], queryFn: async () => filters.tab === "shared"
+    ? await call<Summary[]>("list_shared_wiki_pages", { workspaceId: workspace.id }) ?? []
+    : await call<Summary[]>("list_wiki_pages", { workspaceId: workspace.id, archived: filters.tab === "archived" }) ?? [] });
   const { data: collections = [] } = useQuery({ queryKey: ["wiki-collections", workspace.id], queryFn: async () => await call<Array<{ id: string; name: string; icon: string; visibility: "public" | "private"; isDefault: boolean }>>("list_collections", { workspaceId: workspace.id }) ?? [] });
   const [failed, setFailed] = React.useState(false);
   const shown = filterAndOrder(pages, filters);
-  const projectGroups = Array.from(new Map(pages.filter((page) => page.projectId).map((page) => [page.projectId!, { id: page.projectId!, name: page.projectName ?? page.projectId! }])).values());
   async function create() {
     const created = await call<Page>("create_wiki_page", { workspaceId: workspace.id, title: translate("wiki.untitled") });
     if (created) navigate(paths.wikiPage(workspace.slug, created.id)); else setFailed(true);
@@ -718,19 +708,6 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
         <td className="hidden py-2 text-muted-foreground md:table-cell">{nested}</td>
       </tr>)}
       </React.Fragment>)}
-      {projectGroups.map((project) => {
-        const rows = flatten(shown.filter((page) => page.projectId === project.id));
-        if (rows.length === 0) return null;
-        return <React.Fragment key={`project:${project.id}`}>
-          <tr className="border-b border-border"><th colSpan={5} className="pb-2 pr-2 pt-6 text-left font-semibold text-foreground">{project.name}</th></tr>
-          {rows.map(({ page, depth, nested }) => <tr key={page.id} className="border-b border-border hover:bg-accent">
-            <td className="py-2" style={{ paddingLeft: `${depth * 1.25}rem` }}><Link className={rowLink} to={paths.wikiPage(workspace.slug, page.id)}><FileText aria-hidden size={14} className="shrink-0 text-muted-foreground" /><span className="min-w-0 truncate">{page.title}</span></Link></td>
-            <td className="py-2 align-middle text-muted-foreground"><span className="inline-flex items-center gap-1.5 align-middle">{roleIcon(page)}{translate(`wiki.access.${page.access}` as MessageKey)}</span></td>
-            <td className="hidden py-2 text-muted-foreground md:table-cell">{formatDay(page.createdAt)}</td><td className="py-2 text-muted-foreground">{formatDay(page.updatedAt)}</td>
-            <td className="hidden py-2 text-muted-foreground md:table-cell">{nested}</td>
-          </tr>)}
-        </React.Fragment>;
-      })}
       </tbody>
     </table></div>}
     {collectionDialog && (collectionDialog.kind === "delete"

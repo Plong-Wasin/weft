@@ -11,6 +11,7 @@ const apiPort = Number(Bun.env.E2E_API_PORT ?? 3108);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5208);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
+const auditAfter = "/tmp/weft-ui-audit/after/cycles";
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
   Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
@@ -60,6 +61,7 @@ try {
   const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
   const shots = reviewShots("12-cycles-ui");
   await mkdir(shots, { recursive: true });
+  await mkdir(auditAfter, { recursive: true });
   page.on("dialog", (dialog) => void dialog.accept());
   const addCycle = async (name: string, start: string, end: string) => {
     const trigger = page.getByRole("button", { name: translate("cycles.new"), exact: true });
@@ -110,6 +112,10 @@ try {
   // Screenshots of the list at both widths.
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.screenshot({ path: `${shots}/cycles-1440.png` });
+  await page.screenshot({ path: `${auditAfter}/cycles-1440-light.png`, fullPage: true });
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+  await page.screenshot({ path: `${auditAfter}/cycles-1440-dark.png`, fullPage: true });
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: `${shots}/cycles-390.png` });
   const ringFont = await page.getByRole("img", { name: /^Progress \d+%$/ }).first().evaluate((element) => parseFloat(getComputedStyle(element).fontSize));
@@ -190,9 +196,17 @@ try {
   await page.getByRole("checkbox", { name: `${translate("cycles.selectCandidate")} MOB-1` }).click();
   await page.getByRole("button", { name: translate("cycles.addSelected").replace("{count}", "1"), exact: true }).click();
   await page.getByRole("dialog", { name: translate("cycles.addTitle") }).waitFor({ state: "detached" });
-  await page.getByRole("button", { name: translate("cycles.remove"), exact: true }).waitFor();
+  const itemRow = page.getByTestId("row-MOB-1");
+  const rowAction = itemRow.getByRole("button", { name: `${translate("cycles.menu")}: MOB-1` });
+  await rowAction.waitFor();
+  check(await itemRow.getByRole("button", { name: translate("cycles.remove"), exact: true }).count() === 0, "Cycle removal must stay inside the row action menu");
+  const rowHeights = await page.getByTestId(/^row-MOB-/).evaluateAll((rows) => rows.map((row) => row.getBoundingClientRect().height));
+  check(rowHeights.every((height) => height === rowHeights[0]), `Cycle work item rows have unequal heights: ${rowHeights.join(", ")}`);
+  await rowAction.click();
+  await page.getByRole("menuitem", { name: translate("cycles.remove"), exact: true }).waitFor();
+  await page.keyboard.press("Escape");
   // Search finds a work item already in another Cycle, shows its membership, and requires opting into the move.
-  await page.getByRole("link", { name: translate("cycles.back") }).click();
+  await page.getByRole("link", { name: translate("cycles.title"), exact: true }).click();
   await tab("upcoming").click();
   await page.getByRole("link", { name: "Sprint 2" }).click();
   await page.getByRole("button", { name: translate("cycles.addItems"), exact: true }).click();
@@ -208,7 +222,7 @@ try {
   await candidate.click();
   await page.getByRole("button", { name: translate("cycles.addSelected").replace("{count}", "1"), exact: true }).click();
   await page.getByRole("dialog", { name: translate("cycles.addTitle") }).waitFor({ state: "detached" });
-  await page.getByRole("link", { name: translate("cycles.back") }).click();
+  await page.getByRole("link", { name: translate("cycles.title"), exact: true }).click();
   await tab("active").click();
   await page.getByRole("link", { name: "Sprint 1" }).click();
   await page.getByRole("button", { name: translate("cycles.addItems"), exact: true }).click();
@@ -216,10 +230,17 @@ try {
   await page.getByRole("checkbox", { name: `${translate("cycles.selectCandidate")} MOB-1` }).click();
   await page.getByRole("button", { name: translate("cycles.addSelected").replace("{count}", "1"), exact: true }).click();
   await page.getByRole("dialog", { name: translate("cycles.addTitle") }).waitFor({ state: "detached" });
-  await page.getByRole("button", { name: translate("cycles.remove"), exact: true }).waitFor();
+  await page.getByRole("button", { name: `${translate("cycles.menu")}: MOB-1` }).waitFor();
   const progress = await page.getByTestId("cycle-progress").first().getAttribute("title");
   if (progress !== translate("cycles.progressOf").replace("{done}", "0").replace("{total}", "1")) throw new Error(`unexpected progress: ${progress}`);
   await page.getByTestId("cycle-breakdown").waitFor();
+  await page.screenshot({ path: `${auditAfter}/cycle-detail-1440-light.png`, fullPage: true });
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+  await page.screenshot({ path: `${auditAfter}/cycle-detail-1440-dark.png`, fullPage: true });
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+  await page.setViewportSize({ width: 820, height: 1180 });
+  await page.screenshot({ path: `${auditAfter}/cycle-detail-820-light.png`, fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
   // Creation starts history coverage after yesterday's Cycle start, so this range has no EOD observation yet.
   await page.getByTestId("cycle-burndown").getByRole("status").filter({ hasText: translate("cycles.history.noCoverage") }).waitFor();
   // The item entered this Cycle twice and left it once in the move round-trip above.
@@ -287,7 +308,7 @@ try {
   await page.getByRole("button", { name: `${translate("cycles.menu")}: Sprint 1` }).click();
   await page.getByRole("menuitem", { name: translate("cycles.archive") }).click();
   await page.getByText(translate("cycles.archived")).waitFor();
-  await page.getByRole("link", { name: translate("cycles.back") }).click();
+  await page.getByRole("link", { name: translate("cycles.title"), exact: true }).click();
   await tab("completed").click();
   check(!(await page.getByRole("link", { name: "Sprint 1" }).isVisible()), "archived Cycle must leave the list");
   await page.getByRole("checkbox", { name: translate("cycles.showArchived") }).click();

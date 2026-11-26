@@ -1,6 +1,7 @@
 // Browser end-to-end flow: Modules pages (list and grid, create, edit, properties sidebar, add and remove work items, archive, delete).
 // Run with `bun run e2e` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
 import { chromium, type Page } from "playwright";
+import { mkdir } from "node:fs/promises";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -10,6 +11,7 @@ const apiPort = Number(Bun.env.E2E_API_PORT ?? 31137);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52137);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
+const auditAfter = "/tmp/weft-ui-audit/after/cycles";
 const servers = [
   Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
   Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, CHOKIDAR_USEPOLLING: "true", VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
@@ -28,7 +30,7 @@ let failed = false;
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
   const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1080 } });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1080 }, hasTouch: true });
   const page = await context.newPage();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const call = async <T>(name: string, body: unknown) => { const response = await context.request.post(`${api}/actions/${name}`, { data: body }); if (!response.ok()) throw new Error(`${name} failed: ${response.status()}`); return await response.json() as T; };
@@ -55,6 +57,7 @@ try {
 
   const t = (key: string) => translate(key as never);
   const shots = reviewShots("13-modules-ui");
+  await mkdir(auditAfter, { recursive: true });
   page.on("dialog", (dialog) => void dialog.accept());
   const base = `${web}/${slug}/projects/MOB`;
   await page.goto(`${base}/modules`);
@@ -128,14 +131,30 @@ try {
   await row.waitFor();
   check((await row.innerText()).includes(t("modules.status.in-progress")), "status badge missing in list");
   check((await row.innerText()).includes("0"), "progress missing");
+  const ringFits = await row.getByTestId("module-progress").evaluate((element) => {
+    const ring = element.getBoundingClientRect();
+    const text = element.querySelector("span")!;
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    const glyph = range.getBoundingClientRect();
+    return glyph.width > 0 && glyph.left >= ring.left && glyph.right <= ring.right && glyph.top >= ring.top && glyph.bottom <= ring.bottom;
+  });
+  check(ringFits, "Module progress percentage glyphs must fit inside the ring");
   const createdModule = (await call<Array<{ id: string; name: string; descriptionMarkdown: string }>>("list_modules", { projectId: project!.id })).find(({ name }) => name === "Auth")!;
   check(createdModule.descriptionMarkdown.includes("**Initial module purpose**"), "Module description formatting was not written as Markdown");
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: `${shots}/modules-390.png` });
+  await page.screenshot({ path: `${auditAfter}/modules-390-light.png`, fullPage: true });
   const mobileOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
   check(!mobileOverflow, "Modules list should not scroll horizontally at 390px");
   await page.setViewportSize({ width: 1440, height: 1080 });
   await page.screenshot({ path: `${shots}/modules-list-1440.png` });
+  await page.screenshot({ path: `${auditAfter}/modules-1440-light.png`, fullPage: true });
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+  await page.screenshot({ path: `${auditAfter}/modules-1440-dark.png`, fullPage: true });
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+  const filterHeights = await page.getByTestId("module-filters").locator("input, [role=combobox]").evaluateAll((controls) => controls.map((control) => control.getBoundingClientRect().height));
+  check(filterHeights.every((height) => height >= 44), `Module filter controls should meet the 44px touch target: ${filterHeights.join(", ")}`);
 
   // Grid display.
   await page.getByRole("button", { name: t("modules.display.grid"), exact: true }).click();
@@ -154,9 +173,10 @@ try {
   await page.getByTestId("module-row-Authentication").waitFor();
   // Search and combined filters produce the same result in list and grid.
   await page.getByRole("searchbox", { name: t("modules.searchModules") }).fill("auth");
-  await page.getByLabel(t("modules.statusFilter")).selectOption("in-progress");
-  await page.getByLabel(t("modules.leadFilter")).selectOption({ label: "Modules Tester" });
-  await page.getByLabel(t("modules.memberFilter")).selectOption({ label: "Modules Tester" });
+  for (const [label, option] of [[t("modules.statusFilter"), t("modules.status.in-progress")], [t("modules.leadFilter"), "Modules Tester"], [t("modules.memberFilter"), "Modules Tester"]]) {
+    await page.getByRole("combobox", { name: label }).click();
+    await page.getByRole("option", { name: option, exact: true }).click();
+  }
   await page.locator('input[type="date"]').nth(0).fill("2026-02-01");
   await page.locator('input[type="date"]').nth(1).fill("2026-02-28");
   await page.getByTestId("module-row-Authentication").waitFor();

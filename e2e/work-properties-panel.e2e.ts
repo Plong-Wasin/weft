@@ -77,7 +77,7 @@ try {
   };
 
   await page.goto(`${web}/${slug}/browse/MOB-1`);
-  await page.getByRole("heading", { name: "MOB-1" }).waitFor();
+  await page.getByRole("heading", { name: "Release plan", level: 1 }).waitFor();
   await sidebar().waitFor();
   await page.evaluate(() => localStorage.clear());
   await page.reload();
@@ -170,7 +170,7 @@ try {
   await blocked.addCookies(await page.context().cookies());
   const blockedPage = await blocked.newPage();
   await blockedPage.goto(`${web}/${slug}/browse/MOB-1`);
-  await blockedPage.getByRole("heading", { name: "MOB-1" }).waitFor();
+  await blockedPage.getByRole("heading", { name: "Release plan", level: 1 }).waitFor();
   const blockedSidebar = blockedPage.getByRole("complementary", { name: labelOf("workItems.properties"), exact: true }).last();
   await blockedSidebar.waitFor();
   await blockedPage.getByTestId("work-item-properties-toggle").click();

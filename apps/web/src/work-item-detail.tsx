@@ -309,7 +309,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   };
   const copy = () => copyText(`${window.location.origin}${itemPath}`, t("workItems.linkCopied"), t("comments.copyFailed"));
 
-  const header = <header className={`flex items-center gap-2 border-b border-border px-4 py-2.5 ${mode === "page" ? "" : "bg-card"}`}>
+  const header = <header className={`flex items-center gap-2 border-b border-border px-4 py-2.5 pointer-coarse:py-1 ${mode === "page" ? "" : "bg-card"}`}>
     {mode === "peek"
       ? <>
         <span aria-hidden className="flex-1" />

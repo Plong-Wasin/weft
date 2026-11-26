@@ -34,25 +34,25 @@ export function ForcedPasswordReset({ notice, languageSwitch, signOut, onDone, m
     await onDone();
   }
 
-  return <OnboardingShell action={<Button type="button" className="!h-auto !bg-transparent !p-0 font-semibold !text-accent-text hover:underline" onClick={() => void signOut()}>{translate("auth.signOut")}</Button>}>
-    <h1 className="text-20 font-semibold">{translate("account.resetTitle")}</h1>
-    <p className="text-14 text-secondary">{notice ? securityNoticeText(notice) : translate("account.resetWhy")}</p>
+  return <OnboardingShell action={<Button type="button" className="!h-auto !bg-transparent !p-0 font-semibold !text-foreground hover:underline" onClick={() => void signOut()}>{translate("auth.signOut")}</Button>}>
+    <h1 className="text-xl font-semibold">{translate("account.resetTitle")}</h1>
+    <p className="text-sm text-muted-foreground">{notice ? securityNoticeText(notice) : translate("account.resetWhy")}</p>
     <form onSubmit={submit} className="grid gap-4">
-      <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("account.currentPassword")}<Input className={fieldClass} type="password" autoComplete="current-password" required value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} /></label>
-      <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("account.newPassword")}<Input className={fieldClass} type="password" autoComplete="new-password" required minLength={minPasswordLength} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label>
-      <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.confirmPassword")}<Input className={fieldClass} type="password" autoComplete="new-password" required minLength={minPasswordLength} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} /></label>
-      <p className="text-13 text-secondary">{translate("account.resetHelp")}</p>
+      <label className="grid gap-1.5 text-sm font-medium text-muted-foreground">{translate("account.currentPassword")}<Input className={fieldClass} type="password" autoComplete="current-password" required value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} /></label>
+      <label className="grid gap-1.5 text-sm font-medium text-muted-foreground">{translate("account.newPassword")}<Input className={fieldClass} type="password" autoComplete="new-password" required minLength={minPasswordLength} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label>
+      <label className="grid gap-1.5 text-sm font-medium text-muted-foreground">{translate("auth.confirmPassword")}<Input className={fieldClass} type="password" autoComplete="new-password" required minLength={minPasswordLength} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} /></label>
+      <p className="text-sm text-muted-foreground">{translate("account.resetHelp")}</p>
       <Button className={primaryButton} disabled={busy}>{translate("account.resetSave")}</Button>
     </form>
-    {error && <p role="alert" className="text-13 text-danger-text">{error}</p>}
-    <div className="flex items-center gap-4 pt-2 text-13 text-secondary">{languageSwitch}</div>
+    {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+    <div className="flex items-center gap-4 pt-2 text-sm text-muted-foreground">{languageSwitch}</div>
   </OnboardingShell>;
 }
 
 /** The one-time notice after an Admin signed the person out or asked for a reset. Closing it counts as seen. */
 export function SecurityNotice({ notice, onSeen }: { notice: string; onSeen: () => Promise<void> }) {
   return <Dialog title={translate("account.noticeTitle")} onClose={() => void onSeen()}>
-    <p className="text-14 text-primary">{securityNoticeText(notice)}</p>
+    <p className="text-sm text-foreground">{securityNoticeText(notice)}</p>
     <div className="flex justify-end"><Button type="button" className={primaryButton} onClick={() => void onSeen()}>{translate("account.noticeOk")}</Button></div>
   </Dialog>;
 }
@@ -81,13 +81,13 @@ export function SessionsPage() {
 
   return <main className="mx-auto w-full max-w-[900px] px-4">
     <SettingsHeader title={translate("account.sessionsTitle")} description={translate("account.sessionsDesc")}>
-      <Button type="button" className="secondary hover:!text-danger-text" onClick={() => void signOutEverywhere()}>{translate("account.signOutEverywhere")}</Button>
+      <Button type="button" className="secondary hover:!text-destructive" onClick={() => void signOutEverywhere()}>{translate("account.signOutEverywhere")}</Button>
     </SettingsHeader>
     <SettingsBlock>
-      {sessions === null ? null : sessions.length === 0 ? <p className="text-secondary">{translate("account.sessionsNone")}</p> : <RowList>{sessions.map((row) => <Row key={row.id}>
-        <span className="grid min-w-0 flex-1"><span className="font-medium">{row.device}{row.current && <span className="ml-2 rounded bg-layer-1 px-1.5 py-0.5 text-12 text-secondary">{translate("account.thisDevice")}</span>}</span>
-          <span className="text-13 text-secondary">{translate("account.signedInAt")} {formatDate(row.createdAt)} · {translate("account.lastSeen")} {formatDate(row.lastSeenAt)}</span></span>
-        <Button type="button" className="secondary hover:!text-danger-text" onClick={() => void revoke(row)}>{row.current ? translate("account.signOutThis") : translate("account.signOutDevice")}</Button>
+      {sessions === null ? null : sessions.length === 0 ? <p className="text-muted-foreground">{translate("account.sessionsNone")}</p> : <RowList>{sessions.map((row) => <Row key={row.id}>
+        <span className="grid min-w-0 flex-1"><span className="font-medium">{row.device}{row.current && <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">{translate("account.thisDevice")}</span>}</span>
+          <span className="text-sm text-muted-foreground">{translate("account.signedInAt")} {formatDate(row.createdAt)} · {translate("account.lastSeen")} {formatDate(row.lastSeenAt)}</span></span>
+        <Button type="button" className="secondary hover:!text-destructive" onClick={() => void revoke(row)}>{row.current ? translate("account.signOutThis") : translate("account.signOutDevice")}</Button>
       </Row>)}</RowList>}
       <Note note={note} error={failed} />
     </SettingsBlock>

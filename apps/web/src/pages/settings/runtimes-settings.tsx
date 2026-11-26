@@ -44,19 +44,19 @@ function offlineText(runtime: Runtime): string {
 
 function RuntimeUsage({ runtime }: { runtime: Runtime }) {
   const folders = runtime.sessionFolders;
-  return <div className="grid w-full gap-1 text-13">
-    <span className="text-secondary">{runtime.agents.length ? translate("runtimes.boundAgents").replace("{names}", runtime.agents.map((agent) => agent.name).join(", ")) : translate("runtimes.noBoundAgents")}</span>
-    <span className="text-secondary">{translate("runtimes.waitingRuns").replace("{count}", String(runtime.waitingRuns))}</span>
-    {runtime.waitingRuns > 0 && !runtime.online && <p className="m-0 text-12 text-secondary">{translate("runtimes.waitingRunsHelp")}</p>}
+  return <div className="grid w-full gap-1 text-sm">
+    <span className="text-muted-foreground">{runtime.agents.length ? translate("runtimes.boundAgents").replace("{names}", runtime.agents.map((agent) => agent.name).join(", ")) : translate("runtimes.noBoundAgents")}</span>
+    <span className="text-muted-foreground">{translate("runtimes.waitingRuns").replace("{count}", String(runtime.waitingRuns))}</span>
+    {runtime.waitingRuns > 0 && !runtime.online && <p className="m-0 text-xs text-muted-foreground">{translate("runtimes.waitingRunsHelp")}</p>}
     <details>
-      <summary className="cursor-pointer text-secondary">{translate("runtimes.sessionFolders").replace("{count}", String(folders.length))}</summary>
-      {folders.length === 0 ? <p className="m-0 mt-1 text-12 text-secondary">{translate("runtimes.noSessionFolders")}</p> : <>
-        <p className="m-0 mt-1 text-12 text-secondary">{translate("runtimes.sessionFoldersHelp")}</p>
+      <summary className="cursor-pointer text-muted-foreground">{translate("runtimes.sessionFolders").replace("{count}", String(folders.length))}</summary>
+      {folders.length === 0 ? <p className="m-0 mt-1 text-xs text-muted-foreground">{translate("runtimes.noSessionFolders")}</p> : <>
+        <p className="m-0 mt-1 text-xs text-muted-foreground">{translate("runtimes.sessionFoldersHelp")}</p>
         <ul className="m-0 mt-2 grid list-none gap-2 p-0">
           {folders.map((folder) => <li key={folder.folder} className="grid min-w-0 gap-0.5">
             <span className="break-words">{folder.workItem.displayId} · {folder.workItem.title}</span>
-            <span className="text-12 text-secondary">{translate("runtimes.folderLastUsed").replace("{time}", formatDate(folder.lastUsedAt))}</span>
-            <code className="break-all text-12">{folder.folder}</code>
+            <span className="text-xs text-muted-foreground">{translate("runtimes.folderLastUsed").replace("{time}", formatDate(folder.lastUsedAt))}</span>
+            <code className="break-all text-xs">{folder.folder}</code>
           </li>)}
         </ul>
       </>}
@@ -81,20 +81,20 @@ function ProfileControls({ runtime, owner, reload }: { runtime: Runtime; owner: 
     setError(result === null); if (result) { setName(""); setFilesystem(""); setNetwork(""); setEditingId(undefined); await load(); reload(); }
   };
   // Collapsed by default: with several Runtimes an open form under each one buried the facts the page is for. It stays where the owner left it: starting an edit opens it, saving or cancelling does not close it.
-  return <details className="w-full rounded-md border border-subtle p-3" open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
-    <summary className="cursor-pointer text-13 font-medium max-sm:py-2">{translate("runtimes.profiles")}{loaded ? ` · ${profiles.length}` : ""}</summary>
+  return <details className="w-full rounded-md border border-border p-3" open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
+    <summary className="cursor-pointer text-sm font-medium max-sm:py-2">{translate("runtimes.profiles")}{loaded ? ` · ${profiles.length}` : ""}</summary>
     <div className="mt-2 grid gap-2">
-    <p className="m-0 text-12 text-secondary">{translate("runtimes.profileHelp")}</p>
-    {profiles.map((profile) => <div key={profile.id} className="flex flex-wrap items-center gap-2 text-12"><span className="mr-auto">{profile.name} · {translate(`runtimes.sandbox.${profile.sandbox}` as never)}{profile.sandbox === "full" ? ` · ${translate("runtimes.fullAccessWarning")}` : ""}</span>{owner && <><Button className="secondary" onClick={() => { setExpanded(true); setEditingId(profile.id); setName(profile.name); setSandbox(profile.sandbox); setFilesystem(profile.filesystemAllowlist.join("\n")); setNetwork(profile.networkAllowlist.join(", ")); }}>{translate("runtimes.editProfile")}</Button><Button className="secondary" onClick={async () => { if (!window.confirm(translate("runtimes.deleteProfileConfirm").replace("{name}", profile.name))) return; const result = await actionResult("delete_runtime_profile", { profileId: profile.id }); setError("error" in result); await load(); reload(); }}>{translate("runtimes.deleteProfile")}</Button></>}</div>)}
-    <p role="note" data-testid="runtime-sandbox-requirements" className="m-0 text-12 text-secondary">{translate("runtimes.sandboxRequirements")}</p>
-    {owner && <><label className="text-12">{translate("runtimes.profileName")}<Input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} /></label>
-      <label className="text-12">{translate("runtimes.sandboxMode")}<select value={sandbox} onChange={(event) => setSandbox(event.target.value as RuntimeProfile["sandbox"])}><option value="run-folder">{translate("runtimes.sandbox.run-folder")}</option><option value="read-only">{translate("runtimes.sandbox.read-only")}</option><option value="full">{translate("runtimes.sandbox.full")}</option></select></label>
-      {sandbox !== "full" && <><label className="text-12">{translate("runtimes.filesystemAllowlist")}<Textarea value={filesystem} onChange={(event) => setFilesystem(event.target.value)} placeholder={translate("runtimes.filesystemPlaceholder")} /></label><label className="text-12">{translate("runtimes.networkAllowlist")}<Input value={network} onChange={(event) => setNetwork(event.target.value)} placeholder={translate("runtimes.networkPlaceholder")} /></label></>}
+    <p className="m-0 text-xs text-muted-foreground">{translate("runtimes.profileHelp")}</p>
+    {profiles.map((profile) => <div key={profile.id} className="flex flex-wrap items-center gap-2 text-xs"><span className="mr-auto">{profile.name} · {translate(`runtimes.sandbox.${profile.sandbox}` as never)}{profile.sandbox === "full" ? ` · ${translate("runtimes.fullAccessWarning")}` : ""}</span>{owner && <><Button className="secondary" onClick={() => { setExpanded(true); setEditingId(profile.id); setName(profile.name); setSandbox(profile.sandbox); setFilesystem(profile.filesystemAllowlist.join("\n")); setNetwork(profile.networkAllowlist.join(", ")); }}>{translate("runtimes.editProfile")}</Button><Button className="secondary" onClick={async () => { if (!window.confirm(translate("runtimes.deleteProfileConfirm").replace("{name}", profile.name))) return; const result = await actionResult("delete_runtime_profile", { profileId: profile.id }); setError("error" in result); await load(); reload(); }}>{translate("runtimes.deleteProfile")}</Button></>}</div>)}
+    <p role="note" data-testid="runtime-sandbox-requirements" className="m-0 text-xs text-muted-foreground">{translate("runtimes.sandboxRequirements")}</p>
+    {owner && <><label className="text-xs">{translate("runtimes.profileName")}<Input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} /></label>
+      <label className="text-xs">{translate("runtimes.sandboxMode")}<select value={sandbox} onChange={(event) => setSandbox(event.target.value as RuntimeProfile["sandbox"])}><option value="run-folder">{translate("runtimes.sandbox.run-folder")}</option><option value="read-only">{translate("runtimes.sandbox.read-only")}</option><option value="full">{translate("runtimes.sandbox.full")}</option></select></label>
+      {sandbox !== "full" && <><label className="text-xs">{translate("runtimes.filesystemAllowlist")}<Textarea value={filesystem} onChange={(event) => setFilesystem(event.target.value)} placeholder={translate("runtimes.filesystemPlaceholder")} /></label><label className="text-xs">{translate("runtimes.networkAllowlist")}<Input value={network} onChange={(event) => setNetwork(event.target.value)} placeholder={translate("runtimes.networkPlaceholder")} /></label></>}
       <Button type="button" className="secondary justify-self-start" disabled={!name.trim()} onClick={() => void save(editingId)}>{translate(editingId ? "runtimes.saveProfile" : "runtimes.addProfile")}</Button>
       {editingId && <Button type="button" className="secondary justify-self-start" onClick={() => { setEditingId(undefined); setName(""); setFilesystem(""); setNetwork(""); setSandbox("run-folder"); setError(false); }}>{translate("comments.cancel")}</Button>}
-      {!runtime.enforceSandbox && <p role="note" data-testid="runtime-enforcement-warning" className="m-0 text-12 text-secondary">{translate("runtimes.enforceSandboxImpact")}</p>}
-      <label className="flex items-center gap-2 text-12"><Checkbox checked={runtime.enforceSandbox} onChange={async (event) => { const enforceSandbox = event.target.checked; if (enforceSandbox && !runtime.enforceSandbox && !window.confirm(translate("runtimes.enforceSandboxConfirm"))) return; const result = await action("set_runtime_sandbox_enforcement", { runtimeId: runtime.id, enforceSandbox }); setError(result === null); reload(); }} />{translate("runtimes.enforceSandbox")}</label>
-      {error && <p role="alert" className="m-0 text-12 text-danger-text">{translate("runtimes.failed")}</p>}</>}
+      {!runtime.enforceSandbox && <p role="note" data-testid="runtime-enforcement-warning" className="m-0 text-xs text-muted-foreground">{translate("runtimes.enforceSandboxImpact")}</p>}
+      <label className="flex items-center gap-2 text-xs"><Checkbox checked={runtime.enforceSandbox} onChange={async (event) => { const enforceSandbox = event.target.checked; if (enforceSandbox && !runtime.enforceSandbox && !window.confirm(translate("runtimes.enforceSandboxConfirm"))) return; const result = await action("set_runtime_sandbox_enforcement", { runtimeId: runtime.id, enforceSandbox }); setError(result === null); reload(); }} />{translate("runtimes.enforceSandbox")}</label>
+      {error && <p role="alert" className="m-0 text-xs text-destructive">{translate("runtimes.failed")}</p>}</>}
     </div>
   </details>;
 }
@@ -125,32 +125,32 @@ function DeleteRuntime({ runtime, targets, isAdmin, reload }: { runtime: Runtime
   return <>
     <Button type="button" className={dangerOutline} onClick={() => setOpen(true)}>{translate("runtimes.delete")}</Button>
     {open && <Dialog title={translate(refused ? "runtimes.deleteRefusedTitle" : "runtimes.deleteTitle")} onClose={close}>
-      <p className="m-0 text-14 font-medium">{runtime.ownerName} · {runtime.agentCli} · {runtime.hostname}</p>
+      <p className="m-0 text-sm font-medium">{runtime.ownerName} · {runtime.agentCli} · {runtime.hostname}</p>
       {refused ? <>
-        {enabledAgents.length > 0 && <p className="m-0 text-14">{translate(adminChoices ? "runtimes.deleteRefusedAgentsAdmin" : "runtimes.deleteRefusedAgents").replace("{names}", enabledAgents.join(", "))}</p>}
-        {runtime.unfinishedRuns > 0 && <p className="m-0 text-14">{translate("runtimes.deleteRefusedRuns").replace("{count}", String(runtime.unfinishedRuns))}</p>}
-        {enabledAgents.length === 0 && runtime.unfinishedRuns === 0 && <p className="m-0 text-14">{translate("runtimes.deleteRefusedOther")}</p>}
-        {adminChoices && <div className="grid gap-2 rounded-md border border-subtle p-3">
-          <strong className="text-13">{translate("runtimes.adminChoiceTitle")}</strong>
-          <span className="text-13 text-secondary">{translate("runtimes.boundAgents").replace("{names}", runtime.agents.map((agent) => agent.name).join(", "))}</span>
-          <p className="m-0 text-12 text-secondary">{translate("runtimes.unbindHelp")}</p>
+        {enabledAgents.length > 0 && <p className="m-0 text-sm">{translate(adminChoices ? "runtimes.deleteRefusedAgentsAdmin" : "runtimes.deleteRefusedAgents").replace("{names}", enabledAgents.join(", "))}</p>}
+        {runtime.unfinishedRuns > 0 && <p className="m-0 text-sm">{translate("runtimes.deleteRefusedRuns").replace("{count}", String(runtime.unfinishedRuns))}</p>}
+        {enabledAgents.length === 0 && runtime.unfinishedRuns === 0 && <p className="m-0 text-sm">{translate("runtimes.deleteRefusedOther")}</p>}
+        {adminChoices && <div className="grid gap-2 rounded-md border border-border p-3">
+          <strong className="text-sm">{translate("runtimes.adminChoiceTitle")}</strong>
+          <span className="text-sm text-muted-foreground">{translate("runtimes.boundAgents").replace("{names}", runtime.agents.map((agent) => agent.name).join(", "))}</span>
+          <p className="m-0 text-xs text-muted-foreground">{translate("runtimes.unbindHelp")}</p>
           <Button type="button" className={`${dangerOutline} justify-self-start`} disabled={busy} onClick={() => void run({ boundAgents: "unbind" })}>{translate("runtimes.unbindAndDelete")}</Button>
-          <hr className="m-0 border-subtle" />
-          {targets.length === 0 ? <p className="m-0 text-12 text-secondary">{translate("runtimes.moveNoTargets")}</p> : <>
-            <p className="m-0 text-12 text-secondary">{translate("runtimes.moveHelp")}</p>
-            <label className="text-12">{translate("runtimes.moveTarget")}<select value={moveTo} onChange={(event) => setMoveTo(event.target.value)}>
+          <hr className="m-0 border-border" />
+          {targets.length === 0 ? <p className="m-0 text-xs text-muted-foreground">{translate("runtimes.moveNoTargets")}</p> : <>
+            <p className="m-0 text-xs text-muted-foreground">{translate("runtimes.moveHelp")}</p>
+            <label className="text-xs">{translate("runtimes.moveTarget")}<select value={moveTo} onChange={(event) => setMoveTo(event.target.value)}>
               <option value="">{translate("runtimes.moveTarget")}</option>
               {targets.map((candidate) => <option key={candidate.id} value={candidate.id}>{`${candidate.ownerName} · ${candidate.agentCli} · ${candidate.hostname}`}</option>)}
             </select></label>
-            {target && target.ownerId !== runtime.ownerId && <p role="note" className="m-0 text-12 text-danger-text">{translate("runtimes.moveOwnerWarning").replace("{owner}", target.ownerName)}</p>}
+            {target && target.ownerId !== runtime.ownerId && <p role="note" className="m-0 text-xs text-destructive">{translate("runtimes.moveOwnerWarning").replace("{owner}", target.ownerName)}</p>}
             <Button type="button" className={`${dangerOutline} justify-self-start`} disabled={busy || !target} onClick={() => void run({ boundAgents: { moveTo: target!.id } })}>{translate("runtimes.moveAndDelete")}</Button>
           </>}
         </div>}
         <div className="flex justify-end"><Button type="button" ref={closeButton} className="secondary max-sm:min-h-11" onClick={close}>{translate("runtimes.deleteClose")}</Button></div>
       </> : <>
-        <p className="m-0 text-14">{translate("runtimes.deleteBody")}</p>
-        {runtime.online && <p className="m-0 text-14" data-testid="delete-online-note">{translate("runtimes.deleteOnlineNote")}</p>}
-        {failed && <p role="alert" className="m-0 text-12 text-danger-text">{translate("runtimes.failed")}</p>}
+        <p className="m-0 text-sm">{translate("runtimes.deleteBody")}</p>
+        {runtime.online && <p className="m-0 text-sm" data-testid="delete-online-note">{translate("runtimes.deleteOnlineNote")}</p>}
+        {failed && <p role="alert" className="m-0 text-xs text-destructive">{translate("runtimes.failed")}</p>}
         <div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={close}>{translate("comments.cancel")}</Button><Button type="button" variant="danger" disabled={busy} onClick={() => void run({})}>{translate("runtimes.deleteConfirm")}</Button></div>
       </>}
     </Dialog>}
@@ -179,18 +179,18 @@ export function WorkspaceRuntimes() {
     <SettingsBlock>
       <Note note={translate("runtimes.isolationWarning")} />
       <Note note={failed ? translate("runtimes.failed") : null} error={failed} />
-      {runtimes.length === 0 ? <Link to={paths.workspaceConnectAi(workspace.slug)} className="text-14 text-accent-text underline">{translate("runtimes.connectLink")}</Link> : <RowList>
+      {runtimes.length === 0 ? <Link to={paths.workspaceConnectAi(workspace.slug)} className="text-sm text-foreground underline">{translate("runtimes.connectLink")}</Link> : <RowList>
         {runtimes.map((runtime) => <Row key={runtime.id}><div className="grid w-full gap-3">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-x-3">
             <div className="grid min-w-0 gap-0.5 sm:mr-auto">
               <span className="flex min-w-0 items-center gap-2 font-medium">
-                <span aria-hidden className={`size-2 shrink-0 rounded-full ${runtime.online ? "bg-success-primary" : "bg-warning-primary"}`} />
+                <span aria-hidden className={`size-2 shrink-0 rounded-full ${runtime.online ? "bg-green-600" : "bg-amber-500"}`} />
                 <span className="truncate">{runtime.ownerName} · {runtime.agentCli}</span>
               </span>
-              <span className="break-words text-13 text-secondary">{runtime.hostname} · {runtime.online ? translate("runtimes.online") : offlineText(runtime)}</span>
+              <span className="break-words text-sm text-muted-foreground">{runtime.hostname} · {runtime.online ? translate("runtimes.online") : offlineText(runtime)}</span>
             </div>
             <div className="flex flex-wrap items-center gap-2 sm:gap-x-3">
-            <span className="mr-auto text-13 text-secondary sm:mr-0">{runtime.shared ? translate("runtimes.shared") : translate("runtimes.private")}</span>
+            <span className="mr-auto text-sm text-muted-foreground sm:mr-0">{runtime.shared ? translate("runtimes.shared") : translate("runtimes.private")}</span>
             {runtime.ownerId === selfId && <Button type="button" className="secondary max-sm:min-h-11" onClick={() => void toggle(runtime)}>{translate(runtime.shared ? "runtimes.unshare" : "runtimes.share")}</Button>}
             {(runtime.ownerId === selfId || isAdmin) && <DeleteRuntime runtime={runtime} targets={runtimes.filter((candidate) => candidate.shared && candidate.id !== runtime.id)} isAdmin={isAdmin} reload={() => void load()} />}
             </div>

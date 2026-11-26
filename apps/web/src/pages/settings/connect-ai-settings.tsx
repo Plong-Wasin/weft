@@ -108,21 +108,21 @@ function CliRuntimeCard({ publicUrl }: { publicUrl: string | null }) {
   // Registered is not connected: a Runtime whose Daemon stopped stays listed but offline, so only online ones count.
   const mine = (runtimes.data ?? []).filter((runtime) => runtime.ownerId === selfId && runtime.online);
   return <SettingsBlock title={translate("connectAi.cliTitle")} description={translate("connectAi.cliDescription")}>
-    <div aria-live="polite" className="grid gap-1 rounded-md border border-subtle p-3">
-      {mine.length > 0 ? mine.map((runtime) => <p key={runtime.id} className="m-0 text-14 font-medium text-primary">
+    <div aria-live="polite" className="grid gap-1 rounded-md border border-border p-3">
+      {mine.length > 0 ? mine.map((runtime) => <p key={runtime.id} className="m-0 text-sm font-medium text-foreground">
         {translate("connectAi.cliConnected").replace("{hostname}", runtime.hostname).replace("{agentCli}", runtime.agentCli)}
       </p>) : <>
-        <p className="m-0 text-14 font-medium text-primary">{translate("connectAi.cliWaiting")}</p>
-        <p className="m-0 text-13 text-secondary">{translate("connectAi.cliWaitingHelp")}</p>
+        <p className="m-0 text-sm font-medium text-foreground">{translate("connectAi.cliWaiting")}</p>
+        <p className="m-0 text-sm text-muted-foreground">{translate("connectAi.cliWaitingHelp")}</p>
       </>}
     </div>
-    <label className="grid gap-1 text-13 font-medium text-primary">{translate("connectAi.clonePathLabel")}
+    <label className="grid gap-1 text-sm font-medium text-foreground">{translate("connectAi.clonePathLabel")}
       <Input value={clonePath} placeholder={defaultClonePath} onChange={(event) => setClonePath(event.target.value)} className="font-mono" />
     </label>
-    <p className="m-0 text-13 text-secondary">{translate("connectAi.clonePathHelp")}</p>
+    <p className="m-0 text-sm text-muted-foreground">{translate("connectAi.clonePathHelp")}</p>
     <ol className="m-0 grid list-none gap-4 p-0">
       {cliSteps(clonePath, cliServerUrl(publicUrl)).map((step) => <li key={step.id} className="grid gap-2">
-        <h3 className="m-0 text-14 font-medium text-primary">{step.label}</h3>
+        <h3 className="m-0 text-sm font-medium text-foreground">{step.label}</h3>
         <CopyBlock text={step.command} label={step.label} />
       </li>)}
     </ol>
@@ -137,7 +137,7 @@ async function fetchPublicUrl(): Promise<string | null> {
 
 function CopyBlock({ text, label }: { text: string; label: string }) {
   return <div className="grid gap-2">
-    <pre aria-label={label} className="m-0 overflow-x-auto rounded-md border border-subtle bg-layer-1 p-3 font-mono text-12 text-primary">{text}</pre>
+    <pre aria-label={label} className="m-0 overflow-x-auto rounded-md border border-border bg-muted p-3 font-mono text-xs text-foreground">{text}</pre>
     <Button type="button" className="secondary justify-self-start" onClick={() => void copyText(text, translate("connectAi.copied"), translate("connectAi.copyFailed"))}>{translate("connectAi.copy")}</Button>
   </div>;
 }
@@ -150,21 +150,21 @@ function McpCard({ publicUrl }: { publicUrl: string | null }) {
     {publicUrl === null ? <Note note={translate("connectAi.notReady")} /> : <>
       <Tabs value={client} onValueChange={(value) => setClient(value as ClientId)}>
         <TabsList aria-label={translate("connectAi.clientsLabel")} className="flex h-auto flex-wrap gap-1">
-          {clients.map((item) => <TabsTrigger key={item.id} value={item.id} id={`mcp-tab-${item.id}`} className={`rounded-md px-3 py-1.5 text-13 ${client === item.id ? "bg-accent-subtle text-accent-text" : "text-secondary hover:bg-layer-2"}`}>{item.label}</TabsTrigger>)}
+          {clients.map((item) => <TabsTrigger key={item.id} value={item.id} id={`mcp-tab-${item.id}`} className={`rounded-md px-3 py-1.5 text-sm ${client === item.id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-card"}`}>{item.label}</TabsTrigger>)}
         </TabsList>
         <TabsContent value={client} id="mcp-client-panel" aria-labelledby={`mcp-tab-${client}`} className="grid gap-2">
         <CopyBlock text={mcpSnippets(publicUrl)[client]} label={selected.label} />
-        <p className="m-0 text-13 text-secondary">{translate("connectAi.oauthHelp")}</p>
+        <p className="m-0 text-sm text-muted-foreground">{translate("connectAi.oauthHelp")}</p>
         </TabsContent>
       </Tabs>
-      <details className="grid gap-3 rounded-md border border-subtle p-3">
-        <summary className="cursor-pointer text-14 font-medium text-primary">{translate("connectAi.advanced")}</summary>
-        <p className="m-0 text-13 text-secondary">{translate("connectAi.advancedHelp")}</p>
-        <h3 className="m-0 text-13 font-medium text-primary">{translate("connectAi.stdioTitle")}</h3>
+      <details className="grid gap-3 rounded-md border border-border p-3">
+        <summary className="cursor-pointer text-sm font-medium text-foreground">{translate("connectAi.advanced")}</summary>
+        <p className="m-0 text-sm text-muted-foreground">{translate("connectAi.advancedHelp")}</p>
+        <h3 className="m-0 text-sm font-medium text-foreground">{translate("connectAi.stdioTitle")}</h3>
         <CopyBlock text={advancedSnippets(publicUrl).stdio} label={translate("connectAi.stdioTitle")} />
-        <h3 className="m-0 text-13 font-medium text-primary">{translate("connectAi.tokenTitle")}</h3>
+        <h3 className="m-0 text-sm font-medium text-foreground">{translate("connectAi.tokenTitle")}</h3>
         <CopyBlock text={advancedSnippets(publicUrl).token} label={translate("connectAi.tokenTitle")} />
-        <Link to={paths.workspaceApiTokens(workspace.slug)} className="text-13 text-accent-text underline">{translate("connectAi.tokensLink")}</Link>
+        <Link to={paths.workspaceApiTokens(workspace.slug)} className="text-sm text-foreground underline">{translate("connectAi.tokensLink")}</Link>
       </details>
     </>}
   </SettingsBlock>;

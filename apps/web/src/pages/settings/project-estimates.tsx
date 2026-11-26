@@ -36,12 +36,12 @@ function ValueList({ values, onChange, disabled, numeric }: { values: Draft[]; o
         return <>
           {!disabled && grip}
           <Input className="min-w-0 flex-1" required inputMode={numeric ? "decimal" : "text"} maxLength={20} disabled={disabled} aria-label={`${translate("estimates.value")} ${index + 1}`} value={entry.value} onChange={(event) => set(index, event.target.value)} />
-          {!disabled && <Button type="button" className="secondary hover:!text-danger-text" disabled={values.length <= estimateLimits.min} onClick={() => onChange(values.filter((_, at) => at !== index))}>{translate("estimates.removeValue")}</Button>}
+          {!disabled && <Button type="button" className="secondary hover:!text-destructive" disabled={values.length <= estimateLimits.min} onClick={() => onChange(values.filter((_, at) => at !== index))}>{translate("estimates.removeValue")}</Button>}
         </>;
       }} />
     {!disabled && <div className="flex flex-wrap items-center gap-3">
       <Button type="button" className="secondary" disabled={values.length >= estimateLimits.max} onClick={() => onChange([...values, { value: "" }])}>{translate("estimates.addValue")}</Button>
-      <span className="text-13 text-secondary">{translate("estimates.rangeHint")}</span>
+      <span className="text-sm text-muted-foreground">{translate("estimates.rangeHint")}</span>
     </div>}
   </div>;
 }
@@ -76,7 +76,7 @@ export function ProjectEstimates() {
   const header = <SettingsHeader title={translate("estimates.title")} description={translate("settings.estimatesDesc")} />;
 
   if (estimate === null) {
-    if (!canAdmin) return <section>{header}<p className="text-14 text-secondary">{translate("estimates.none")}</p></section>;
+    if (!canAdmin) return <section>{header}<p className="text-sm text-muted-foreground">{translate("estimates.none")}</p></section>;
     return <section>
       {header}
       <form className="grid gap-4" onSubmit={async (event) => { event.preventDefault(); await send("create_estimate", { name: name.trim() || undefined, type, values: values.map((entry) => entry.value) }); }}>
@@ -112,11 +112,11 @@ export function ProjectEstimates() {
     {header}
     <SettingsBlock>
       <Row>
-        <span className="grid flex-1"><span className="font-medium">{translate("estimates.enabled")}</span><span className="text-13 text-secondary">{translate("estimates.enabledDesc")}</span></span>
+        <span className="grid flex-1"><span className="font-medium">{translate("estimates.enabled")}</span><span className="text-sm text-muted-foreground">{translate("estimates.enabledDesc")}</span></span>
         <label className="flex-row items-center gap-2"><Switch disabled={!canAdmin} checked={estimate.enabled} aria-label={translate("estimates.enabled")} onChange={(event) => void send("update_estimate", { enabled: event.target.checked })} /></label>
       </Row>
     </SettingsBlock>
-    {!estimate.enabled && <p className="mb-3 text-13 text-secondary">{translate("estimates.offHint")}</p>}
+    {!estimate.enabled && <p className="mb-3 text-sm text-muted-foreground">{translate("estimates.offHint")}</p>}
     <form className="grid gap-4" onSubmit={async (event) => { event.preventDefault(); await send("update_estimate", { name: name.trim() || undefined, points: values.map((entry) => ({ ...(entry.id ? { id: entry.id } : {}), value: entry.value })) }); }}>
       <SettingsBlock title={translate(`estimates.type.${estimate.type}` as MessageKey)}>
         <label className="max-w-[420px]">{translate("estimates.name")}<Input required maxLength={100} disabled={readOnly} value={name} onChange={(event) => setName(event.target.value)} /></label>

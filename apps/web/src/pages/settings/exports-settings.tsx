@@ -71,21 +71,21 @@ export function WorkspaceExports() {
 
   return <section>
     <SettingsHeader title={translate("exports.title")} description={translate("exports.description")} />
-    {denied ? <p className="text-secondary">{translate("exports.notAllowed")}</p> : <>
+    {denied ? <p className="text-muted-foreground">{translate("exports.notAllowed")}</p> : <>
     <SettingsBlock>
-      {projects.length === 0 ? <p className="text-secondary">{translate("exports.noProjects")}</p> : <form className="grid max-w-xl gap-4" onSubmit={(event) => { event.preventDefault(); void request(); }}>
+      {projects.length === 0 ? <p className="text-muted-foreground">{translate("exports.noProjects")}</p> : <form className="grid max-w-xl gap-4" onSubmit={(event) => { event.preventDefault(); void request(); }}>
         <fieldset className="m-0 grid min-w-0 gap-2 border-0 p-0">
-          <legend className="mb-1 text-14 font-medium text-primary">{translate("exports.project")}</legend>
-          <div className="grid gap-px overflow-hidden rounded-lg border border-subtle bg-[var(--border)]">
-            {projects.map((project) => <label key={project.id} className="flex min-w-0 items-center gap-3 bg-surface-1 px-3 py-2 text-14 hover:bg-layer-transparent-hover">
+          <legend className="mb-1 text-sm font-medium text-foreground">{translate("exports.project")}</legend>
+          <div className="grid gap-px overflow-hidden rounded-lg border border-border bg-[var(--border)]">
+            {projects.map((project) => <label key={project.id} className="flex min-w-0 items-center gap-3 bg-card px-3 py-2 text-sm hover:bg-accent">
               <Checkbox checked={picked.includes(project.id)} onChange={(event) => setPicked(event.target.checked ? [...picked, project.id] : picked.filter((id) => id !== project.id))} />
-              <span className="min-w-0 truncate"><span className="text-tertiary">{project.key}</span> · {project.name}</span>
+              <span className="min-w-0 truncate"><span className="text-muted-foreground">{project.key}</span> · {project.name}</span>
             </label>)}
           </div>
-          <p className="m-0 text-13 text-secondary">{picked.length === 0 ? translate("exports.allProjects") : translate("exports.choiceNote")}</p>
+          <p className="m-0 text-sm text-muted-foreground">{picked.length === 0 ? translate("exports.allProjects") : translate("exports.choiceNote")}</p>
         </fieldset>
         <div className="flex flex-wrap items-end gap-3">
-          <label className="grid gap-1 text-14 font-medium text-primary">{translate("exports.format")}
+          <label className="grid gap-1 text-sm font-medium text-foreground">{translate("exports.format")}
             <select className="font-normal" value={format} onChange={(event) => setFormat(event.target.value as "csv" | "json")}>
               <option value="csv">{translate("exports.formatCsv")}</option><option value="json">{translate("exports.formatJson")}</option>
             </select>
@@ -93,17 +93,17 @@ export function WorkspaceExports() {
           <Button type="submit">{translate("exports.request")}</Button>
         </div>
       </form>}
-      <p className="m-0 max-w-xl text-13 text-tertiary">{translate("exports.csvNote")}</p>
+      <p className="m-0 max-w-xl text-sm text-muted-foreground">{translate("exports.csvNote")}</p>
       <Note note={note} error={error} />
     </SettingsBlock>
     <SettingsBlock title={translate("exports.previous")}>
-      {listFailed ? <div className="flex flex-wrap items-center gap-3" role="alert"><p className="m-0 text-13 text-danger-text">{translate("exports.listFailed")}</p><Button type="button" className="secondary" onClick={() => void load()}>{translate("exports.retry")}</Button></div> : items === null ? <p role="status" className="text-secondary">{translate("exports.loading")}</p> : items.length === 0 ? <p className="text-secondary">{translate("exports.none")}</p> : <RowList>{items.map((item) => <Row key={item.id}>
+      {listFailed ? <div className="flex flex-wrap items-center gap-3" role="alert"><p className="m-0 text-sm text-destructive">{translate("exports.listFailed")}</p><Button type="button" className="secondary" onClick={() => void load()}>{translate("exports.retry")}</Button></div> : items === null ? <p role="status" className="text-muted-foreground">{translate("exports.loading")}</p> : items.length === 0 ? <p className="text-muted-foreground">{translate("exports.none")}</p> : <RowList>{items.map((item) => <Row key={item.id}>
         <div className="grid min-w-0 flex-1 gap-1">
           <span className="font-medium">{item.projects.map((project) => `${project.key} · ${project.name}`).join(", ")} · {item.format.toUpperCase()}</span>
-          <span className="text-13 text-secondary">{translate("exports.requestedAt")}: {formatDate(item.createdAt)}</span>
-          {item.status === "failed" && item.failureReason && <span className="text-13 text-danger-text">{translate("exports.reason")}: {item.failureReason}</span>}
+          <span className="text-sm text-muted-foreground">{translate("exports.requestedAt")}: {formatDate(item.createdAt)}</span>
+          {item.status === "failed" && item.failureReason && <span className="text-sm text-destructive">{translate("exports.reason")}: {item.failureReason}</span>}
         </div>
-        <span className="text-13" data-status={item.status}>{expired(item) ? translate("exports.expired") : translate(`exports.status.${item.status}` as MessageKey)}</span>
+        <span className="text-sm" data-status={item.status}>{expired(item) ? translate("exports.expired") : translate(`exports.status.${item.status}` as MessageKey)}</span>
         {item.status === "completed" && !expired(item) && <Button type="button" className="secondary" onClick={() => void download(item)}>{translate("exports.download")}</Button>}
       </Row>)}</RowList>}
     </SettingsBlock>

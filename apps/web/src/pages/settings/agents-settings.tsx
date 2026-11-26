@@ -46,16 +46,16 @@ function AgentForm({ draft, onChange, onSubmit, onCancel, runtimes, allowAutopil
     <label>{translate("agents.name")}<Input required maxLength={100} value={draft.name} onChange={set("name")} /></label>
     <label>{translate("agents.instructions")}<Textarea rows={4} value={draft.instructions} onChange={set("instructions")} /></label>
     <label>{translate("agents.model")}<Input required value={draft.model} onChange={set("model")} /></label>
-    <fieldset className="grid gap-1 border-0 p-0"><label className="flex items-center gap-2"><Checkbox checked={draft.autopilot || !!draft.runtimeId} disabled={!!draft.runtimeId || !allowAutopilot} onChange={(event) => onChange({ ...draft, autopilot: event.target.checked })} />{translate("agents.autopilot")}</label><small className="text-12 text-secondary">{translate(draft.runtimeId ? "agents.runtimeAutopilot" : "agents.autopilotRisk")}</small></fieldset>
+    <fieldset className="grid gap-1 border-0 p-0"><label className="flex items-center gap-2"><Checkbox checked={draft.autopilot || !!draft.runtimeId} disabled={!!draft.runtimeId || !allowAutopilot} onChange={(event) => onChange({ ...draft, autopilot: event.target.checked })} />{translate("agents.autopilot")}</label><small className="text-xs text-muted-foreground">{translate(draft.runtimeId ? "agents.runtimeAutopilot" : "agents.autopilotRisk")}</small></fieldset>
     <label>{translate("agents.runsOn")}<select value={draft.runtimeId} onChange={(event) => { const next = event.target.value; onChange({ ...draft, runtimeId: next, autopilot: next ? true : (allowAutopilot ? draft.autopilot : false) }); }}><option value="">{translate("agents.server")}</option>{selectable.map((runtime) => <option key={runtime.id} value={runtime.id}>{runtime.hostname} · {runtime.agentCli} · {translate(runtime.online ? "runtimes.online" : "runtimes.offline")}</option>)}</select></label>
     {selectable.length === 0 && (runtimes.length > 0
-      ? <Link to={paths.workspaceRuntimes(workspace.slug)} className="text-13 text-accent-text underline">{translate("agents.shareRuntimeLink")}</Link>
-      : <Link to={paths.workspaceConnectAi(workspace.slug)} className="text-13 text-accent-text underline">{translate("runtimes.connectLink")}</Link>)}
-    {draft.runtimeId && <small className="text-12 text-secondary">{translate("agents.runtimeProfileHelp")}</small>}
-    <fieldset className="grid gap-1 border-0 p-0"><label className="flex items-center gap-2"><Checkbox checked={draft.canWakeAgents} onChange={(event) => onChange({ ...draft, canWakeAgents: event.target.checked })} />{translate("agents.canWakeAgents")}</label><small className="text-12 text-secondary">{translate("agents.canWakeAgentsHelp")}</small></fieldset>
+      ? <Link to={paths.workspaceRuntimes(workspace.slug)} className="text-sm text-foreground underline">{translate("agents.shareRuntimeLink")}</Link>
+      : <Link to={paths.workspaceConnectAi(workspace.slug)} className="text-sm text-foreground underline">{translate("runtimes.connectLink")}</Link>)}
+    {draft.runtimeId && <small className="text-xs text-muted-foreground">{translate("agents.runtimeProfileHelp")}</small>}
+    <fieldset className="grid gap-1 border-0 p-0"><label className="flex items-center gap-2"><Checkbox checked={draft.canWakeAgents} onChange={(event) => onChange({ ...draft, canWakeAgents: event.target.checked })} />{translate("agents.canWakeAgents")}</label><small className="text-xs text-muted-foreground">{translate("agents.canWakeAgentsHelp")}</small></fieldset>
     {draft.runtimeId && <div className="grid gap-3 sm:grid-cols-2"><label>{translate("agents.cliModel")}<Input value={draft.cliModel} onChange={set("cliModel")} /></label><label>{translate("agents.concurrency")}<Input type="number" min={1} max={20} value={draft.maxConcurrentRuns} onChange={set("maxConcurrentRuns")} /></label></div>}
     <details className="grid gap-3">
-      <summary className="cursor-pointer text-13 font-medium text-secondary">{translate("agents.limits")}</summary>
+      <summary className="cursor-pointer text-sm font-medium text-muted-foreground">{translate("agents.limits")}</summary>
       <div className="grid gap-3 sm:grid-cols-2">
         {number("maxToolCalls", "agents.maxToolCalls")}{number("maxTokens", "agents.maxTokens")}
         {number("timeoutSeconds", "agents.timeoutSeconds")}{number("monthlyTokenBudget", "agents.monthlyBudget")}
@@ -88,16 +88,16 @@ function AccessEditor({ agent, projects, onSaved, onFailed, canSetAllProjects = 
     setBase(saved);
     onSaved();
   };
-  return <fieldset className="grid gap-1 border-0 p-0"><legend className="text-13 font-medium text-secondary">{translate("agents.access")}</legend>
-    {!canSetAllProjects && projectsLoaded && (agent.allProjects || agent.projectIds.some((projectId) => !projects.some((project) => project.id === projectId))) && <p role="status" className="text-12 text-secondary">{translate("agents.revokedProjectAccess")}</p>}
+  return <fieldset className="grid gap-1 border-0 p-0"><legend className="text-sm font-medium text-muted-foreground">{translate("agents.access")}</legend>
+    {!canSetAllProjects && projectsLoaded && (agent.allProjects || agent.projectIds.some((projectId) => !projects.some((project) => project.id === projectId))) && <p role="status" className="text-xs text-muted-foreground">{translate("agents.revokedProjectAccess")}</p>}
     {canSetAllProjects && <label className="flex items-center gap-2"><Checkbox checked={draft.allProjects} onChange={(event) => setDraft({ ...draft, allProjects: event.target.checked, projectIds: event.target.checked ? [] : draft.projectIds })} />{translate("agents.allProjects")}</label>}
     {!draft.allProjects && <>
-      <label className="grid gap-1 text-12 font-medium text-secondary">{translate("projects.find")}
-        <Input type="search" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder={translate("projects.searchPlaceholder")} className="px-2 py-1 text-13" />
+      <label className="grid gap-1 text-xs font-medium text-muted-foreground">{translate("projects.find")}
+        <Input type="search" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder={translate("projects.searchPlaceholder")} className="px-2 py-1 text-sm" />
       </label>
       {visibleProjects.map((project) => <label key={project.id} className="flex items-center gap-2">
         <Checkbox checked={draft.projectIds.includes(project.id)} onChange={(event) => setDraft({ ...draft, projectIds: event.target.checked ? [...draft.projectIds, project.id] : draft.projectIds.filter((entry) => entry !== project.id) })} />{project.key} · {project.name}</label>)}
-      {visibleProjects.length === 0 && projectQuery.trim() && <p role="status" className="m-0 text-12 text-secondary">{translate("projects.noSearchResults")}</p>}
+      {visibleProjects.length === 0 && projectQuery.trim() && <p role="status" className="m-0 text-xs text-muted-foreground">{translate("projects.noSearchResults")}</p>}
     </>}
     <Button type="button" disabled={!dirty || saving} onClick={() => void save()}>{translate("agents.save")}</Button>
   </fieldset>;
@@ -115,7 +115,7 @@ function MemberAgentSettings({ agent, onSaved, onFailed }: { agent: ManagedAgent
     setSaving(false);
     result === null ? onFailed() : onSaved();
   };
-  return <form className="grid gap-3 border-y border-subtle py-3" onSubmit={(event) => void save(event)}>
+  return <form className="grid gap-3 border-y border-border py-3" onSubmit={(event) => void save(event)}>
     <strong>{translate("agents.myAgentSettings")}</strong>
     <label>{translate("agents.name")}<Input required maxLength={100} value={draft.name} onChange={set("name")} /></label>
     <label>{translate("agents.instructions")}<Textarea rows={4} value={draft.instructions} onChange={set("instructions")} /></label>
@@ -162,8 +162,8 @@ function AgentPeopleAccess({ agent, members, onSaved, onFailed }: { agent: Pick<
     setBase(result.accessUserIds);
     onSaved();
   };
-  return <fieldset className="grid gap-1 border-0 p-0"><legend className="text-13 font-medium text-secondary">{translate("agents.peopleAccess")}</legend>
-    <p className="text-12 text-secondary">{translate(agent.runtimeId ? "agents.runtimeOwnerAccess" : "agents.adminAccess")}</p>
+  return <fieldset className="grid gap-1 border-0 p-0"><legend className="text-sm font-medium text-muted-foreground">{translate("agents.peopleAccess")}</legend>
+    <p className="text-xs text-muted-foreground">{translate(agent.runtimeId ? "agents.runtimeOwnerAccess" : "agents.adminAccess")}</p>
     {members.filter((member) => !member.isAgent).map((member) => <label key={member.userId} className="flex items-center gap-2">
       <Checkbox aria-label={`${translate("agents.mayUse")} ${member.name}`} checked={draft.includes(member.userId)} onChange={(event) => setDraft(event.target.checked ? [...draft, member.userId] : draft.filter((id) => id !== member.userId))} />
       <Avatar name={member.name} id={member.userId} />{member.name}
@@ -180,8 +180,8 @@ function AgentRuntimeProfile({ agent, onSaved, onFailed }: { agent: Pick<AgentRe
     void action<RuntimeProfile[]>("list_runtime_profiles", { runtimeId: agent.runtimeId }).then((rows) => setProfiles(rows ?? []));
   }, [agent.runtimeId]);
   if (!agent.runtimeId) return null;
-  return <fieldset className="grid min-w-0 gap-1 border-0 p-0"><legend className="text-13 font-medium text-secondary">{translate("agents.runtimeProfile")}</legend>
-    <p className="text-12 text-secondary">{translate("agents.runtimeProfileHelp")}</p>
+  return <fieldset className="grid min-w-0 gap-1 border-0 p-0"><legend className="text-sm font-medium text-muted-foreground">{translate("agents.runtimeProfile")}</legend>
+    <p className="text-xs text-muted-foreground">{translate("agents.runtimeProfileHelp")}</p>
     <div className="flex min-w-0 flex-wrap items-center gap-2"><select className="max-w-full min-w-0" aria-label={translate("agents.runtimeProfile")} value={selected} onChange={(event) => setSelected(event.target.value)}>{!agent.runtimeProfileId && <option value="">{translate("agents.profileDefault")}</option>}{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {translate(`runtimes.sandbox.${profile.sandbox}` as never)}{profile.sandbox === "full" ? ` · ${translate("runtimes.fullAccessWarning")}` : ""}</option>)}</select>
       <Button type="button" className="secondary" disabled={!selected || selected === agent.runtimeProfileId} onClick={async () => { const result = await action("set_agent_runtime_profile", { agentId: agent.id, profileId: selected }); result === null ? onFailed() : onSaved(); }}>{translate("agents.saveProfile")}</Button></div>
   </fieldset>;
@@ -217,20 +217,20 @@ function AgentRuntimeEnvironment({ agent, onFailed }: { agent: Pick<AgentRecord,
   };
   const classificationDirty = JSON.stringify(classifications) !== JSON.stringify(savedClassifications);
   return <fieldset data-runtime-environment className="grid min-w-0 gap-2 border-0 p-0">
-    <legend className="text-13 font-medium text-secondary">{translate("agents.runtimeEnvironment")}</legend>
-    <p className="text-12 text-secondary">{translate("agents.runtimeEnvironmentHelp")}</p>
+    <legend className="text-sm font-medium text-muted-foreground">{translate("agents.runtimeEnvironment")}</legend>
+    <p className="text-xs text-muted-foreground">{translate("agents.runtimeEnvironmentHelp")}</p>
     {classifications.length > 0 && <div role="group" className="grid gap-2" aria-label={translate("agents.runtimeEnvironmentClassifications")}>
-      {classifications.map(({ name, classification }) => <div key={name} data-environment-name={name} className="grid min-w-0 gap-2 rounded-md border border-subtle p-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-        <strong className="break-all text-13">{name}</strong>
+      {classifications.map(({ name, classification }) => <div key={name} data-environment-name={name} className="grid min-w-0 gap-2 rounded-md border border-border p-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+        <strong className="break-all text-sm">{name}</strong>
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <label className="flex items-center gap-2 text-12">{translate("agents.environmentClassification")}
+          <label className="flex items-center gap-2 text-xs">{translate("agents.environmentClassification")}
             <select aria-label={`${name} ${translate("agents.environmentClassification")}`} value={classification} onChange={(event) => setClassifications((current) => current.map((entry) => entry.name === name ? { ...entry, classification: event.target.value as "secret" | "non-secret" } : entry))}>
               <option value="secret">{translate("agents.environmentSecret")}</option><option value="non-secret">{translate("agents.environmentNonSecret")}</option>
             </select>
           </label>
           {editing === name ? <>
-            <label className="min-w-[12rem] flex-1 text-12">{translate("agents.environmentValue")}<Input id={`environment-value-${agent.id}`} type="password" autoComplete="new-password" aria-describedby={`environment-value-help-${agent.id}`} value={value} onChange={(event) => setValue(event.target.value)} /></label>
-            <small id={`environment-value-help-${agent.id}`} className="text-secondary">{translate("agents.environmentUnchanged")}</small>
+            <label className="min-w-[12rem] flex-1 text-xs">{translate("agents.environmentValue")}<Input id={`environment-value-${agent.id}`} type="password" autoComplete="new-password" aria-describedby={`environment-value-help-${agent.id}`} value={value} onChange={(event) => setValue(event.target.value)} /></label>
+            <small id={`environment-value-help-${agent.id}`} className="text-muted-foreground">{translate("agents.environmentUnchanged")}</small>
             <Button type="button" onClick={() => void apply({ [name]: value })}>{translate("agents.environmentUpdate")}</Button>
             <Button type="button" className="secondary" onClick={() => { setEditing(null); setValue(""); }}>{translate("agents.cancel")}</Button>
           </> : <Button type="button" className="secondary" disabled={classificationDirty} onClick={() => { setEditing(name); setValue(""); }}>{translate("agents.environmentChangeValue")}</Button>}
@@ -246,12 +246,12 @@ function AgentRuntimeEnvironment({ agent, onFailed }: { agent: Pick<AgentRecord,
         setSaved(true);
       }}>{translate("agents.environmentSaveClassifications")}</Button>
     </div>}
-    <form method="post" className="grid min-w-0 gap-2 rounded-md border border-subtle p-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end" onSubmit={(event) => { event.preventDefault(); void apply({ [newName.trim()]: newValue }); }}>
+    <form method="post" className="grid min-w-0 gap-2 rounded-md border border-border p-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end" onSubmit={(event) => { event.preventDefault(); void apply({ [newName.trim()]: newValue }); }}>
       <label>{translate("agents.environmentName")}<Input name="variable-name" required value={newName} autoComplete="off" autoCapitalize="none" spellCheck={false} onChange={(event) => setNewName(event.target.value)} /></label>
       <label>{translate("agents.environmentValue")}<Input name="variable-value" type="password" autoComplete="new-password" required value={newValue} onChange={(event) => setNewValue(event.target.value)} /></label>
       <Button type="submit" disabled={classificationDirty}>{translate("agents.environmentAdd")}</Button>
     </form>
-    {saved && <p role="status" className="text-12 text-secondary">{translate("agents.environmentSaved")}</p>}
+    {saved && <p role="status" className="text-xs text-muted-foreground">{translate("agents.environmentSaved")}</p>}
   </fieldset>;
 }
 
@@ -263,13 +263,13 @@ function RetirePanel({ agent, counts, onClose, onDisable }: { agent: { id: strin
   const kinds = Object.entries(counts).filter(([, value]) => value > 0).sort((a, b) => b[1] - a[1]);
   const shown = kinds.slice(0, 5);
   const hidden = kinds.slice(5);
-  return <div ref={panel} tabIndex={-1} role="alertdialog" aria-labelledby={`retire-${agent.id}`} onKeyDown={(event) => { if (event.key === "Escape") close(); }} className="grid gap-2 rounded-md border border-danger-strong bg-danger-subtle p-3 outline-none">
-    <strong id={`retire-${agent.id}`} className="text-14 text-danger-text">{translate("agents.retire.title").replace("{name}", () => agent.name)}</strong>
-    <ul className="m-0 grid list-none gap-0.5 p-0 text-13" data-testid="retire-counts">
+  return <div ref={panel} tabIndex={-1} role="alertdialog" aria-labelledby={`retire-${agent.id}`} onKeyDown={(event) => { if (event.key === "Escape") close(); }} className="grid gap-2 rounded-md border border-destructive bg-destructive/10 p-3 outline-none">
+    <strong id={`retire-${agent.id}`} className="text-sm text-destructive">{translate("agents.retire.title").replace("{name}", () => agent.name)}</strong>
+    <ul className="m-0 grid list-none gap-0.5 p-0 text-sm" data-testid="retire-counts">
       {shown.map(([kind, value]) => <li key={kind}>{translate(`agents.retire.kind.${kind}` as Parameters<typeof translate>[0])}: {value}</li>)}
-      {hidden.length > 0 && <li className="text-secondary">{translate("agents.retire.more").replace("{count}", String(hidden.reduce((sum, [, value]) => sum + value, 0)))}</li>}
+      {hidden.length > 0 && <li className="text-muted-foreground">{translate("agents.retire.more").replace("{count}", String(hidden.reduce((sum, [, value]) => sum + value, 0)))}</li>}
     </ul>
-    <p className="m-0 text-13 text-secondary">{translate(agent.enabled ? "agents.retire.help" : "agents.retire.helpDisabled")}</p>
+    <p className="m-0 text-sm text-muted-foreground">{translate(agent.enabled ? "agents.retire.help" : "agents.retire.helpDisabled")}</p>
     <div className="flex flex-wrap gap-2">
       {agent.enabled && <Button type="button" onClick={() => { onDisable(); document.querySelector<HTMLElement>(`[data-retire-trigger="${agent.id}"]`)?.focus(); }}>{translate("agents.disable")}</Button>}
       <Button type="button" className="secondary" onClick={close}>{translate("agents.retire.close")}</Button>
@@ -334,9 +334,9 @@ export function WorkspaceAgents() {
   if (workspaceRole === null) return <section>{header}</section>;
   if (workspaceRole !== "Admin") return <section>{header}
     {workspaceRole === "Member" && <SettingsBlock title={translate("agents.memberCreateTitle")}>
-      <p className="text-13 text-secondary">{translate("agents.memberCreateHelp")}</p>
+      <p className="text-sm text-muted-foreground">{translate("agents.memberCreateHelp")}</p>
       {runtimes.filter((runtime) => runtime.ownerId === selfId && runtime.shared).length === 0
-        ? <p className="text-13 text-secondary">{translate("agents.memberNoRuntime")}</p>
+        ? <p className="text-sm text-muted-foreground">{translate("agents.memberNoRuntime")}</p>
         : <form className="grid gap-3" onSubmit={async (event) => {
           event.preventDefault();
           const result = await action("create_agent", { workspaceId: workspace.id, ...memberAgent, runtimeId: memberAgent.runtimeId });
@@ -351,14 +351,14 @@ export function WorkspaceAgents() {
         </form>}
     </SettingsBlock>}
     <SettingsBlock title={translate("agents.askableTitle")}>
-      <p className="text-13 text-secondary">{translate("agents.askableHelp")}</p>
-      {askable.length === 0 ? <p className="text-secondary">{translate("agents.askableEmpty")}</p> : <RowList>{askable.map((agent) => <Row key={agent.id}>
-        <div className="mr-auto grid min-w-0 gap-0.5"><span className="flex items-center gap-2"><Avatar name={agent.name} id={agent.id} agent size="md" /><span className={agent.hasAccess ? "font-medium" : "font-medium text-tertiary"}>{agent.name}</span></span><span className="text-13 text-secondary">{agent.codeCapable && agent.ownerName ? translate("agents.askableOwner").replace("{name}", agent.ownerName) : translate("agents.askableServer")}</span></div>
-        <span className="text-13 text-secondary">{agent.hasAccess ? translate("agents.askableUsable") : agent.ownerName ? translate("agents.askableAsk").replace("{name}", agent.ownerName) : translate("agents.askableAskAdmin")}</span>
+      <p className="text-sm text-muted-foreground">{translate("agents.askableHelp")}</p>
+      {askable.length === 0 ? <p className="text-muted-foreground">{translate("agents.askableEmpty")}</p> : <RowList>{askable.map((agent) => <Row key={agent.id}>
+        <div className="mr-auto grid min-w-0 gap-0.5"><span className="flex items-center gap-2"><Avatar name={agent.name} id={agent.id} agent size="md" /><span className={agent.hasAccess ? "font-medium" : "font-medium text-muted-foreground"}>{agent.name}</span></span><span className="text-sm text-muted-foreground">{agent.codeCapable && agent.ownerName ? translate("agents.askableOwner").replace("{name}", agent.ownerName) : translate("agents.askableServer")}</span></div>
+        <span className="text-sm text-muted-foreground">{agent.hasAccess ? translate("agents.askableUsable") : agent.ownerName ? translate("agents.askableAsk").replace("{name}", agent.ownerName) : translate("agents.askableAskAdmin")}</span>
       </Row>)}</RowList>}
     </SettingsBlock>
     {workspaceRole === "Member" && ownerAgents.map((agent) => (
-      <div key={agent.id} data-owner-agent={agent.name} className="grid gap-2 border-b border-subtle py-3"><div className="flex flex-wrap items-center gap-x-2"><Avatar name={agent.name} id={agent.id} agent /><strong>{agent.name}</strong><span className="text-13 text-secondary">{profileSummary(agent).join(" · ")}</span></div>
+      <div key={agent.id} data-owner-agent={agent.name} className="grid gap-2 border-b border-border py-3"><div className="flex flex-wrap items-center gap-x-2"><Avatar name={agent.name} id={agent.id} agent /><strong>{agent.name}</strong><span className="text-sm text-muted-foreground">{profileSummary(agent).join(" · ")}</span></div>
         {workspaceRole === "Member" && agent.memberOwned && agent.createdBy === selfId && <MemberAgentSettings agent={agent} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} />}
         {workspaceRole === "Member" && agent.memberOwned && agent.createdBy === selfId && <AccessEditor agent={agent} projects={projects.filter((project) => project.role === "Admin" || project.role === "Member")} canSetAllProjects={false} projectsLoaded={projectsLoaded} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} />}
         <AgentRuntimeProfile agent={agent} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} /><AgentRuntimeEnvironment agent={agent} onFailed={() => setNote(translate("agents.failed"))} /><AgentPeopleAccess agent={agent} members={members} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} />
@@ -378,11 +378,11 @@ export function WorkspaceAgents() {
       }} />
     </SettingsBlock>}
     <SettingsBlock>
-      {agents.length === 0 ? <p className="text-secondary">{translate("agents.none")}</p> : <RowList>{agents.map((agent) => { const runtime = runtimeParts(agent); return <Row key={agent.id}>
+      {agents.length === 0 ? <p className="text-muted-foreground">{translate("agents.none")}</p> : <RowList>{agents.map((agent) => { const runtime = runtimeParts(agent); return <Row key={agent.id}>
         <div className="grid min-w-0 flex-1 gap-2" data-agent={agent.name}>
           <div className="flex flex-wrap items-center gap-2">
             <span className="flex items-center gap-2"><Avatar name={agent.name} id={agent.id} agent size="md" /><span className="font-medium">{agent.name}</span></span>
-            <span className="text-13 text-secondary">{translate(agent.enabled ? "agents.enabled" : "agents.disabled")} · {agent.model === "default" ? translate("agents.defaultModel") : agent.model} · {runtime ? [translate("agents.metaComputer").replace("{name}", runtime.computer), agent.runtimeOwnerName ? translate("agents.metaOwner").replace("{name}", agent.runtimeOwnerName) : null, runtime.tool ? translate("agents.metaTool").replace("{name}", capitalize(runtime.tool)) : null, translate(agent.runtimeOnline ? "agents.metaOnline" : "agents.metaOffline"), ...profileSummary(agent)].filter(Boolean).join(" · ") : translate("agents.server")} · {translate("agents.usage").replace("{used}", formatNumber(agent.monthlyTokensUsed))}</span>
+            <span className="text-sm text-muted-foreground">{translate(agent.enabled ? "agents.enabled" : "agents.disabled")} · {agent.model === "default" ? translate("agents.defaultModel") : agent.model} · {runtime ? [translate("agents.metaComputer").replace("{name}", runtime.computer), agent.runtimeOwnerName ? translate("agents.metaOwner").replace("{name}", agent.runtimeOwnerName) : null, runtime.tool ? translate("agents.metaTool").replace("{name}", capitalize(runtime.tool)) : null, translate(agent.runtimeOnline ? "agents.metaOnline" : "agents.metaOffline"), ...profileSummary(agent)].filter(Boolean).join(" · ") : translate("agents.server")} · {translate("agents.usage").replace("{used}", formatNumber(agent.monthlyTokensUsed))}</span>
           </div>
           {editing?.id === agent.id
             ? <AgentForm draft={editing.draft} runtimes={runtimes} allowAutopilot={allowAutopilot} onChange={(draft) => setEditing({ id: agent.id, draft })} onCancel={() => setEditing(null)} onSubmit={async () => {
@@ -391,11 +391,11 @@ export function WorkspaceAgents() {
               setEditing(null);
             }} />
           : <><AccessEditor agent={agent} projects={projects} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} />
-            {manageableAgentIds.includes(agent.id) ? <AgentPeopleAccess agent={agent} members={members} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} /> : <p className="text-12 text-secondary">{translate("agents.runtimeOwnerAccess")}</p>}</>}
+            {manageableAgentIds.includes(agent.id) ? <AgentPeopleAccess agent={agent} members={members} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} /> : <p className="text-xs text-muted-foreground">{translate("agents.runtimeOwnerAccess")}</p>}</>}
           {manageableAgentIds.includes(agent.id) && agent.runtimeId && <AgentRuntimeProfile agent={agent} onSaved={() => void load()} onFailed={() => setNote(translate("agents.failed"))} />}
           {manageableAgentIds.includes(agent.id) && agent.runtimeId && <AgentRuntimeEnvironment agent={agent} onFailed={() => setNote(translate("agents.failed"))} />}
-          <fieldset className="grid gap-1 border-0 p-0"><legend className="text-13 font-medium text-secondary">{translate("agents.skills")}</legend>
-            {workspaceSkills.length === 0 ? <span className="text-13 text-secondary">{translate("agents.noSkills")}</span> : workspaceSkills.map((skill) => <label key={skill.id} className="flex items-center gap-2" title={skill.description}>
+          <fieldset className="grid gap-1 border-0 p-0"><legend className="text-sm font-medium text-muted-foreground">{translate("agents.skills")}</legend>
+            {workspaceSkills.length === 0 ? <span className="text-sm text-muted-foreground">{translate("agents.noSkills")}</span> : workspaceSkills.map((skill) => <label key={skill.id} className="flex items-center gap-2" title={skill.description}>
               <Checkbox checked={agent.skills.some((attached) => attached.id === skill.id)} onChange={async (event) => {
                 const ids = event.target.checked ? [...agent.skills.map((entry) => entry.id), skill.id] : agent.skills.filter((entry) => entry.id !== skill.id).map((entry) => entry.id);
                 await guard(await action("set_agent_skills", { agentId: agent.id, skillIds: ids }));
@@ -403,7 +403,7 @@ export function WorkspaceAgents() {
           </fieldset>
           <TriggerSection agent={agent} projects={projects} projectsLoaded={projectsLoaded} />
           <AgentRuns agent={agent} />
-          <p className="text-13 text-secondary">{translate("agents.retire.hint")}</p>
+          <p className="text-sm text-muted-foreground">{translate("agents.retire.hint")}</p>
           <div className="flex flex-wrap gap-2">
             {editing?.id !== agent.id && <Button type="button" className="secondary" onClick={() => setEditing({ id: agent.id, draft: toDraft(agent) })}>{translate("agents.edit")}</Button>}
             <Button type="button" className="secondary" onClick={async () => { setRetiring(null); await guard(await action(agent.enabled ? "disable_agent" : "enable_agent", { agentId: agent.id })); }}>{translate(agent.enabled ? "agents.disable" : "agents.enable")}</Button>
@@ -443,21 +443,21 @@ function TriggerSection({ agent, projects, projectsLoaded }: { agent: AgentRecor
     const result = await actionResult<TriggerRow>("create_trigger", { agentId: agent.id, projectId, ...(kind === "event" ? { eventType } : { schedule, ...(schedule === "cron" ? { expression } : {}) }) });
     setError("error" in result ? result.error : null); if ("data" in result) await reload();
   };
-  return <fieldset className="grid gap-2 border-0 p-0"><legend className="text-13 font-medium text-secondary">{translate("triggers.title")}</legend>
+  return <fieldset className="grid gap-2 border-0 p-0"><legend className="text-sm font-medium text-muted-foreground">{translate("triggers.title")}</legend>
     <div className="flex flex-wrap gap-2">
-      <label className="grid gap-1 text-12 text-secondary">{translate("triggers.project")}<select aria-label={translate("triggers.project")} value={projectId} disabled={!projectsLoaded || availableProjects.length === 0} onChange={(e) => setProjectId(e.target.value)}>
+      <label className="grid gap-1 text-xs text-muted-foreground">{translate("triggers.project")}<select aria-label={translate("triggers.project")} value={projectId} disabled={!projectsLoaded || availableProjects.length === 0} onChange={(e) => setProjectId(e.target.value)}>
         {!projectsLoaded && <option value="">{translate("triggers.projectsLoading")}</option>}
         {projectsLoaded && availableProjects.length === 0 && <option value="">{translate("triggers.noAccessibleProjects")}</option>}
         {availableProjects.map((p) => <option key={p.id} value={p.id}>{p.key} · {p.name}</option>)}
       </select></label>
-      <label className="grid gap-1 text-12 text-secondary">{translate("triggers.kind")}<select aria-label={translate("triggers.kind")} value={kind} onChange={(e) => setKind(e.target.value)}><option value="event">{translate("triggers.eventKind")}</option><option value="schedule">{translate("triggers.scheduleKind")}</option></select></label>
-      {kind === "event" ? <label className="grid gap-1 text-12 text-secondary">{translate("triggers.event")}<select aria-label={translate("triggers.event")} value={eventType} onChange={(e) => setEventType(e.target.value)}>{(["work_item_created", "work_item_updated", "state_changed", "assignee_changed", "comment_added", "sub_items_closed"] as TriggerEvent[]).map((event) => <option key={event} value={event}>{translate(`triggers.${event}`)}</option>)}</select></label> : <><label className="grid gap-1 text-12 text-secondary">{translate("triggers.schedule")}<select aria-label={translate("triggers.schedule")} value={schedule} onChange={(e) => setSchedule(e.target.value)}>{(["daily", "weekly", "monthly", "cron"] as const).map((entry) => <option key={entry} value={entry}>{translate(`triggers.${entry}`)}</option>)}</select></label>{schedule === "cron" && <label className="grid gap-1 text-12 text-secondary">{translate("triggers.cron")}<Input aria-label={translate("triggers.cron")} value={expression} onChange={(e) => setExpression(e.target.value)} /></label>}</>}
+      <label className="grid gap-1 text-xs text-muted-foreground">{translate("triggers.kind")}<select aria-label={translate("triggers.kind")} value={kind} onChange={(e) => setKind(e.target.value)}><option value="event">{translate("triggers.eventKind")}</option><option value="schedule">{translate("triggers.scheduleKind")}</option></select></label>
+      {kind === "event" ? <label className="grid gap-1 text-xs text-muted-foreground">{translate("triggers.event")}<select aria-label={translate("triggers.event")} value={eventType} onChange={(e) => setEventType(e.target.value)}>{(["work_item_created", "work_item_updated", "state_changed", "assignee_changed", "comment_added", "sub_items_closed"] as TriggerEvent[]).map((event) => <option key={event} value={event}>{translate(`triggers.${event}`)}</option>)}</select></label> : <><label className="grid gap-1 text-xs text-muted-foreground">{translate("triggers.schedule")}<select aria-label={translate("triggers.schedule")} value={schedule} onChange={(e) => setSchedule(e.target.value)}>{(["daily", "weekly", "monthly", "cron"] as const).map((entry) => <option key={entry} value={entry}>{translate(`triggers.${entry}`)}</option>)}</select></label>{schedule === "cron" && <label className="grid gap-1 text-xs text-muted-foreground">{translate("triggers.cron")}<Input aria-label={translate("triggers.cron")} value={expression} onChange={(e) => setExpression(e.target.value)} /></label>}</>}
       <Button type="button" onClick={() => void create()} disabled={!projectsLoaded || !availableProjects.some((project) => project.id === projectId)}>{translate("triggers.add")}</Button>
     </div>
-    {!projectsLoaded ? <p role="status" className="m-0 text-12 text-secondary">{translate("triggers.projectsLoading")}</p>
-      : availableProjects.length === 0 ? <p role="status" className="m-0 text-12 text-secondary">{translate(projects.length === 0 ? "triggers.noProjects" : "triggers.noAccessibleProjectsHelp")}</p> : null}
-    {error && <p role="alert" className="text-13 text-danger-text">{error}</p>}
-    {rows.map((trigger) => <div key={trigger.id} className="flex gap-2 text-13"><span>{projects.find((p) => p.id === trigger.projectId)?.key} · {trigger.schedule ? `${translate(`triggers.${trigger.schedule}`)}${trigger.expression ? ` (${trigger.expression})` : ""}` : translate(`triggers.${trigger.eventType ?? "work_item_created"}`)}</span>
+    {!projectsLoaded ? <p role="status" className="m-0 text-xs text-muted-foreground">{translate("triggers.projectsLoading")}</p>
+      : availableProjects.length === 0 ? <p role="status" className="m-0 text-xs text-muted-foreground">{translate(projects.length === 0 ? "triggers.noProjects" : "triggers.noAccessibleProjectsHelp")}</p> : null}
+    {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+    {rows.map((trigger) => <div key={trigger.id} className="flex gap-2 text-sm"><span>{projects.find((p) => p.id === trigger.projectId)?.key} · {trigger.schedule ? `${translate(`triggers.${trigger.schedule}`)}${trigger.expression ? ` (${trigger.expression})` : ""}` : translate(`triggers.${trigger.eventType ?? "work_item_created"}`)}</span>
       <Button type="button" className="secondary" onClick={async () => { await action("pause_trigger", { triggerId: trigger.id, paused: !trigger.paused }); await reload(); }}>{translate(trigger.paused ? "triggers.resume" : "triggers.pause")}</Button>
       <Button type="button" className="secondary" onClick={async () => { await action("delete_trigger", { triggerId: trigger.id }); await reload(); }}>{translate("triggers.delete")}</Button></div>)}
   </fieldset>;
@@ -493,43 +493,43 @@ function AgentRuns({ agent }: { agent: AgentRecord }) {
     else setTranscriptFailed((old) => ({ ...old, [runId]: true }));
     setTranscriptLoading((old) => ({ ...old, [runId]: false }));
   };
-  const statusTone = (status: string) => status === "completed" ? "text-success-text" : ["failed", "stale"].includes(status) ? "text-danger-text" : ["running", "dispatched", "waiting_confirmation", "awaiting_input"].includes(status) ? "text-accent-text" : "text-secondary";
+  const statusTone = (status: string) => status === "completed" ? "text-green-700" : ["failed", "stale"].includes(status) ? "text-destructive" : ["running", "dispatched", "waiting_confirmation", "awaiting_input"].includes(status) ? "text-foreground" : "text-muted-foreground";
   const confirmationStatus = (status: string) => ({ pending: "agents.logConfirmationPending", confirmed: "agents.logConfirmationConfirmed", rejected: "agents.logConfirmationRejected", expired: "agents.logConfirmationExpired" } as const)[status as "pending" | "confirmed" | "rejected" | "expired"];
   const pretty = (value: unknown) => typeof value === "string" ? value : JSON.stringify(value, null, 2);
   return <fieldset data-testid="agent-log" aria-busy={rows === null && !loadFailed} className="grid gap-2 border-0 p-0">
-    <legend className="text-13 font-medium text-secondary">{translate("agents.logTitle")}</legend>
-    {rows === null && !loadFailed && <p role="status" className="m-0 text-13 text-secondary">{translate("agents.logLoading")}</p>}
-    {loadFailed && <p role="alert" className="m-0 text-13 text-danger-text">{translate("agents.logFailed")} <Button type="button" className="secondary" onClick={() => void reload()}>{translate("agents.logRetry")}</Button></p>}
-    {rows?.length === 0 && <p role="status" className="m-0 text-13 text-secondary">{translate("agents.runsEmpty")}</p>}
-    {rows?.map((run) => <details key={run.id} data-agent-log-run className="min-w-0 rounded-md border border-subtle bg-surface-1 px-3 py-2" onToggle={(event) => { if ((event.currentTarget as HTMLDetailsElement).open && !transcript[run.id] && !transcriptLoading[run.id]) void loadTranscript(run.id); }}>
-      <summary className="flex min-w-0 cursor-pointer flex-wrap items-center gap-x-2 gap-y-1 text-13">
+    <legend className="text-sm font-medium text-muted-foreground">{translate("agents.logTitle")}</legend>
+    {rows === null && !loadFailed && <p role="status" className="m-0 text-sm text-muted-foreground">{translate("agents.logLoading")}</p>}
+    {loadFailed && <p role="alert" className="m-0 text-sm text-destructive">{translate("agents.logFailed")} <Button type="button" className="secondary" onClick={() => void reload()}>{translate("agents.logRetry")}</Button></p>}
+    {rows?.length === 0 && <p role="status" className="m-0 text-sm text-muted-foreground">{translate("agents.runsEmpty")}</p>}
+    {rows?.map((run) => <details key={run.id} data-agent-log-run className="min-w-0 rounded-md border border-border bg-card px-3 py-2" onToggle={(event) => { if ((event.currentTarget as HTMLDetailsElement).open && !transcript[run.id] && !transcriptLoading[run.id]) void loadTranscript(run.id); }}>
+      <summary className="flex min-w-0 cursor-pointer flex-wrap items-center gap-x-2 gap-y-1 text-sm">
         <span className="min-w-0 flex-1 break-words font-medium">{run.workItem ? <>{run.workItem.displayId} · {run.workItem.title}</> : run.workItemId ? translate("agents.logWorkItemUnavailable") : translate("runs.scheduled")}</span>
         <span className={`whitespace-nowrap font-medium ${statusTone(run.status)}`}>{translate(`runs.status.${run.status}` as "runs.status.queued")}</span>
-        <time className="text-12 text-tertiary" dateTime={run.createdAt}>{formatDate(run.createdAt)}</time>
+        <time className="text-xs text-muted-foreground" dateTime={run.createdAt}>{formatDate(run.createdAt)}</time>
       </summary>
-      <div className="mt-2 border-t border-subtle pt-2 text-13">
-        {transcriptLoading[run.id] && <p role="status" className="m-0 text-secondary">{translate("agents.logTranscriptLoading")}</p>}
-        {transcriptFailed[run.id] && <p role="alert" className="m-0 text-danger-text">{translate("agents.logTranscriptFailed")} <Button type="button" className="secondary" onClick={() => void loadTranscript(run.id)}>{translate("agents.logRetry")}</Button></p>}
-        {transcript[run.id]?.runtimeProfile && <p className="m-0 text-12 text-secondary"><strong>{translate("agents.logRuntimeProfile")}:</strong> {transcript[run.id]!.runtimeProfile!.name} · {translate(transcript[run.id]!.runtimeProfile!.sandbox === "full" ? "runtimes.fullAccessWarning" : "runtimes.sandboxEnabled")} · {translate(transcript[run.id]!.runtimeProfile!.enforceSandbox ? "agents.logSandboxEnforced" : "agents.logSandboxNotEnforced")}</p>}
-        {transcript[run.id]?.failureReason && <div role="alert" className="text-danger-text"><strong>{translate("agents.logFailure")}:</strong> {runFailureText(transcript[run.id]!.failureReason) ?? translate("runs.failed")}{transcript[run.id]!.failureMessage && <p className="m-0 text-secondary">{translate("runs.failureDetail").replace("{detail}", () => transcript[run.id]!.failureMessage!)}</p>}</div>}
-        {transcript[run.id]?.steps.length === 0 && <p className="m-0 text-secondary">{translate("runs.noSteps")}</p>}
+      <div className="mt-2 border-t border-border pt-2 text-sm">
+        {transcriptLoading[run.id] && <p role="status" className="m-0 text-muted-foreground">{translate("agents.logTranscriptLoading")}</p>}
+        {transcriptFailed[run.id] && <p role="alert" className="m-0 text-destructive">{translate("agents.logTranscriptFailed")} <Button type="button" className="secondary" onClick={() => void loadTranscript(run.id)}>{translate("agents.logRetry")}</Button></p>}
+        {transcript[run.id]?.runtimeProfile && <p className="m-0 text-xs text-muted-foreground"><strong>{translate("agents.logRuntimeProfile")}:</strong> {transcript[run.id]!.runtimeProfile!.name} · {translate(transcript[run.id]!.runtimeProfile!.sandbox === "full" ? "runtimes.fullAccessWarning" : "runtimes.sandboxEnabled")} · {translate(transcript[run.id]!.runtimeProfile!.enforceSandbox ? "agents.logSandboxEnforced" : "agents.logSandboxNotEnforced")}</p>}
+        {transcript[run.id]?.failureReason && <div role="alert" className="text-destructive"><strong>{translate("agents.logFailure")}:</strong> {runFailureText(transcript[run.id]!.failureReason) ?? translate("runs.failed")}{transcript[run.id]!.failureMessage && <p className="m-0 text-muted-foreground">{translate("runs.failureDetail").replace("{detail}", () => transcript[run.id]!.failureMessage!)}</p>}</div>}
+        {transcript[run.id]?.steps.length === 0 && <p className="m-0 text-muted-foreground">{translate("runs.noSteps")}</p>}
         <ol className="m-0 grid list-none gap-2 p-0">
           {transcript[run.id]?.steps.map((step) => step.kind === "tool_call" ? <li key={step.seq} className="grid min-w-0 gap-1">
             <span className="font-medium">{translate("runs.tool")}: {step.toolName}{step.failed ? ` · ${translate("runs.toolFailed")}` : ""}</span>
-            <details className="text-12 text-tertiary"><summary className="cursor-pointer">{translate("agents.logToolDetails")}</summary>
+            <details className="text-xs text-muted-foreground"><summary className="cursor-pointer">{translate("agents.logToolDetails")}</summary>
               {step.input === null && step.result === null ? <p className="m-0">{translate("runs.hidden")}</p> : <>
-                {step.input !== undefined && step.input !== null && <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-surface-2 p-2">{pretty(step.input)}</pre>}
-              {step.result !== undefined && step.result !== null && <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-surface-2 p-2">{pretty(step.result)}</pre>}
+                {step.input !== undefined && step.input !== null && <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-muted p-2">{pretty(step.input)}</pre>}
+              {step.result !== undefined && step.result !== null && <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-muted p-2">{pretty(step.result)}</pre>}
               </>}
             </details>
           </li> : <li key={step.seq} className="min-w-0 break-words">{step.kind === "person" ? <><span className="font-medium">{translate("runs.personMessage").replace("{name}", () => step.author ?? "")}: </span>{step.text}</> : <><span className="font-medium">{translate(`runs.${step.kind}` as "runs.answer")}: </span>{step.text}</>}</li>)}
         </ol>
-        {(transcript[run.id]?.confirmations.length ?? 0) > 0 && <section className="mt-2 grid gap-1 border-t border-subtle pt-2" aria-label={translate("agents.logConfirmations")}>
-          <h4 className="m-0 text-12 font-medium">{translate("agents.logConfirmations")}</h4>
-          {transcript[run.id]!.confirmations.map((confirmation) => <details key={confirmation.id} className="text-12 text-secondary">
+        {(transcript[run.id]?.confirmations.length ?? 0) > 0 && <section className="mt-2 grid gap-1 border-t border-border pt-2" aria-label={translate("agents.logConfirmations")}>
+          <h4 className="m-0 text-xs font-medium">{translate("agents.logConfirmations")}</h4>
+          {transcript[run.id]!.confirmations.map((confirmation) => <details key={confirmation.id} className="text-xs text-muted-foreground">
             <summary className="cursor-pointer">{confirmation.action} · {confirmationStatus(confirmation.status) ? translate(confirmationStatus(confirmation.status)!) : confirmation.status} · {translate("agents.logExpiresAt")} <time dateTime={confirmation.expiresAt}>{formatDate(confirmation.expiresAt)}</time></summary>
             <p className="m-0">{translate("agents.logConfirmationDetails")}</p>
-            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-surface-2 p-2">{pretty(confirmation.input)}</pre>
+            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-muted p-2">{pretty(confirmation.input)}</pre>
           </details>)}
         </section>}
       </div>

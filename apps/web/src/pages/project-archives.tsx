@@ -54,27 +54,27 @@ export function ProjectArchivesRoute() {
     await load();
   };
   return <section className="grid gap-4">
-    <h2 className="m-0 flex items-center gap-2 text-16 font-semibold"><Archive aria-hidden size={16} />{t("archives.title")}</h2>
+    <h2 className="m-0 flex items-center gap-2 text-base font-semibold"><Archive aria-hidden size={16} />{t("archives.title")}</h2>
     <Tabs value={active} onValueChange={(value) => selectTab(value as Tab)}>
-      <TabsList aria-label={t("archives.tabs")} className="flex h-auto w-fit max-w-full flex-wrap gap-1 rounded-lg bg-layer-1 p-1">
-        {tabs.map((id) => <TabsTrigger key={id} value={id} id={`archives-tab-${id}`} className={`rounded-md border-0 px-3 py-2 text-14 font-medium ${id === active ? "bg-surface-1 text-primary shadow-sm" : "bg-transparent text-secondary hover:bg-layer-transparent-hover"}`}>{t(tabLabel[id])}</TabsTrigger>)}
+      <TabsList aria-label={t("archives.tabs")} className="flex h-auto w-fit max-w-full flex-wrap gap-1 rounded-lg bg-muted p-1">
+        {tabs.map((id) => <TabsTrigger key={id} value={id} id={`archives-tab-${id}`} className={`rounded-md border-0 px-3 py-2 text-sm font-medium ${id === active ? "bg-card text-foreground shadow-sm" : "bg-transparent text-muted-foreground hover:bg-accent"}`}>{t(tabLabel[id])}</TabsTrigger>)}
       </TabsList>
-      {note && <p role="alert" className="m-0 text-danger-text">{note}</p>}
+      {note && <p role="alert" className="m-0 text-destructive">{note}</p>}
       <TabsContent value={active}>
     {active !== "workItems" && <div>
-      {structures?.length === 0 && <p className="m-0 rounded-xl bg-layer-1 p-4 text-secondary">{t(active === "cycles" ? "archives.emptyCycles" : "archives.emptyModules")}</p>}
-      <ul className="m-0 grid list-none gap-1 rounded-xl border border-subtle bg-surface-1 p-1 empty:hidden">{(structures ?? []).map((row) => <li key={row.id} data-testid={`archived-row-${row.id}`} className="flex flex-wrap items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-layer-transparent-hover max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-x-3 max-sm:gap-y-2">
-        <Link to={active === "cycles" ? paths.cycle(workspace.slug, project.key, row.id) : paths.module(workspace.slug, project.key, row.id)} className="min-w-0 flex-1 truncate text-14 font-medium text-primary max-sm:col-span-2">{row.name}</Link>
-        {row.startDate && row.endDate && <span className="text-12 text-secondary">{formatDate(row.startDate)} – {formatDate(row.endDate)}</span>}
+      {structures?.length === 0 && <p className="m-0 rounded-xl bg-muted p-4 text-muted-foreground">{t(active === "cycles" ? "archives.emptyCycles" : "archives.emptyModules")}</p>}
+      <ul className="m-0 grid list-none gap-1 rounded-xl border border-border bg-card p-1 empty:hidden">{(structures ?? []).map((row) => <li key={row.id} data-testid={`archived-row-${row.id}`} className="flex flex-wrap items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-accent max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-x-3 max-sm:gap-y-2">
+        <Link to={active === "cycles" ? paths.cycle(workspace.slug, project.key, row.id) : paths.module(workspace.slug, project.key, row.id)} className="min-w-0 flex-1 truncate text-sm font-medium text-foreground max-sm:col-span-2">{row.name}</Link>
+        {row.startDate && row.endDate && <span className="text-xs text-muted-foreground">{formatDate(row.startDate)} – {formatDate(row.endDate)}</span>}
         {canRestoreStructure && <Button type="button" className="secondary max-sm:min-h-11 shrink-0" aria-label={t("archives.restoreItem").replace("{name}", row.name)} onClick={() => void restoreStructure(row)}>{t("archives.restore")}</Button>}
     </li>)}</ul>
     </div>}
     {active === "workItems" && <div>
-    {items?.length === 0 && <p className="m-0 rounded-xl bg-layer-1 p-4 text-secondary">{t("archives.empty")}</p>}
-    <ul className="m-0 grid list-none gap-1 rounded-xl border border-subtle bg-surface-1 p-1 empty:hidden">{(items ?? []).map((item) => <li key={item.id} data-testid={`archived-row-${item.displayId}`} className="flex flex-wrap items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-layer-transparent-hover max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-x-3 max-sm:gap-y-2">
-      <span className="text-12 text-secondary max-sm:col-span-2">{item.displayId}</span>
-      <Link to={paths.workItem(workspace.slug, item.displayId)} className="min-w-0 flex-1 truncate text-14 font-medium text-primary max-sm:col-span-2 max-sm:overflow-visible max-sm:whitespace-normal max-sm:[overflow-wrap:anywhere]">{item.title}</Link>
-      <span className="text-12 text-secondary">{t("archives.archivedAt").replace("{date}", formatDate(item.archivedAt))}</span>
+    {items?.length === 0 && <p className="m-0 rounded-xl bg-muted p-4 text-muted-foreground">{t("archives.empty")}</p>}
+    <ul className="m-0 grid list-none gap-1 rounded-xl border border-border bg-card p-1 empty:hidden">{(items ?? []).map((item) => <li key={item.id} data-testid={`archived-row-${item.displayId}`} className="flex flex-wrap items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-accent max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-x-3 max-sm:gap-y-2">
+      <span className="text-xs text-muted-foreground max-sm:col-span-2">{item.displayId}</span>
+      <Link to={paths.workItem(workspace.slug, item.displayId)} className="min-w-0 flex-1 truncate text-sm font-medium text-foreground max-sm:col-span-2 max-sm:overflow-visible max-sm:whitespace-normal max-sm:[overflow-wrap:anywhere]">{item.title}</Link>
+      <span className="text-xs text-muted-foreground">{t("archives.archivedAt").replace("{date}", formatDate(item.archivedAt))}</span>
       {canWrite && <Button type="button" className="secondary max-sm:min-h-11 shrink-0" aria-label={t("archives.restoreItem").replace("{name}", item.displayId)} onClick={() => void restore(item)}>{t("archives.restore")}</Button>}
     </li>)}</ul>
     </div>}

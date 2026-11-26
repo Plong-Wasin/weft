@@ -69,7 +69,7 @@ export function MemberSecurityList({ workspaceId, selfId, onChanged }: { workspa
     if (current) await loadTokens(current);
   };
 
-  if (accounts === null) return <p role="status" className="text-secondary">{translate(accountsFailed ? "account.loadFailed" : "account.loading")}{accountsFailed && <Button type="button" className="secondary ml-2" onClick={() => void load()}>{translate("account.retry")}</Button>}</p>;
+  if (accounts === null) return <p role="status" className="text-muted-foreground">{translate(accountsFailed ? "account.loadFailed" : "account.loading")}{accountsFailed && <Button type="button" className="secondary ml-2" onClick={() => void load()}>{translate("account.retry")}</Button>}</p>;
   return <SettingsBlock title={translate("account.adminTitle")} description={translate("account.adminDesc")}>
     <RowList>{accounts.map((account) => {
       const self = account.userId === selfId;
@@ -77,10 +77,10 @@ export function MemberSecurityList({ workspaceId, selfId, onChanged }: { workspa
         <Avatar name={account.name} id={account.userId} size="md" />
         <span className="grid min-w-0 flex-1 gap-0.5">
           <span className="flex flex-wrap items-center gap-2 font-medium">{account.name}
-            <span className={`rounded px-1.5 py-0.5 text-12 ${account.status === "suspended" ? "bg-danger-subtle text-danger-text" : "bg-layer-1 text-secondary"}`}>{translate(account.status === "suspended" ? "account.statusSuspended" : "account.statusActive")}</span>
-            {account.forcePasswordReset && <span className="rounded bg-layer-1 px-1.5 py-0.5 text-12 text-secondary">{translate("account.resetPending")}</span>}
+            <span className={`rounded px-1.5 py-0.5 text-xs ${account.status === "suspended" ? "bg-destructive/10 text-destructive" : "bg-muted text-muted-foreground"}`}>{translate(account.status === "suspended" ? "account.statusSuspended" : "account.statusActive")}</span>
+            {account.forcePasswordReset && <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">{translate("account.resetPending")}</span>}
           </span>
-          <span className="text-13 text-secondary">{account.email} · {translate("account.lastActive")}: {account.lastActiveAt ? formatDate(account.lastActiveAt) : translate("account.never")}</span>
+          <span className="text-sm text-muted-foreground">{account.email} · {translate("account.lastActive")}: {account.lastActiveAt ? formatDate(account.lastActiveAt) : translate("account.never")}</span>
         </span>
         <Popover label={`${translate("sortable.actions")}: ${account.name}`} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-56">
           {(close) => <>
@@ -94,9 +94,9 @@ export function MemberSecurityList({ workspaceId, selfId, onChanged }: { workspa
           </>}
         </Popover>
         {openTokens === account.userId && <div className="w-full pl-0 pt-2">
-          {tokens === null ? <p role="status" className="text-13 text-secondary">{translate(tokensFailed ? "account.loadFailed" : "account.loading")}{tokensFailed && <Button type="button" className="secondary ml-2" onClick={() => void loadTokens(account.userId)}>{translate("account.retry")}</Button>}</p> : tokens.length === 0 ? <p className="text-13 text-secondary">{translate("account.tokensNone")}</p> : <ul className="m-0 grid list-none gap-1.5 p-0">{tokens.map((token) => <li key={token.id} className="flex flex-wrap items-center gap-3 text-13">
-            <span className="min-w-0 flex-1"><span className="font-medium">{token.name}</span> <span className="text-secondary">· {translate(token.kind === "daemon" ? "account.tokenKindDaemon" : "account.tokenKindPersonal")} · {token.prefix}… · {translate(`account.tokenStatus.${token.status}` as MessageKey)}{token.lastUsedAt ? ` · ${translate("account.lastUsed")} ${formatDate(token.lastUsedAt)}` : ""}</span></span>
-            {token.status === "active" && <Button type="button" className="secondary hover:!text-danger-text" onClick={() => void revokeToken(token, account)}>{translate("account.revokeToken")}</Button>}
+          {tokens === null ? <p role="status" className="text-sm text-muted-foreground">{translate(tokensFailed ? "account.loadFailed" : "account.loading")}{tokensFailed && <Button type="button" className="secondary ml-2" onClick={() => void loadTokens(account.userId)}>{translate("account.retry")}</Button>}</p> : tokens.length === 0 ? <p className="text-sm text-muted-foreground">{translate("account.tokensNone")}</p> : <ul className="m-0 grid list-none gap-1.5 p-0">{tokens.map((token) => <li key={token.id} className="flex flex-wrap items-center gap-3 text-sm">
+            <span className="min-w-0 flex-1"><span className="font-medium">{token.name}</span> <span className="text-muted-foreground">· {translate(token.kind === "daemon" ? "account.tokenKindDaemon" : "account.tokenKindPersonal")} · {token.prefix}… · {translate(`account.tokenStatus.${token.status}` as MessageKey)}{token.lastUsedAt ? ` · ${translate("account.lastUsed")} ${formatDate(token.lastUsedAt)}` : ""}</span></span>
+            {token.status === "active" && <Button type="button" className="secondary hover:!text-destructive" onClick={() => void revokeToken(token, account)}>{translate("account.revokeToken")}</Button>}
           </li>)}</ul>}
         </div>}
       </Row>;
@@ -150,7 +150,7 @@ export function AuditLogPage({ workspaceId, members }: { workspaceId: string; me
     setNote(result.truncated ? translate("account.exportTruncated") : translate("account.exported"));
   };
 
-  const field = "grid gap-1 text-13 font-medium text-secondary";
+  const field = "grid gap-1 text-sm font-medium text-muted-foreground";
   return <section>
     <SettingsHeader title={translate("account.auditTitle")} description={translate("account.auditDesc")}>
       <Button type="button" className="secondary" onClick={() => void exportCsv()}>{translate("account.exportCsv")}</Button>
@@ -167,16 +167,16 @@ export function AuditLogPage({ workspaceId, members }: { workspaceId: string; me
       <label className={field}>{translate("account.filterFrom")}<Input type="date" value={from} max={to || undefined} onChange={(event) => setFrom(event.target.value)} /></label>
       <label className={field}>{translate("account.filterTo")}<Input type="date" value={to} min={from || undefined} onChange={(event) => setTo(event.target.value)} /></label>
     </div>
-    {loaded && rows.length === 0 && !failed ? <p className="text-secondary">{translate("account.auditNone")}</p> : null}
-    {page.failed && <p role="status" className="text-secondary">{translate("account.loadFailed")}<Button type="button" className="secondary ml-2" onClick={() => void load(rows.length)}>{translate("account.retry")}</Button></p>}
-    {rows.length > 0 && <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-left text-13">
-      <thead><tr className="text-secondary"><th className="py-2 pr-3 font-medium">{translate("account.colTime")}</th><th className="py-2 pr-3 font-medium">{translate("account.colPerson")}</th><th className="py-2 pr-3 font-medium">{translate("account.colKind")}</th><th className="py-2 pr-3 font-medium">{translate("account.colChange")}</th><th className="py-2 font-medium">{translate("account.colDetail")}</th></tr></thead>
-      <tbody>{rows.map((row) => <tr key={row.id} className="border-t border-subtle align-top">
+    {loaded && rows.length === 0 && !failed ? <p className="text-muted-foreground">{translate("account.auditNone")}</p> : null}
+    {page.failed && <p role="status" className="text-muted-foreground">{translate("account.loadFailed")}<Button type="button" className="secondary ml-2" onClick={() => void load(rows.length)}>{translate("account.retry")}</Button></p>}
+    {rows.length > 0 && <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-left text-sm">
+      <thead><tr className="text-muted-foreground"><th className="py-2 pr-3 font-medium">{translate("account.colTime")}</th><th className="py-2 pr-3 font-medium">{translate("account.colPerson")}</th><th className="py-2 pr-3 font-medium">{translate("account.colKind")}</th><th className="py-2 pr-3 font-medium">{translate("account.colChange")}</th><th className="py-2 font-medium">{translate("account.colDetail")}</th></tr></thead>
+      <tbody>{rows.map((row) => <tr key={row.id} className="border-t border-border align-top">
         <td className="py-2 pr-3 whitespace-nowrap">{formatDate(row.at)}</td>
         <td className="py-2 pr-3">{row.actorName ?? translate("account.systemActor")}</td>
         <td className="py-2 pr-3">{translate(`account.kind.${row.kind}` as MessageKey)}</td>
         <td className="py-2 pr-3">{auditFieldLabel(row.field)}</td>
-        <td className="py-2 break-all text-secondary">{describeAuditValue(row.newValue ?? row.oldValue)}</td>
+        <td className="py-2 break-all text-muted-foreground">{describeAuditValue(row.newValue ?? row.oldValue)}</td>
       </tr>)}</tbody>
     </table></div>}
     {hasMore && <Button type="button" className="secondary mt-3 w-fit" onClick={() => void load(rows.length)}>{translate("account.loadMore")}</Button>}

@@ -140,7 +140,7 @@ export function ViewsPage({ workspaceSlug, project, selfId }: Scope) {
   const needle = search.trim().toLowerCase();
   const shown = (views ?? []).filter((view) => !needle || view.name.toLowerCase().includes(needle));
   const ownerOf = (view: SavedView) => people.find((person) => person.userId === view.ownerId)?.name ?? "";
-  return <section className="grid gap-3">
+  return <section className="grid grid-cols-[minmax(0,1fr)] gap-3">
     <header className="flex flex-wrap items-center gap-2 rounded-xl bg-muted p-3">
       <nav aria-label={t("views.breadcrumb")} className="flex min-w-0 flex-1 items-center gap-1.5 text-14 text-muted-foreground">
         <Link to={paths.workItems(workspaceSlug, project.key)} className="truncate text-muted-foreground hover:text-foreground">{project.name}</Link>
@@ -149,7 +149,7 @@ export function ViewsPage({ workspaceSlug, project, selfId }: Scope) {
       <label className="relative my-0 block w-full sm:w-auto"><span className="sr-only">{t("views.search")}</span>
         <Search aria-hidden size={14} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
         <Input type="search" value={search} placeholder={t("views.search")} className="w-full pl-7 text-13 sm:w-48" onChange={(event) => setSearch(event.target.value)} /></label>
-      {canWrite && <Button type="button" variant="primary" className="flex items-center gap-1.5" onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{t("views.add")}</Button>}
+      {canWrite && <Button type="button" variant="primary" className="flex items-center gap-1.5 pointer-coarse:min-h-11" onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{t("views.add")}</Button>}
     </header>
     {loadFailed && <div role="alert" className="flex flex-wrap items-center gap-2 px-3 py-6 text-14 text-muted-foreground">
       <span>{t("views.loadFailed")}</span>
@@ -159,7 +159,7 @@ export function ViewsPage({ workspaceSlug, project, selfId }: Scope) {
     <ul aria-label={t("views.title")} className="m-0 grid list-none gap-1 rounded-xl border border-border bg-card p-1 empty:hidden">{shown.map((view) => <li key={view.id} data-testid={`view-row-${view.name}`} className="flex items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-accent">
       <Layers aria-hidden size={16} className="shrink-0 text-muted-foreground" />
       <div className="grid min-w-0 flex-1">
-        <Link to={paths.view(workspaceSlug, project.key, view.id)} className="truncate text-14 font-medium text-foreground">{view.name}</Link>
+        <Link to={paths.view(workspaceSlug, project.key, view.id)} title={view.name} className="flex min-w-0 items-center text-14 font-medium text-foreground pointer-coarse:min-h-11"><span className="min-w-0 [overflow-wrap:anywhere] max-sm:line-clamp-2 sm:truncate">{view.name}</span></Link>
         {view.description && <span className="truncate text-12 text-muted-foreground">{view.description}</span>}
       </div>
       <span className="hidden text-12 text-muted-foreground sm:inline">{t("views.updatedAt").replace("{date}", formatDate(view.updatedAt))}</span>
@@ -214,15 +214,15 @@ export function ViewDetailPage({ workspaceSlug, project, selfId, viewId }: Scope
   if (view === null) return <section><p role="alert">{t("views.notFound")}</p><Link to={paths.views(workspaceSlug, project.key)}>{t("views.back")}</Link></section>;
   const canWrite = project.role !== "Guest";
   const owner = people.find((person) => person.userId === view.ownerId)?.name;
-  return <section className="grid gap-4">
+  return <section className="grid grid-cols-[minmax(0,1fr)] gap-4">
     <header className="flex flex-wrap items-center gap-2 rounded-xl bg-muted p-3">
-      <nav aria-label={t("views.breadcrumb")} className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 text-14 text-muted-foreground">
+      <nav aria-label={t("views.breadcrumb")} className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 max-sm:basis-full text-14 text-muted-foreground">
         <Link to={paths.workItems(workspaceSlug, project.key)} className="text-muted-foreground hover:text-foreground">{project.name}</Link><ChevronRight aria-hidden size={14} />
         <Link to={paths.views(workspaceSlug, project.key)} className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground"><Layers aria-hidden size={14} />{t("views.title")}</Link><ChevronRight aria-hidden size={14} />
-        <h3 className="m-0 text-14 font-medium text-foreground [overflow-wrap:anywhere]">{view.name}</h3><AccessBadge access={view.access} />
+        <h3 className="m-0 text-14 font-medium text-foreground [overflow-wrap:anywhere] max-sm:basis-full">{view.name}</h3><AccessBadge access={view.access} />
         {owner && <span className="hidden items-center gap-1.5 text-12 text-muted-foreground md:flex"><Avatar name={owner} id={view.ownerId} />{owner}</span>}
       </nav>
-      {canWrite && !project.archived && <Button type="button" variant="primary" className="flex items-center gap-1.5" onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{t("workItems.addNew")}</Button>}
+      {canWrite && !project.archived && <Button type="button" variant="primary" className="flex items-center gap-1.5 pointer-coarse:min-h-11" onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{t("workItems.addNew")}</Button>}
       <ViewMenu view={view} scope={scope} onEdit={() => setEditing(true)} onDelete={() => setDeleting(true)} />
     </header>
     {view.description && <p className="m-0 text-13 text-muted-foreground">{view.description}</p>}

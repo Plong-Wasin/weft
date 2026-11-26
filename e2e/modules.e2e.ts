@@ -277,17 +277,19 @@ try {
   await page.screenshot({ path: `${shots}/module-detail-1440.png` });
 
   // Remove a work item from the module page.
-  await page.getByRole("button", { name: t("modules.remove") }).first().click();
+  check(await page.getByRole("button", { name: t("modules.remove"), exact: true }).count() === 0, "Module removal must stay inside the row action menu");
+  await page.getByRole("button", { name: new RegExp(`^${t("modules.actions")}: `) }).first().click();
+  await page.getByRole("menuitem", { name: t("modules.remove"), exact: true }).click();
   await page.waitForFunction(() => document.querySelector('[data-testid="module-items-count"]')?.textContent === "0/1");
   console.log("modules: add/remove work items, properties sidebar");
 
   // Archive (completed Module), see it under archived, unarchive, delete.
-  await page.getByRole("button", { name: t("modules.actions") }).click();
+  await page.getByRole("button", { name: t("modules.actions"), exact: true }).click();
   await page.getByRole("menuitem", { name: t("modules.archive") }).click();
   await page.getByText(t("modules.archivedNote")).waitFor();
-  check(await page.getByRole("button", { name: t("modules.remove") }).count() === 0, "archived module must be read-only");
+  check(await page.getByRole("button", { name: new RegExp(`^${t("modules.actions")}: `) }).count() === 0, "archived module must be read-only");
   check(await page.getByRole("complementary", { name: t("modules.properties") }).locator('[data-testid="description-editor"] [contenteditable="true"]').count() === 0, "archived Module description must be read-only");
-  await page.getByRole("button", { name: t("modules.actions") }).click();
+  await page.getByRole("button", { name: t("modules.actions"), exact: true }).click();
   check(await page.getByRole("menuitem", { name: t("modules.edit") }).count() === 0, "archived Module still offers Edit");
   await page.keyboard.press("Escape");
   await page.goto(`${base}/modules`);

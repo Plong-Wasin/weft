@@ -198,6 +198,9 @@
   .comment-editor.comment-editor { max-width: calc(100vw - var(--padding-page-x) - var(--padding-page-x) - 2rem); }
   .wiki-editor-shell.wiki-editor-shell, .wiki-editor.wiki-editor { max-width: calc(100vw - var(--padding-page-x) - var(--padding-page-x)); }
 }
+@media (pointer: coarse) {
+  .editor-toolbar .editor-tool, .editor-footer .editor-tool { min-width: 2.75rem; min-height: 2.75rem; }
+}
 .comment-editor .ProseMirror table { border-collapse: collapse; table-layout: auto; width: 100%; margin: .75rem 0; }
 .comment-editor .ProseMirror th, .comment-editor .ProseMirror td { border: 1px solid var(--border); min-width: 4rem; padding: .4rem .55rem; vertical-align: top; }
 .comment-editor .ProseMirror th { background: var(--muted); font-weight: 600; }

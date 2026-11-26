@@ -17,6 +17,7 @@ import { DetailsPanelToggle, useDetailsPanel } from "./details-panel";
 
 import { Checkbox } from "@/ui/checkbox";
 import { Input } from "@/ui/input";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/ui/dropdown-menu";
 import { DatePicker } from "@/ui/date-picker";
 import { Select, SelectContent, SelectItem, SelectItemText, SelectTrigger, SelectValue } from "@/ui/select";
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
@@ -39,8 +40,8 @@ const statusTone: Record<Status, string> = {
   backlog: "bg-background text-muted-foreground", planned: "bg-accent text-foreground", "in-progress": "bg-amber-500/10 text-amber-700 dark:text-amber-400",
   paused: "bg-background text-muted-foreground", completed: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400", cancelled: "bg-destructive/10 text-destructive",
 };
-const primaryButton = "flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium";
-const iconButton = "grid size-7 place-items-center rounded-md border-0 bg-transparent p-0 text-muted-foreground hover:bg-accent hover:text-foreground";
+const primaryButton = "flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium pointer-coarse:min-h-11";
+const iconButton = "grid size-7 place-items-center rounded-md border-0 bg-transparent p-0 text-muted-foreground hover:bg-accent hover:text-foreground pointer-coarse:size-11";
 
 function StatusBadge({ status }: { status: Status }) {
   return <span className={`inline-flex items-center whitespace-nowrap rounded-md border border-border px-2 py-1 text-xs font-medium ${statusTone[status]}`}>{t(`modules.status.${status}`)}</span>;
@@ -192,17 +193,17 @@ export function ModulesPage({ workspaceId, workspaceSlug, projectKey, projectId,
   const leadOf = (module: Module) => people.find((person) => person.userId === module.leadId);
   const toggle = (value: Display, icon: React.ReactNode) => <Button type="button" aria-pressed={display === value} aria-label={t(`modules.display.${value}`)} title={t(`modules.display.${value}`)}
     className={`${iconButton} ${display === value ? "bg-accent text-foreground" : ""}`} onClick={() => setDisplay(value)}>{icon}</Button>;
-  return <section className="grid gap-4">
+  return <section className="grid grid-cols-[minmax(0,1fr)] gap-4">
     <PageHeader level={2} title={<><Package aria-hidden size={20} />{t("modules.title")}</>} actions={<>
-        <label className="flex items-center gap-1.5 whitespace-nowrap text-sm text-muted-foreground"><Checkbox checked={archived} onChange={(event) => setArchived(event.target.checked)} />{t("modules.showArchived")}</label>
+        <label className="flex items-center gap-1.5 whitespace-nowrap text-sm text-muted-foreground pointer-coarse:min-h-11"><Checkbox hitArea="overlay" checked={archived} onChange={(event) => setArchived(event.target.checked)} />{t("modules.showArchived")}</label>
         <div role="group" aria-label={t("modules.display")} className="flex items-center gap-0.5 rounded-md bg-muted p-0.5">{toggle("list", <List aria-hidden size={15} />)}{toggle("grid", <LayoutGrid aria-hidden size={15} />)}</div>
         {canWrite && !archived && <Button type="button" className={primaryButton} onClick={() => setForm({})}><Plus aria-hidden size={14} />{t("modules.addNew")}</Button>}
     </>} className="border-b border-border pb-3" />
-    <div data-testid="module-filters" className="grid grid-cols-1 items-end gap-3 rounded-xl border border-border bg-card p-3 sm:grid-cols-2 xl:grid-cols-6">
-      <label className="grid min-w-0 gap-1 text-sm font-medium">{t("modules.searchModules")}<Input type="search" className="h-11" aria-label={t("modules.searchModules")} value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+    <div data-testid="module-filters" className="grid grid-cols-2 items-end gap-3 rounded-xl border border-border bg-card p-3 xl:grid-cols-6">
+      <label className="col-span-2 xl:col-span-1 grid min-w-0 gap-1 text-sm font-medium">{t("modules.searchModules")}<Input type="search" className="h-11" aria-label={t("modules.searchModules")} value={search} onChange={(event) => setSearch(event.target.value)} /></label>
       <label className="grid min-w-0 gap-1 text-sm font-medium">{t("modules.statusFilter")}<Select value={statusFilter || "any"} items={[{ value: "any", label: t("modules.anyStatus") }, ...statuses.map((value) => ({ value, label: t(`modules.status.${value}`) }))]} onValueChange={(value) => setStatusFilter(!value || value === "any" ? "" : value)}><SelectTrigger className="h-11" aria-label={t("modules.statusFilter")}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="any"><SelectItemText>{t("modules.anyStatus")}</SelectItemText></SelectItem>{statuses.map((value) => <SelectItem key={value} value={value}><SelectItemText>{t(`modules.status.${value}`)}</SelectItemText></SelectItem>)}</SelectContent></Select></label>
       <label className="grid min-w-0 gap-1 text-sm font-medium">{t("modules.leadFilter")}<Select value={leadFilter || "any"} items={[{ value: "any", label: t("modules.anyLead") }, ...people.filter((person) => !person.isAgent).map((person) => ({ value: person.userId, label: person.name }))]} onValueChange={(value) => setLeadFilter(!value || value === "any" ? "" : value)}><SelectTrigger className="h-11" aria-label={t("modules.leadFilter")}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="any"><SelectItemText>{t("modules.anyLead")}</SelectItemText></SelectItem>{people.filter((person) => !person.isAgent).map((person) => <SelectItem key={person.userId} value={person.userId}><SelectItemText>{person.name}</SelectItemText></SelectItem>)}</SelectContent></Select></label>
-      <label className="grid min-w-0 gap-1 text-sm font-medium">{t("modules.memberFilter")}<Select value={memberFilter || "any"} items={[{ value: "any", label: t("modules.anyMember") }, ...people.map((person) => ({ value: person.userId, label: person.name }))]} onValueChange={(value) => setMemberFilter(!value || value === "any" ? "" : value)}><SelectTrigger className="h-11" aria-label={t("modules.memberFilter")}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="any"><SelectItemText>{t("modules.anyMember")}</SelectItemText></SelectItem>{people.map((person) => <SelectItem key={person.userId} value={person.userId}><SelectItemText>{person.name}</SelectItemText></SelectItem>)}</SelectContent></Select></label>
+      <label className="col-span-2 grid min-w-0 gap-1 text-sm font-medium xl:col-span-1">{t("modules.memberFilter")}<Select value={memberFilter || "any"} items={[{ value: "any", label: t("modules.anyMember") }, ...people.map((person) => ({ value: person.userId, label: person.name }))]} onValueChange={(value) => setMemberFilter(!value || value === "any" ? "" : value)}><SelectTrigger className="h-11" aria-label={t("modules.memberFilter")}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="any"><SelectItemText>{t("modules.anyMember")}</SelectItemText></SelectItem>{people.map((person) => <SelectItem key={person.userId} value={person.userId}><SelectItemText>{person.name}</SelectItemText></SelectItem>)}</SelectContent></Select></label>
       <label className="grid min-w-0 gap-1 text-sm font-medium">{t("modules.dateFrom")}<DatePicker label={t("modules.dateFrom")} value={dateFrom} className="h-11" onChange={setDateFrom} /></label>
       <label className="grid min-w-0 gap-1 text-sm font-medium">{t("modules.dateTo")}<DatePicker label={t("modules.dateTo")} value={dateTo} field="due" className="h-11" onChange={setDateTo} /></label>
       {(search || statusFilter || leadFilter || memberFilter || dateFrom || dateTo) && <Button type="button" className={primaryButton} onClick={() => { setSearch(""); setStatusFilter(""); setLeadFilter(""); setMemberFilter(""); setDateFrom(""); setDateTo(""); }}>{t("modules.clearFilters")}</Button>}
@@ -214,13 +215,13 @@ export function ModulesPage({ workspaceId, workspaceSlug, projectKey, projectId,
     {display === "list"
       ? <ul aria-label={t("modules.title")} className="m-0 grid list-none gap-1 rounded-xl border border-border bg-card p-1 empty:hidden">{(modules ?? []).map((module) => <li key={module.id} data-testid={`module-row-${module.name}`} className="flex flex-wrap items-center gap-3 rounded-lg px-4 py-3 transition-colors hover:bg-accent">
         <ProgressRing percent={module.progress.percent} />
-        <Link to={paths.module(workspaceSlug, projectKey, module.id)} className="min-w-48 flex-1 truncate text-sm font-medium text-foreground">{module.name}</Link>
+        <Link to={paths.module(workspaceSlug, projectKey, module.id)} title={module.name} className="flex min-w-48 flex-1 basis-[calc(100%-4rem)] items-center text-sm font-medium text-foreground pointer-coarse:min-h-11 lg:basis-48"><span className="min-w-0 [overflow-wrap:anywhere] max-lg:line-clamp-2 lg:truncate">{module.name}</span></Link>
         <span className="flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground"><CalendarRange aria-hidden size={13} />{dateRange(module)}</span>
         <StatusBadge status={module.status} />
         <span className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">{t("modules.itemCount").replace("{count}", formatNumber(module.itemCount))}</span>
         <Members ids={module.memberIds} people={people} />
         {leadOf(module) && <span title={`${t("modules.lead")}: ${leadOf(module)?.name}`}><Avatar name={leadOf(module)?.name ?? ""} id={module.leadId ?? undefined} /></span>}
-        {menu(module)}
+        <span className="ml-auto">{menu(module)}</span>
       </li>)}</ul>
       : <ul aria-label={t("modules.title")} className="m-0 grid list-none grid-cols-1 gap-2 rounded-xl border border-border bg-card p-2 empty:hidden sm:grid-cols-2 xl:grid-cols-3">{(modules ?? []).map((module) => <li key={module.id} data-testid={`module-card-${module.name}`} className="grid content-between gap-4 rounded-lg bg-muted p-4 transition-colors hover:bg-background">
         <div className="flex items-start gap-2">
@@ -267,7 +268,7 @@ function AddItemsModal({ candidates, onAdd, onClose }: { candidates: Item[]; onA
 }
 
 function PropertyRow({ icon, label, children }: { icon: React.ReactNode; label: string; children: React.ReactNode }) {
-  return <div className="grid grid-cols-[7.5rem_1fr] items-center gap-2 text-sm">
+  return <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-2 text-sm">
     <span className="flex items-center gap-2 text-muted-foreground">{icon}{label}</span>
     <div className="flex min-w-0 flex-wrap items-center gap-1">{children}</div>
   </div>;
@@ -333,25 +334,14 @@ export function ModuleDetailPage({ workspaceId, workspaceSlug, projectKey, proje
       <div className="min-w-0 flex-1 overflow-x-auto p-4">
         <h2 className="sr-only">{t("modules.workItems")}</h2>
         <WorkItemLayouts projectId={projectId} workspaceSlug={workspaceSlug} action={action} run={runQuery} refreshKey={refreshKey} moduleId={moduleId}
-          rowAction={editable ? (item) => <Button className="whitespace-nowrap rounded-md border border-border bg-card px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => void run("remove_module_items", { moduleId, workItemIds: [item.id] })}>{t("modules.remove")}</Button> : undefined} />
+          rowAction={editable ? (item) => <DropdownMenu>
+            <DropdownMenuTrigger render={<Button type="button" variant="ghost" size="icon" aria-label={`${t("modules.actions")}: ${item.displayId}`} title={t("modules.actions")} className="size-8" />}><Ellipsis aria-hidden size={16} /></DropdownMenuTrigger>
+            <DropdownMenuContent align="end"><DropdownMenuItem onClick={() => void run("remove_module_items", { moduleId, workItemIds: [item.id] })}>{t("modules.remove")}</DropdownMenuItem></DropdownMenuContent>
+          </DropdownMenu> : undefined} />
       </div>
-      <aside id="module-details-panel" aria-label={t("modules.properties")} className={`grid content-start gap-3 rounded-xl border border-border bg-card p-4 sm:p-5 lg:w-80 lg:shrink-0 ${detailsPanel.open ? "" : "lg:hidden"}`}>
-        <section className="grid gap-2" aria-label={t("workItems.description")}><h3 className="m-0 text-sm font-semibold">{t("workItems.description")}</h3><EntityDescription key={module.id} action={action} workspaceId={workspaceId} owner={{ ownerType: "module", ownerId: module.id }} mentionPeople={people} initial={module.description ?? null} editable={editable} /></section>
-        <div className="flex items-center gap-2"><StatusBadge status={module.status} /></div>
-        <BurndownChart action={action} name="get_module_burndown" body={{ moduleId }} projectId={projectId} refreshKey={refreshKey} testId="module-burndown" />
-        {insights && <section aria-label={t("modules.risks")} className="grid gap-2 border-t border-border pt-3">
-          <h3 className="m-0 text-sm font-semibold text-foreground">{t("modules.risks")}</h3>
-          <InsightList title={t("modules.blocked")} items={insights.blocked} workspaceSlug={workspaceSlug} />
-          <InsightList title={t("modules.overdue")} items={insights.overdue} workspaceSlug={workspaceSlug} />
-          <label className="grid gap-1 text-xs text-muted-foreground">{t("modules.breakdown")}
-            <Select value={breakdown} items={["state", "assignee", "label", "priority"].map((dimension) => ({ value: dimension, label: t(`modules.breakdown.${dimension}` as MessageKey) }))} onValueChange={(value) => { if (value) setBreakdown(value); }}>
-              <SelectTrigger aria-label={t("modules.breakdown")}><SelectValue /></SelectTrigger>
-              <SelectContent>{["state", "assignee", "label", "priority"].map((dimension) => <SelectItem key={dimension} value={dimension}><SelectItemText>{t(`modules.breakdown.${dimension}` as MessageKey)}</SelectItemText></SelectItem>)}</SelectContent>
-            </Select>
-          </label>
-          <ul className="m-0 grid list-none gap-1 p-0">{(insights.breakdowns[breakdown] ?? []).map((group) => <li key={group.key} className="rounded border border-border p-2"><span className="flex justify-between text-xs"><span>{group.label}</span><span>{group.items.length}</span></span><ItemLinks items={group.items} workspaceSlug={workspaceSlug} /></li>)}</ul>
-        </section>}
+      <aside id="module-details-panel" aria-label={t("modules.properties")} className={`grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-3 [overflow-wrap:anywhere] rounded-xl border border-border bg-card p-4 sm:p-5 lg:w-80 lg:shrink-0 ${detailsPanel.open ? "" : "lg:hidden"}`}>
         <h2 className="m-0 text-xl font-semibold text-foreground">{module.name}</h2>
+        <div className="flex items-center gap-2"><StatusBadge status={module.status} /></div>
         <PropertyRow icon={<CalendarRange aria-hidden size={15} />} label={t("modules.status")}>
           <SingleSelect label={t("modules.status")} summary={t(`modules.status.${module.status}`)} value={module.status} readOnly={!editable}
             options={statuses.map((value) => ({ id: value, name: t(`modules.status.${value}`) }))} onSelect={(value) => void patch({ status: value as Status })} />
@@ -378,6 +368,20 @@ export function ModuleDetailPage({ workspaceId, workspaceSlug, projectKey, proje
           <div className="flex items-center justify-between text-sm"><span className="font-medium text-foreground">{t("modules.progress")}</span><span className="text-muted-foreground">{t("modules.percent").replace("{percent}", formatNumber(percent))}</span></div>
           <progress max={100} value={percent} aria-label={t("modules.progress")} className="h-1.5 w-full" />
         </div>
+        <section className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 [overflow-wrap:anywhere]" aria-label={t("workItems.description")}><h3 className="m-0 text-sm font-semibold">{t("workItems.description")}</h3><EntityDescription key={module.id} action={action} workspaceId={workspaceId} owner={{ ownerType: "module", ownerId: module.id }} mentionPeople={people} initial={module.description ?? null} editable={editable} /></section>
+        <BurndownChart action={action} name="get_module_burndown" body={{ moduleId }} projectId={projectId} refreshKey={refreshKey} testId="module-burndown" />
+        {insights && <section aria-label={t("modules.risks")} className="grid gap-2 border-t border-border pt-3">
+          <h3 className="m-0 text-sm font-semibold text-foreground">{t("modules.risks")}</h3>
+          <InsightList title={t("modules.blocked")} items={insights.blocked} workspaceSlug={workspaceSlug} />
+          <InsightList title={t("modules.overdue")} items={insights.overdue} workspaceSlug={workspaceSlug} />
+          <label className="grid gap-1 text-xs text-muted-foreground">{t("modules.breakdown")}
+            <Select value={breakdown} items={["state", "assignee", "label", "priority"].map((dimension) => ({ value: dimension, label: t(`modules.breakdown.${dimension}` as MessageKey) }))} onValueChange={(value) => { if (value) setBreakdown(value); }}>
+              <SelectTrigger aria-label={t("modules.breakdown")}><SelectValue /></SelectTrigger>
+              <SelectContent>{["state", "assignee", "label", "priority"].map((dimension) => <SelectItem key={dimension} value={dimension}><SelectItemText>{t(`modules.breakdown.${dimension}` as MessageKey)}</SelectItemText></SelectItem>)}</SelectContent>
+            </Select>
+          </label>
+          <ul className="m-0 grid list-none gap-1 p-0">{(insights.breakdowns[breakdown] ?? []).map((group) => <li key={group.key} className="rounded border border-border p-2"><span className="flex justify-between text-xs"><span>{group.label}</span><span>{group.items.length}</span></span><ItemLinks items={group.items} workspaceSlug={workspaceSlug} /></li>)}</ul>
+        </section>}
       </aside>
     </div>
     {editing && <ModuleFormModal action={action} projectId={projectId} workspaceId={workspaceId} module={module} onClose={() => setEditing(false)} onSaved={() => void load()} />}

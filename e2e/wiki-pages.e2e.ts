@@ -114,6 +114,8 @@ try {
   }
   await page.goto(`${web}/${slug}/wiki/${projectGuide.id}`);
   await page.locator(".ProseMirror").waitFor();
+  const emptyEditorBox = await page.getByTestId("wiki-editor").boundingBox();
+  check(emptyEditorBox !== null && emptyEditorBox.height <= 112, `the empty Wiki editor must reserve a compact writing area before Attachments, found ${emptyEditorBox?.height}px`);
   for (const theme of ["light", "dark"] as const) {
     await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
     await page.screenshot({ path: `${shots}/wiki-page-after-${theme}-1440.png`, fullPage: true });

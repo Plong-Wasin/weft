@@ -150,7 +150,7 @@ export function RootLayout() {
   if (inviteToken) return <OnboardingShell>
     <h1 className="text-20 font-semibold">{translate("invite.title")}</h1>
     <p role={inviteError ? "alert" : "status"} className={`text-14 ${inviteError ? "text-destructive" : "text-muted-foreground"}`}>{inviteError ?? translate("invite.joining")}</p>
-    {inviteError && <a href={paths.home("")} className="text-14 font-medium">{translate("invite.goHome")}</a>}
+    {inviteError && <a href={paths.home("")} className="text-14 font-medium underline">{translate("invite.goHome")}</a>}
   </OnboardingShell>;
   const notice = current.account?.securityNotice ?? null;
   return <>

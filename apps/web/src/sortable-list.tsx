@@ -23,9 +23,9 @@ export function SortMenu({ name, canUp, canDown, onMove }: { name: string; canUp
  * A bordered list whose rows reorder by dragging a handle (mouse, pen or touch) or by Arrow Up/Down on the focused handle.
  * The list reports the new order once, on drop; it does not hold the order itself.
  */
-export function SortableList({ ids, onReorder, disabled = false, label, renderRow }: {
+export function SortableList({ ids, onReorder, disabled = false, label, renderRow, gripClassName = "" }: {
   ids: string[]; onReorder: (ids: string[]) => void; disabled?: boolean; label: (id: string) => string;
-  renderRow: (id: string, grip: React.ReactNode) => React.ReactNode;
+  renderRow: (id: string, grip: React.ReactNode) => React.ReactNode; gripClassName?: string;
 }) {
   const list = React.useRef<HTMLUListElement>(null);
   const [drag, setDrag] = React.useState<Drag | null>(null);
@@ -47,7 +47,7 @@ export function SortableList({ ids, onReorder, disabled = false, label, renderRo
     return rows.length > 0 && y < rows[0]!.getBoundingClientRect().top ? 0 : rows.length - 1;
   };
   const grip = (id: string) => <Button type="button" data-grip={id} disabled={disabled} aria-label={`${translate("sortable.reorder")}: ${label(id)}`} title={translate("sortable.hint")}
-    className={`grid size-7 shrink-0 touch-none place-items-center rounded-md !bg-transparent !p-0 text-muted-foreground hover:!bg-accent hover:text-foreground ${drag?.id === id ? "cursor-grabbing" : "cursor-grab"}`}
+    className={`grid size-7 shrink-0 touch-none place-items-center rounded-md !bg-transparent !p-0 text-muted-foreground hover:!bg-accent hover:text-foreground ${gripClassName} ${drag?.id === id ? "cursor-grabbing" : "cursor-grab"}`}
     onPointerDown={(event) => {
       if (disabled || (event.pointerType === "mouse" && event.button !== 0)) return;
       event.preventDefault();

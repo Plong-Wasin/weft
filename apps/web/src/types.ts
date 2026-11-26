@@ -9,6 +9,8 @@ export const roles = ["Admin", "Member", "Guest"] as const;
 export const priorities = ["urgent", "high", "medium", "low", "none"] as const;
 export type StateGroup = "backlog" | "unstarted" | "started" | "completed" | "cancelled";
 export const stateGroups: StateGroup[] = ["backlog", "unstarted", "started", "completed", "cancelled"];
+/** One fixed colour per State group, shared by Settings > States and Analytics so a group keeps its colour in light and dark. */
+export const stateGroupColors: Record<StateGroup, string> = { backlog: "#a3a3a3", unstarted: "#737373", started: "#f59e0b", completed: "#16a34a", cancelled: "#dc2626" };
 export type WorkState = { id: string; name: string; group: StateGroup };
 export type WorkItem = { typeId?: string; properties?: Array<{ propertyId: string; value: unknown }>; id: string; projectId: string; createdBy: string; displayId: string; title: string; description: unknown; descriptionText: string; stateId: string; priority: (typeof priorities)[number]; estimatePointId: string | null; assigneeIds: string[]; labelIds: string[]; parentId: string | null; startDate: string | null; dueDate: string | null; archivedAt?: string | null };
 export type Label = { id: string; projectId: string; name: string; color: string };

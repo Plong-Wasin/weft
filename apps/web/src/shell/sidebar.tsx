@@ -25,7 +25,7 @@ import { Input } from "@/ui/input";
 export const projectsKey = (workspaceId: string) => ["projects", workspaceId] as const;
 const favoritesKey = (workspaceId: string) => ["favorite-wiki-pages", workspaceId] as const;
 
-const itemClass = ({ isActive }: { isActive: boolean }) => `transition-colors flex min-h-9 max-md:min-h-11 items-center gap-2 rounded-lg px-3 py-1.5 text-[14px] font-medium ${isActive ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent"}`;
+const itemClass = ({ isActive }: { isActive: boolean }) => `transition-colors flex min-h-9 max-md:min-h-11 pointer-coarse:min-h-11 items-center gap-2 rounded-lg px-3 py-1.5 text-[14px] font-medium ${isActive ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent"}`;
 const heading = "px-3 pb-1 pt-4 text-[12px] font-medium text-muted-foreground";
 
 /** What a project row can do to the order. The list owns the state; a row only reports the gesture. */
@@ -100,7 +100,7 @@ function SettingsProjectNav({ workspace, projects, projectKey }: { workspace: Wo
   const known = settingsSections.some((item) => item.path === section) ? section : "";
   return <div className="grid min-w-0 gap-1">
     <label className="grid min-w-0 gap-1 px-3 text-[12px] font-medium text-muted-foreground">{translate("sidebar.projectSwitcher")}
-      <select value={projectKey} onChange={(event) => navigate(paths.projectSettings(workspace.slug, event.target.value, known))} className="min-w-0 rounded-lg px-3 py-2 text-[14px] text-foreground">
+      <select value={projectKey} onChange={(event) => navigate(paths.projectSettings(workspace.slug, event.target.value, known))} className="min-h-9 min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground max-md:min-h-11 pointer-coarse:min-h-11">
         {/* The open project may be missing from the list while it loads, or after it was archived: it stays selectable so the sections keep showing. */}
         {!projects.some((project) => project.key === projectKey) && <option value={projectKey}>{projectKey}</option>}
         {projects.map((project) => <option key={project.id} value={project.key}>{project.name}</option>)}
@@ -108,7 +108,7 @@ function SettingsProjectNav({ workspace, projects, projectKey }: { workspace: Wo
     </label>
     <nav aria-label={`${translate("settings.label")} ${projectKey}`}><ul className="grid gap-0.5">
       {settingsSections.map((item) => <li key={item.label}><NavLink end to={paths.projectSettings(workspace.slug, projectKey, item.path)}
-        className={({ isActive }) => `flex items-center rounded-md px-2.5 py-1 text-[13px] font-medium ${isActive ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent"}`}>{translate(item.label)}</NavLink></li>)}
+        className={itemClass}>{translate(item.label)}</NavLink></li>)}
     </ul></nav>
   </div>;
 }
@@ -165,6 +165,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
   const projectList = data ?? [];
   const { prefs, setPreference, setOrder, resetOrder } = useProjectPreferences(workspace.id, section === "work" || section === "settings");
   const projectSort = sortProjects(projectList, prefs);
+  const projectsPage = pathname === paths.projects(workspace.slug);
   const drag = React.useRef<{ id: string; starred: boolean } | null>(null);
   // A keyboard move keeps focus on the moved project: the list re-sorts, so focus is set once the new order is in the cache.
   const focusAfterMove = React.useRef<string | null>(null);
@@ -224,11 +225,11 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       <NavLink to={paths.activeCycles(workspace.slug)} className={itemClass}>{translate("cycles.activeTitle")}</NavLink>
       {canSeeAnalytics && <NavLink to={paths.analytics(workspace.slug)} className={itemClass}>{translate("analytics.title")}</NavLink>}
       {favoritesBlock}
-      <label className="grid gap-1 px-3 pt-2 text-[12px] font-medium text-muted-foreground">
+      {!projectsPage && <label className="grid gap-1 px-3 pt-2 text-[12px] font-medium text-muted-foreground">
         {translate("projects.find")}
         <Input type="search" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder={translate("projects.searchPlaceholder")} className="min-h-9 min-w-0 rounded-lg px-3 py-2 text-[13px]" />
-      </label>
-      <ProjectGroups workspace={workspace} projects={projectList} prefs={prefs} projectKey={projectKey} reorder={reorder} drag={drag} query={projectQuery} />
+      </label>}
+      <ProjectGroups workspace={workspace} projects={projectList} prefs={prefs} projectKey={projectKey} reorder={reorder} drag={drag} query={projectsPage ? "" : projectQuery} />
     </>}
     {section === "wiki" && <>
       {favoritesBlock}
@@ -236,10 +237,16 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
     </>}
     {section === "ai" && <AiOnly><AiSidebar workspace={workspace} activeId={aiChatId} /></AiOnly>}
     {inProjectSettings && projectKey && <>
-      <NavLink to={paths.workspaceSettings(workspace.slug)} className={(state) => `${itemClass(state)} mb-2`}><ArrowLeft aria-hidden size={14} className="shrink-0" />{translate("sidebar.backToWorkspace")}</NavLink>
+      <NavLink to={paths.workspaceSettings(workspace.slug)} aria-label={translate("sidebar.backToWorkspace")} title={translate("sidebar.backToWorkspace")} className={(state) => `${itemClass(state)} mb-2`}><ArrowLeft aria-hidden size={14} className="shrink-0" /><span className="min-w-0 truncate">{translate("settings.workspaceTitle")}</span></NavLink>
       <SettingsProjectNav workspace={workspace} projects={[...projectSort.starred, ...projectSort.others]} projectKey={projectKey} />
     </>}
     {section === "settings" && !inProjectSettings && <>
+      <p className={`${heading} pt-1`}>{translate("projects.title")}</p>
+      <label className="grid gap-1 px-3 text-[12px] font-medium text-muted-foreground">
+        {translate("projects.find")}
+        <Input type="search" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder={translate("projects.searchPlaceholder")} className="min-h-9 min-w-0 rounded-lg px-3 py-2 text-[13px]" />
+      </label>
+      <SettingsProjectList workspace={workspace} projects={[...projectSort.starred, ...projectSort.others]} query={projectQuery} />
       <p className={heading}>{translate("sidebar.workspace")}</p>
       <NavLink end to={paths.workspaceSettings(workspace.slug)} className={itemClass}>{translate("settings.general")}</NavLink>
       <NavLink to={paths.workspaceMembers(workspace.slug)} className={itemClass}>{translate("members.title")}</NavLink>
@@ -251,17 +258,13 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       <NavLink to={paths.workspaceRuntimes(workspace.slug)} className={itemClass}>{translate("runtimes.title")}</NavLink>
       <NavLink to={paths.workspaceSkills(workspace.slug)} className={itemClass}>{translate("settings.skills")}</NavLink>
       <NavLink to={paths.workspaceExports(workspace.slug)} className={itemClass}>{translate("settings.exports")}</NavLink>
+      {/* Second block has no heading: no copy key exists for it yet, so a divider separates it from the first. */}
+      <div role="presentation" className="mx-3 my-2 border-t border-border" />
       {isWorkspaceAdmin && <NavLink to={paths.workspaceUsage(workspace.slug)} className={itemClass}>{translate("settings.usage")}</NavLink>}
       <NavLink to={paths.workspaceAi(workspace.slug)} className={itemClass}>{translate("aiStatus.title")}</NavLink>
       {integrationsOn && <NavLink to={paths.workspaceIntegrations(workspace.slug)} className={itemClass}>{translate("integrations.title")}</NavLink>}
       {webhooksOn && <NavLink to={paths.workspaceWebhooks(workspace.slug)} className={itemClass}>{translate("outboundWebhooks.nav")}</NavLink>}
       <NavLink to={paths.workspaceProjectOrder(workspace.slug)} className={itemClass}>{translate("settings.projectOrder")}</NavLink>
-      <p className={heading}>{translate("projects.title")}</p>
-      <label className="grid gap-1 px-3 pt-2 text-[12px] font-medium text-muted-foreground">
-        {translate("projects.find")}
-        <Input type="search" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder={translate("projects.searchPlaceholder")} className="min-h-9 min-w-0 rounded-lg px-3 py-2 text-[13px]" />
-      </label>
-      <SettingsProjectList workspace={workspace} projects={[...projectSort.starred, ...projectSort.others]} query={projectQuery} />
     </>}
   </nav>;
 }

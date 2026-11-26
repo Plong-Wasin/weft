@@ -25,6 +25,7 @@ import { pageMarkdown, readableReferenceLabels, splitPageMarkdown, toMarkdown } 
 import { MenuItem, Popover } from "./shell/popover";
 import { Dialog, DialogActions } from "./dialog";
 import { TableControls } from "./table-controls";
+import { Select, SelectContent, SelectItem, SelectItemText, SelectTrigger, SelectValue } from "@/ui/select";
 import { addRowAfter, goToNextCell } from "@tiptap/pm/tables";
 import { PluginKey, TextSelection } from "@tiptap/pm/state";
 import type { WikiPaperSize } from "./wiki-pdf";
@@ -408,14 +409,16 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
   return <div className={wide && panelOpen ? "grid gap-6 grid-cols-[minmax(0,1fr)_minmax(0,20rem)]" : "grid gap-6"}>
     <section aria-label={title} className={`min-w-0 ${fullWidth ? "" : "mx-auto w-full max-w-[760px]"}`}>
     <div className="wiki-print-document">
-    <h1 className="wiki-print-title">{title}</h1>
+    <h1 aria-hidden="true" className="wiki-print-title">{title}</h1>
     <div className="flex flex-wrap items-center gap-2">
-      <Textarea ref={titleRef} rows={1} className="wiki-edit-title min-w-0 flex-1 basis-[12rem] resize-none overflow-hidden border-0 bg-transparent px-0 text-28 font-semibold leading-tight text-foreground sm:text-40" aria-label={translate("wiki.untitled")} value={title} disabled={!page.canEdit} onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }} onChange={(event) => { setTitle(event.target.value); dirtyTitle.current = event.target.value || translate("wiki.untitled"); schedule(); }} onBlur={onChanged} />
+      <h1 aria-label={title} data-testid="wiki-page-heading" className="m-0 min-w-0 flex-1">
+      <Textarea ref={titleRef} rows={1} className="wiki-edit-title w-full min-w-0 resize-none overflow-hidden border-0 bg-transparent px-0 text-28 font-semibold leading-tight text-foreground md:text-40" aria-label={translate("wiki.untitled")} value={title} disabled={!page.canEdit} onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }} onChange={(event) => { setTitle(event.target.value); dirtyTitle.current = event.target.value || translate("wiki.untitled"); schedule(); }} onBlur={onChanged} />
+      </h1>
       {page.locked && <span data-testid="wiki-locked-badge" className="shrink-0 rounded-md border border-border bg-muted px-2 py-0.5 text-12 text-muted-foreground">{translate("wiki.locked")}</span>}
       <div className="wiki-page-actions flex items-center gap-1">
         {!page.projectId && page.ownerId === self && <Button type="button" className="secondary rounded-lg" data-testid="wiki-header-share" onClick={() => revealPanelSection("wiki-share-members")}>{translate("wiki.share.action")}</Button>}
         {canPublishHere(page) && <Button type="button" className="secondary rounded-lg" aria-pressed={Boolean(page.published)} data-testid="wiki-header-publish" onClick={() => revealPanelSection("wiki-published-link")}>{translate(page.published ? "wiki.published" : "wiki.publish")}</Button>}
-        <div className="flex items-center gap-1 rounded-lg bg-muted p-1">
+        <div className="flex items-center gap-1">
         <Button type="button" className="icon-button-ghost" data-testid="wiki-details-toggle" aria-pressed={panelOpen} aria-label={translate(panelOpen ? "wiki.details.hide" : "wiki.details.show")} title={translate(panelOpen ? "wiki.details.hide" : "wiki.details.show")} onClick={togglePanel}><PanelRight aria-hidden size={16} /></Button>
         <Popover label={translate("wiki.exports")} align="right" className="icon-button-ghost !grid !place-items-center !p-0" panelClassName="w-72" trigger={<MoreHorizontal aria-hidden size={16} />}>
         {(close) => {
@@ -479,13 +482,13 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
     <div data-testid="wiki-editor-shell" className="wiki-editor-shell grid gap-4">
     <div className="relative">
       <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-testid="inline-image-input" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !editor) return; const assetId = await uploadFile(file); if (assetId) { const { selection } = editor.state; const at = "node" in selection ? selection.to : selection.from; editor.chain().focus().insertContentAt(at, { type: "assetImage", attrs: { assetId } }).run(); } }} />
-    <div className="wiki-editor relative min-h-40" data-testid="wiki-editor"><EditorSourceMode editor={page.canEdit ? editor : null} initialWarnings={limitWarnings} onSourceDraftChange={(hasDraft) => { if (hasDraft) setStatus("not-saved"); }} toggleRef={sourceToggle} onModeChange={setSourceActive} /><CalloutControls editor={editor} editable={page.canEdit} /><CodeBlockControls editor={editor} editable={page.canEdit} /><TableControls editor={editor} editable={page.canEdit} /><EditorContent editor={editor} /><WikiBlockControls editor={editor} editable={page.canEdit} /><WikiBubbleMenu editor={page.canEdit ? editor : null} />{page.canEdit && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>
+    <div className="wiki-editor relative min-h-24" data-testid="wiki-editor"><EditorSourceMode editor={page.canEdit ? editor : null} initialWarnings={limitWarnings} onSourceDraftChange={(hasDraft) => { if (hasDraft) setStatus("not-saved"); }} toggleRef={sourceToggle} onModeChange={setSourceActive} /><CalloutControls editor={editor} editable={page.canEdit} /><CodeBlockControls editor={editor} editable={page.canEdit} /><TableControls editor={editor} editable={page.canEdit} /><EditorContent editor={editor} /><WikiBlockControls editor={editor} editable={page.canEdit} /><WikiBubbleMenu editor={page.canEdit ? editor : null} />{page.canEdit && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>
     </div>
     </div>
-    <section aria-label={translate("assets.title")} className="mt-5 rounded-xl border border-border bg-card p-4 [&_[data-testid=attachment-dropzone]]:rounded-lg">
-      <h2 className="mb-2 mt-0 text-16 font-semibold text-foreground">{translate("assets.title")}</h2>
-      <AttachmentsPanel workItemId={page.id} ownerType="wiki_page" canWrite={page.canEdit} action={call} showForm={page.canEdit} onCount={() => {}} testId="wiki-attachments" excludeAssetIds={inlineAssetIds} />
-    </section>
+    <details data-testid="wiki-attachments-disclosure" className="mt-2 rounded-xl border border-border bg-card p-4 [&_[data-testid=attachment-dropzone]]:rounded-lg">
+      <summary data-testid="wiki-attachments-toggle" className="cursor-pointer text-16 font-semibold text-foreground">{translate("assets.title")}</summary>
+      <div className="mt-3"><AttachmentsPanel workItemId={page.id} ownerType="wiki_page" canWrite={page.canEdit} action={call} showForm={page.canEdit} onCount={() => {}} testId="wiki-attachments" excludeAssetIds={inlineAssetIds} /></div>
+    </details>
     {imageError && <p role="alert">{imageError}</p>}
     </div>
     </section>
@@ -607,14 +610,20 @@ function ListControls({ pages, filters, update, shared = false }: { pages: Summa
       </TabsList>
     </Tabs>
     <div className="flex flex-wrap items-end gap-3 text-13">
-      <label className="grid gap-1 text-muted-foreground">{translate("pages.filter.owner")}<select aria-label={translate("pages.filter.owner")} value={filters.owner} onChange={(event) => update("owner", event.target.value)}>
-        <option value="">{translate("pages.filter.anyOwner")}</option>{owners.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-      </select></label>
-      <label className="grid gap-1 text-muted-foreground">{translate("pages.filter.createdAfter")}<Input aria-label={translate("pages.filter.createdAfter")} type="date" value={filters.createdAfter} onChange={(event) => update("createdAfter", event.target.value)} /></label>
-      <label className="grid gap-1 text-muted-foreground">{translate("pages.filter.updatedAfter")}<Input aria-label={translate("pages.filter.updatedAfter")} type="date" value={filters.updatedAfter} onChange={(event) => update("updatedAfter", event.target.value)} /></label>
-      <label className="grid gap-1 text-muted-foreground">{translate("pages.order")}<select aria-label={translate("pages.order")} value={filters.order} onChange={(event) => update("order", event.target.value)}>
-        <option value="name">{translate("pages.order.name")}</option><option value="created">{translate("pages.order.created")}</option><option value="updated">{translate("pages.order.updated")}</option>
-      </select></label>
+      <label className="grid min-w-40 gap-1 text-muted-foreground">{translate("pages.filter.owner")}
+        <Select value={filters.owner || "any"} items={[{ value: "any", label: translate("pages.filter.anyOwner") }, ...owners.map(([value, label]) => ({ value, label }))]} onValueChange={(value) => update("owner", value === "any" || value === null ? "" : value)}>
+          <SelectTrigger aria-label={translate("pages.filter.owner")} className="pointer-coarse:min-h-11"><SelectValue /></SelectTrigger>
+          <SelectContent><SelectItem value="any"><SelectItemText>{translate("pages.filter.anyOwner")}</SelectItemText></SelectItem>{owners.map(([id, name]) => <SelectItem key={id} value={id}><SelectItemText>{name}</SelectItemText></SelectItem>)}</SelectContent>
+        </Select>
+      </label>
+      <label className="grid min-w-40 gap-1 text-muted-foreground">{translate("pages.filter.createdAfter")}<Input aria-label={translate("pages.filter.createdAfter")} type="date" value={filters.createdAfter} onChange={(event) => update("createdAfter", event.target.value)} /></label>
+      <label className="grid min-w-40 gap-1 text-muted-foreground">{translate("pages.filter.updatedAfter")}<Input aria-label={translate("pages.filter.updatedAfter")} type="date" value={filters.updatedAfter} onChange={(event) => update("updatedAfter", event.target.value)} /></label>
+      <label className="grid min-w-40 gap-1 text-muted-foreground">{translate("pages.order")}
+        <Select value={filters.order} items={[{ value: "name", label: translate("pages.order.name") }, { value: "created", label: translate("pages.order.created") }, { value: "updated", label: translate("pages.order.updated") }]} onValueChange={(value) => update("order", value ?? "name")}>
+          <SelectTrigger aria-label={translate("pages.order")} className="pointer-coarse:min-h-11"><SelectValue /></SelectTrigger>
+          <SelectContent><SelectItem value="name"><SelectItemText>{translate("pages.order.name")}</SelectItemText></SelectItem><SelectItem value="created"><SelectItemText>{translate("pages.order.created")}</SelectItemText></SelectItem><SelectItem value="updated"><SelectItemText>{translate("pages.order.updated")}</SelectItemText></SelectItem></SelectContent>
+        </Select>
+      </label>
     </div>
   </div>;
 }
@@ -693,12 +702,13 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
           </>}
         </Popover></div></th></tr>
         {flatten(shown.filter((page) => page.collectionId === collection.id)).map(({ page, depth, nested }) => <tr key={page.id} className="border-b border-border hover:bg-accent">
-        <td className="py-2" style={{ paddingLeft: `${depth * 1.25}rem` }}><Link className={rowLink} to={paths.wikiPage(workspace.slug, page.id)}><FileText aria-hidden size={14} className="shrink-0 text-muted-foreground" />{page.title}</Link></td>
+        <td className="py-2" style={{ paddingLeft: `${depth * 1.25}rem` }}><Link className={rowLink} to={paths.wikiPage(workspace.slug, page.id)}><FileText aria-hidden size={14} className="shrink-0 text-muted-foreground" /><span className="min-w-0 truncate">{page.title}</span></Link></td>
         <td className="py-2 align-middle text-muted-foreground"><span className="inline-flex items-center gap-1.5 align-middle">{roleIcon(page)}{translate(`wiki.access.${page.access}` as MessageKey)}</span></td>
         <td className="hidden py-2 text-muted-foreground md:table-cell">{formatDay(page.createdAt)}</td><td className="py-2 text-muted-foreground">{formatDay(page.updatedAt)}</td>
         <td className="hidden py-2 text-muted-foreground md:table-cell">{nested}</td>
       </tr>)}
-      </React.Fragment>)}</tbody>
+      </React.Fragment>)}
+      </tbody>
     </table></div>}
     {collectionDialog && (collectionDialog.kind === "delete"
       ? <Dialog title={translate("wiki.collection.delete")} onClose={() => setCollectionDialog(null)}>

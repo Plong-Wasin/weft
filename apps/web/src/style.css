@@ -278,7 +278,7 @@
 .ProseMirror { min-width: 0; max-width: 100%; box-sizing: border-box; outline: none; font-size: .9375rem; line-height: 1.6; }
 .ProseMirror:has(> p.is-empty:only-child) > p.is-empty::before { color: var(--muted-foreground); content: attr(data-placeholder); float: left; height: 0; pointer-events: none; }
 .ProseMirror a { color: var(--color-link); text-decoration: underline; cursor: pointer; }
-.wiki-editor .ProseMirror { min-height: 10rem; }
+.wiki-editor .ProseMirror { min-height: 6rem; }
 .wiki-bubble-menu { position:relative; z-index:30; display:flex; flex-wrap:nowrap; align-items:center; gap:.2rem; max-width:max-content; padding:.25rem; border:1px solid var(--border); border-radius:.625rem; background:var(--muted); color:var(--foreground); box-shadow:var(--shadow-md); }
 .wiki-bubble-button { display:inline-flex; flex:none; align-items:center; justify-content:center; width:1.75rem; height:1.75rem; margin:0; padding:0; border:0; border-radius:.375rem; background:transparent; color:var(--muted-foreground); cursor:pointer; }
 .wiki-bubble-button:hover { background:var(--accent); color:var(--foreground); }

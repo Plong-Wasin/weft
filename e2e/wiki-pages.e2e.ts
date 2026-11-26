@@ -48,6 +48,10 @@ try {
     if (await toggle.getAttribute("aria-pressed") !== "true") await toggle.click();
     await panel.waitFor();
   };
+  const chooseWikiSelect = async (label: string, option: string) => {
+    await page.getByRole("combobox", { name: label, exact: true }).click();
+    await page.getByRole("option", { name: option, exact: true }).click();
+  };
   const call = async <T>(name: string, body: unknown) => await (await page.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
   async function waitForStoredText(pageId: string, text: string) {
     for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -77,8 +81,69 @@ try {
   const workspaceId = me.workspaces.find((workspace) => workspace.slug === slug)!.id;
   const [captureOwner] = await db.select().from(users).where(eq(users.email, `${slug}@example.test`));
   const project = (await call<Array<{ id: string; key: string }>>("list_projects", { workspaceId, archived: false })).find((candidate) => candidate.key === "MOB")!;
-  await call("create_wiki_page", { workspaceId, title: "Handbook" });
+  const handbook = await call<{ id: string }>("create_wiki_page", { workspaceId, title: "Handbook" });
   await call("create_wiki_page", { workspaceId, title: "Runbook" });
+  await page.goto(`${web}/${slug}/wiki`);
+  const handbookLink = page.getByRole("main").getByRole("link", { name: "Handbook", exact: true });
+  await handbookLink.waitFor();
+  const wikiSidebar = page.getByRole("navigation", { name: translate("shell.sidebar") });
+  check(await wikiSidebar.getByRole("link", { name: translate("inbox.navLabel"), exact: true }).count() === 0, "Wiki navigation must not repeat the Work Inbox link");
+  check(await wikiSidebar.getByRole("button", { name: translate("wiki.new"), exact: true }).count() === 0, "Wiki navigation must not duplicate the page creation action");
+  const handbookTextFits = await handbookLink.evaluate((link) => {
+    const label = link.querySelector("span");
+    if (!label) return false;
+    const range = document.createRange();
+    range.selectNodeContents(label);
+    const linkBox = link.getBoundingClientRect();
+    const textBoxes = Array.from(range.getClientRects());
+    return textBoxes.length > 0 && textBoxes.every((box) => box.left >= linkBox.left && box.right <= linkBox.right && box.top >= linkBox.top && box.bottom <= linkBox.bottom);
+  });
+  check(handbookTextFits, "Workspace Wiki page text must be visible and unclipped in the workspace All pages list");
+  const filterControls = await Promise.all([
+    page.locator(`[aria-label="${translate("pages.filter.owner")}"]`).boundingBox(),
+    page.locator(`[aria-label="${translate("pages.filter.createdAfter")}"]`).boundingBox(),
+    page.locator(`[aria-label="${translate("pages.filter.updatedAfter")}"]`).boundingBox(),
+    page.locator(`[aria-label="${translate("pages.order")}"]`).boundingBox(),
+  ]);
+  check(filterControls.every(Boolean), "Wiki filters must all render controls");
+  check(filterControls.every((box) => Math.abs(box!.height - filterControls[0]!.height) <= 1 && Math.abs(box!.y + box!.height - (filterControls[0]!.y + filterControls[0]!.height)) <= 1), `Wiki filters must have equal heights and aligned baselines: ${JSON.stringify(filterControls)}`);
+  for (const theme of ["light", "dark"] as const) {
+    await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+    await page.screenshot({ path: `${shots}/wiki-list-after-${theme}-1440.png`, fullPage: true });
+  }
+  await page.goto(`${web}/${slug}/wiki/${handbook.id}`);
+  await page.locator(".ProseMirror").waitFor();
+  const emptyEditorBox = await page.getByTestId("wiki-editor").boundingBox();
+  check(emptyEditorBox !== null && emptyEditorBox.height <= 112, `the empty Wiki editor must reserve a compact writing area before Attachments, found ${emptyEditorBox?.height}px`);
+  for (const theme of ["light", "dark"] as const) {
+    await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+    await page.screenshot({ path: `${shots}/wiki-page-after-${theme}-1440.png`, fullPage: true });
+  }
+  const attachmentsDisclosure = page.getByTestId("wiki-attachments-disclosure");
+  const attachmentsToggle = page.getByTestId("wiki-attachments-toggle");
+  const attachmentsPanel = page.getByTestId("wiki-attachments");
+  check(await attachmentsDisclosure.evaluate((node) => !(node as HTMLDetailsElement).open), "Wiki attachments must start collapsed beneath the editor");
+  await attachmentsToggle.click();
+  check(await attachmentsPanel.isVisible(), "expanding Wiki attachments must reveal the attachment panel");
+  await attachmentsToggle.click();
+  check(!(await attachmentsPanel.isVisible()), "collapsing Wiki attachments must hide the secondary section");
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+  await page.goto(`${web}/${slug}/wiki?tab=public`);
+  await page.getByRole("main").getByRole("link", { name: "Handbook", exact: true }).waitFor();
+  await page.getByRole("tab", { name: translate("pages.tab.all") }).click();
+  await page.waitForFunction(() => new URLSearchParams(location.search).get("tab") === "all");
+  await chooseWikiSelect(translate("pages.filter.owner"), "Wiki Tester");
+  await page.waitForFunction(() => Boolean(new URLSearchParams(location.search).get("owner")));
+  await chooseWikiSelect(translate("pages.order"), translate("pages.order.name"));
+  await page.waitForFunction(() => new URLSearchParams(location.search).get("order") === "name");
+  check(page.url().includes("tab=all") && page.url().includes("owner=") && page.url().includes("order=name"), "Wiki list controls must be reflected in the URL");
+  await page.reload();
+  await page.getByRole("main").getByRole("link", { name: "Handbook", exact: true }).waitFor();
+  check(await page.getByRole("tab", { name: translate("pages.tab.all") }).getAttribute("aria-selected") === "true", "Wiki tab must survive reload");
+  check((await page.getByRole("combobox", { name: translate("pages.filter.owner"), exact: true }).innerText()).trim() === "Wiki Tester", "Wiki owner filter must survive reload");
+  check((await page.getByRole("combobox", { name: translate("pages.order"), exact: true }).innerText()).trim() === translate("pages.order.name"), "Wiki order must survive reload");
+  await chooseWikiSelect(translate("pages.filter.owner"), translate("pages.filter.anyOwner"));
+  console.log("wiki-pages ok: Workspace Wiki shows workspace pages with unclipped title text");
 
   // Scope moves show their impact before changing the page or its subtree.
   const moveRoot = await call<{ id: string }>("create_wiki_page", { workspaceId, projectId: project.id, title: "Move guide" });
@@ -196,24 +261,10 @@ try {
   check((await call<{ collectionId: string | null }>("get_wiki_page", { pageId: alpha.id }))?.collectionId === elsewhere.id, "accepting the Collection confirmation must move the page");
   console.log("wiki-pages ok: cross-Collection move asks for confirmation");
 
-  // Wiki lists every page; Pages of the project lists none yet.
+  // Workspace Wiki contains only workspace documents; project Pages are shown only in their project.
   await page.goto(`${web}/${slug}/wiki`);
-  await page.getByRole("main").getByRole("link", { name: "Handbook" }).waitFor();
+  await page.getByRole("main").getByRole("link", { name: "Handbook", exact: true }).waitFor();
   await page.getByRole("main").getByRole("link", { name: "Runbook" }).waitFor();
-  // List state is addressable, so refreshing preserves the selected tab, filters, and order.
-  await page.getByRole("tab", { name: translate("pages.tab.all") }).click();
-  await page.waitForFunction(() => new URLSearchParams(location.search).get("tab") === "all");
-  await page.getByLabel(translate("pages.filter.owner")).selectOption({ label: "Wiki Tester" });
-  await page.waitForFunction(() => Boolean(new URLSearchParams(location.search).get("owner")));
-  await page.getByLabel(translate("pages.order")).selectOption("name");
-  await page.waitForFunction(() => new URLSearchParams(location.search).get("order") === "name");
-  check(page.url().includes("tab=all") && page.url().includes("owner=") && page.url().includes("order=name"), "Wiki list controls must be reflected in the URL");
-  await page.reload();
-  await page.getByRole("main").getByRole("link", { name: "Handbook" }).waitFor();
-  check(await page.getByRole("tab", { name: translate("pages.tab.all") }).getAttribute("aria-selected") === "true", "Wiki tab must survive reload");
-  check(await page.getByLabel(translate("pages.filter.owner")).inputValue() !== "", "Wiki owner filter must survive reload");
-  check(await page.getByLabel(translate("pages.order")).inputValue() === "name", "Wiki order must survive reload");
-  await page.getByLabel(translate("pages.filter.owner")).selectOption("");
 
   // A different workspace member creates a Wiki page; the open list refreshes from its SSE signal.
   const secondaryEmail = `e2e-collab-${slug}@example.test`;
@@ -236,21 +287,21 @@ try {
   const createResponse = await secondary.request.post(`${api}/actions/create_wiki_page`, { data: { workspaceId, title: "Created by collaborator" } });
   check(createResponse.ok, "a second workspace member must be able to create a Wiki page");
   await page.getByRole("main").getByRole("link", { name: "Created by collaborator" }).waitFor({ timeout: 10_000 });
-  await page.getByLabel(translate("pages.filter.owner")).selectOption({ label: "Wiki Collaborator" });
+  await chooseWikiSelect(translate("pages.filter.owner"), "Wiki Collaborator");
   await page.getByRole("main").getByRole("link", { name: "Created by collaborator" }).waitFor();
-  await page.getByRole("main").getByRole("link", { name: "Handbook" }).waitFor({ state: "detached" });
-  check(await page.getByRole("main").getByRole("link", { name: "Handbook" }).count() === 0, "Owner filter must hide pages owned by other people");
-  await page.getByLabel(translate("pages.filter.owner")).selectOption("");
+  await page.getByRole("main").getByRole("link", { name: "Handbook", exact: true }).waitFor({ state: "detached" });
+  check(await page.getByRole("main").getByRole("link", { name: "Handbook", exact: true }).count() === 0, "Owner filter must hide pages owned by other people");
+  await chooseWikiSelect(translate("pages.filter.owner"), translate("pages.filter.anyOwner"));
   await page.getByLabel(translate("pages.filter.createdAfter")).fill("2999-01-01");
-  await page.getByRole("main").getByRole("link", { name: "Handbook" }).waitFor({ state: "detached" });
+  await page.getByRole("main").getByRole("link", { name: "Handbook", exact: true }).waitFor({ state: "detached" });
   await page.getByText(translate("wiki.empty")).waitFor();
   await page.getByLabel(translate("pages.filter.createdAfter")).fill("");
-  await page.getByRole("main").getByRole("link", { name: "Handbook" }).waitFor();
+  await page.getByRole("main").getByRole("link", { name: "Handbook", exact: true }).waitFor();
   await secondaryContext.close();
   console.log("wiki-pages ok: collaborator list updates without reload");
   await page.goto(`${web}/${slug}/projects/MOB/pages`);
   await page.getByText(translate("pages.empty")).waitFor();
-  check(await page.getByRole("main").getByRole("link", { name: "Handbook" }).count() === 0, "Pages must start empty");
+  check(await page.getByRole("main").getByRole("link", { name: "Handbook", exact: true }).count() === 0, "Pages must start empty");
   await page.screenshot({ path: `${shots}/pages-empty-1440.png` });
 
   // Pages and Wiki lists are separate scopes; seed shared and private Pages for list controls.
@@ -259,32 +310,39 @@ try {
   await call("create_wiki_page", { workspaceId, projectId: project.id, title: "Z Private draft", access: "private" });
   await Bun.sleep(1_100);
   await call("update_wiki_page", { pageId: sharedPage.id, title: "A Project handbook" });
-  await page.getByRole("main").getByRole("link", { name: "A Project handbook" }).waitFor();
+  await page.goto(`${web}/${slug}/wiki`);
+  check(await page.getByRole("main").getByRole("link", { name: "A Project handbook", exact: true }).count() === 0, "Workspace Wiki must not list a Page tied to a project");
+  await page.goto(`${web}/${slug}/projects/MOB/pages?tab=private`);
+  await page.getByRole("main").getByRole("link", { name: "Z Private draft", exact: true }).waitFor();
   await page.getByRole("tab", { name: translate("pages.tab.all") }).click();
   await page.waitForFunction(() => new URLSearchParams(location.search).get("tab") === "all");
-  await page.getByLabel(translate("pages.filter.owner")).selectOption({ label: "Wiki Tester" });
+  await page.getByRole("main").getByRole("link", { name: "A Project handbook" }).waitFor();
+  await chooseWikiSelect(translate("pages.filter.owner"), "Wiki Tester");
   await page.waitForFunction(() => Boolean(new URLSearchParams(location.search).get("owner")));
   await page.getByLabel(translate("pages.filter.createdAfter")).fill("2020-01-01");
   await page.waitForFunction(() => new URLSearchParams(location.search).get("createdAfter") === "2020-01-01");
   await page.getByLabel(translate("pages.filter.updatedAfter")).fill("2020-01-01");
   await page.waitForFunction(() => new URLSearchParams(location.search).get("updatedAfter") === "2020-01-01");
-  await page.getByLabel(translate("pages.order")).selectOption("updated");
+  await chooseWikiSelect(translate("pages.order"), translate("pages.order.updated"));
   await page.waitForFunction(() => new URLSearchParams(location.search).get("order") === "updated");
   check(page.url().includes("tab=all") && page.url().includes("createdAfter=2020-01-01") && page.url().includes("updatedAfter=2020-01-01") && page.url().includes("order=updated"), "Pages filters and order must be reflected in the URL");
   await page.reload();
   await page.getByRole("main").getByRole("link", { name: "A Project handbook" }).waitFor();
-  check(await page.getByLabel(translate("pages.filter.owner")).inputValue() !== "", "Pages owner filter must survive reload");
+  check((await page.getByRole("combobox", { name: translate("pages.filter.owner"), exact: true }).innerText()).trim() === "Wiki Tester", "Pages owner filter must survive reload");
   check(await page.getByLabel(translate("pages.filter.createdAfter")).inputValue() === "2020-01-01", "Pages created date filter must survive reload");
   check(await page.getByLabel(translate("pages.filter.updatedAfter")).inputValue() === "2020-01-01", "Pages updated date filter must survive reload");
-  check(await page.getByLabel(translate("pages.order")).inputValue() === "updated", "Pages order must survive reload");
+  check((await page.getByRole("combobox", { name: translate("pages.order"), exact: true }).innerText()).trim() === translate("pages.order.updated"), "Pages order must survive reload");
   const projectPageList = page.getByRole("region", { name: translate("projectNav.pages") });
   const listedPages = () => projectPageList.locator("ul.grid > li a").allTextContents();
   check((await listedPages())[0] === "A Project handbook", "Updated order must put the most recently edited Page first");
-  await page.getByLabel(translate("pages.order")).selectOption("created");
+  await chooseWikiSelect(translate("pages.order"), translate("pages.order.created"));
   await page.waitForFunction(() => new URLSearchParams(location.search).get("order") === "created");
-  check((await listedPages())[0] === "Z Private draft", "Created order must put the newest Page first");
-  await page.getByLabel(translate("pages.order")).selectOption("name");
+  await page.waitForFunction(() => document.querySelector('[aria-label="Pages"] ul.grid > li a')?.textContent === "Z Private draft");
+  const createdOrderedPages = await listedPages();
+  check(createdOrderedPages[0] === "Z Private draft", `Created order must put the newest Page first: ${JSON.stringify(createdOrderedPages)}`);
+  await chooseWikiSelect(translate("pages.order"), translate("pages.order.name"));
   await page.waitForFunction(() => new URLSearchParams(location.search).get("order") === "name");
+  await page.waitForFunction(() => document.querySelector('[aria-label="Pages"] ul.grid > li a')?.textContent === "A Project handbook");
   const nameOrderedPages = await listedPages();
   check(nameOrderedPages[0] === "A Project handbook", `Name order must sort Pages alphabetically: ${JSON.stringify(nameOrderedPages)}`);
   await page.getByLabel(translate("pages.filter.createdAfter")).fill("2999-01-01");
@@ -305,17 +363,18 @@ try {
   await page.getByRole("main").getByRole("link", { name: "A Project handbook" }).waitFor();
   await page.goto(`${web}/${slug}/wiki`);
   await page.getByRole("main").getByRole("link", { name: "Runbook" }).waitFor();
-  await page.getByRole("main").getByRole("link", { name: "Handbook" }).waitFor();
+  await page.getByRole("main").getByRole("link", { name: "Handbook", exact: true }).waitFor();
+  check(await page.getByRole("main").getByRole("link", { name: "A Project handbook", exact: true }).count() === 0, "Wiki list All must contain workspace pages only");
   console.log("wiki-pages ok: Wiki and Pages list tabs, filters, and order");
   await page.goto(`${web}/${slug}/projects/MOB/pages`);
   // Move Handbook from the Wiki into the project's Pages: it leaves the Wiki because each document has one scope.
   await page.getByLabel(translate("pages.linkExisting")).selectOption({ label: "Handbook" });
-  await page.getByRole("main").getByRole("link", { name: "Handbook" }).waitFor();
+  await page.getByRole("main").getByRole("link", { name: "Handbook", exact: true }).waitFor();
   check(await page.getByRole("main").getByRole("link", { name: "Runbook" }).count() === 0, "Pages must show only linked pages");
   await page.goto(`${web}/${slug}/wiki`);
   await page.getByRole("main").getByRole("link", { name: "Runbook" }).waitFor();
-  check(await page.getByRole("main").getByRole("link", { name: "Handbook" }).count() === 0, "a Page must leave the Wiki after moving to a project");
-  console.log("wiki-pages ok: Wiki and project Pages follow document scope");
+  check(await page.getByRole("main").getByRole("link", { name: "Handbook", exact: true }).count() === 0, "a Page must leave the Wiki after moving to a project");
+  console.log("wiki-pages ok: a Page leaves Workspace Wiki after moving into a project");
 
   // Add page from Pages creates and links; the editor opens in project context.
   await page.goto(`${web}/${slug}/projects/MOB/pages`);
@@ -541,8 +600,8 @@ try {
   await page.waitForURL(new RegExp(`/${slug}/wiki/[0-9a-f-]+$`));
   await page.goto(`${web}/${slug}/wiki`);
   await page.getByRole("main").getByRole("link", { name: "Untitled" }).waitFor();
-  check(await page.getByRole("main").getByRole("link", { name: "Handbook" }).count() === 0, "the Page remains in its project when another Page moves back to Wiki");
-  console.log("wiki-pages ok: Page and Wiki page keep their scopes");
+  check(await page.getByRole("main").getByRole("link", { name: "Handbook", exact: true }).count() === 0, "the Page remains in its project when another Page moves back to Wiki");
+  console.log("wiki-pages ok: a Page stays in its project when another page moves to Wiki");
 
   // Deleting a Page asks first: dismissing keeps it, accepting removes it.
   await call("create_wiki_page", { workspaceId, title: "Disposable" });

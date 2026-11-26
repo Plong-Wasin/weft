@@ -104,9 +104,9 @@ function TypeRows({ project, item, canWrite, people, onSaved }: { project: Proje
 }
 
 function PropertyRow({ icon, label, children }: { icon: React.ReactNode; label: string; children: React.ReactNode }) {
-  return <div className="grid min-h-8 grid-cols-[5.75rem_minmax(0,1fr)] items-center gap-2 rounded-lg px-1 text-13 transition-colors hover:bg-accent">
+  return <div data-property-row className="grid min-h-8 grid-cols-[minmax(6.5rem,0.85fr)_minmax(0,1.15fr)] items-center gap-2 rounded-lg px-1 text-13 transition-colors hover:bg-accent">
     <span className="flex min-w-0 items-center gap-2 text-muted-foreground">{icon}<span className="truncate" title={label}>{label}</span></span>
-    <div className="flex min-w-0 flex-nowrap items-center gap-1">{children}</div>
+    <div className="flex min-w-0 flex-nowrap items-center gap-1 [&>*]:min-w-0 [&>div]:w-full [&>div>button]:w-full [&>div>button]:justify-start">{children}</div>
   </div>;
 }
 
@@ -336,6 +336,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       <div className="hidden items-center gap-2 sm:flex">
         <Button type="button" className={iconButton} aria-label={t("workItems.copyLink")} title={t("workItems.copyLink")} onClick={() => void copy()}><Link2 aria-hidden size={15} /></Button>
         {mayArchive && !isArchived && eligible && <Button type="button" className={iconButton} aria-label={t("workItems.archive")} title={t("workItems.archive")} onClick={() => void archiveOrRestore("archive_work_item")}><Archive aria-hidden size={15} /></Button>}
+        {canWrite && <span aria-hidden className="mx-1 h-5 border-l border-border" />}
         {canWrite && <Button type="button" className={`${iconButton} hover:text-destructive`} aria-label={t("workItems.delete")} title={t("workItems.delete")} onClick={() => void remove()}><Trash2 aria-hidden size={15} /></Button>}
       </div>
     </div>}
@@ -390,6 +391,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
           onToggle={(id, on) => void change({ assigneeIds: on ? [...assignees, id] : assignees.filter((other) => other !== id) })} />,
     due: <DateChip label={t("workItems.dueDate")} field="due" range={{ startDate: item.startDate, dueDate: item.dueDate }} stateGroup={stateOf?.group} readOnly={!canWrite} onChange={(dates) => void change(dates)} />,
   };
+  const TitleHeading = mode === "page" ? "h1" : "h2";
   // The content is one column in order. The peek splits it: the part above the Timeline, then Properties, then the Timeline and what follows it.
   const mainTop = <>
     {isArchived &&<div role="status" className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-muted px-3 py-2 text-13 text-muted-foreground">
@@ -397,11 +399,13 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       {mayArchive && <Button type="button" className="secondary ml-auto flex items-center gap-1.5" onClick={() => void archiveOrRestore("restore_work_item")}><ArchiveRestore aria-hidden size={14} />{t("workItems.restore")}</Button>}
     </div>}
     <div className="grid gap-2">
-      {mode === "page" ? <h1 className="m-0 text-14 font-medium text-muted-foreground">{item.displayId}</h1> : <h2 className="m-0 text-14 font-medium text-muted-foreground">{item.displayId}</h2>}
-      <Textarea ref={titleRef} rows={1} aria-label={t("workItems.titleField")} value={title} maxLength={500} readOnly={!canWrite} className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-24 font-semibold leading-tight text-foreground [overflow-wrap:anywhere]"
+      {mode === "peek" && <p className="m-0 text-13 text-muted-foreground">{item.displayId}</p>}
+      <TitleHeading aria-label={title} className="m-0 text-2xl font-semibold leading-tight text-foreground">
+      <Textarea ref={titleRef} rows={1} aria-label={t("workItems.titleField")} value={title} maxLength={500} readOnly={!canWrite} className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-2xl font-semibold leading-tight text-foreground md:text-2xl [overflow-wrap:anywhere]"
         onChange={(event) => setTitle(event.target.value)}
         onBlur={() => { const next = title.trim(); if (!next) setTitle(item.title); else if (next !== item.title) void change({ title: next }); }}
         onKeyDown={(event) => { handleImeSafeEnter(event.nativeEvent, () => event.currentTarget.blur()); }} />
+      </TitleHeading>
     </div>
     {/* Beside the description (wide page with the panel shown) the Properties panel already holds these, so the bar is for the other layouts. */}
     <div role="group" aria-label={t("workItems.quickProperties")} data-quick-properties className={`max-sm:grid max-sm:grid-cols-2 flex flex-wrap items-center gap-2 ${mode === "page" && propertiesOpen ? "lg:hidden" : ""} ${mode === "peek" ? "@[800px]:hidden" : ""}`}>
@@ -416,7 +420,6 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     {lastDescriptionEdit && <Button data-testid="description-last-edited" type="button" className="justify-self-start bg-transparent p-0 text-13 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => void openVersions()}>
       {t("workItems.lastEditedBy").replace("{name}", lastDescriptionEdit.name).replace("{time}", relativeTime(lastDescriptionEdit.at))} ▾
     </Button>}
-    <OutlinksPanel kind="work-item" id={item.id} run={action} refreshKey={descriptionOutlinksKey} updating={descriptionSaveState === "saving" || descriptionSaveState === "updating"} onRefreshComplete={onDescriptionOutlinksRefreshComplete} />
     <div role="group" className="flex w-full min-w-0 max-w-full flex-wrap gap-2 max-sm:grid max-sm:grid-cols-[auto_auto] max-sm:justify-items-start max-sm:[&>button]:whitespace-nowrap" aria-label={t("workItems.actions")}>
       {canWrite && <>
         <Button type="button" className="secondary max-sm:min-h-11" onClick={() => openAction("subItems")}>{t("workItems.addSubItemAction")}</Button>
@@ -436,13 +439,17 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       </form>}
     </>)}
     {section("relations", t("relations.title"), sectionCounts.relations, <RelationsPanel workspaceSlug={workspace.slug} workItemId={item.id} candidates={projectItems.filter((candidate) => candidate.id !== item.id)} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "relations"} onClose={() => setActiveForm(null)} onCount={countCallbacks.relations} />)}
-    {section("links", t("webLinks.title"), sectionCounts.links, <WebLinksPanel personName={personName} workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "links"} onClose={() => setActiveForm(null)} onCount={countCallbacks.links} />)}
     {integrationsOn && section("pullRequests", t("pullRequests.title"), sectionCounts.pullRequests, <PullRequestsPanel workItemId={item.id} action={action} onCount={countCallbacks.pullRequests} />)}
     {section("attachments", t("assets.title"), sectionCounts.attachments, <AttachmentsPanel workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "attachments"} onCount={countCallbacks.attachments} pickerRef={attachmentPicker} />)}
     <div className={sectionClass}><RunsPanel workItemId={item.id} workspaceId={workspace.id} canControl={canWrite} selfId={selfId} isAdmin={project?.role === "Admin"} action={action} onActivity={() => { setTimelineKey((key) => key + 1); void load(); }} /></div>
   </>;
   const mainTail = <>
     <div className={`${sectionClass} mt-2 border-t border-border pt-6`}><TimelinePanel workspaceId={workspace.id} workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canWrite} linkBase={itemPath} refreshKey={timelineKey} action={action} actionResult={actionResult} onChange={() => void load()} /></div>
+    <details data-work-item-links className="grid gap-3 border-t border-border pt-4">
+      <summary className="cursor-pointer text-15 font-semibold text-foreground">{t("outlinks.title")}</summary>
+      <OutlinksPanel kind="work-item" id={item.id} run={action} compact refreshKey={descriptionOutlinksKey} updating={descriptionSaveState === "saving" || descriptionSaveState === "updating"} onRefreshComplete={onDescriptionOutlinksRefreshComplete} />
+    </details>
+    {section("links", t("webLinks.title"), sectionCounts.links, <WebLinksPanel personName={personName} workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "links"} onClose={() => setActiveForm(null)} onCount={countCallbacks.links} />)}
     {note && <p role="alert" className="text-destructive">{note}</p>}
     {versionsOpen && <div role="presentation" className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setVersionsOpen(false); }}>
       <section role="dialog" aria-modal="true" aria-labelledby="description-versions-title" className="grid max-h-[80dvh] w-full max-w-xl gap-4 overflow-auto rounded-2xl bg-card p-5 shadow-xl">
@@ -461,7 +468,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     const panelId = `work-item-props-${item.id}-${key}`;
     return <section data-props-section={key} className="grid content-start gap-3">
       <h3 className="m-0 text-13 font-medium">
-        <Button type="button" aria-expanded={open} aria-controls={panelId} className="flex w-full items-center gap-1.5 rounded-md bg-transparent p-0 text-left text-13 font-medium text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => setSectionOpen(key, !open)}>
+        <Button type="button" aria-expanded={open} aria-controls={panelId} className="flex w-full justify-start items-center gap-1.5 rounded-md bg-transparent p-0 text-left text-13 font-medium text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => setSectionOpen(key, !open)}>
           <ChevronDown aria-hidden size={15} className={`shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} />{t(`workItems.properties.${key}`)}
         </Button>
       </h3>
@@ -523,7 +530,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     {mode === "peek" && <div className="flex flex-wrap gap-2 border-t border-border pt-4" data-peek-actions>
       <Button type="button" className="secondary flex items-center gap-1.5 whitespace-nowrap" onClick={() => void copy()}><Link2 aria-hidden size={14} />{t("workItems.copyLink")}</Button>
       {mayArchive && !isArchived && eligible && <Button type="button" className="secondary flex items-center gap-1.5 whitespace-nowrap" onClick={() => void archiveOrRestore("archive_work_item")}><Archive aria-hidden size={14} />{t("workItems.archive")}</Button>}
-      {canWrite && <Button type="button" className="secondary flex items-center gap-1.5 whitespace-nowrap hover:text-destructive" onClick={() => void remove()}><Trash2 aria-hidden size={14} />{t("workItems.delete")}</Button>}
+      {canWrite && <Button type="button" variant="secondary" className="flex items-center gap-1.5 whitespace-nowrap text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => void remove()}><Trash2 aria-hidden size={14} />{t("workItems.delete")}</Button>}
     </div>}
   </aside>;
 

@@ -486,7 +486,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const gridColumns = columnTracks.join(" ");
   const oneLine = listWidth >= widthFor(shownProperties);
   const columnStyle = { "--cols": gridColumns } as React.CSSProperties;
-  const propertyCell = (item: Item, property: (typeof allListProperties)[number], mobile = false) => <span key={property} className={`flex min-w-0 items-center justify-end whitespace-nowrap sm:order-6 ${mobile ? "rounded-md bg-muted px-1.5 py-0.5 text-11 text-muted-foreground [&_button]:px-1 [&_button]:py-0 [&_button]:text-11" : ""} ${isEmptyProperty(item, property) ? "[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-hover/row:pointer-events-auto [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:pointer-events-auto" : ""} [&>*]:max-w-full [&_*]:min-w-0 [&_svg]:shrink-0`}>
+  const propertyCell = (item: Item, property: (typeof allListProperties)[number], mobile = false) => <span key={property} className={`flex min-w-0 items-center justify-end whitespace-nowrap sm:order-6 ${mobile ? "rounded-md bg-muted px-1.5 text-11 text-muted-foreground [&_button]:px-1 [&_button]:py-0 [&_button]:text-11" : ""} ${isEmptyProperty(item, property) ? "[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-hover/row:pointer-events-auto [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:pointer-events-auto" : ""} [&>*]:max-w-full [&_*]:min-w-0 [&_svg]:shrink-0`}>
     {cellOf(item, property, false, true)}
   </span>;
   const rowOf = (item: Item) => {
@@ -494,13 +494,13 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     const rowActionCell = rowAction?.(item);
     const phoneProperties = allListProperties.filter((property) => !isEmptyProperty(item, property));
     const priorityEmpty = isEmptyProperty(item, "priority");
-    return <li key={item.id} data-testid={`row-${item.displayId}`} className="group/row border-b border-border px-1 py-0.5">
-      <div style={columnStyle} className={`mx-1 grid min-w-0 grid-cols-1 gap-y-1 rounded-lg px-3 py-1 ${selected.includes(item.id) ? "bg-background" : "bg-transparent hover:bg-accent"} sm:grid-cols-[var(--cols)] sm:gap-x-2 sm:gap-y-0 sm:py-0`}>
-        <div className="flex min-w-0 items-center gap-2 sm:contents">
+    return <li key={item.id} data-testid={`row-${item.displayId}`} data-list-row className="work-item-list-row group/row border-b border-border px-1 py-0.5">
+      <div style={columnStyle} className={`mx-1 grid min-w-0 grid-cols-1 gap-y-0 rounded-lg px-3 py-1 ${selected.includes(item.id) ? "bg-background" : "bg-transparent hover:bg-accent"} sm:grid-cols-[var(--cols)] sm:gap-x-2 sm:gap-y-0 sm:py-0`}>
+        <div className="flex min-h-10 min-w-0 items-center gap-2 sm:contents">
           <span className="flex size-4 shrink-0 items-center justify-center sm:order-1">{checkbox ? React.cloneElement(checkbox, { className: `${checkbox.props.className ?? ""} rounded-sm` }) : <span aria-hidden />}</span>
-          <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="line-clamp-2 min-w-0 flex-1 text-14 font-medium text-foreground sm:order-5 sm:truncate">{item.title}</Link>
+          <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} title={item.title} className="min-w-0 flex-1 truncate text-14 font-medium text-foreground sm:order-5">{item.title}</Link>
         </div>
-        <div className="flex min-w-0 flex-wrap items-center justify-end gap-1 [@media(pointer:coarse)]:gap-2 sm:contents max-sm:flex-nowrap max-sm:justify-start max-sm:overflow-x-auto">
+        <div className="flex min-h-10 min-w-0 flex-wrap items-center justify-end gap-1 [@media(pointer:coarse)]:gap-2 sm:contents max-sm:flex-nowrap max-sm:justify-start max-sm:overflow-x-auto">
           {leadingProperties.includes("priority") && <span className={`flex min-w-7 shrink-0 items-center justify-center sm:order-2 ${priorityEmpty ? "[@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/row:pointer-events-auto [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:pointer-events-auto [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100" : ""}`}>{cellOf(item, "priority", false, true, true)}</span>}
           {shows("id") ? <span title={item.displayId} className="min-w-0 shrink-0 truncate whitespace-nowrap text-11 tabular-nums text-muted-foreground sm:order-3 sm:text-12">{item.displayId}</span> : <span aria-hidden className="sm:order-3" />}
           {leadingProperties.includes("state") && <span className="flex min-w-7 shrink-0 items-center justify-center sm:order-4">{cellOf(item, "state", false, true, true)}</span>}
@@ -656,7 +656,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     <aside aria-label={t("layout.gantt.undated")} className="mt-2 rounded-lg bg-muted p-3"><h3 className="mb-2 text-13 font-medium">{t("layout.gantt.undated")}</h3>{gantt.undated.length ? <ul className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">{gantt.undated.map((item) => <li key={item.id}><Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="block rounded-md px-2 py-1.5 text-13 text-foreground hover:bg-accent">{item.title}</Link></li>)}</ul> : <p className="text-13 text-muted-foreground">{t("layout.gantt.noUndated")}</p>}</aside>
   </section>;
 
-  const toolbar = <div className="flex flex-wrap items-center gap-2 [@media(max-height:480px)]:[&_span]:sr-only [@media(pointer:coarse)]:[&_button]:min-h-11 [@media(pointer:coarse)]:[&_label]:min-h-11">
+  const toolbar = <div data-testid="work-items-toolbar" className="flex flex-wrap items-center gap-2 [@media(max-height:480px)]:[&_span]:sr-only [@media(pointer:coarse)]:[&_button]:min-h-11 [@media(pointer:coarse)]:[&_label]:min-h-11">
     <div role="group" aria-label={t("layout.switch")} className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
       {(["list", "board", "spreadsheet", "calendar", "gantt"] as const).map((layout) => { const Icon = layout === "list" ? List : layout === "board" ? Columns3 : layout === "spreadsheet" ? Table2 : layout === "calendar" ? CalendarDays : BarChart3; return <Button key={layout} type="button" aria-pressed={params.layout === layout} aria-label={t(`layout.${layout}`)} title={t(`layout.${layout}`)}
         className={`inline-flex items-center rounded-md p-1.5 max-sm:min-h-9 max-sm:min-w-9 max-sm:flex-col max-sm:justify-center max-sm:gap-0.5 ${params.layout === layout ? "bg-card text-foreground shadow-sm" : "bg-transparent text-muted-foreground hover:bg-accent"} hover:text-foreground`} onClick={() => update({ layout })}><Icon aria-hidden size={16} /><span className="hidden text-11 leading-none max-sm:inline">{t(`layout.${layout}`)}</span></Button>; })}
@@ -734,8 +734,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
         const open = empty ? expandedEmpty.includes(group.key) || quick === group.key : !collapsed.includes(group.key);
         const name = params.group === "none" ? "" : groupLabel(group.key);
         return <section key={group.key} aria-label={params.group === "none" ? undefined : name}>
-          {params.group !== "none" && <div className="mx-1 my-1 flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-1.5">
-            <Button type="button" aria-expanded={open} aria-label={`${t("layout.toggleGroup")}: ${name}`} className="flex flex-1 items-center gap-2 bg-transparent p-0 text-left text-14 font-medium text-foreground hover:bg-transparent"
+          {params.group !== "none" && <div className="mx-1 my-1 flex items-center gap-2 border-b border-border bg-muted px-3 py-1.5">
+            <Button type="button" aria-expanded={open} aria-label={`${t("layout.toggleGroup")}: ${name}`} className="flex flex-1 items-center justify-start gap-2 bg-transparent p-0 text-left text-14 font-medium text-foreground hover:bg-transparent"
               onClick={() => empty ? (open ? (setExpandedEmpty(expandedEmpty.filter((key) => key !== group.key)), quick === group.key && setQuick(null)) : setExpandedEmpty([...expandedEmpty, group.key])) : setCollapsed(open ? [...collapsed, group.key] : collapsed.filter((key) => key !== group.key))}>
               {open ? <ChevronDown aria-hidden size={14} className="text-muted-foreground" /> : <ChevronRight aria-hidden size={14} className="text-muted-foreground" />}
               {groupIcon(group.key)}<span>{name}</span><span className="text-13 font-normal text-muted-foreground">{formatNumber(group.items.length)}</span>

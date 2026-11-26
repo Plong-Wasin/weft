@@ -128,8 +128,12 @@ try {
     const moduleTrigger = firstRow.getByRole("button", { name: /^Modules/ }).first();
     check("touch-empty-module-slot-hidden", !(await moduleTrigger.isVisible()), `empty Module control remains visible at ${viewport.suffix}`);
     const stateTrigger = firstRow.getByRole("button", { name: /^State:/ }).first();
-    const stateBox = await stateTrigger.boundingBox();
-    check("touch-filled-chip-target-44px", !!stateBox && stateBox.height >= 44, `State target is ${stateBox?.height ?? 0}px at ${viewport.suffix}`);
+    const stateMetrics = await stateTrigger.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const hitArea = getComputedStyle(element, "::before");
+      return { visualHeight: rect.height, hitHeight: parseFloat(hitArea.height), hitWidth: parseFloat(hitArea.width) };
+    });
+    check("touch-filled-chip-target-44px", stateMetrics.visualHeight <= 36 && stateMetrics.hitHeight >= 44 && stateMetrics.hitWidth >= 44, `State chip metrics at ${viewport.suffix}: ${JSON.stringify(stateMetrics)}`);
     const rowBox = await firstRow.boundingBox();
     check("touch-row-present", !!rowBox, `seed row has no visible bounds at ${viewport.suffix}`);
     // The last property slot can contain Assignee at wider widths, so the trailing edge is not reliably blank.

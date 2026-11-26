@@ -435,6 +435,40 @@ try {
   await mobilePage.goto(mobileListUrl);
   const mobileRow = mobilePage.getByTestId("row-MOB-1");
   await mobileRow.getByRole("link", { name: "Alpha" }).waitFor();
+  const rowCheckbox = mobileRow.getByRole("checkbox");
+  const selectShown = mobilePage.getByRole("checkbox", { name: translate("bulk.selectAll") });
+  const checkboxMetrics = await Promise.all([rowCheckbox, selectShown].map(async (checkbox) => {
+    const box = await checkbox.boundingBox();
+    return box ? { width: box.width, height: box.height } : null;
+  }));
+  check(checkboxMetrics.every((box) => !!box && box.width <= 24 && box.height <= 24), `390px touch checkboxes stay visually at or below 24px: ${JSON.stringify(checkboxMetrics)}`);
+  const checkboxHitTargets = await Promise.all([rowCheckbox, selectShown].map((checkbox) => checkbox.evaluate((element) => {
+    const before = getComputedStyle(element, "::before");
+    return { width: parseFloat(before.width), height: parseFloat(before.height) };
+  })));
+  check(checkboxHitTargets.every((box) => box.width >= 44 && box.height >= 44), `390px touch checkboxes retain 44px invisible hit areas: ${JSON.stringify(checkboxHitTargets)}`);
+  const cycleChip = mobileRow.getByRole("button", { name: `${translate("workItems.cycle")}: Sprint 17` });
+  const cycleChipMetrics = await cycleChip.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const target = getComputedStyle(element, "::before");
+    return { width: rect.width, height: rect.height, targetWidth: parseFloat(target.width), targetHeight: parseFloat(target.height) };
+  });
+  check(cycleChipMetrics.height <= 36 && cycleChipMetrics.targetWidth >= 44 && cycleChipMetrics.targetHeight >= 44, `390px property chips stay visually compact with 44px touch targets: ${JSON.stringify(cycleChipMetrics)}`);
+  const rowTitleBox = await mobileRow.getByRole("link", { name: "Alpha" }).boundingBox();
+  const rowCheckboxBox = await rowCheckbox.boundingBox();
+  check(!!rowTitleBox && !!rowCheckboxBox && (rowTitleBox.x >= rowCheckboxBox.x + rowCheckboxBox.width || rowTitleBox.y >= rowCheckboxBox.y + rowCheckboxBox.height || rowTitleBox.x + rowTitleBox.width <= rowCheckboxBox.x || rowTitleBox.y + rowTitleBox.height <= rowCheckboxBox.y), `390px title does not overlap its checkbox: ${JSON.stringify({ title: rowTitleBox, checkbox: rowCheckboxBox })}`);
+  const toolbar = mobilePage.getByTestId("work-items-toolbar");
+  const addWorkItem = toolbar.getByRole("button", { name: translate("workItems.addNew"), exact: true });
+  const saveView = toolbar.getByRole("button", { name: translate("views.saveAs") });
+  const settingsLink = toolbar.getByRole("link", { name: translate("projects.settings"), exact: true });
+  const [addBox, saveBox, settingsControlBox] = await Promise.all([addWorkItem.boundingBox(), saveView.boundingBox(), settingsLink.boundingBox()]);
+  check(!!addBox && !!saveBox && !!settingsControlBox && Math.abs(addBox.y + addBox.height / 2 - (saveBox.y + saveBox.height / 2)) <= 1 && Math.abs(addBox.y + addBox.height / 2 - (settingsControlBox.y + settingsControlBox.height / 2)) <= 1, `390px Add work item, Save view and Settings stay in one control row without an orphan: ${JSON.stringify({ add: addBox, save: saveBox, settings: settingsControlBox })}`);
+  for (const theme of ["light", "dark"] as const) {
+    await mobilePage.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+    await mobilePage.screenshot({ path: `${evidenceShots}/work-items-list-touch-390-${theme}.png`, fullPage: true });
+  }
+  const phoneRowHeights = await mobilePage.locator('[data-testid^="row-"]').evaluateAll((rows) => rows.map((row) => row.getBoundingClientRect().height));
+  check(phoneRowHeights.length > 0 && Math.max(...phoneRowHeights) - Math.min(...phoneRowHeights) <= 1, `390px touch list rows have equal heights: ${JSON.stringify(phoneRowHeights)}`);
   await mobileRow.getByRole("button", { name: `${translate("workItems.cycle")}: Sprint 17` }).waitFor();
   const mobileRowLines = await mobileRow.evaluate((row) => {
     const titleLink = row.querySelector("a");
@@ -463,8 +497,7 @@ try {
   }
   check(await page.getByText(translate("bulk.selectShown"), { exact: true }).isVisible(), "select-all has no visible phone label");
   const titleBox = await page.getByRole("heading", { name: /MOB · Mobile/ }).boundingBox();
-  const settingsBox = await page.getByRole("link", { name: translate("projects.settings") }).boundingBox();
-  check(Boolean(titleBox && settingsBox) && Math.abs(titleBox!.y - settingsBox!.y) < 3, "project title and Settings wrap onto separate phone rows");
+  check(!!titleBox && titleBox.x >= 0 && titleBox.x + titleBox.width <= 390, "project title stays within the phone viewport while project actions move to the list toolbar");
   await page.getByRole("button", { name: translate("layout.board") }).click();
   const phoneCard = page.getByTestId("card-MOB-2");
   await phoneCard.getByText(translate("workItems.noAssignee"), { exact: true }).waitFor();

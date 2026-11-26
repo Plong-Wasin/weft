@@ -43,8 +43,8 @@ function block(node: Node): React.ReactNode {
       return <div className="my-2 overflow-x-auto"><table className="w-full border-collapse text-left text-13">{headed && <thead>{block(first!)}</thead>}<tbody>{nodes(headed ? rest : node.content)}</tbody></table></div>;
     }
     case "tableRow": return <tr>{nodes(node.content)}</tr>;
-    case "tableHeader": return <th className="border border-subtle bg-layer-1 px-2 py-1 text-left font-medium">{nodes(node.content)}</th>;
-    case "tableCell": return <td className="border border-subtle px-2 py-1">{nodes(node.content)}</td>;
+    case "tableHeader": return <th className="border border-border bg-muted px-2 py-1 text-left font-medium">{nodes(node.content)}</th>;
+    case "tableCell": return <td className="border border-border px-2 py-1">{nodes(node.content)}</td>;
     // Anything else the preview does not know (mentions…) still shows its text.
     default: return nodes(node.content);
   }
@@ -53,5 +53,5 @@ function block(node: Node): React.ReactNode {
 /** Read-only view of an editor (Tiptap) document, so a Confirmation card shows what the page will hold. Renders nothing for a value that is not a document. */
 export function DocPreview({ doc }: { doc: unknown }) {
   if (typeof doc !== "object" || doc === null || (doc as Node).type !== "doc") return null;
-  return <div className="doc-preview grid gap-2 text-14 text-primary">{nodes((doc as Node).content)}</div>;
+  return <div className="doc-preview grid gap-2 text-14 text-foreground">{nodes((doc as Node).content)}</div>;
 }

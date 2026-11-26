@@ -88,7 +88,7 @@ export function DatePanel({ range, field: initialField, onChange, today = todayK
         const start = draft.startDate, due = draft.dueDate;
         const selected = day === start || day === due;
         const inRange = !!start && !!due && day > start && day < due;
-        const tone = selected ? "bg-primary text-primary-foreground hover:bg-primary/90" : inRange ? "bg-accent text-accent-foreground" : "text-foreground hover:bg-accent hover:text-accent-foreground";
+        const tone = selected ? "bg-[var(--primary)] text-primary-foreground hover:bg-[var(--primary)]/90" : inRange ? "bg-accent text-accent-foreground" : "text-foreground hover:bg-accent hover:text-accent-foreground";
         return <Button key={day} type="button" data-date={day} aria-label={longDay(day)} aria-pressed={selected} aria-current={day === today ? "date" : undefined}
           tabIndex={day === tabStop ? 0 : -1} onClick={() => pick(day)}
           className={`grid h-9 place-items-center rounded-md bg-transparent text-center text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-11 ${tone} ${day === today ? "font-semibold underline underline-offset-4" : ""}`}>{Number(day.slice(8))}</Button>;

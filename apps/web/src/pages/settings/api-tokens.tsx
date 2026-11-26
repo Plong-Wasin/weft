@@ -211,7 +211,7 @@ export function ApiTokensPage() {
       </Row>)}</RowList>}
     </SettingsBlock>
     <Note note={note} />
-    {dialog && <div className="fixed inset-0 z-50 grid place-items-center bg-backdrop p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) closeDialog(); }}>
+    {dialog && <div className="fixed inset-0 z-50 grid place-items-center bg-background/80 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) closeDialog(); }}>
       <section role="dialog" aria-modal="true" aria-labelledby="token-dialog-title" className="grid w-full max-w-lg gap-4 rounded-xl border border-border bg-card p-5 shadow-xl">
         <header className="flex items-start justify-between gap-3"><div><h2 id="token-dialog-title" className="text-lg font-semibold">{secret ? translate("tokens.createdTitle") : translate("tokens.add")}</h2>
           <p className="mt-1 text-sm text-muted-foreground">{secret ? translate("tokens.secretOnce") : translate("tokens.dialogDescription")}</p></div>

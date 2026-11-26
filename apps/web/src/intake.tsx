@@ -59,7 +59,7 @@ const statusTone: Record<Outcome, string> = {
   pending: "bg-amber-500/10 text-amber-700 dark:text-amber-400", snoozed: "bg-background text-muted-foreground", accepted: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
   rejected: "bg-destructive/10 text-destructive", duplicate: "bg-background text-muted-foreground",
 };
-const primaryButton = "min-h-9 rounded-lg bg-primary px-3 py-1.5 text-13 font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50";
+const primaryButton = "min-h-9 rounded-lg bg-[var(--primary)] px-3 py-1.5 text-13 font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50";
 const quietButton = "min-h-9 rounded-lg border border-border bg-card px-3 py-1.5 text-13 font-medium text-foreground hover:bg-accent disabled:opacity-50";
 const iconButton = "grid size-9 place-items-center rounded-lg border border-border bg-card p-0 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40";
 const field = "w-full rounded-md border border-border bg-card px-2.5 py-1.5 text-14 text-foreground";
@@ -253,7 +253,7 @@ function DuplicateModal({ action, workspaceId, item, onClose, onPick }: { action
 function ListRow({ item, selected, onSelect }: { item: IntakeItem; selected: boolean; onSelect: () => void }) {
   return <li>
     <Button type="button" data-testid={`intake-${item.displayId}`} aria-current={selected ? "true" : undefined} onClick={onSelect}
-      className={`h-auto min-h-28 w-full items-stretch rounded-lg border-0 bg-transparent px-4 py-3 text-left hover:bg-accent ${selected ? "bg-accent outline outline-1 -outline-offset-1 outline-accent-primary" : ""}`}>
+      className={`h-auto min-h-28 w-full items-stretch rounded-lg border-0 bg-transparent px-4 py-3 text-left hover:bg-accent ${selected ? "bg-accent outline outline-1 -outline-offset-1 outline-ring" : ""}`}>
       <span className="flex min-w-0 flex-1 flex-col items-stretch justify-center gap-1.5">
         <span className="text-12 leading-4 text-muted-foreground">{item.displayId}</span>
         <span title={item.title} className="line-clamp-2 min-w-0 text-left text-14 leading-5 font-medium text-foreground">{item.title}</span>
@@ -518,7 +518,7 @@ export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, 
           {(["open", "closed"] as const).map((value) => <TabsTrigger key={value} value={value}
             className={`flex items-center gap-1.5 rounded-md border-0 px-3 py-2.5 text-14 font-medium ${tab === value ? "bg-muted text-foreground" : "bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground"}`}>
             {t(`intake.tab.${value}`)}
-            {value === "open" && tab === "open" && items && <span data-testid="intake-open-count" className="rounded-full bg-primary/20 px-1.5 py-0.5 text-11 font-semibold text-foreground">{items.length}</span>}
+            {value === "open" && tab === "open" && items && <span data-testid="intake-open-count" className="rounded-full bg-[var(--primary)]/20 px-1.5 py-0.5 text-11 font-semibold text-foreground">{items.length}</span>}
           </TabsTrigger>)}
           </TabsList>
           <TabsContent value={tab} className="mt-0 flex min-h-0 flex-1 flex-col">

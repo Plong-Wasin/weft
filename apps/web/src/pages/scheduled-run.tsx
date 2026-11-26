@@ -27,12 +27,12 @@ export function ScheduledRunPage() {
   }, [runId, markLoaded, markUnavailable]);
 
   return <section className="card-surface mx-auto grid max-w-3xl gap-4 rounded-xl p-5 sm:p-6">
-    <Link to={paths.notifications(workspace.slug)} className="text-13 text-secondary">{translate("inbox.title")}</Link>
+    <Link to={paths.notifications(workspace.slug)} className="text-13 text-muted-foreground">{translate("inbox.title")}</Link>
     <h1 className="m-0 text-20 font-semibold">{translate("runs.scheduled")}</h1>
     {run === undefined ? <p role="status">{translate("runs.scheduledLoading")}</p> : !run ? <p role="status">{translate("runs.scheduledUnavailable")}</p> : <>
-      <p className="m-0 text-14 text-secondary">{translateDynamic(`runs.status.${run.status}`) ?? run.status} · {formatDate(run.createdAt)}</p>
+      <p className="m-0 text-14 text-muted-foreground">{translateDynamic(`runs.status.${run.status}`) ?? run.status} · {formatDate(run.createdAt)}</p>
       {run.failureReason && <p className="m-0" role="status">{runFailureText(run.failureReason) ?? run.failureMessage ?? translate("runs.scheduledUnavailable")}</p>}
-      {run.failureMessage && run.failureReason && run.failureReason !== "runtime_capability_missing" && <p className="m-0 text-13 text-secondary">{translate("runs.failureDetail").replace("{detail}", run.failureMessage)}</p>}
+      {run.failureMessage && run.failureReason && run.failureReason !== "runtime_capability_missing" && <p className="m-0 text-13 text-muted-foreground">{translate("runs.failureDetail").replace("{detail}", run.failureMessage)}</p>}
     </>}
   </section>;
 }

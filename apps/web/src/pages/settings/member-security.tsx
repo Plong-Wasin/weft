@@ -169,14 +169,14 @@ export function AuditLogPage({ workspaceId, members }: { workspaceId: string; me
     </div>
     {loaded && rows.length === 0 && !failed ? <p className="text-muted-foreground">{translate("account.auditNone")}</p> : null}
     {page.failed && <p role="status" className="text-muted-foreground">{translate("account.loadFailed")}<Button type="button" className="secondary ml-2" onClick={() => void load(rows.length)}>{translate("account.retry")}</Button></p>}
-    {rows.length > 0 && <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-left text-sm">
-      <thead><tr className="text-muted-foreground"><th className="py-2 pr-3 font-medium">{translate("account.colTime")}</th><th className="py-2 pr-3 font-medium">{translate("account.colPerson")}</th><th className="py-2 pr-3 font-medium">{translate("account.colKind")}</th><th className="py-2 pr-3 font-medium">{translate("account.colChange")}</th><th className="py-2 font-medium">{translate("account.colDetail")}</th></tr></thead>
+    {rows.length > 0 && <div className="overflow-x-auto"><table className="w-full min-w-[820px] text-left text-sm">
+      <thead><tr className="text-muted-foreground"><th className="py-2 pr-3 font-medium">{translate("account.colTime")}</th><th className="py-2 pr-3 font-medium">{translate("account.colPerson")}</th><th className="py-2 pr-3 font-medium">{translate("account.colKind")}</th><th className="py-2 pr-3 font-medium">{translate("account.colChange")}</th><th className="min-w-60 w-1/2 py-2 font-medium">{translate("account.colDetail")}</th></tr></thead>
       <tbody>{rows.map((row) => <tr key={row.id} className="border-t border-border align-top">
         <td className="py-2 pr-3 whitespace-nowrap">{formatDate(row.at)}</td>
         <td className="py-2 pr-3">{row.actorName ?? translate("account.systemActor")}</td>
         <td className="py-2 pr-3">{translate(`account.kind.${row.kind}` as MessageKey)}</td>
         <td className="py-2 pr-3">{auditFieldLabel(row.field)}</td>
-        <td className="py-2 break-all text-muted-foreground">{describeAuditValue(row.newValue ?? row.oldValue)}</td>
+        <td className="min-w-60 py-2 [overflow-wrap:anywhere] text-muted-foreground">{describeAuditValue(row.newValue ?? row.oldValue)}</td>
       </tr>)}</tbody>
     </table></div>}
     {hasMore && <Button type="button" className="secondary mt-3 w-fit" onClick={() => void load(rows.length)}>{translate("account.loadMore")}</Button>}

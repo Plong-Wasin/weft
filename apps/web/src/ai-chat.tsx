@@ -333,7 +333,7 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
         </li>}
         {messages.map((message, index) => {
           if (message.role === "user") return <li key={message.id} data-role="user" className="flex justify-end">
-            <div className="max-w-[85%] rounded-2xl bg-card px-4 py-3 text-16 text-foreground"><p className="whitespace-pre-wrap">{textOf(message)}</p>{message.parts.filter((part) => part.type === "data-skill").map((part, i) => { const data = (part as { data?: { name?: string } }).data; return <span key={i} className="mt-2 inline-flex rounded-md border border-border px-2 py-0.5 text-12">/{data?.name}</span>; })}</div>
+            <div className="min-w-0 max-w-[85%] rounded-2xl bg-card px-4 py-3 text-16 text-foreground"><p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{textOf(message)}</p>{message.parts.filter((part) => part.type === "data-skill").map((part, i) => { const data = (part as { data?: { name?: string } }).data; return <span key={i} className="mt-2 inline-flex rounded-md border border-border px-2 py-0.5 text-12">/{data?.name}</span>; })}</div>
           </li>;
           const steps = message.parts.flatMap((part) => part.type.startsWith("tool-") && !proposalId(part as { output?: unknown }) ? [part.type.slice(5)] : []);
           const ids = message.parts.flatMap((part) => { const id = part.type.startsWith("tool-") ? proposalId(part as { output?: unknown }) : null; return id ? [id] : []; });
@@ -346,7 +346,7 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
           });
           const text = textOf(message);
           const last = index === messages.length - 1;
-          return <li key={message.id} data-role="assistant" className="grid gap-3">
+          return <li key={message.id} data-role="assistant" className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
             {steps.length > 0 && <Thoughts steps={steps} />}
             {applied.map((actionName, resultIndex) => <p key={`done-${resultIndex}`} role="status" className="m-0 rounded-md border border-border bg-muted/30 px-3 py-2 text-13 text-foreground">{translate("ai.autopilot.done")} · {actionName}</p>)}
             {message.parts.map((part, partIndex) => part.type === "text" ? <Markdown key={partIndex} text={part.text} /> : null)}

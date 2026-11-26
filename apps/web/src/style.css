@@ -133,7 +133,11 @@
   /* Native selects keep their element but look like controls: our chevron (preflight removes the browser one), a quiet border (the shared look, see DESIGN.md), and clear hover, focus and disabled states. */
   :where(select) {
     appearance: none;
+    min-height: 2.25rem;
+    padding-left: 0.75rem;
     padding-right: 2rem;
+    border-width: 1px;
+    border-radius: calc(var(--radius) - 2px);
     border-color: var(--border);
     background-color: var(--card);
     background-image: var(--select-chevron);
@@ -142,6 +146,7 @@
     background-size: 0.75rem;
     cursor: pointer;
   }
+  @media (pointer: coarse) { :where(select) { min-height: 2.75rem; } }
   :where(select:hover:not(:disabled)) { border-color: var(--muted-foreground); }
   :where(select:focus-visible) { border-color: var(--ring); }
   :where(select:disabled) { cursor: not-allowed; border-color: var(--border); background-color: var(--muted); color: var(--muted-foreground); }

@@ -26,7 +26,7 @@ export function WorkspaceSwitcher({ workspace, workspaces, canCreate, refresh }:
   }, [creating]);
   return <Popover label={switchLabel} panelLabel={creating ? translate("workspace.new") : undefined} panelRole={creating ? "dialog" : "menu"} className="rounded-md px-2.5 py-2 text-foreground"
     trigger={<><span className="grid size-6 place-items-center rounded-md bg-primary text-[12px] font-semibold text-primary-foreground">{workspace.name.slice(0, 1).toUpperCase()}</span>
-      <span className="max-w-32 truncate text-[14px] font-medium max-md:max-w-[4.5rem] max-[379px]:hidden">{workspace.name}</span><ChevronDown aria-hidden size={14} /></>}>
+      <span className="max-w-32 truncate text-[14px] font-medium max-md:max-w-[4.5rem] max-[439px]:hidden">{workspace.name}</span><ChevronDown aria-hidden size={14} /></>}>
     {(close) => creating
       ? <div ref={form} className="w-72 p-3"><CreateWorkspaceForm onCancel={() => setCreating(false)} onCreated={async (created) => { await refresh(); close(); setCreating(false); navigate(paths.home(created.slug)); }} /></div>
       : <>

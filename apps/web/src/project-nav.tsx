@@ -25,7 +25,7 @@ const menu: Entry[] = [
 export function ProjectNav({ workspace, projectKey, features }: { workspace: string; projectKey: string; features: ProjectFeatures }) {
   return <nav aria-label={`${translate("projectNav.label")} ${projectKey}`}><ul className="ml-4 grid gap-0.5 border-l border-border pl-2">
     {menu.filter((entry) => !entry.feature || features[entry.feature]).map((entry) => <li key={entry.label}><NavLink to={entry.path(workspace, projectKey)}
-      className={({ isActive }) => `flex items-center gap-2 rounded-md px-2.5 py-1 text-[13px] font-medium ${isActive ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent"}`}>
+      className={({ isActive }) => `flex items-center gap-2 rounded-md px-2.5 py-1 text-[13px] font-medium max-md:min-h-11 pointer-coarse:min-h-11 ${isActive ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent"}`}>
       <entry.icon aria-hidden size={14} />{translate(entry.label)}</NavLink></li>)}
   </ul></nav>;
 }

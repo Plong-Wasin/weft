@@ -37,7 +37,7 @@ export function WorkspaceProjectOrder() {
         const count = isStarred ? starred.length : others.length;
         const starLabel = translate(isStarred ? "sidebar.unstar" : "sidebar.star");
         return <Row key={project.id}>
-          <span className="w-full text-sm font-medium"><span className="font-code text-xs text-muted-foreground">{project.key}</span> · {project.name}</span>
+          <span className="w-full min-w-0 text-sm font-medium [overflow-wrap:anywhere]"><span className="font-code text-xs text-muted-foreground">{project.key}</span> · {project.name}</span>
           <div className="flex w-full flex-wrap gap-2">
             <Button type="button" aria-pressed={isStarred} aria-label={`${starLabel}: ${project.name}`} title={starLabel} onClick={() => void setPreference(project.id, { starred: !isStarred })} className="secondary inline-flex items-center gap-1.5">
               <Star aria-hidden size={14} fill={isStarred ? "currentColor" : "none"} />{isStarred ? translate("sidebar.starred") : translate("sidebar.star")}

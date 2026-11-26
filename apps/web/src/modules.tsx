@@ -115,10 +115,6 @@ function ModuleFormModal({ action, projectId, workspaceId, module, onClose, onSa
       </div>
       <Input autoFocus required aria-label={t("modules.name")} placeholder={t("modules.name")} value={name} maxLength={255} className="w-full text-base" onChange={(event) => setName(event.target.value)} />
       <div className="grid gap-1 text-sm text-muted-foreground"><span>{t("workItems.description")}</span><DescriptionEditor workspaceId={workspaceId} owner={module ? { ownerType: "module", ownerId: module.id } : undefined} mentionPeople={people} initial={description} editable onChange={setDescription} /></div>
-      <div data-testid="module-date-fields" className="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
-        <label className="grid min-w-40 gap-1 text-sm text-muted-foreground">{t("modules.start")}<DatePicker label={t("modules.start")} value={startDate} max={endDate || undefined} onChange={setStartDate} /></label>
-        <label className="grid min-w-40 gap-1 text-sm text-muted-foreground">{t("modules.end")}<DatePicker label={t("modules.end")} value={endDate} min={startDate || undefined} field="due" onChange={setEndDate} /></label>
-      </div>
       <div className="flex flex-wrap items-center gap-2">
         <SingleSelect label={t("modules.status")} summary={t(`modules.status.${status}`)} value={status} options={statuses.map((value) => ({ id: value, name: t(`modules.status.${value}`) }))} onSelect={(value) => setStatus(value as Status)} />
         <SingleSelect label={t("modules.lead")} summary={leadId ? nameOf(leadId) : t("modules.noLead")} value={leadId} icon={<CircleUserRound aria-hidden size={14} className="text-muted-foreground" />}
@@ -128,7 +124,9 @@ function ModuleFormModal({ action, projectId, workspaceId, module, onClose, onSa
           options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} /> }))}
           onToggle={(id, on) => setMemberIds(on ? [...memberIds, id] : memberIds.filter((other) => other !== id))} />
       </div>
-      <div className="flex flex-wrap items-center gap-3">
+      <div data-testid="module-date-fields" className="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
+        <label className="grid min-w-40 gap-1 text-sm text-muted-foreground">{t("modules.start")}<DatePicker label={t("modules.start")} value={startDate} max={endDate || undefined} onChange={setStartDate} /></label>
+        <label className="grid min-w-40 gap-1 text-sm text-muted-foreground">{t("modules.end")}<DatePicker label={t("modules.end")} value={endDate} min={startDate || undefined} field="due" onChange={setEndDate} /></label>
       </div>
       {note && <p role="alert" className="m-0 text-destructive">{note}</p>}
       <div className="flex justify-end gap-2 border-t border-border pt-4">

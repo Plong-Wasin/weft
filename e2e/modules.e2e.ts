@@ -174,6 +174,8 @@ try {
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   const filterHeights = await page.getByTestId("module-filters").locator("input, [role=combobox]").evaluateAll((controls) => controls.map((control) => control.getBoundingClientRect().height));
   check(filterHeights.every((height) => height >= 44), `Module filter controls should meet the 44px touch target: ${filterHeights.join(", ")}`);
+  const filterBoxes = await page.getByTestId("module-filters").locator(`input, [role=combobox], ${dateFromButton}, ${dateToButton}`).evaluateAll((controls) => controls.map((control) => { const box = control.getBoundingClientRect(); return { height: box.height, centerY: box.top + box.height / 2 }; }));
+  check(filterBoxes.every((box) => Math.abs(box.height - filterBoxes[0]!.height) <= 1 && Math.abs(box.centerY - filterBoxes[0]!.centerY) <= 1), `Module filter controls should share one height and centre line: ${JSON.stringify(filterBoxes)}`);
 
   // Grid display.
   await page.getByRole("button", { name: t("modules.display.grid"), exact: true }).click();

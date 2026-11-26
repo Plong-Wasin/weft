@@ -215,8 +215,8 @@ export function CommandPalette({ current, signOut }: { current: Current; signOut
 /** Top-bar button for the palette. Its title shows the shortcut, so the key is discoverable. */
 export function CommandPaletteButton({ shortcut }: { shortcut: string }) {
   const label = `${translate("palette.button")} (${shortcut})`;
-  return <Button type="button" aria-label={label} title={label} onClick={() => window.dispatchEvent(new Event(openPaletteEvent))}
-    className="flex items-center rounded-lg bg-transparent p-2 text-muted-foreground hover:bg-accent hover:text-foreground pointer-coarse:min-h-11 pointer-coarse:min-w-11">
+  return <Button variant="ghost" type="button" aria-label={label} title={label} onClick={() => window.dispatchEvent(new Event(openPaletteEvent))}
+    className="flex items-center bg-transparent p-2 text-muted-foreground hover:bg-accent hover:text-foreground pointer-coarse:min-h-11 pointer-coarse:min-w-11">
     <CommandIcon aria-hidden size={18} />
   </Button>;
 }

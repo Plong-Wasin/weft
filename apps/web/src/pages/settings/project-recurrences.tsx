@@ -84,12 +84,12 @@ export function ProjectRecurrences() {
       const schedule = typeof row.schedule === "string" ? JSON.parse(row.schedule) as Schedule : row.schedule;
       const status = row.status === "active" && row.lastWarning ? "warning" : row.status;
       return <Row key={row.id}>
-        <span className="grid min-w-0 flex-1"><strong className="truncate">{row.name}</strong><span className="text-sm text-muted-foreground">{t("recurrences.status." + status)} · {t("recurrences.nextRun")}: {formatDate(row.nextRunAt, undefined, schedule.timezone)} · {t("recurrences.lastRun")}: {row.lastRunAt ? formatDate(row.lastRunAt, undefined, schedule.timezone) : t("recurrences.never")}</span>{row.status === "paused" && row.pausedReason && <span className="text-sm text-muted-foreground">{row.pausedReason}</span>}{row.lastWarning && <span role="status" className="text-sm text-warning-text">{t("recurrences.warning")}: {row.lastWarning}</span>}</span>
+        <span className="grid min-w-0 flex-1"><strong className="truncate">{row.name}</strong><span className="text-sm text-muted-foreground">{t("recurrences.status." + status)} · {t("recurrences.nextRun")}: {formatDate(row.nextRunAt, undefined, schedule.timezone)} · {t("recurrences.lastRun")}: {row.lastRunAt ? formatDate(row.lastRunAt, undefined, schedule.timezone) : t("recurrences.never")}</span>{row.status === "paused" && row.pausedReason && <span className="text-sm text-muted-foreground">{row.pausedReason}</span>}{row.lastWarning && <span role="status" className="text-sm text-amber-700 dark:text-amber-400">{t("recurrences.warning")}: {row.lastWarning}</span>}</span>
         {canWrite && <div className="flex flex-wrap gap-2">
-          {row.status !== "ended" && <Button type="button" className="secondary" onClick={() => void guard(action(row.status === "paused" ? "resume_recurrence" : "pause_recurrence", { recurrenceId: row.id }))}>{t(row.status === "paused" ? "recurrences.resume" : "recurrences.pause")}</Button>}
-          <Button type="button" className="secondary" onClick={() => openForm(row)}>{t("recurrences.edit")}</Button>
-          <Button type="button" className="secondary" onClick={() => void guard(action("run_recurrence_now", { recurrenceId: row.id }), "recurrences.ranNow")}>{t("recurrences.runNow")}</Button>
-          <Button type="button" className="secondary hover:!text-destructive" onClick={async () => { if (window.confirm(t("recurrences.deleteConfirm"))) await guard(action("delete_recurrence", { recurrenceId: row.id }), "recurrences.deleted"); }}>{t("recurrences.delete")}</Button>
+          {row.status !== "ended" && <Button type="button" onClick={() => void guard(action(row.status === "paused" ? "resume_recurrence" : "pause_recurrence", { recurrenceId: row.id }))}>{t(row.status === "paused" ? "recurrences.resume" : "recurrences.pause")}</Button>}
+          <Button type="button" onClick={() => openForm(row)}>{t("recurrences.edit")}</Button>
+          <Button type="button" onClick={() => void guard(action("run_recurrence_now", { recurrenceId: row.id }), "recurrences.ranNow")}>{t("recurrences.runNow")}</Button>
+          <Button type="button" className="hover:!text-destructive" onClick={async () => { if (window.confirm(t("recurrences.deleteConfirm"))) await guard(action("delete_recurrence", { recurrenceId: row.id }), "recurrences.deleted"); }}>{t("recurrences.delete")}</Button>
         </div>}
       </Row>;
     })}</RowList>}
@@ -119,7 +119,7 @@ export function ProjectRecurrences() {
         <label>{t("recurrences.timezone")}<Input required value={timezone} onChange={(e) => setTimezone(e.target.value)} /></label>
         <label>{t("recurrences.endDate")}<Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} /></label>
       </SettingsBlock>
-      <div className="flex justify-end gap-2"><Button type="button" className="secondary" onClick={() => setEditing(false)}>{t("settings.cancel")}</Button><Button type="submit">{t("recurrences.save")}</Button></div>
+      <div className="flex justify-end gap-2"><Button type="button" onClick={() => setEditing(false)}>{t("settings.cancel")}</Button><Button type="submit">{t("recurrences.save")}</Button></div>
     </form>}
     <Note note={note} error={failed} />
   </section>;

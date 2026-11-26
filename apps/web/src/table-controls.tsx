@@ -251,7 +251,7 @@ export function TableControls({ editor, editable }: { editor: Editor | null; edi
         const at = buttons.indexOf(document.activeElement as HTMLElement);
         buttons[(at + (event.key === "ArrowDown" ? 1 : buttons.length - 1)) % buttons.length]?.focus();
       }}>
-      {items.map((item) => <Button key={item.action} type="button" role="menuitem" aria-disabled={item.disabled || undefined} title={translate(`table.${item.action}.help` as never)} className={`table-control flex items-center gap-2 rounded px-2 py-1.5 text-left text-13 hover:bg-accent ${item.danger ? "text-destructive" : ""} ${item.disabled ? "opacity-40" : ""}`} onMouseDown={(event) => event.preventDefault()} onClick={() => { if (!item.disabled) runMenu(item.action); }}>
+      {items.map((item) => <Button key={item.action} type="button" role="menuitem" aria-disabled={item.disabled || undefined} title={translate(`table.${item.action}.help` as never)} className={`table-control flex items-center gap-2 px-2 text-left hover:bg-accent ${item.danger ? "text-destructive" : ""} ${item.disabled ? "opacity-40" : ""}`} onMouseDown={(event) => event.preventDefault()} onClick={() => { if (!item.disabled) runMenu(item.action); }}>
         <item.icon aria-hidden size={14} />{translate(`table.${item.action}` as never)}
       </Button>)}
     </div>;
@@ -270,7 +270,7 @@ export function TableControls({ editor, editable }: { editor: Editor | null; edi
 
 function TableGrip({ id, label, left, top, expanded, onOpen, onDragStart, children }: { id: string; label: string; left: number; top: number; expanded: boolean; onOpen: () => void; onDragStart?: (event: React.PointerEvent<HTMLButtonElement>) => void; children: React.ReactNode }) {
   return <Button type="button" data-table-grip={id} aria-label={label} title={label} aria-haspopup="menu" aria-expanded={expanded}
-    className="table-control pointer-events-auto absolute grid size-6 touch-none cursor-grab place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground aria-expanded:bg-accent aria-expanded:text-foreground"
+    className="table-control pointer-events-auto absolute grid size-6 touch-none cursor-grab place-items-center text-muted-foreground hover:bg-accent hover:text-foreground aria-expanded:bg-accent aria-expanded:text-foreground"
     style={{ left, top }} onMouseDown={(event) => event.preventDefault()} onPointerDown={onDragStart} onClick={onOpen}>{children}</Button>;
 }
 

@@ -72,14 +72,14 @@ export function ProjectsPanel() {
       </fieldset>
       <div className="flex flex-wrap gap-2">
         <Button className="pointer-coarse:min-h-11">{translate("projects.create")}</Button>
-        <Button type="button" className="secondary pointer-coarse:min-h-11" onClick={() => { setCreating(false); setNote(null); }}>{translate("projects.cancel")}</Button>
+        <Button type="button" className="pointer-coarse:min-h-11" onClick={() => { setCreating(false); setNote(null); }}>{translate("projects.cancel")}</Button>
       </div>
       {note && <p role="alert" className="m-0 text-sm text-destructive">{note}</p>}
     </form>;
   return <section className="grid gap-4">
     <PageHeader title={translate("projects.title")} actions={<div className="flex w-screen max-w-full flex-wrap items-center gap-2 lg:w-auto lg:justify-end">
       <Input aria-label={translate("projects.find")} type="search" className="w-full max-w-80 sm:w-64 sm:max-w-none" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={translate("projects.searchPlaceholder")} />
-      <label className="secondary flex items-center gap-2 text-sm pointer-coarse:min-h-11"><Checkbox checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />{translate("projects.showArchived")}</label>
+      <label className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-sm font-medium text-foreground hover:bg-accent pointer-coarse:min-h-11"><Checkbox checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />{translate("projects.showArchived")}</label>
       {!creating && <Button type="button" className="flex items-center gap-1.5 pointer-coarse:min-h-11" onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{translate("projects.new")}</Button>}
     </div>} />
     {form}
@@ -95,13 +95,13 @@ export function ProjectsPanel() {
       {(() => {
         const starred = preferenceOf(prefs, project.id)?.starred ?? false;
         const label = translate(starred ? "sidebar.unstar" : "sidebar.star");
-        return <Button type="button" aria-pressed={starred} aria-label={`${label}: ${project.name}`} title={label} onClick={() => void setPreference(project.id, { starred: !starred })} className="border-l border-border bg-transparent px-3 text-muted-foreground hover:bg-transparent hover:text-foreground pointer-coarse:min-h-11 pointer-coarse:min-w-11">
+        return <Button variant="ghost" type="button" aria-pressed={starred} aria-label={`${label}: ${project.name}`} title={label} onClick={() => void setPreference(project.id, { starred: !starred })} className="border-l border-border bg-transparent text-muted-foreground hover:bg-transparent hover:text-foreground pointer-coarse:min-h-11 pointer-coarse:min-w-11">
           <Star aria-hidden size={14} className={starred ? "text-foreground" : undefined} fill={starred ? "currentColor" : "none"} />
         </Button>;
       })()}
       <span className="flex min-h-9 items-center gap-1.5 whitespace-nowrap border-l border-border pl-3 text-sm text-muted-foreground">{project.visibility === "private" ? <Lock aria-hidden size={13} /> : <Globe aria-hidden size={13} />}{translate(`projects.visibility.${project.visibility}`)}</span>
       {project.archived && <span className="whitespace-nowrap border-l border-border pl-3 text-xs font-medium text-muted-foreground">{translate("projects.archivedBadge")}</span>}
-      {project.role === null && !project.archived && project.visibility === "public" && <Button type="button" className="secondary ml-3 pointer-coarse:min-h-11" onClick={async () => { await action("join_project", { projectId: project.id }); await load(); }}>{translate("projects.join")}</Button>}
+      {project.role === null && !project.archived && project.visibility === "public" && <Button type="button" className="ml-3 pointer-coarse:min-h-11" onClick={async () => { await action("join_project", { projectId: project.id }); await load(); }}>{translate("projects.join")}</Button>}
       </div>
     </li>)}</ul>}
   </section>;

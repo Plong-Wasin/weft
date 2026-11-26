@@ -20,7 +20,7 @@ function SkillEditor({ draft, onChange, onSubmit, onCancel }: { draft: SkillDraf
     <p id="skill-name-hint" className="text-13 text-muted-foreground">{translate("skills.nameHint")}</p>
     <label>{translate("skills.descriptionField")}<Textarea maxLength={1024} rows={2} value={draft.description} onChange={set("description")} /></label>
     <label>{translate("skills.instructions")}<Textarea maxLength={8000} rows={5} value={draft.instructions} onChange={set("instructions")} /></label>
-    <div className="flex gap-2"><Button type="submit">{translate("skills.save")}</Button>{onCancel && <Button type="button" className="secondary" onClick={onCancel}>{translate("agents.cancel")}</Button>}</div>
+    <div className="flex gap-2"><Button type="submit">{translate("skills.save")}</Button>{onCancel && <Button type="button" onClick={onCancel}>{translate("agents.cancel")}</Button>}</div>
   </form>;
 }
 
@@ -92,7 +92,7 @@ export function WorkspaceSkills() {
     <SettingsBlock>
       {visible.length === 0 ? <p className="text-muted-foreground">{translate("skills.none")}</p> : <RowList>{visible.map((skill) => <Row key={skill.id}>
         <div className="grid min-w-0 flex-1 gap-1"><span className="font-medium">{skill.name}</span><span className="text-13 text-muted-foreground">{skill.description}</span></div>
-        {(tab === "personal" || isAdmin) && <div className="flex gap-2"><Button type="button" className="secondary" onClick={() => void edit(skill)}>{translate("skills.edit")}</Button><Button type="button" className="secondary" onClick={() => void remove(skill)}>{translate("skills.delete")}</Button></div>}
+        {(tab === "personal" || isAdmin) && <div className="flex gap-2"><Button type="button" onClick={() => void edit(skill)}>{translate("skills.edit")}</Button><Button type="button" onClick={() => void remove(skill)}>{translate("skills.delete")}</Button></div>}
       </Row>)}</RowList>}
     </SettingsBlock>
     <Note note={note} error={error} />

@@ -1,9 +1,10 @@
+import { Card } from "@/ui/card";
 import React from "react";
 import { translate, type MessageKey } from "@weft/shared";
 
 /** The destructive entry point: outlined, so the filled danger button is kept for a confirmation. */
-export const dangerOutline = "rounded-md border border-destructive/40 px-3 py-1.5 text-sm font-medium text-destructive hover:border-destructive/60 hover:bg-destructive/10 pointer-coarse:min-h-11";
-export const dangerButton = "rounded-md bg-destructive px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-destructive/90";
+export const dangerOutline = "rounded-md border border-destructive/40 text-sm font-medium text-destructive hover:border-destructive/60 hover:bg-destructive/10 pointer-coarse:min-h-11";
+export const dangerButton = "rounded-md bg-destructive text-sm font-medium text-primary-foreground hover:bg-destructive/90";
 const InSettingsBlock = React.createContext(false);
 
 /** Section heading of a settings page: title, one-line description, rule underneath (Plane's settings header). */
@@ -18,25 +19,23 @@ export function SettingsHeader({ title, description, children, level = 1 }: { ti
 /** A labelled block inside a settings page. */
 export function SettingsBlock({ title, description, children }: { title?: string; description?: string; children: React.ReactNode }) {
   return <InSettingsBlock.Provider value={true}>
-    <section className="card-surface mb-6 grid gap-3 p-4 sm:p-5">
+    <Card as="section" className="mb-6 grid gap-3 p-4 sm:p-5">
       {title && <div className="grid gap-0.5"><h2 className="text-sm font-medium text-foreground">{title}</h2>{description && <p className="text-sm text-muted-foreground">{description}</p>}</div>}
       {children}
-    </section>
+    </Card>
   </InSettingsBlock.Provider>;
 }
 
 /** Bordered list of rows (members, invites, labels, states). */
 export function RowList({ children }: { children: React.ReactNode }) {
   const inSettingsBlock = React.useContext(InSettingsBlock);
-  const classes = inSettingsBlock
-    ? "m-0 grid list-none grid-cols-[minmax(0,1fr)] divide-y divide-[var(--border)] p-0"
-    : "card-surface m-0 grid list-none grid-cols-[minmax(0,1fr)] divide-y divide-[var(--border)] rounded-xl p-0";
-  return <ul className={classes}>{children}</ul>;
+  const classes = "m-0 grid list-none grid-cols-[minmax(0,1fr)] divide-y divide-[var(--border)] p-0";
+  return inSettingsBlock ? <ul className={classes}>{children}</ul> : <Card as="ul" className={`${classes} rounded-xl`}>{children}</Card>;
 }
 
 export function Row({ children }: { children: React.ReactNode }) {
   const inSettingsBlock = React.useContext(InSettingsBlock);
-  return <li className={`inset-row-hover flex flex-wrap items-center gap-3 rounded-lg ${inSettingsBlock ? "px-0" : "px-4"} py-3 text-sm`}>{children}</li>;
+  return <li className={`transition-colors duration-[120ms] hover:bg-accent focus-visible:bg-accent flex flex-wrap items-center gap-3 rounded-lg ${inSettingsBlock ? "px-0" : "px-4"} py-3 text-sm`}>{children}</li>;
 }
 
 /** Danger zone: a red-ruled block holding the destructive Actions of a settings page. */

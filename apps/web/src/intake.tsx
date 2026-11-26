@@ -60,9 +60,9 @@ const statusTone: Record<Outcome, string> = {
   pending: "bg-amber-500/10 text-amber-700 dark:text-amber-400", snoozed: "bg-background text-muted-foreground", accepted: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
   rejected: "bg-destructive/10 text-destructive", duplicate: "bg-background text-muted-foreground",
 };
-const primaryButton = "min-h-9 rounded-lg bg-[var(--primary)] px-3 py-1.5 text-13 font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50";
-const quietButton = "min-h-9 rounded-lg border border-border bg-card px-3 py-1.5 text-13 font-medium text-foreground hover:bg-accent disabled:opacity-50";
-const iconButton = "grid size-9 place-items-center rounded-lg border border-border bg-card p-0 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40";
+const primaryButton = "bg-[var(--primary)] font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50";
+const quietButton = "border border-border bg-card font-medium text-foreground hover:bg-accent disabled:opacity-50";
+const iconButton = "grid size-9 place-items-center border border-border bg-card p-0 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40";
 const field = "w-full rounded-md border border-border bg-card px-2.5 py-1.5 text-14 text-foreground";
 
 function StatusBadge({ item }: { item: IntakeItem }) {
@@ -103,7 +103,7 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
   }} className="fixed left-0 right-0 top-[10dvh] z-50 mx-auto max-h-[80dvh] w-[calc(100vw-1.5rem)] max-w-lg overflow-auto rounded-2xl border border-border bg-card p-6 text-foreground shadow-xl backdrop:bg-black/30">
       <div className="mb-4 flex items-center gap-2">
         <h2 id={titleId} className="m-0 flex-1 text-18 font-semibold text-foreground">{title}</h2>
-        <Button type="button" className="rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent" aria-label={t("intake.cancel")} onClick={onClose}><X aria-hidden size={16} /></Button>
+        <Button variant="ghost" type="button" className="rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent" aria-label={t("intake.cancel")} onClick={onClose}><X aria-hidden size={16} /></Button>
       </div>
       {children}
   </dialog>;
@@ -265,7 +265,7 @@ function DuplicateModal({ action, workspaceId, item, onClose, onPick }: { action
 function ListRow({ item, selected, onSelect }: { item: IntakeItem; selected: boolean; onSelect: () => void }) {
   return <li>
     <Button type="button" data-testid={`intake-${item.displayId}`} aria-current={selected ? "true" : undefined} onClick={onSelect}
-      className={`h-auto min-h-28 w-full items-stretch whitespace-normal [overflow-wrap:anywhere] rounded-lg border-0 bg-transparent px-4 py-3 text-left hover:bg-accent ${selected ? "bg-accent outline outline-1 -outline-offset-1 outline-ring" : ""}`}>
+      variant="ghost" className={`h-auto min-h-28 w-full items-stretch whitespace-normal [overflow-wrap:anywhere] border-0 bg-transparent px-4 py-3 text-left hover:bg-accent ${selected ? "bg-accent outline outline-1 -outline-offset-1 outline-ring" : ""}`}>
       <span className="flex min-w-0 flex-1 flex-col items-stretch justify-center gap-1.5">
         <span className="text-12 leading-4 text-muted-foreground">{item.displayId}</span>
         <span title={item.title} className="line-clamp-2 min-w-0 text-left text-14 leading-5 font-medium text-foreground">{item.title}</span>
@@ -371,7 +371,7 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
         <Button type="button" className={iconButton} aria-label={t("intake.previous")} disabled={index <= 0} onClick={() => onMove(-1)}><ChevronUp aria-hidden size={16} /></Button>
         <Button type="button" className={iconButton} aria-label={t("intake.next")} disabled={index >= count - 1} onClick={() => onMove(1)}><ChevronDown aria-hidden size={16} /></Button>
         {canDecide && undecided && <>
-          <Button type="button" variant="primary" className="min-h-9 rounded-lg px-3 py-1.5 text-13" onClick={() => setDialog("accept")}>{t("intake.accept")}</Button>
+          <Button type="button" variant="primary" onClick={() => setDialog("accept")}>{t("intake.accept")}</Button>
           <Button type="button" className={quietButton} onClick={() => void run("reject_intake_item", {})}>{t("intake.reject")}</Button>
         </>}
         {canDecide && unsnoozed && <Button type="button" className={quietButton} onClick={() => void run("unsnooze_intake_item", {})}>{t("intake.unsnooze")}</Button>}

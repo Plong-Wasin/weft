@@ -37,7 +37,7 @@ export function OAuthConsentPage() {
       <p className="mt-4 text-14 text-muted-foreground">{translate("oauth.request").replace("{app}", info.clientName).replace("{host}", info.redirectHost)}</p>
       <div className="mt-6 grid gap-3">
         <Button className={primaryButton} disabled={submitting} onClick={() => void respond(true)}>{translate("oauth.allow")}</Button>
-        <Button type="button" className="!h-10 rounded-md border border-border bg-transparent px-3 text-14 font-medium text-foreground hover:bg-accent" disabled={submitting} onClick={() => void respond(false)}>{translate("oauth.deny")}</Button>
+        <Button variant="ghost" type="button" className="!h-10 rounded-md border border-border bg-transparent font-medium text-foreground hover:bg-accent" disabled={submitting} onClick={() => void respond(false)}>{translate("oauth.deny")}</Button>
       </div>
     </>}
   </AuthShell>;

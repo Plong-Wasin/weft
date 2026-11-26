@@ -39,19 +39,19 @@ export function WorkspaceProjectOrder() {
         return <Row key={project.id}>
           <span className="w-full min-w-0 text-sm font-medium [overflow-wrap:anywhere]"><span className="font-code text-xs text-muted-foreground">{project.key}</span> · {project.name}</span>
           <div className="flex w-full flex-wrap gap-2">
-            <Button type="button" aria-pressed={isStarred} aria-label={`${starLabel}: ${project.name}`} title={starLabel} onClick={() => void setPreference(project.id, { starred: !isStarred })} className="secondary inline-flex items-center gap-1.5">
+            <Button type="button" aria-pressed={isStarred} aria-label={`${starLabel}: ${project.name}`} title={starLabel} onClick={() => void setPreference(project.id, { starred: !isStarred })} className="inline-flex items-center gap-1.5">
               <Star aria-hidden size={14} fill={isStarred ? "currentColor" : "none"} />{isStarred ? translate("sidebar.starred") : translate("sidebar.star")}
             </Button>
-            <Button type="button" disabled={index <= 0} aria-label={`${translate("sidebar.moveUp")}: ${project.name}`} onClick={() => { const order = moveWithinGroup(projects, prefs, project.id, -1); if (order) void setOrder(order); }} className="secondary inline-flex items-center gap-1.5">
+            <Button type="button" disabled={index <= 0} aria-label={`${translate("sidebar.moveUp")}: ${project.name}`} onClick={() => { const order = moveWithinGroup(projects, prefs, project.id, -1); if (order) void setOrder(order); }} className="inline-flex items-center gap-1.5">
               <ArrowUp aria-hidden size={14} />{translate("sidebar.moveUp")}
             </Button>
-            <Button type="button" disabled={index >= count - 1} aria-label={`${translate("sidebar.moveDown")}: ${project.name}`} onClick={() => { const order = moveWithinGroup(projects, prefs, project.id, 1); if (order) void setOrder(order); }} className="secondary inline-flex items-center gap-1.5">
+            <Button type="button" disabled={index >= count - 1} aria-label={`${translate("sidebar.moveDown")}: ${project.name}`} onClick={() => { const order = moveWithinGroup(projects, prefs, project.id, 1); if (order) void setOrder(order); }} className="inline-flex items-center gap-1.5">
               <ArrowDown aria-hidden size={14} />{translate("sidebar.moveDown")}
             </Button>
           </div>
         </Row>;
       })}</RowList>}
-      {hasOrder && <Button type="button" title={translate("sidebar.resetOrderTip")} onClick={() => void resetOrder()} className="secondary justify-self-start">{translate("sidebar.resetOrder")}</Button>}
+      {hasOrder && <Button type="button" title={translate("sidebar.resetOrderTip")} onClick={() => void resetOrder()} className="justify-self-start">{translate("sidebar.resetOrder")}</Button>}
     </SettingsBlock>
   </section>;
 }

@@ -47,7 +47,7 @@ export function FilterPicker({ sections, filters, count, onChange, onClear }: { 
         const expanded = needle !== "" || open === section.key;
         const selected = filters[section.key].length;
         return <div key={section.key} className="grid gap-1">
-          <Button type="button" aria-expanded={expanded} className="flex min-h-9 w-full items-center justify-between rounded-md bg-transparent px-2.5 py-2 text-sm font-medium text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11" onClick={() => setOpen(open === section.key ? null : section.key)}>
+          <Button variant="ghost" type="button" aria-expanded={expanded} className="flex w-full items-center justify-between rounded-md bg-transparent px-2.5 py-2 text-sm font-medium text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11" onClick={() => setOpen(open === section.key ? null : section.key)}>
             <span>{t(`layout.filter.${section.key}`)}</span>{selected > 0 && <span className="rounded bg-muted px-1.5 text-xs text-muted-foreground">{selected}</span>}</Button>
           {expanded && <fieldset className="m-0 grid gap-0.5 border-0 p-0 px-1" aria-label={t(`layout.filter.${section.key}`)}>
             <legend className="sr-only">{t(`layout.filter.${section.key}`)}</legend>
@@ -56,7 +56,7 @@ export function FilterPicker({ sections, filters, count, onChange, onClear }: { 
               return <div key={option.id} className="my-0 flex min-h-9 items-center gap-2 rounded-md px-1.5 py-1 text-sm text-foreground hover:bg-accent pointer-coarse:min-h-11" onClick={(event) => {
                 if (!event.currentTarget.querySelector("[data-slot=checkbox]")?.contains(event.target as Node)) toggle(section.key, option.id, !filters[section.key].includes(option.id));
               }}>
-                <Checkbox aria-labelledby={optionLabelId} checked={filters[section.key].includes(option.id)} onChange={(event) => toggle(section.key, option.id, event.target.checked)} />{option.isAgent ? <span title={t("comments.agent")}><Bot aria-hidden size={14} className="text-muted-foreground" /></span> : option.icon}<span id={optionLabelId} className="truncate">{option.name}{option.isAgent && <> <span className="ml-1.5 text-xs text-muted-foreground">{t("comments.agent")}</span></>}</span>{option.codeCapable && <span className="inline-flex items-center gap-1 whitespace-nowrap rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground" title={t("agents.codeCapable")}><Code2 aria-hidden size={13} className="text-amber-700 dark:text-amber-400" />{t("agents.canEditCode")}</span>}
+                <Checkbox hitArea="overlay" aria-labelledby={optionLabelId} checked={filters[section.key].includes(option.id)} onChange={(event) => toggle(section.key, option.id, event.target.checked)} />{option.isAgent ? <span title={t("comments.agent")}><Bot aria-hidden size={14} className="text-muted-foreground" /></span> : option.icon}<span id={optionLabelId} className="truncate">{option.name}{option.isAgent && <> <span className="ml-1.5 text-xs text-muted-foreground">{t("comments.agent")}</span></>}</span>{option.codeCapable && <span className="inline-flex items-center gap-1 whitespace-nowrap rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground" title={t("agents.codeCapable")}><Code2 aria-hidden size={13} className="text-amber-700 dark:text-amber-400" />{t("agents.canEditCode")}</span>}
               </div>;
             })}
           </fieldset>}
@@ -66,7 +66,7 @@ export function FilterPicker({ sections, filters, count, onChange, onClear }: { 
         const expanded = needle !== "" || open === key;
         const range = filters[key];
         return <div key={key} className="grid gap-1">
-          <Button type="button" aria-expanded={expanded} className="flex min-h-9 w-full items-center justify-between rounded-md bg-transparent px-2.5 py-2 text-sm font-medium text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11" onClick={() => setOpen(open === key ? null : key)}>
+          <Button variant="ghost" type="button" aria-expanded={expanded} className="flex w-full items-center justify-between rounded-md bg-transparent px-2.5 py-2 text-sm font-medium text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11" onClick={() => setOpen(open === key ? null : key)}>
             <span>{t(`layout.filter.${key}`)}</span>{(range.from || range.to) && <span className="rounded bg-muted px-1.5 text-xs text-muted-foreground">1</span>}</Button>
           {expanded && <fieldset className="m-0 grid gap-1 border-0 p-0 px-2" aria-label={t(`layout.filter.${key}`)}>
             <legend className="sr-only">{t(`layout.filter.${key}`)}</legend>
@@ -76,7 +76,7 @@ export function FilterPicker({ sections, filters, count, onChange, onClear }: { 
         </div>;
       })}
       {needle && !hasMatches && <p role="status" className="m-0 px-2 py-2 text-sm text-muted-foreground">{t("layout.filter.noMatches")}</p>}
-      {count > 0 && <Button type="button" className="mt-1 min-h-9 rounded-md border border-input bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11" onClick={onClear}>{t("layout.clear")}</Button>}
+      {count > 0 && <Button type="button" className="mt-1 rounded-md border border-input bg-background text-sm font-medium text-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11" onClick={onClear}>{t("layout.clear")}</Button>}
     </>}
   </Popover>;
 }
@@ -98,8 +98,8 @@ export function FilterChips({ filters, sections, custom, onChange, onClear }: { 
   if (chips.length === 0) return null;
   return <ul aria-label={t("layout.filter.active")} className="m-0 flex list-none flex-wrap items-center gap-1.5 p-0">
     {chips.map((chip) => <li key={chip.id} data-testid={`chip-${chip.id}`} className={chipClass}><span>{chip.text}</span>
-      <Button type="button" aria-label={t("layout.filter.remove").replace("{filter}", chip.text)} className="rounded bg-transparent p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={chip.remove}><X aria-hidden size={12} /></Button></li>)}
-    {(hasFilters(filters) || custom) && <li><Button type="button" className="rounded-md bg-transparent px-1.5 py-0.5 text-12 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={onClear}>{t("layout.clearAll")}</Button></li>}
+      <Button variant="ghost" type="button" aria-label={t("layout.filter.remove").replace("{filter}", chip.text)} className="bg-transparent p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={chip.remove}><X aria-hidden size={12} /></Button></li>)}
+    {(hasFilters(filters) || custom) && <li><Button variant="ghost" type="button" className="rounded-md bg-transparent px-1.5 py-0.5 text-12 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={onClear}>{t("layout.clearAll")}</Button></li>}
   </ul>;
 }
 

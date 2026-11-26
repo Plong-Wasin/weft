@@ -118,7 +118,7 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch, minPa
     {inviteToken && <p role="status" className="mt-4 rounded-md bg-accent px-3 py-2 text-sm text-foreground">{translate("invite.signInToJoin")}</p>}
     {authSettings === null ? <p role="status" className="mt-8 text-sm text-muted-foreground">{translate("auth.loading")}</p> : <>
     {authSettings.microsoftSignInEnabled && <div className="mt-8 grid gap-2">
-      <Button type="button" className="h-10 w-full rounded-md border border-border bg-transparent px-3 text-sm font-medium text-foreground hover:bg-accent" onClick={() => void signInWithMicrosoft()}>{translate("auth.microsoftButton")}</Button>
+      <Button variant="ghost" type="button" className="w-full rounded-md border border-border bg-transparent text-sm font-medium text-foreground hover:bg-accent" onClick={() => void signInWithMicrosoft()}>{translate("auth.microsoftButton")}</Button>
       <p className="m-0 text-xs text-muted-foreground">{translate("auth.microsoftHelp")}</p>
     </div>}
     {authSettings.passwordSignInEnabled && <form onSubmit={authenticate} aria-busy={pending} className={`${authSettings.microsoftSignInEnabled ? "mt-5 border-t border-border pt-5" : "mt-8"} grid gap-4`}>
@@ -135,7 +135,7 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch, minPa
     {/* The other mode is a full-width secondary button under the form (not small text), so a first-run admin who lands on Sign in finds "Create account". */}
     {authSettings.passwordSignInEnabled && <div className="mt-6 grid gap-2 border-t border-border pt-6 text-center">
       <p className="m-0 text-sm text-muted-foreground">{translate(mode === "sign-up" ? "auth.haveAccountShort" : "auth.needAccountShort")}</p>
-      <Button type="button" disabled={pending} className="h-10 w-full rounded-md border border-border bg-transparent px-3 text-sm font-medium text-foreground hover:bg-accent" onClick={() => { if (pendingRef.current) return; setError(null); setConfirmPassword(""); setShowPassword(false); setMode(mode === "sign-up" ? "sign-in" : "sign-up"); }}>
+      <Button variant="ghost" type="button" disabled={pending} className="w-full rounded-md border border-border bg-transparent text-sm font-medium text-foreground hover:bg-accent" onClick={() => { if (pendingRef.current) return; setError(null); setConfirmPassword(""); setShowPassword(false); setMode(mode === "sign-up" ? "sign-in" : "sign-up"); }}>
         {translate(mode === "sign-up" ? "auth.signIn" : "auth.signUp")}
       </Button>
     </div>}
@@ -152,7 +152,7 @@ function PasswordField({ label, value, onChange, visible, onToggle, autoComplete
     <label htmlFor={id} className="text-sm font-medium text-muted-foreground">{label}</label>
     <div className="relative">
       <Input id={id} className={`${fieldClass} ${onToggle ? "pr-10" : ""} ${invalid ? "border-destructive" : ""}`} required type={visible ? "text" : "password"} minLength={minLength} maxLength={256} autoComplete={autoComplete} aria-invalid={invalid || undefined} aria-describedby={[invalid ? describedBy : null, hint ? `${id}-hint` : null].filter(Boolean).join(" ") || undefined} value={value} onChange={(event) => onChange(event.target.value)} />
-      {onToggle && <Button type="button" aria-label={translate(visible ? "auth.hidePassword" : "auth.showPassword")} title={translate(visible ? "auth.hidePassword" : "auth.showPassword")} aria-pressed={visible} onClick={onToggle} className="absolute right-1 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">
+      {onToggle && <Button type="button" aria-label={translate(visible ? "auth.hidePassword" : "auth.showPassword")} title={translate(visible ? "auth.hidePassword" : "auth.showPassword")} aria-pressed={visible} onClick={onToggle} className="absolute right-1 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">
         <Icon size={16} aria-hidden />
       </Button>}
     </div>
@@ -203,7 +203,7 @@ function ForgotPasswordForm({ api, emailEnabled, languageSwitch, onBack }: { api
           {error && <p role="alert" className="mt-4 text-sm text-destructive">{error}</p>}
         </>}
     <div className="mt-6 grid gap-2 border-t border-border pt-6 text-center">
-      <Button type="button" disabled={pending} className="h-10 w-full rounded-md border border-border bg-transparent px-3 text-sm font-medium text-foreground hover:bg-accent" onClick={() => { if (!pendingRef.current) onBack(); }}>{translate("auth.backToSignIn")}</Button>
+      <Button variant="ghost" type="button" disabled={pending} className="w-full rounded-md border border-border bg-transparent text-sm font-medium text-foreground hover:bg-accent" onClick={() => { if (!pendingRef.current) onBack(); }}>{translate("auth.backToSignIn")}</Button>
     </div>
   </AuthShell>;
 }

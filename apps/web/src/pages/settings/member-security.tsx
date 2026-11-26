@@ -69,7 +69,7 @@ export function MemberSecurityList({ workspaceId, selfId, onChanged }: { workspa
     if (current) await loadTokens(current);
   };
 
-  if (accounts === null) return <p role="status" className="text-muted-foreground">{translate(accountsFailed ? "account.loadFailed" : "account.loading")}{accountsFailed && <Button type="button" className="secondary ml-2" onClick={() => void load()}>{translate("account.retry")}</Button>}</p>;
+  if (accounts === null) return <p role="status" className="text-muted-foreground">{translate(accountsFailed ? "account.loadFailed" : "account.loading")}{accountsFailed && <Button type="button" className="ml-2" onClick={() => void load()}>{translate("account.retry")}</Button>}</p>;
   return <SettingsBlock title={translate("account.adminTitle")} description={translate("account.adminDesc")}>
     <RowList>{accounts.map((account) => {
       const self = account.userId === selfId;
@@ -94,9 +94,9 @@ export function MemberSecurityList({ workspaceId, selfId, onChanged }: { workspa
           </>}
         </Popover>
         {openTokens === account.userId && <div className="w-full pl-0 pt-2">
-          {tokens === null ? <p role="status" className="text-sm text-muted-foreground">{translate(tokensFailed ? "account.loadFailed" : "account.loading")}{tokensFailed && <Button type="button" className="secondary ml-2" onClick={() => void loadTokens(account.userId)}>{translate("account.retry")}</Button>}</p> : tokens.length === 0 ? <p className="text-sm text-muted-foreground">{translate("account.tokensNone")}</p> : <ul className="m-0 grid list-none gap-1.5 p-0">{tokens.map((token) => <li key={token.id} className="flex flex-wrap items-center gap-3 text-sm">
+          {tokens === null ? <p role="status" className="text-sm text-muted-foreground">{translate(tokensFailed ? "account.loadFailed" : "account.loading")}{tokensFailed && <Button type="button" className="ml-2" onClick={() => void loadTokens(account.userId)}>{translate("account.retry")}</Button>}</p> : tokens.length === 0 ? <p className="text-sm text-muted-foreground">{translate("account.tokensNone")}</p> : <ul className="m-0 grid list-none gap-1.5 p-0">{tokens.map((token) => <li key={token.id} className="flex flex-wrap items-center gap-3 text-sm">
             <span className="min-w-0 flex-1"><span className="font-medium">{token.name}</span> <span className="text-muted-foreground">· {translate(token.kind === "daemon" ? "account.tokenKindDaemon" : "account.tokenKindPersonal")} · {token.prefix}… · {translate(`account.tokenStatus.${token.status}` as MessageKey)}{token.lastUsedAt ? ` · ${translate("account.lastUsed")} ${formatDate(token.lastUsedAt)}` : ""}</span></span>
-            {token.status === "active" && <Button type="button" className="secondary hover:!text-destructive" onClick={() => void revokeToken(token, account)}>{translate("account.revokeToken")}</Button>}
+            {token.status === "active" && <Button type="button" className="hover:!text-destructive" onClick={() => void revokeToken(token, account)}>{translate("account.revokeToken")}</Button>}
           </li>)}</ul>}
         </div>}
       </Row>;
@@ -153,7 +153,7 @@ export function AuditLogPage({ workspaceId, members }: { workspaceId: string; me
   const field = "grid gap-1 text-sm font-medium text-muted-foreground";
   return <section>
     <SettingsHeader title={translate("account.auditTitle")} description={translate("account.auditDesc")}>
-      <Button type="button" className="secondary" onClick={() => void exportCsv()}>{translate("account.exportCsv")}</Button>
+      <Button type="button" onClick={() => void exportCsv()}>{translate("account.exportCsv")}</Button>
     </SettingsHeader>
     <div className="mb-4 flex flex-wrap items-end gap-3">
       <label className={field}>{translate("account.filterPerson")}<select value={person} onChange={(event) => setPerson(event.target.value)}>
@@ -168,9 +168,9 @@ export function AuditLogPage({ workspaceId, members }: { workspaceId: string; me
       <label className={field}>{translate("account.filterTo")}<Input type="date" value={to} min={from || undefined} onChange={(event) => setTo(event.target.value)} /></label>
     </div>
     {loaded && rows.length === 0 && !failed ? <p className="text-muted-foreground">{translate("account.auditNone")}</p> : null}
-    {page.failed && <p role="status" className="text-muted-foreground">{translate("account.loadFailed")}<Button type="button" className="secondary ml-2" onClick={() => void load(rows.length)}>{translate("account.retry")}</Button></p>}
+    {page.failed && <p role="status" className="text-muted-foreground">{translate("account.loadFailed")}<Button type="button" className="ml-2" onClick={() => void load(rows.length)}>{translate("account.retry")}</Button></p>}
     {rows.length > 0 && <div className="overflow-x-auto"><table className="w-full min-w-[820px] text-left text-sm">
-      <thead><tr className="text-muted-foreground"><th className="py-2 pr-3 font-medium">{translate("account.colTime")}</th><th className="py-2 pr-3 font-medium">{translate("account.colPerson")}</th><th className="py-2 pr-3 font-medium">{translate("account.colKind")}</th><th className="py-2 pr-3 font-medium">{translate("account.colChange")}</th><th className="min-w-60 w-1/2 py-2 font-medium">{translate("account.colDetail")}</th></tr></thead>
+      <thead><tr className="text-muted-foreground"><th className="py-2 pr-3 font-medium">{translate("account.colTime")}</th><th className="py-2 pr-3 font-medium">{translate("account.colPerson")}</th><th className="py-2 pr-3 font-medium">{translate("account.colKind")}</th><th className="py-2 pr-3 font-medium">{translate("account.colChange")}</th><th className="w-1/2 min-w-60 py-2 font-medium">{translate("account.colDetail")}</th></tr></thead>
       <tbody>{rows.map((row) => <tr key={row.id} className="border-t border-border align-top">
         <td className="py-2 pr-3 whitespace-nowrap">{formatDate(row.at)}</td>
         <td className="py-2 pr-3">{row.actorName ?? translate("account.systemActor")}</td>
@@ -179,7 +179,7 @@ export function AuditLogPage({ workspaceId, members }: { workspaceId: string; me
         <td className="min-w-60 py-2 [overflow-wrap:anywhere] text-muted-foreground">{describeAuditValue(row.newValue ?? row.oldValue)}</td>
       </tr>)}</tbody>
     </table></div>}
-    {hasMore && <Button type="button" className="secondary mt-3 w-fit" onClick={() => void load(rows.length)}>{translate("account.loadMore")}</Button>}
+    {hasMore && <Button type="button" className="mt-3 w-fit" onClick={() => void load(rows.length)}>{translate("account.loadMore")}</Button>}
     <Note note={note} error={exportFailed} />
   </section>;
 }

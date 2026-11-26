@@ -39,7 +39,7 @@ const statusTone: Record<Status, string> = {
   backlog: "bg-background text-muted-foreground", planned: "bg-accent text-foreground", "in-progress": "bg-amber-500/10 text-amber-700 dark:text-amber-400",
   paused: "bg-background text-muted-foreground", completed: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400", cancelled: "bg-destructive/10 text-destructive",
 };
-const primaryButton = "flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium";
+const primaryButton = "flex items-center gap-1.5 whitespace-nowrap rounded-md text-sm font-medium";
 const iconButton = "grid size-7 place-items-center rounded-md border-0 bg-transparent p-0 text-muted-foreground hover:bg-accent hover:text-foreground";
 
 function StatusBadge({ status }: { status: Status }) {
@@ -52,8 +52,8 @@ function ProgressRing({ percent }: { percent: number }) {
   const circumference = 2 * Math.PI * radius;
   return <span role="img" aria-label={`${t("modules.progress")}: ${t("modules.percent").replace("{percent}", formatNumber(percent))}`} data-testid="module-progress" data-percent={percent} className="relative grid size-9 shrink-0 place-items-center">
     <svg aria-hidden viewBox="0 0 36 36" className="absolute inset-0 -rotate-90">
-      <circle cx="18" cy="18" r="15" fill="none" strokeWidth="2.5" className="stroke-[var(--color-layer-3)]" />
-      <circle cx="18" cy="18" r="15" fill="none" strokeWidth="2.5" strokeLinecap="round" className="stroke-[var(--color-success-primary)]" strokeDasharray={circumference} strokeDashoffset={circumference * (1 - percent / 100)} />
+      <circle cx="18" cy="18" r="15" fill="none" strokeWidth="2.5" className="stroke-muted" />
+      <circle cx="18" cy="18" r="15" fill="none" strokeWidth="2.5" strokeLinecap="round" className="stroke-green-600 dark:stroke-green-400" strokeDasharray={circumference} strokeDashoffset={circumference * (1 - percent / 100)} />
     </svg>
     <span aria-hidden className="whitespace-nowrap text-[10px] font-medium tabular-nums text-muted-foreground">{formatNumber(percent)}%</span>
   </span>;
@@ -111,7 +111,7 @@ function ModuleFormModal({ action, projectId, workspaceId, module, onClose, onSa
     }}>
       <div className="flex items-center gap-2">
         <h2 className="m-0 flex-1 text-lg font-semibold text-foreground">{title}</h2>
-        <Button type="button" className={iconButton} aria-label={t("modules.close")} onClick={onClose}><X aria-hidden size={16} /></Button>
+        <Button variant="ghost" type="button" className={iconButton} aria-label={t("modules.close")} onClick={onClose}><X aria-hidden size={16} /></Button>
       </div>
       <Input autoFocus required aria-label={t("modules.name")} placeholder={t("modules.name")} value={name} maxLength={255} className="w-full text-base" onChange={(event) => setName(event.target.value)} />
       <div className="grid gap-1 text-sm text-muted-foreground"><span>{t("workItems.description")}</span><DescriptionEditor workspaceId={workspaceId} owner={module ? { ownerType: "module", ownerId: module.id } : undefined} mentionPeople={people} initial={description} editable onChange={setDescription} /></div>
@@ -130,7 +130,7 @@ function ModuleFormModal({ action, projectId, workspaceId, module, onClose, onSa
       </div>
       {note && <p role="alert" className="m-0 text-destructive">{note}</p>}
       <div className="flex justify-end gap-2 border-t border-border pt-4">
-        <Button type="button" className="secondary" onClick={onClose}>{t("modules.cancel")}</Button>
+        <Button type="button" onClick={onClose}>{t("modules.cancel")}</Button>
         <Button type="submit" disabled={busy}>{t(module ? "modules.save" : "modules.create")}</Button>
       </div>
     </form>
@@ -191,7 +191,7 @@ export function ModulesPage({ workspaceId, workspaceSlug, projectKey, projectId,
     onArchive={() => void run(module.archived ? "unarchive_module" : "archive_module", { moduleId: module.id })} onDelete={() => remove(module)} />;
   const leadOf = (module: Module) => people.find((person) => person.userId === module.leadId);
   const toggle = (value: Display, icon: React.ReactNode) => <Button type="button" aria-pressed={display === value} aria-label={t(`modules.display.${value}`)} title={t(`modules.display.${value}`)}
-    className={`${iconButton} ${display === value ? "bg-accent text-foreground" : ""}`} onClick={() => setDisplay(value)}>{icon}</Button>;
+    variant="ghost" className={`${iconButton} ${display === value ? "bg-accent text-foreground" : ""}`} onClick={() => setDisplay(value)}>{icon}</Button>;
   return <section className="grid gap-4">
     <PageHeader level={2} title={<><Package aria-hidden size={20} />{t("modules.title")}</>} actions={<>
         <label className="flex items-center gap-1.5 whitespace-nowrap text-sm text-muted-foreground"><Checkbox checked={archived} onChange={(event) => setArchived(event.target.checked)} />{t("modules.showArchived")}</label>
@@ -248,7 +248,7 @@ function AddItemsModal({ candidates, onAdd, onClose }: { candidates: Item[]; onA
     <div className="grid gap-3 p-5">
       <div className="flex items-center gap-2">
         <h2 className="m-0 flex-1 text-lg font-semibold text-foreground">{t("modules.addItemsTitle")}</h2>
-        <Button type="button" className={iconButton} aria-label={t("modules.close")} onClick={onClose}><X aria-hidden size={16} /></Button>
+        <Button variant="ghost" type="button" className={iconButton} aria-label={t("modules.close")} onClick={onClose}><X aria-hidden size={16} /></Button>
       </div>
       <Input autoFocus type="search" aria-label={t("modules.searchItems")} placeholder={t("modules.searchItems")} value={query} className="w-full text-sm" onChange={(event) => setQuery(event.target.value)} />
       {candidates.length === 0 && <p className="m-0 text-sm text-muted-foreground">{t("modules.noneToAdd")}</p>}
@@ -259,7 +259,7 @@ function AddItemsModal({ candidates, onAdd, onClose }: { candidates: Item[]; onA
         </label>
       </li>)}</ul>
       <div className="flex justify-end gap-2 border-t border-border pt-4">
-        <Button type="button" className="secondary" onClick={onClose}>{t("modules.cancel")}</Button>
+        <Button type="button" onClick={onClose}>{t("modules.cancel")}</Button>
         <Button type="button" disabled={selected.length === 0} onClick={async () => { await onAdd(selected); onClose(); }}>{t("modules.add")}</Button>
       </div>
     </div>
@@ -333,7 +333,7 @@ export function ModuleDetailPage({ workspaceId, workspaceSlug, projectKey, proje
       <div className="min-w-0 flex-1 overflow-x-auto p-4">
         <h2 className="sr-only">{t("modules.workItems")}</h2>
         <WorkItemLayouts projectId={projectId} workspaceSlug={workspaceSlug} action={action} run={runQuery} refreshKey={refreshKey} moduleId={moduleId}
-          rowAction={editable ? (item) => <Button className="whitespace-nowrap rounded-md border border-border bg-card px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => void run("remove_module_items", { moduleId, workItemIds: [item.id] })}>{t("modules.remove")}</Button> : undefined} />
+          rowAction={editable ? (item) => <Button className="whitespace-nowrap rounded-md border border-border bg-card px-2 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => void run("remove_module_items", { moduleId, workItemIds: [item.id] })}>{t("modules.remove")}</Button> : undefined} />
       </div>
       <aside id="module-details-panel" aria-label={t("modules.properties")} className={`grid content-start gap-3 rounded-xl border border-border bg-card p-4 sm:p-5 lg:w-80 lg:shrink-0 ${detailsPanel.open ? "" : "lg:hidden"}`}>
         <section className="grid gap-2" aria-label={t("workItems.description")}><h3 className="m-0 text-sm font-semibold">{t("workItems.description")}</h3><EntityDescription key={module.id} action={action} workspaceId={workspaceId} owner={{ ownerType: "module", ownerId: module.id }} mentionPeople={people} initial={module.description ?? null} editable={editable} /></section>

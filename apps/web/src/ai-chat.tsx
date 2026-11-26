@@ -1,3 +1,4 @@
+import { Card } from "@/ui/card";
 import { Button } from "@/ui/button";
 import { action, api } from "./api";
 import React from "react";
@@ -60,7 +61,7 @@ function ResultCard({ card, diff, project, selectable, selected, onSelect, onDec
   const heading = `${verb} ${noun}${project ? ` ${translate("ai.proposal.in")} ${project}` : ""}`;
   const title = summary.title ?? heading;
   const pending = card.status === "pending";
-  return <div data-status={card.status} data-action={card.action} className="card-surface rounded-xl px-4 py-4">
+  return <Card data-status={card.status} data-action={card.action} className="rounded-xl px-4 py-4">
     <div className="flex items-start gap-3">
       {pending && selectable && <Checkbox className="mt-1" checked={selected} onChange={(event) => onSelect?.(event.target.checked)} aria-label={`${translate("ai.selectCard")}: ${title}`} />}
       <div className="min-w-0 flex-1">
@@ -76,8 +77,8 @@ function ResultCard({ card, diff, project, selectable, selected, onSelect, onDec
       </div>
       {card.status !== "pending" && <span aria-hidden className={`shrink-0 rounded-full px-2 py-0.5 text-12 font-medium ${badgeTone[card.status]}`}>{translate(`ai.proposal.status.${card.status}`)}</span>}
       {pending && onDecide && <span className="flex shrink-0 gap-2">
-        <Button type="button" disabled={busy} aria-label={`${translate("ai.confirm.confirm")}: ${title}`} onClick={() => onDecide("confirm")} className="rounded-md bg-[var(--primary)] px-3 py-1 text-13 font-medium text-white hover:bg-[var(--primary)] disabled:opacity-60">{translate("ai.confirm.confirm")}</Button>
-        <Button type="button" disabled={busy} aria-label={`${translate("ai.confirm.reject")}: ${title}`} onClick={() => onDecide("reject")} className="secondary rounded-md border border-border bg-transparent px-3 py-1 text-13 font-medium text-foreground hover:bg-accent disabled:opacity-60">{translate("ai.confirm.reject")}</Button>
+        <Button type="button" disabled={busy} aria-label={`${translate("ai.confirm.confirm")}: ${title}`} variant="primary" onClick={() => onDecide("confirm")} className="disabled:opacity-60">{translate("ai.confirm.confirm")}</Button>
+        <Button type="button" disabled={busy} aria-label={`${translate("ai.confirm.reject")}: ${title}`} onClick={() => onDecide("reject")} className="rounded-md border border-border bg-transparent font-medium text-foreground hover:bg-accent disabled:opacity-60">{translate("ai.confirm.reject")}</Button>
       </span>}
     </div>
     {diff && diff.length > 0 && <div role="alert" className="mt-2 text-13 text-destructive">
@@ -89,7 +90,7 @@ function ResultCard({ card, diff, project, selectable, selected, onSelect, onDec
       <div className="mt-2 max-h-80 overflow-auto rounded-md border border-border p-3"><DocPreview doc={input.content} /></div></details>}
     <details open={pending && (summary.omitted > 0 || (summary.title === null && summary.fields.length === 0))} className="mt-1 text-12 text-muted-foreground"><summary className="cursor-pointer">{translate("ai.details")}</summary>
       <pre className="mt-1 whitespace-pre-wrap"><code className="text-12">{card.action}</code>{"\n"}{JSON.stringify(card.input, null, 2)}</pre></details>
-  </div>;
+  </Card>;
 }
 
 /**
@@ -141,8 +142,8 @@ export function ProposalSet({ ids, refreshKey, onResolved, workspaceId }: { ids:
       <p className="text-14 font-semibold text-foreground">{translate("ai.awaiting")}</p>
       <p className="mb-2 text-14 text-muted-foreground">{translate("ai.confirmPrompt")}</p>
       <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" disabled={busy || chosen.length === 0} onClick={() => void decide(chosen, "confirm")} className="rounded-md bg-[var(--primary)] px-3 py-1 text-14 font-medium text-white hover:bg-[var(--primary)] disabled:opacity-60">{translate(acknowledged ? "ai.confirm.anyway" : several ? "ai.confirmSelected" : "ai.confirmAll")}{several && !acknowledged ? ` (${chosen.length}/${pending.length})` : ""}</Button>
-        <Button type="button" disabled={busy || chosen.length === 0} onClick={() => void decide(chosen, "reject")} className="secondary rounded-md border border-border bg-transparent px-3 py-1 text-14 font-medium text-foreground hover:bg-accent disabled:opacity-60">{translate(several ? "ai.rejectSelected" : "ai.rejectAll")}</Button>
+        <Button type="button" disabled={busy || chosen.length === 0} variant="primary" onClick={() => void decide(chosen, "confirm")} className="disabled:opacity-60">{translate(acknowledged ? "ai.confirm.anyway" : several ? "ai.confirmSelected" : "ai.confirmAll")}{several && !acknowledged ? ` (${chosen.length}/${pending.length})` : ""}</Button>
+        <Button type="button" disabled={busy || chosen.length === 0} onClick={() => void decide(chosen, "reject")} className="rounded-md border border-border bg-transparent font-medium text-foreground hover:bg-accent disabled:opacity-60">{translate(several ? "ai.rejectSelected" : "ai.rejectAll")}</Button>
         <small className="text-muted-foreground">{translate("ai.confirm.expires")} {formatDate(soonest!)}</small>
       </div>
     </div>}
@@ -170,11 +171,11 @@ function AnswerActions({ text, workspace, onRegenerate }: { text: string; worksp
     navigate(paths.wikiPage(workspace.slug, page.id));
   }
   return <div className="flex items-center gap-0.5">
-    <Button type="button" className={iconButton} aria-label={translate("ai.copy")} title={translate("ai.copy")} onClick={() => { void navigator.clipboard?.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }); }}>{copied ? <Check aria-hidden size={14} /> : <Copy aria-hidden size={14} />}</Button>
-    <Button type="button" className={iconButton} aria-pressed={rating === "up"} aria-label={translate("ai.thumbUp")} title={translate("ai.thumbUp")} onClick={() => setRating(rating === "up" ? null : "up")}><ThumbsUp aria-hidden size={14} className={rating === "up" ? "text-foreground" : ""} /></Button>
-    <Button type="button" className={iconButton} aria-pressed={rating === "down"} aria-label={translate("ai.thumbDown")} title={translate("ai.thumbDown")} onClick={() => setRating(rating === "down" ? null : "down")}><ThumbsDown aria-hidden size={14} className={rating === "down" ? "text-foreground" : ""} /></Button>
-    {onRegenerate && <Button type="button" className={iconButton} aria-label={translate("ai.regenerate")} title={translate("ai.regenerate")} onClick={onRegenerate}><RefreshCw aria-hidden size={14} /></Button>}
-    <Button type="button" disabled={converted === "busy"} className={iconButton} aria-label={translate("ai.convert")} title={translate("ai.convert")} onClick={() => void convert()}><FilePlus aria-hidden size={14} /></Button>
+    <Button variant="ghost" type="button" className={iconButton} aria-label={translate("ai.copy")} title={translate("ai.copy")} onClick={() => { void navigator.clipboard?.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }); }}>{copied ? <Check aria-hidden size={14} /> : <Copy aria-hidden size={14} />}</Button>
+    <Button variant="ghost" type="button" className={iconButton} aria-pressed={rating === "up"} aria-label={translate("ai.thumbUp")} title={translate("ai.thumbUp")} onClick={() => setRating(rating === "up" ? null : "up")}><ThumbsUp aria-hidden size={14} className={rating === "up" ? "text-foreground" : ""} /></Button>
+    <Button variant="ghost" type="button" className={iconButton} aria-pressed={rating === "down"} aria-label={translate("ai.thumbDown")} title={translate("ai.thumbDown")} onClick={() => setRating(rating === "down" ? null : "down")}><ThumbsDown aria-hidden size={14} className={rating === "down" ? "text-foreground" : ""} /></Button>
+    {onRegenerate && <Button variant="ghost" type="button" className={iconButton} aria-label={translate("ai.regenerate")} title={translate("ai.regenerate")} onClick={onRegenerate}><RefreshCw aria-hidden size={14} /></Button>}
+    <Button variant="ghost" type="button" disabled={converted === "busy"} className={iconButton} aria-label={translate("ai.convert")} title={translate("ai.convert")} onClick={() => void convert()}><FilePlus aria-hidden size={14} /></Button>
     {converted === "failed" && <span role="alert" className="ml-2 text-12 text-destructive">{translate("ai.convertFailed")}</span>}
   </div>;
 }
@@ -328,7 +329,7 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
         {messages.length === 0 && <li className="grid gap-2 py-6">
           <p className="m-0 text-14 font-medium text-muted-foreground">{translate("ai.suggest.heading")}</p>
           <ul className="m-0 grid list-none gap-2 p-0 sm:grid-cols-2">
-            {([1, 2, 3, 4] as const).map((n) => <li key={n}><Button type="button" onClick={() => { setInput(translate(`ai.suggest.${n}`)); composerRef.current?.focus(); }} className="w-full rounded-lg border border-border bg-card px-3 py-2 text-left text-14 text-foreground hover:bg-accent">{translate(`ai.suggest.${n}`)}</Button></li>)}
+            {([1, 2, 3, 4] as const).map((n) => <li key={n}><Button type="button" onClick={() => { setInput(translate(`ai.suggest.${n}`)); composerRef.current?.focus(); }} className="w-full border border-border bg-card py-2 text-left text-foreground hover:bg-accent">{translate(`ai.suggest.${n}`)}</Button></li>)}
           </ul>
         </li>}
         {messages.map((message, index) => {
@@ -360,11 +361,11 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
     </div>
     {error && <p role="alert" className="px-4 text-14 text-destructive">{translate(error.message.includes("rate_limited") ? "ai.rateLimited" : "ai.failed")}</p>}
     <div className="mx-auto w-full max-w-3xl px-4 pb-2">
-      <form ref={composerForm} onSubmit={(event) => { event.preventDefault(); const text = input.trim(); if (!text || busy) return; setInput(""); send(text); }} className="card-surface rounded-2xl p-3 shadow-sm sm:p-4">
+      <Card as="form" ref={composerForm} onSubmit={(event) => { event.preventDefault(); const text = input.trim(); if (!text || busy) return; setInput(""); send(text); }} className="rounded-2xl p-3 shadow-sm sm:p-4">
         <span title={translate("ai.contextHint")} className="mb-2 flex w-fit max-w-full items-center gap-1.5 truncate rounded-md border border-border px-2 py-1 text-14 text-foreground"><span className="sr-only">{translate("ai.contextPill")}: </span>{pill}</span>
         <label className="sr-only" htmlFor={`composer-${chatId}`}>{translate("ai.message")}</label>
-        {selectedSkill && <Button type="button" onClick={() => setSelectedSkill(null)} className="mb-2 inline-flex rounded-md border border-border px-2 py-1 text-13 text-foreground">/{selectedSkill.name} · {translate(selectedSkill.scope === "personal" ? "skills.personal" : "skills.workspace")} ×</Button>}
-        {skillPickerOpen && <div role="listbox" aria-label={translate("skills.picker")} className="mb-2 max-h-44 overflow-auto rounded-md border border-border bg-card">{matchingSkills.map((skill) => <Button key={skill.id} type="button" role="option" onClick={() => pickSkill(skill)} className="flex w-full items-center justify-between px-3 py-2 text-left text-14 hover:bg-muted"><span>/{skill.name}</span><span className="text-12 text-muted-foreground">{translate(skill.scope === "personal" ? "skills.personal" : "skills.workspace")}</span></Button>)}{matchingSkills.length === 0 && <p className="px-3 py-2 text-13 text-muted-foreground">{translate("skills.empty")}</p>}</div>}
+        {selectedSkill && <Button type="button" onClick={() => setSelectedSkill(null)} className="mb-2 inline-flex rounded-md border border-border px-2 text-foreground">/{selectedSkill.name} · {translate(selectedSkill.scope === "personal" ? "skills.personal" : "skills.workspace")} ×</Button>}
+        {skillPickerOpen && <div role="listbox" aria-label={translate("skills.picker")} className="mb-2 max-h-44 overflow-auto rounded-md border border-border bg-card">{matchingSkills.map((skill) => <Button key={skill.id} type="button" role="option" onClick={() => pickSkill(skill)} className="flex w-full items-center justify-between py-2 text-left hover:bg-muted"><span>/{skill.name}</span><span className="text-12 text-muted-foreground">{translate(skill.scope === "personal" ? "skills.personal" : "skills.workspace")}</span></Button>)}{matchingSkills.length === 0 && <p className="px-3 py-2 text-13 text-muted-foreground">{translate("skills.empty")}</p>}</div>}
         <Textarea ref={composerRef} id={`composer-${chatId}`} value={input} placeholder={translate("ai.placeholder")} rows={2} onChange={(event) => setInput(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Escape" && skillPickerOpen) { event.preventDefault(); setDismissedSkillInput(input); return; }
@@ -383,11 +384,11 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
               <option value="build">{translate("ai.mode.build")}</option>
               {canAutopilot && <option value="autopilot">{translate("ai.mode.autopilot")}</option>}
             </select>
-            {canSearchWeb && <Button type="button" aria-pressed={webSearch} aria-label={translate("ai.webSearch")} title={translate(webSearch ? "ai.webSearch.on" : "ai.webSearch.off")} onClick={() => setWebSearch(!webSearch)} className={`inline-flex size-8 items-center justify-center rounded-lg border p-0 ${webSearch ? "border-ring bg-[var(--primary)]/10 text-foreground" : "border-border bg-card text-muted-foreground"}`}><Globe aria-hidden size={16} /></Button>}
+            {canSearchWeb && <Button type="button" aria-pressed={webSearch} aria-label={translate("ai.webSearch")} title={translate(webSearch ? "ai.webSearch.on" : "ai.webSearch.off")} onClick={() => setWebSearch(!webSearch)} className={`inline-flex size-8 items-center justify-center border p-0 ${webSearch ? "border-ring bg-[var(--primary)]/10 text-foreground" : "border-border bg-card text-muted-foreground"}`}><Globe aria-hidden size={16} /></Button>}
           </div>
-          <Button type="submit" aria-label={translate("ai.send")} title={translate("ai.send")} disabled={busy || input.trim() === ""} className="inline-flex size-8 items-center justify-center rounded-lg border-0 bg-[var(--primary)] p-0 text-white hover:bg-[var(--primary)] disabled:opacity-50"><ArrowUp aria-hidden size={16} /></Button>
+          <Button variant="primary" type="submit" aria-label={translate("ai.send")} title={translate("ai.send")} disabled={busy || input.trim() === ""} className="size-8 p-0"><ArrowUp aria-hidden size={16} /></Button>
         </div>
-      </form>
+      </Card>
       <p className="py-2 text-center text-12 text-muted-foreground">{translate("ai.disclaimer")}</p>
     </div>
   </section>;
@@ -430,18 +431,18 @@ export function AiSidebar({ workspace, activeId }: { workspace: Workspace; activ
           {renaming?.id === chat.id
             ? <form className="flex w-full min-w-0 items-center gap-1 p-1" onSubmit={(event) => { event.preventDefault(); void saveRename(); }}>
               <Input autoFocus value={renaming.title} onChange={(event) => setRenaming({ id: chat.id, title: event.target.value })} aria-label={translate("ai.rename")} className="min-w-0 flex-1 basis-0 rounded border border-border bg-card px-1.5 py-0.5 text-14" />
-              <Button type="submit" className="shrink-0 rounded !bg-transparent !px-1 !py-0.5 text-13 !text-foreground hover:!bg-accent">{translate("ai.renameSave")}</Button>
-              <Button type="button" onClick={() => setRenaming(null)} className="shrink-0 rounded !border-0 !bg-transparent !px-1 !py-0.5 text-13 !text-foreground hover:!bg-accent">{translate("ai.cancel")}</Button>
+              <Button type="submit" className="shrink-0 !bg-transparent !px-1 !py-0.5 !text-foreground hover:!bg-accent">{translate("ai.renameSave")}</Button>
+              <Button type="button" onClick={() => setRenaming(null)} className="shrink-0 !border-0 !bg-transparent !px-1 !py-0.5 !text-foreground hover:!bg-accent">{translate("ai.cancel")}</Button>
             </form>
             : deleting === chat.id
               ? <div className="flex items-center gap-1 px-2 py-1.5 text-13"><span className="flex-1 truncate">{translate("ai.deleteConfirm")}</span>
-                <Button type="button" onClick={() => void remove(chat.id)} className="rounded bg-destructive px-1.5 py-0.5 text-13 text-white">{translate("ai.deleteYes")}</Button>
-                <Button type="button" onClick={() => setDeleting(null)} className="secondary rounded px-1.5 py-0.5 text-13">{translate("ai.cancel")}</Button></div>
+                <Button variant="danger" type="button" onClick={() => void remove(chat.id)} className="px-1.5 py-0.5">{translate("ai.deleteYes")}</Button>
+                <Button type="button" onClick={() => setDeleting(null)} className="px-1.5 py-0.5">{translate("ai.cancel")}</Button></div>
               : <div className="flex items-center">
                 <Link to={paths.aiChat(workspace.slug, chat.id)} title={chat.title} aria-current={chat.id === activeId ? "page" : undefined} className="min-w-0 flex-1 truncate px-2.5 py-1.5 text-14 text-foreground">{chat.title}</Link>
                 <span className="flex pr-1 opacity-0 focus-within:opacity-100 group-hover:opacity-100 max-md:opacity-100">
-                  <Button type="button" className={iconButton} aria-label={`${translate("ai.rename")}: ${chat.title}`} onClick={() => setRenaming({ id: chat.id, title: chat.title })}><Pencil aria-hidden size={13} /></Button>
-                  <Button type="button" className={iconButton} aria-label={`${translate("ai.delete")}: ${chat.title}`} onClick={() => setDeleting(chat.id)}><Trash2 aria-hidden size={13} /></Button>
+                  <Button variant="ghost" type="button" className={iconButton} aria-label={`${translate("ai.rename")}: ${chat.title}`} onClick={() => setRenaming({ id: chat.id, title: chat.title })}><Pencil aria-hidden size={13} /></Button>
+                  <Button variant="ghost" type="button" className={iconButton} aria-label={`${translate("ai.delete")}: ${chat.title}`} onClick={() => setDeleting(chat.id)}><Trash2 aria-hidden size={13} /></Button>
                 </span></div>}
         </li>)}</ul>}
     </nav>

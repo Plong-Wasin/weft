@@ -29,9 +29,9 @@ const download = (name: string, text: string) => {
 
 /** Shows what one number of usage means, with plain words; an unknown value reads "Unknown", never 0. */
 function Figure({ label, value, hint }: { label: string; value: string | null; hint?: string }) {
-  return <div className="grid gap-0.5 rounded-lg border border-subtle bg-surface-1 px-4 py-3" title={hint}>
-    <span className="text-12 text-secondary">{label}</span>
-    <strong className="text-18 font-semibold text-primary">{value ?? translate("usage.unknown")}</strong>
+  return <div className="grid gap-0.5 rounded-lg border border-border bg-card px-4 py-3" title={hint}>
+    <span className="text-12 text-muted-foreground">{label}</span>
+    <strong className="text-18 font-semibold text-foreground">{value ?? translate("usage.unknown")}</strong>
   </div>;
 }
 
@@ -39,11 +39,11 @@ function TotalsTable({ title, totals, label }: { title: string; totals: UsageTot
   return <SettingsBlock title={title}>
     <div className="overflow-x-auto">
       <table className="w-full text-13">
-        <thead><tr className="text-left text-secondary"><th className="whitespace-nowrap py-1 pr-3 font-medium">{label}</th><th className="whitespace-nowrap py-1 pr-3 font-medium">{translate("usage.col.runs")}</th><th className="whitespace-nowrap py-1 pr-3 font-medium">{translate("usage.col.tokens")}</th><th className="whitespace-nowrap py-1 pr-3 font-medium">{translate("usage.col.time")}</th><th className="whitespace-nowrap py-1 font-medium">{translate("usage.col.cost")}</th></tr></thead>
+        <thead><tr className="text-left text-muted-foreground"><th className="whitespace-nowrap py-1 pr-3 font-medium">{label}</th><th className="whitespace-nowrap py-1 pr-3 font-medium">{translate("usage.col.runs")}</th><th className="whitespace-nowrap py-1 pr-3 font-medium">{translate("usage.col.tokens")}</th><th className="whitespace-nowrap py-1 pr-3 font-medium">{translate("usage.col.time")}</th><th className="whitespace-nowrap py-1 font-medium">{translate("usage.col.cost")}</th></tr></thead>
         <tbody>{totals.map((total) => {
           const tokens = tokensOf(total);
-          return <tr key={total.key} className="border-t border-subtle">
-            <td className="py-1.5 pr-3 text-primary">{total.label}</td>
+          return <tr key={total.key} className="border-t border-border">
+            <td className="py-1.5 pr-3 text-foreground">{total.label}</td>
             <td className="whitespace-nowrap py-1.5 pr-3">{formatNumber(total.runs)}</td>
             <td className="whitespace-nowrap py-1.5 pr-3">{tokens === null ? translate("usage.unknown") : fill(translate("usage.tokens"), { count: formatNumber(tokens) })}</td>
             <td className="whitespace-nowrap py-1.5 pr-3">{durationText(total.elapsedMs) ?? translate("usage.unknown")}</td>
@@ -121,8 +121,8 @@ export function WorkspaceUsage() {
         <Figure label={translate("usage.col.time")} value={duration} />
         <Figure label={translate("usage.col.cost")} value={formatUsd(totals.estimatedCostUsd)} hint={translate("runs.costHelp")} />
       </div>
-      <p className="mb-6 text-13 text-secondary">{totals.unknownUsageRuns > 0 && <>{fill(translate("usage.unknownUsageNote"), { count: totals.unknownUsageRuns })} </>}{totals.unknownCostRuns > 0 && <>{fill(translate("usage.unknownCostNote"), { count: totals.unknownCostRuns })} </>}{totals.reportedCostRuns > 0 && fill(translate("usage.reportedNote"), { count: totals.reportedCostRuns })}</p>
-      {rows.length === 0 && <p className="text-13 text-secondary">{translate("usage.noRows")}</p>}
+      <p className="mb-6 text-13 text-muted-foreground">{totals.unknownUsageRuns > 0 && <>{fill(translate("usage.unknownUsageNote"), { count: totals.unknownUsageRuns })} </>}{totals.unknownCostRuns > 0 && <>{fill(translate("usage.unknownCostNote"), { count: totals.unknownCostRuns })} </>}{totals.reportedCostRuns > 0 && fill(translate("usage.reportedNote"), { count: totals.reportedCostRuns })}</p>
+      {rows.length === 0 && <p className="text-13 text-muted-foreground">{translate("usage.noRows")}</p>}
       {rows.length > 0 && <>
         <TotalsTable title={translate("usage.byAgent")} totals={byAgent} label={translate("usage.col.agent")} />
         <TotalsTable title={translate("usage.byPerson")} totals={byPerson} label={translate("usage.col.person")} />
@@ -130,10 +130,10 @@ export function WorkspaceUsage() {
       </>}
     </>}
     <SettingsBlock title={translate("usage.prices")} description={translate("usage.pricesDesc")}>
-      {prices.length === 0 ? <p className="text-13 text-secondary">{translate("usage.pricesEmpty")}</p> : <RowList>
+      {prices.length === 0 ? <p className="text-13 text-muted-foreground">{translate("usage.pricesEmpty")}</p> : <RowList>
         {prices.map((price) => <Row key={price.id}>
-          <span className="min-w-40 flex-1 font-medium text-primary">{price.model}</span>
-          <span className="text-13 text-secondary">{formatUsd(price.inputUsdPerMillion)} / {formatUsd(price.outputUsdPerMillion)}{price.cachedInputUsdPerMillion !== null && ` · ${fill(translate("usage.priceCachedShown"), { price: formatUsd(price.cachedInputUsdPerMillion) ?? "" })}`}</span>
+          <span className="min-w-40 flex-1 font-medium text-foreground">{price.model}</span>
+          <span className="text-13 text-muted-foreground">{formatUsd(price.inputUsdPerMillion)} / {formatUsd(price.outputUsdPerMillion)}{price.cachedInputUsdPerMillion !== null && ` · ${fill(translate("usage.priceCachedShown"), { price: formatUsd(price.cachedInputUsdPerMillion) ?? "" })}`}</span>
           <Button type="button" className="secondary" onClick={() => setDraft({ model: price.model, input: String(price.inputUsdPerMillion), output: String(price.outputUsdPerMillion), cached: price.cachedInputUsdPerMillion === null ? "" : String(price.cachedInputUsdPerMillion) })}>{translate("agents.edit")}</Button>
           <Button type="button" className="secondary" onClick={() => void removePrice(price)}>{translate("usage.priceRemove")}</Button>
         </Row>)}

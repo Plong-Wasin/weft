@@ -83,9 +83,11 @@ export function BulkBar({ projectId, selected, states, people, labels, estimate,
   };
 
   const priorities = ["urgent", "high", "medium", "low", "none"];
-  return <div role="toolbar" aria-label={t("bulk.label")} data-testid="bulk-bar" className="fixed inset-x-0 bottom-4 z-30 mx-auto grid w-fit max-w-[calc(100vw-2rem)] gap-2 rounded-lg border border-border bg-card p-2 shadow-xl">
+  return <div role="toolbar" aria-label={t("bulk.label")} data-testid="bulk-bar" className="fixed inset-x-0 bottom-4 z-30 mx-auto grid w-fit max-w-[calc(100vw-2rem)] gap-2 max-sm:w-[calc(100vw-1rem)] max-sm:max-w-none rounded-lg border border-border bg-card p-2 shadow-xl">
     <div className="flex flex-wrap items-center gap-2">
-      <span className="px-1 text-13 font-medium text-foreground" aria-live="polite">{fill("bulk.selected", count)}</span>
+      <span className="px-1 text-13 font-medium text-foreground max-sm:flex-1" aria-live="polite">{fill("bulk.selected", count)}</span>
+      {/* On a phone the actions form a three-column grid under the count and the close button. */}
+      <div data-testid="bulk-actions" className="contents max-sm:order-3 max-sm:grid max-sm:w-full max-sm:grid-cols-3 max-sm:gap-2 max-sm:[&>*]:min-w-0 max-sm:[&_button]:w-full max-sm:[&_button]:min-w-0 max-sm:[&_button]:justify-center max-sm:[&_button]:overflow-hidden">
       <SingleSelect label={t("workItems.state")} summary={t("workItems.state")} value="" icon={<StateIcon group="started" />} options={states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> }))} onSelect={(stateId) => void update({ stateId })} />
       <SingleSelect label={t("workItems.priority")} summary={t("workItems.priority")} value="" icon={<PriorityIcon priority="high" />} options={priorities.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> }))} onSelect={(priority) => void update({ priority })} />
       <SetMenu label={t("workItems.assignees")} icon={<Users aria-hidden size={14} className="text-muted-foreground" />} options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: accessReasonText(person) }))} present={assigned}
@@ -101,7 +103,8 @@ export function BulkBar({ projectId, selected, states, people, labels, estimate,
         onApply={(mode, id) => apply(mode === "add" ? "add_module_items" : "remove_module_items", { moduleId: id, workItemIds: ids }, "bulk.updated")} />}
       <Button type="button" className={`${chip} disabled:opacity-50`} disabled={!archivable} title={archivable ? undefined : t("bulk.archiveBlocked")} onClick={() => void apply("bulk_archive_work_items", { projectId, workItemIds: ids }, "bulk.archived").then((ok) => ok && onClear())}><Archive aria-hidden size={14} className="text-muted-foreground" />{t("bulk.archive")}</Button>
       <Button type="button" className={`${chip} text-destructive`} onClick={() => setConfirmDelete(true)}><Trash2 aria-hidden size={14} />{t("bulk.delete")}</Button>
-      <Button variant="ghost" type="button" aria-label={t("bulk.clear")} title={t("bulk.clear")} className="rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={onClear}><X aria-hidden size={16} /></Button>
+      </div>
+      <Button variant="ghost" type="button" aria-label={t("bulk.clear")} title={t("bulk.clear")} className="rounded-md bg-transparent p-1 max-sm:order-2 max-sm:size-11 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={onClear}><X aria-hidden size={16} /></Button>
     </div>
     {error && <p role="alert" className="m-0 px-1 text-13 text-destructive">{error}</p>}
     {confirmDelete && <Dialog title={fill("bulk.deleteTitle", count)} onClose={() => setConfirmDelete(false)}>

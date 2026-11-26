@@ -33,11 +33,11 @@ const t = (key: string) => translate(key as MessageKey);
 const displayKey = "weft.modules.display";
 
 const statusTone: Record<Status, string> = {
-  backlog: "bg-layer-2 text-secondary", planned: "bg-accent-subtle text-accent-text", "in-progress": "bg-warning-subtle text-warning-primary",
-  paused: "bg-layer-2 text-tertiary", completed: "bg-success-subtle text-success-text", cancelled: "bg-danger-subtle text-danger-text",
+  backlog: "bg-background text-muted-foreground", planned: "bg-accent text-foreground", "in-progress": "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+  paused: "bg-background text-muted-foreground", completed: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400", cancelled: "bg-destructive/10 text-destructive",
 };
 const primaryButton = "flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-13 font-medium";
-const iconButton = "grid size-7 place-items-center rounded-md border-0 bg-transparent p-0 text-secondary hover:bg-layer-transparent-hover hover:text-primary";
+const iconButton = "grid size-7 place-items-center rounded-md border-0 bg-transparent p-0 text-muted-foreground hover:bg-accent hover:text-foreground";
 
 function StatusBadge({ status }: { status: Status }) {
   return <span className={`inline-flex items-center whitespace-nowrap rounded-md px-2 py-0.5 text-11 font-medium ${statusTone[status]}`}>{t(`modules.status.${status}`)}</span>;
@@ -52,7 +52,7 @@ function ProgressRing({ percent }: { percent: number }) {
       <circle cx="14" cy="14" r={radius} fill="none" strokeWidth="2.5" className="stroke-[var(--color-layer-3)]" />
       <circle cx="14" cy="14" r={radius} fill="none" strokeWidth="2.5" strokeLinecap="round" className="stroke-[var(--color-success-primary)]" strokeDasharray={circumference} strokeDashoffset={circumference * (1 - percent / 100)} />
     </svg>
-    <span aria-hidden className="text-9 font-medium text-secondary">{formatNumber(percent)}%</span>
+    <span aria-hidden className="text-9 font-medium text-muted-foreground">{formatNumber(percent)}%</span>
   </span>;
 }
 
@@ -77,7 +77,7 @@ function Overlay({ label, onClose, children }: { label: string; onClose: () => v
   };
   const close = () => { if (dialog.current?.open) dialog.current.close(); };
   return <dialog ref={dialog} aria-label={label} onClose={onClose} onPointerDown={(event) => { pressedOutside.current = outside(event); }} onPointerUp={(event) => { if (pressedOutside.current && outside(event)) close(); pressedOutside.current = false; }}
-    className="module-dialog fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100vw-1.5rem)] max-w-lg overflow-y-auto overscroll-contain rounded-lg border border-subtle bg-surface-1 p-0 shadow-xl backdrop:bg-backdrop">{children}</dialog>;
+    className="module-dialog fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100vw-1.5rem)] max-w-lg overflow-y-auto overscroll-contain rounded-lg border border-border bg-card p-0 shadow-xl backdrop:bg-black/30">{children}</dialog>;
 }
 
 function ModuleFormModal({ action, projectId, workspaceId, module, onClose, onSaved }: { action: Call; projectId: string; workspaceId: string; module?: Module; onClose: () => void; onSaved: () => void }) {
@@ -107,26 +107,26 @@ function ModuleFormModal({ action, projectId, workspaceId, module, onClose, onSa
       onClose();
     }}>
       <div className="flex items-center gap-2">
-        <h2 className="m-0 flex-1 text-18 font-semibold text-primary">{title}</h2>
+        <h2 className="m-0 flex-1 text-18 font-semibold text-foreground">{title}</h2>
         <Button type="button" className={iconButton} aria-label={t("modules.close")} onClick={onClose}><X aria-hidden size={16} /></Button>
       </div>
       <Input autoFocus required aria-label={t("modules.name")} placeholder={t("modules.name")} value={name} maxLength={255} className="w-full text-16" onChange={(event) => setName(event.target.value)} />
-      <div className="grid gap-1 text-13 text-secondary"><span>{t("workItems.description")}</span><DescriptionEditor workspaceId={workspaceId} owner={module ? { ownerType: "module", ownerId: module.id } : undefined} mentionPeople={people} initial={description} editable onChange={setDescription} /></div>
+      <div className="grid gap-1 text-13 text-muted-foreground"><span>{t("workItems.description")}</span><DescriptionEditor workspaceId={workspaceId} owner={module ? { ownerType: "module", ownerId: module.id } : undefined} mentionPeople={people} initial={description} editable onChange={setDescription} /></div>
       <div className="flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-2 text-13 text-secondary">{t("modules.start")}<Input type="date" value={startDate} max={endDate || undefined} className="w-auto" onChange={(event) => setStartDate(event.target.value)} /></label>
-        <label className="flex items-center gap-2 text-13 text-secondary">{t("modules.end")}<Input type="date" value={endDate} min={startDate || undefined} className="w-auto" onChange={(event) => setEndDate(event.target.value)} /></label>
+        <label className="flex items-center gap-2 text-13 text-muted-foreground">{t("modules.start")}<Input type="date" value={startDate} max={endDate || undefined} className="w-auto" onChange={(event) => setStartDate(event.target.value)} /></label>
+        <label className="flex items-center gap-2 text-13 text-muted-foreground">{t("modules.end")}<Input type="date" value={endDate} min={startDate || undefined} className="w-auto" onChange={(event) => setEndDate(event.target.value)} /></label>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <SingleSelect label={t("modules.status")} summary={t(`modules.status.${status}`)} value={status} options={statuses.map((value) => ({ id: value, name: t(`modules.status.${value}`) }))} onSelect={(value) => setStatus(value as Status)} />
-        <SingleSelect label={t("modules.lead")} summary={leadId ? nameOf(leadId) : t("modules.noLead")} value={leadId} icon={<CircleUserRound aria-hidden size={14} className="text-secondary" />}
+        <SingleSelect label={t("modules.lead")} summary={leadId ? nameOf(leadId) : t("modules.noLead")} value={leadId} icon={<CircleUserRound aria-hidden size={14} className="text-muted-foreground" />}
           options={[{ id: "", name: t("modules.noLead") }, ...people.filter((person) => !person.isAgent).map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} /> }))]} onSelect={setLeadId} />
-        <MultiSelect label={t("modules.members")} selected={memberIds} icon={<Users aria-hidden size={14} className="text-secondary" />}
-          summary={memberIds.length === 0 ? <span className="text-secondary">{t("modules.members")}</span> : <span>{memberIds.map(nameOf).filter(Boolean).join(", ")}</span>}
+        <MultiSelect label={t("modules.members")} selected={memberIds} icon={<Users aria-hidden size={14} className="text-muted-foreground" />}
+          summary={memberIds.length === 0 ? <span className="text-muted-foreground">{t("modules.members")}</span> : <span>{memberIds.map(nameOf).filter(Boolean).join(", ")}</span>}
           options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} /> }))}
           onToggle={(id, on) => setMemberIds(on ? [...memberIds, id] : memberIds.filter((other) => other !== id))} />
       </div>
-      {note && <p role="alert" className="m-0 text-danger-text">{note}</p>}
-      <div className="flex justify-end gap-2 border-t border-subtle pt-4">
+      {note && <p role="alert" className="m-0 text-destructive">{note}</p>}
+      <div className="flex justify-end gap-2 border-t border-border pt-4">
         <Button type="button" className="secondary" onClick={onClose}>{t("modules.cancel")}</Button>
         <Button type="submit" disabled={busy}>{t(module ? "modules.save" : "modules.create")}</Button>
       </div>
@@ -152,7 +152,7 @@ function ModuleMenu({ module, canWrite, canAdmin, onEdit, onArchive, onDelete }:
 function Members({ ids, people }: { ids: string[]; people: Person[] }) {
   const named = ids.map((id) => people.find((person) => person.userId === id)).filter((person): person is Person => !!person);
   if (named.length === 0) return null;
-  return <span className="flex items-center -space-x-1" title={named.map((person) => person.name).join(", ")}>{named.slice(0, 3).map((person) => <Avatar key={person.userId} name={person.name} id={person.userId} agent={person.isAgent} />)}{named.length > 3 && <span className="pl-2 text-11 text-secondary">+{named.length - 3}</span>}</span>;
+  return <span className="flex items-center -space-x-1" title={named.map((person) => person.name).join(", ")}>{named.slice(0, 3).map((person) => <Avatar key={person.userId} name={person.name} id={person.userId} agent={person.isAgent} />)}{named.length > 3 && <span className="pl-2 text-11 text-muted-foreground">+{named.length - 3}</span>}</span>;
 }
 
 function useDisplay(): [Display, (next: Display) => void] {
@@ -188,53 +188,53 @@ export function ModulesPage({ workspaceId, workspaceSlug, projectKey, projectId,
     onArchive={() => void run(module.archived ? "unarchive_module" : "archive_module", { moduleId: module.id })} onDelete={() => remove(module)} />;
   const leadOf = (module: Module) => people.find((person) => person.userId === module.leadId);
   const toggle = (value: Display, icon: React.ReactNode) => <Button type="button" aria-pressed={display === value} aria-label={t(`modules.display.${value}`)} title={t(`modules.display.${value}`)}
-    className={`${iconButton} ${display === value ? "bg-layer-transparent-selected text-primary" : ""}`} onClick={() => setDisplay(value)}>{icon}</Button>;
+    className={`${iconButton} ${display === value ? "bg-accent text-foreground" : ""}`} onClick={() => setDisplay(value)}>{icon}</Button>;
   return <section className="grid gap-4">
-    <header className="flex flex-wrap items-center gap-3 border-b border-subtle pb-3">
-      <nav aria-label={t("workItems.breadcrumb")} className="flex items-center gap-2 text-13 text-secondary">
-        <Link to={paths.workItems(workspaceSlug, projectKey)} className="text-secondary hover:text-primary">{projectKey}</Link><ChevronRight aria-hidden size={12} />
-        <Package aria-hidden size={14} /><h2 className="m-0 text-13 font-medium text-primary">{t("modules.title")}</h2>
+    <header className="flex flex-wrap items-center gap-3 border-b border-border pb-3">
+      <nav aria-label={t("workItems.breadcrumb")} className="flex items-center gap-2 text-13 text-muted-foreground">
+        <Link to={paths.workItems(workspaceSlug, projectKey)} className="text-muted-foreground hover:text-foreground">{projectKey}</Link><ChevronRight aria-hidden size={12} />
+        <Package aria-hidden size={14} /><h2 className="m-0 text-13 font-medium text-foreground">{t("modules.title")}</h2>
       </nav>
       <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-        <label className="flex items-center gap-1.5 whitespace-nowrap text-13 text-secondary"><Checkbox checked={archived} onChange={(event) => setArchived(event.target.checked)} />{t("modules.showArchived")}</label>
-        <div role="group" aria-label={t("modules.display")} className="flex items-center gap-0.5 rounded-md bg-layer-1 p-0.5">{toggle("list", <List aria-hidden size={15} />)}{toggle("grid", <LayoutGrid aria-hidden size={15} />)}</div>
+        <label className="flex items-center gap-1.5 whitespace-nowrap text-13 text-muted-foreground"><Checkbox checked={archived} onChange={(event) => setArchived(event.target.checked)} />{t("modules.showArchived")}</label>
+        <div role="group" aria-label={t("modules.display")} className="flex items-center gap-0.5 rounded-md bg-muted p-0.5">{toggle("list", <List aria-hidden size={15} />)}{toggle("grid", <LayoutGrid aria-hidden size={15} />)}</div>
         {canWrite && !archived && <Button type="button" className={primaryButton} onClick={() => setForm({})}><Plus aria-hidden size={14} />{t("modules.addNew")}</Button>}
       </div>
     </header>
-    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-subtle bg-surface-1 p-3">
+    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card p-3">
       <Input type="search" aria-label={t("modules.searchModules")} placeholder={t("modules.searchModules")} value={search} onChange={(event) => setSearch(event.target.value)} className="w-48" />
       <select aria-label={t("modules.statusFilter")} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">{t("modules.anyStatus")}</option>{statuses.map((value) => <option key={value} value={value}>{t(`modules.status.${value}`)}</option>)}</select>
       <select aria-label={t("modules.leadFilter")} value={leadFilter} onChange={(event) => setLeadFilter(event.target.value)}><option value="">{t("modules.anyLead")}</option>{people.filter((person) => !person.isAgent).map((person) => <option key={person.userId} value={person.userId}>{person.name}</option>)}</select>
       <select aria-label={t("modules.memberFilter")} value={memberFilter} onChange={(event) => setMemberFilter(event.target.value)}><option value="">{t("modules.anyMember")}</option>{people.map((person) => <option key={person.userId} value={person.userId}>{person.name}</option>)}</select>
-      <label className="flex items-center gap-1 text-12 text-secondary">{t("modules.dateFrom")}<Input aria-label={t("modules.dateFrom")} type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /></label>
-      <label className="flex items-center gap-1 text-12 text-secondary">{t("modules.dateTo")}<Input aria-label={t("modules.dateTo")} type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /></label>
+      <label className="flex items-center gap-1 text-12 text-muted-foreground">{t("modules.dateFrom")}<Input aria-label={t("modules.dateFrom")} type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /></label>
+      <label className="flex items-center gap-1 text-12 text-muted-foreground">{t("modules.dateTo")}<Input aria-label={t("modules.dateTo")} type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /></label>
       {(search || statusFilter || leadFilter || memberFilter || dateFrom || dateTo) && <Button type="button" className={primaryButton} onClick={() => { setSearch(""); setStatusFilter(""); setLeadFilter(""); setMemberFilter(""); setDateFrom(""); setDateTo(""); }}>{t("modules.clearFilters")}</Button>}
     </div>
-    {note && <p role="alert" className="m-0 px-4 py-2 text-danger-text">{note}</p>}
+    {note && <p role="alert" className="m-0 px-4 py-2 text-destructive">{note}</p>}
     {modules?.length === 0 && (archived || search || statusFilter || leadFilter || memberFilter || dateFrom || dateTo
       ? <EmptyState title={search || statusFilter || leadFilter || memberFilter || dateFrom || dateTo ? t("modules.noMatches") : t("modules.empty")} />
       : <EmptyState title={t("modules.empty")} description={t("modules.emptyHint")} action={canWrite ? <Button type="button" className={primaryButton} onClick={() => setForm({})}><Plus aria-hidden size={14} />{t("modules.createFirst")}</Button> : undefined} />)}
     {display === "list"
-      ? <ul aria-label={t("modules.title")} className="m-0 grid list-none gap-1 rounded-xl border border-subtle bg-surface-1 p-1 empty:hidden">{(modules ?? []).map((module) => <li key={module.id} data-testid={`module-row-${module.name}`} className="flex flex-wrap items-center gap-3 rounded-lg px-4 py-3 transition-colors hover:bg-layer-transparent-hover">
+      ? <ul aria-label={t("modules.title")} className="m-0 grid list-none gap-1 rounded-xl border border-border bg-card p-1 empty:hidden">{(modules ?? []).map((module) => <li key={module.id} data-testid={`module-row-${module.name}`} className="flex flex-wrap items-center gap-3 rounded-lg px-4 py-3 transition-colors hover:bg-accent">
         <ProgressRing percent={module.progress.percent} />
-        <Link to={paths.module(workspaceSlug, projectKey, module.id)} className="min-w-48 flex-1 truncate text-14 font-medium text-primary">{module.name}</Link>
-        <span className="flex items-center gap-1.5 rounded-md border border-subtle px-2 py-1 text-12 text-secondary"><CalendarRange aria-hidden size={13} />{dateRange(module)}</span>
+        <Link to={paths.module(workspaceSlug, projectKey, module.id)} className="min-w-48 flex-1 truncate text-14 font-medium text-foreground">{module.name}</Link>
+        <span className="flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-12 text-muted-foreground"><CalendarRange aria-hidden size={13} />{dateRange(module)}</span>
         <StatusBadge status={module.status} />
-        <span className="text-12 text-secondary">{t("modules.itemCount").replace("{count}", formatNumber(module.itemCount))}</span>
+        <span className="text-12 text-muted-foreground">{t("modules.itemCount").replace("{count}", formatNumber(module.itemCount))}</span>
         <Members ids={module.memberIds} people={people} />
         {leadOf(module) && <span title={`${t("modules.lead")}: ${leadOf(module)?.name}`}><Avatar name={leadOf(module)?.name ?? ""} id={module.leadId ?? undefined} /></span>}
         {menu(module)}
       </li>)}</ul>
-      : <ul aria-label={t("modules.title")} className="m-0 grid list-none grid-cols-1 gap-2 rounded-xl border border-subtle bg-surface-1 p-2 empty:hidden sm:grid-cols-2 xl:grid-cols-3">{(modules ?? []).map((module) => <li key={module.id} data-testid={`module-card-${module.name}`} className="grid content-between gap-4 rounded-lg bg-layer-1 p-4 transition-colors hover:bg-layer-2">
+      : <ul aria-label={t("modules.title")} className="m-0 grid list-none grid-cols-1 gap-2 rounded-xl border border-border bg-card p-2 empty:hidden sm:grid-cols-2 xl:grid-cols-3">{(modules ?? []).map((module) => <li key={module.id} data-testid={`module-card-${module.name}`} className="grid content-between gap-4 rounded-lg bg-muted p-4 transition-colors hover:bg-background">
         <div className="flex items-start gap-2">
-          <Link to={paths.module(workspaceSlug, projectKey, module.id)} className="min-w-0 flex-1 truncate text-16 font-medium text-primary">{module.name}</Link>
+          <Link to={paths.module(workspaceSlug, projectKey, module.id)} className="min-w-0 flex-1 truncate text-16 font-medium text-foreground">{module.name}</Link>
           {menu(module)}
         </div>
-        <div className="flex items-center gap-2"><StatusBadge status={module.status} /><span className="text-12 text-secondary">{t("modules.itemCount").replace("{count}", formatNumber(module.itemCount))}</span></div>
-        <div className="flex items-center gap-1.5 text-12 text-secondary"><CalendarRange aria-hidden size={13} />{dateRange(module)}</div>
-        <div className="flex items-center gap-2 border-t border-subtle pt-3">
+        <div className="flex items-center gap-2"><StatusBadge status={module.status} /><span className="text-12 text-muted-foreground">{t("modules.itemCount").replace("{count}", formatNumber(module.itemCount))}</span></div>
+        <div className="flex items-center gap-1.5 text-12 text-muted-foreground"><CalendarRange aria-hidden size={13} />{dateRange(module)}</div>
+        <div className="flex items-center gap-2 border-t border-border pt-3">
           <ProgressRing percent={module.progress.percent} />
-          <span className="text-12 text-secondary">{t("modules.percent").replace("{percent}", formatNumber(module.progress.percent))}</span>
+          <span className="text-12 text-muted-foreground">{t("modules.percent").replace("{percent}", formatNumber(module.progress.percent))}</span>
           <span className="ml-auto flex items-center gap-2"><Members ids={module.memberIds} people={people} />{leadOf(module) && <span title={`${t("modules.lead")}: ${leadOf(module)?.name}`}><Avatar name={leadOf(module)?.name ?? ""} id={module.leadId ?? undefined} /></span>}</span>
         </div>
       </li>)}</ul>}
@@ -250,18 +250,18 @@ function AddItemsModal({ candidates, onAdd, onClose }: { candidates: Item[]; onA
   return <Overlay label={t("modules.addItemsTitle")} onClose={onClose}>
     <div className="grid gap-3 p-5">
       <div className="flex items-center gap-2">
-        <h2 className="m-0 flex-1 text-18 font-semibold text-primary">{t("modules.addItemsTitle")}</h2>
+        <h2 className="m-0 flex-1 text-18 font-semibold text-foreground">{t("modules.addItemsTitle")}</h2>
         <Button type="button" className={iconButton} aria-label={t("modules.close")} onClick={onClose}><X aria-hidden size={16} /></Button>
       </div>
       <Input autoFocus type="search" aria-label={t("modules.searchItems")} placeholder={t("modules.searchItems")} value={query} className="w-full text-14" onChange={(event) => setQuery(event.target.value)} />
-      {candidates.length === 0 && <p className="m-0 text-13 text-secondary">{t("modules.noneToAdd")}</p>}
+      {candidates.length === 0 && <p className="m-0 text-13 text-muted-foreground">{t("modules.noneToAdd")}</p>}
       <ul className="m-0 grid max-h-72 list-none gap-0.5 overflow-auto p-0">{shown.map((item) => <li key={item.id}>
-        <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-13 text-primary hover:bg-layer-transparent-hover">
+        <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-13 text-foreground hover:bg-accent">
           <Checkbox checked={selected.includes(item.id)} onChange={(event) => setSelected(event.target.checked ? [...selected, item.id] : selected.filter((id) => id !== item.id))} />
-          <span className="text-tertiary">{item.displayId}</span><span className="truncate">{item.title}</span>
+          <span className="text-muted-foreground">{item.displayId}</span><span className="truncate">{item.title}</span>
         </label>
       </li>)}</ul>
-      <div className="flex justify-end gap-2 border-t border-subtle pt-4">
+      <div className="flex justify-end gap-2 border-t border-border pt-4">
         <Button type="button" className="secondary" onClick={onClose}>{t("modules.cancel")}</Button>
         <Button type="button" disabled={selected.length === 0} onClick={async () => { await onAdd(selected); onClose(); }}>{t("modules.add")}</Button>
       </div>
@@ -271,7 +271,7 @@ function AddItemsModal({ candidates, onAdd, onClose }: { candidates: Item[]; onA
 
 function PropertyRow({ icon, label, children }: { icon: React.ReactNode; label: string; children: React.ReactNode }) {
   return <div className="grid grid-cols-[7.5rem_1fr] items-center gap-2 text-13">
-    <span className="flex items-center gap-2 text-secondary">{icon}{label}</span>
+    <span className="flex items-center gap-2 text-muted-foreground">{icon}{label}</span>
     <div className="flex min-w-0 flex-wrap items-center gap-1">{children}</div>
   </div>;
 }
@@ -313,11 +313,11 @@ export function ModuleDetailPage({ workspaceId, workspaceSlug, projectKey, proje
   const nameOf = (id: string) => people.find((person) => person.userId === id)?.name ?? "";
   const { completed, total, percent } = module.progress;
   return <section className="flex min-h-full min-w-0 max-w-full flex-col gap-3 overflow-x-hidden">
-    <header className="flex flex-wrap items-center gap-2 border-b border-subtle pb-3">
-      <nav aria-label={t("workItems.breadcrumb")} className="flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap text-13 text-secondary">
-        <Link to={paths.workItems(workspaceSlug, projectKey)} className="text-secondary hover:text-primary">{projectKey}</Link><ChevronRight aria-hidden size={12} />
-        <Link to={back} aria-label={t("modules.back")} className="text-secondary hover:text-primary">{t("modules.title")}</Link><ChevronRight aria-hidden size={12} />
-        <span className="truncate font-medium text-primary">{module.name}</span>
+    <header className="flex flex-wrap items-center gap-2 border-b border-border pb-3">
+      <nav aria-label={t("workItems.breadcrumb")} className="flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap text-13 text-muted-foreground">
+        <Link to={paths.workItems(workspaceSlug, projectKey)} className="text-muted-foreground hover:text-foreground">{projectKey}</Link><ChevronRight aria-hidden size={12} />
+        <Link to={back} aria-label={t("modules.back")} className="text-muted-foreground hover:text-foreground">{t("modules.title")}</Link><ChevronRight aria-hidden size={12} />
+        <span className="truncate font-medium text-foreground">{module.name}</span>
       </nav>
       <div className="ml-auto flex items-center gap-2">
         <DetailsPanelToggle open={detailsPanel.open} onToggle={detailsPanel.toggle} panelId="module-details-panel" />
@@ -330,30 +330,30 @@ export function ModuleDetailPage({ workspaceId, workspaceSlug, projectKey, proje
           }} />
       </div>
     </header>
-    {module.archived && <p role="status" className="m-0 px-4 py-2 text-13 text-secondary">{t("modules.archivedNote")}</p>}
-    {note && <p role="alert" className="m-0 px-4 py-2 text-danger-text">{note}</p>}
+    {module.archived && <p role="status" className="m-0 px-4 py-2 text-13 text-muted-foreground">{t("modules.archivedNote")}</p>}
+    {note && <p role="alert" className="m-0 px-4 py-2 text-destructive">{note}</p>}
     <div className="flex flex-1 flex-col gap-4 lg:flex-row">
       <div className="min-w-0 flex-1 overflow-x-auto p-4">
         <h2 className="sr-only">{t("modules.workItems")}</h2>
         <WorkItemLayouts projectId={projectId} workspaceSlug={workspaceSlug} action={action} run={runQuery} refreshKey={refreshKey} moduleId={moduleId}
-          rowAction={editable ? (item) => <Button className="whitespace-nowrap rounded-md border border-subtle bg-surface-1 px-2 py-1 text-12 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={() => void run("remove_module_items", { moduleId, workItemIds: [item.id] })}>{t("modules.remove")}</Button> : undefined} />
+          rowAction={editable ? (item) => <Button className="whitespace-nowrap rounded-md border border-border bg-card px-2 py-1 text-12 font-medium text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => void run("remove_module_items", { moduleId, workItemIds: [item.id] })}>{t("modules.remove")}</Button> : undefined} />
       </div>
-      <aside id="module-details-panel" aria-label={t("modules.properties")} className={`grid content-start gap-3 rounded-xl border border-subtle bg-surface-1 p-4 sm:p-5 lg:w-80 lg:shrink-0 ${detailsPanel.open ? "" : "lg:hidden"}`}>
+      <aside id="module-details-panel" aria-label={t("modules.properties")} className={`grid content-start gap-3 rounded-xl border border-border bg-card p-4 sm:p-5 lg:w-80 lg:shrink-0 ${detailsPanel.open ? "" : "lg:hidden"}`}>
         <section className="grid gap-2" aria-label={t("workItems.description")}><h3 className="m-0 text-14 font-semibold">{t("workItems.description")}</h3><EntityDescription key={module.id} action={action} workspaceId={workspaceId} owner={{ ownerType: "module", ownerId: module.id }} mentionPeople={people} initial={module.description ?? null} editable={editable} /></section>
         <div className="flex items-center gap-2"><StatusBadge status={module.status} /></div>
         <BurndownChart action={action} name="get_module_burndown" body={{ moduleId }} projectId={projectId} refreshKey={refreshKey} testId="module-burndown" />
-        {insights && <section aria-label={t("modules.risks")} className="grid gap-2 border-t border-subtle pt-3">
-          <h3 className="m-0 text-14 font-semibold text-primary">{t("modules.risks")}</h3>
+        {insights && <section aria-label={t("modules.risks")} className="grid gap-2 border-t border-border pt-3">
+          <h3 className="m-0 text-14 font-semibold text-foreground">{t("modules.risks")}</h3>
           <InsightList title={t("modules.blocked")} items={insights.blocked} workspaceSlug={workspaceSlug} />
           <InsightList title={t("modules.overdue")} items={insights.overdue} workspaceSlug={workspaceSlug} />
-          <label className="grid gap-1 text-12 text-secondary">{t("modules.breakdown")}
+          <label className="grid gap-1 text-12 text-muted-foreground">{t("modules.breakdown")}
             <select aria-label={t("modules.breakdown")} value={breakdown} onChange={(event) => setBreakdown(event.target.value)}>
               {["state", "assignee", "label", "priority"].map((dimension) => <option key={dimension} value={dimension}>{t(`modules.breakdown.${dimension}` as MessageKey)}</option>)}
             </select>
           </label>
-          <ul className="m-0 grid list-none gap-1 p-0">{(insights.breakdowns[breakdown] ?? []).map((group) => <li key={group.key} className="rounded border border-subtle p-2"><span className="flex justify-between text-12"><span>{group.label}</span><span>{group.items.length}</span></span><ItemLinks items={group.items} workspaceSlug={workspaceSlug} /></li>)}</ul>
+          <ul className="m-0 grid list-none gap-1 p-0">{(insights.breakdowns[breakdown] ?? []).map((group) => <li key={group.key} className="rounded border border-border p-2"><span className="flex justify-between text-12"><span>{group.label}</span><span>{group.items.length}</span></span><ItemLinks items={group.items} workspaceSlug={workspaceSlug} /></li>)}</ul>
         </section>}
-        <h2 className="m-0 text-20 font-semibold text-primary">{module.name}</h2>
+        <h2 className="m-0 text-20 font-semibold text-foreground">{module.name}</h2>
         <PropertyRow icon={<CalendarRange aria-hidden size={15} />} label={t("modules.status")}>
           <SingleSelect label={t("modules.status")} summary={t(`modules.status.${module.status}`)} value={module.status} readOnly={!editable}
             options={statuses.map((value) => ({ id: value, name: t(`modules.status.${value}`) }))} onSelect={(value) => void patch({ status: value as Status })} />
@@ -369,15 +369,15 @@ export function ModuleDetailPage({ workspaceId, workspaceSlug, projectKey, proje
         </PropertyRow>
         <PropertyRow icon={<Users aria-hidden size={15} />} label={t("modules.members")}>
           <MultiSelect label={t("modules.members")} readOnly={!editable} selected={module.memberIds}
-            summary={module.memberIds.length === 0 ? <span className="text-secondary">{t("modules.noMembers")}</span> : <span className="flex items-center gap-1">{module.memberIds.slice(0, 3).map((id) => <Avatar key={id} name={nameOf(id)} id={id} agent={people.find((person) => person.userId === id)?.isAgent} />)}<span className="max-w-32 truncate">{module.memberIds.map(nameOf).join(", ")}</span></span>}
+            summary={module.memberIds.length === 0 ? <span className="text-muted-foreground">{t("modules.noMembers")}</span> : <span className="flex items-center gap-1">{module.memberIds.slice(0, 3).map((id) => <Avatar key={id} name={nameOf(id)} id={id} agent={people.find((person) => person.userId === id)?.isAgent} />)}<span className="max-w-32 truncate">{module.memberIds.map(nameOf).join(", ")}</span></span>}
             options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} /> }))}
             onToggle={(id, on) => void patch({ memberIds: on ? [...module.memberIds, id] : module.memberIds.filter((other) => other !== id) })} />
         </PropertyRow>
         <PropertyRow icon={<Package aria-hidden size={15} />} label={t("modules.workItemsCount")}>
-          <span data-testid="module-items-count" className="px-1 text-13 font-medium text-primary">{formatNumber(completed)}/{formatNumber(total)}</span>
+          <span data-testid="module-items-count" className="px-1 text-13 font-medium text-foreground">{formatNumber(completed)}/{formatNumber(total)}</span>
         </PropertyRow>
-        <div className="grid gap-2 border-t border-subtle pt-3">
-          <div className="flex items-center justify-between text-13"><span className="font-medium text-primary">{t("modules.progress")}</span><span className="text-secondary">{t("modules.percent").replace("{percent}", formatNumber(percent))}</span></div>
+        <div className="grid gap-2 border-t border-border pt-3">
+          <div className="flex items-center justify-between text-13"><span className="font-medium text-foreground">{t("modules.progress")}</span><span className="text-muted-foreground">{t("modules.percent").replace("{percent}", formatNumber(percent))}</span></div>
           <progress max={100} value={percent} aria-label={t("modules.progress")} className="h-1.5 w-full" />
         </div>
       </aside>
@@ -391,5 +391,5 @@ function InsightList({ title, items, workspaceSlug }: { title: string; items: It
   return <details><summary className="cursor-pointer text-13 font-medium">{title} · {items.length}</summary><ItemLinks items={items} workspaceSlug={workspaceSlug} /></details>;
 }
 function ItemLinks({ items, workspaceSlug }: { items: Item[]; workspaceSlug: string }) {
-  return items.length ? <ul className="m-0 mt-1 grid list-none gap-1 p-0">{items.map((item) => <li key={item.id}><Link className="text-12 text-primary hover:underline" to={paths.workItem(workspaceSlug, item.displayId)}>{item.displayId} · {item.title}</Link></li>)}</ul> : null;
+  return items.length ? <ul className="m-0 mt-1 grid list-none gap-1 p-0">{items.map((item) => <li key={item.id}><Link className="text-12 text-foreground hover:underline" to={paths.workItem(workspaceSlug, item.displayId)}>{item.displayId} · {item.title}</Link></li>)}</ul> : null;
 }

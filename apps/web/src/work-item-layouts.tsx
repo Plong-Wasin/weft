@@ -28,7 +28,7 @@ type Label = { id: string; name: string; color: string };
 type Item = { id: string; displayId: string; title: string; stateId: string; priority: string; estimatePointId?: string | null; assigneeIds: string[]; labelIds: string[]; createdBy: string; startDate: string | null; dueDate: string | null };
 type Named = { id: string; name: string; status?: string };
 const t = (key: string) => translate(key as MessageKey);
-const ghost = "flex items-center gap-1.5 rounded-lg border border-transparent bg-layer-1 px-2.5 py-1 text-13 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary";
+const ghost = "flex items-center gap-1.5 rounded-lg border border-transparent bg-muted px-2.5 py-1 text-13 font-medium text-muted-foreground hover:bg-accent hover:text-foreground";
 const checkRow = "flex items-center gap-2 text-13";
 
 /** Work items of one project in a layout (list or board) with display options and filters; every setting lives in the URL query string. */
@@ -373,8 +373,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     : grouping === "priority" ? <PriorityIcon priority={key} />
     : grouping === "type" && typeOptions.find((type) => type.id === key) ? <TypeIconMark icon={typeOptions.find((type) => type.id === key)!.icon} color={typeOptions.find((type) => type.id === key)!.color} />
     : grouping === "label" ? labels.find((label) => label.id === key) ? <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: labels.find((label) => label.id === key)!.color }} /> : null
-    : grouping === "cycle" ? <RefreshCw aria-hidden size={14} className="text-secondary" />
-    : grouping === "module" ? <Package aria-hidden size={14} className="text-secondary" />
+    : grouping === "cycle" ? <RefreshCw aria-hidden size={14} className="text-muted-foreground" />
+    : grouping === "module" ? <Package aria-hidden size={14} className="text-muted-foreground" />
     : grouping === "creator" && key !== "none" ? <Avatar name={personName(key)} id={key} agent={isAgentId(key)} /> : null;
   const groupIcon = (key: string) => groupIconFor(params.group, key);
   const stateIds = states.map((state) => state.id);
@@ -423,29 +423,29 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
           options={states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> }))} onSelect={(stateId) => void change(item, { stateId })} />;
       case "priority": return <SingleSelect label={t("workItems.priority")} iconOnly={iconOnly || (compact && item.priority === "none")} quiet={rowQuiet} summary={t(`workItems.priority.${item.priority}`)} display={rowQuiet && item.priority === "none" && !iconOnly ? "—" : undefined} value={item.priority} readOnly={readOnly} icon={<PriorityIcon priority={item.priority} />} hideIconOnlyTextOnPhone={iconOnly}
           options={priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> }))} onSelect={(priority) => void change(item, { priority })} />;
-      case "assignee": return <MultiSelect label={t("workItems.assignees")} readOnly={readOnly} selected={assignees} quiet={rowQuiet} searchAlways onOpen={() => { void action<Person[]>("list_project_members", { projectId }).then((rows) => rows && setPeople(rows)); }} icon={assignees.length === 0 ? <Users aria-hidden size={14} className="text-secondary" /> : undefined}
-          summary={assignees.length === 0 ? rowQuiet ? <span className="text-tertiary">—</span> : compact ? <span className="hidden text-11 max-sm:inline">{t("workItems.noAssignee")}</span> : <span className="text-secondary">{t("workItems.noAssignee")}</span> : <span className="flex items-center -space-x-1">{assignees.slice(0, 3).map((id) => <Avatar key={id} name={personName(id)} id={id} agent={isAgentId(id)} />)}{assignees.length > 3 && <span className="pl-2 text-12">+{formatNumber(assignees.length - 3)}</span>}</span>}
+      case "assignee": return <MultiSelect label={t("workItems.assignees")} readOnly={readOnly} selected={assignees} quiet={rowQuiet} searchAlways onOpen={() => { void action<Person[]>("list_project_members", { projectId }).then((rows) => rows && setPeople(rows)); }} icon={assignees.length === 0 ? <Users aria-hidden size={14} className="text-muted-foreground" /> : undefined}
+          summary={assignees.length === 0 ? rowQuiet ? <span className="text-muted-foreground">—</span> : compact ? <span className="hidden text-11 max-sm:inline">{t("workItems.noAssignee")}</span> : <span className="text-muted-foreground">{t("workItems.noAssignee")}</span> : <span className="flex items-center -space-x-1">{assignees.slice(0, 3).map((id) => <Avatar key={id} name={personName(id)} id={id} agent={isAgentId(id)} />)}{assignees.length > 3 && <span className="pl-2 text-12">+{formatNumber(assignees.length - 3)}</span>}</span>}
           options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: accessReasonText(person) }))}
           onToggle={(id, on) => void change(item, { assigneeIds: on ? [...assignees, id] : assignees.filter((other) => other !== id) })} />;
       case "labels": {
         const labelNames = item.labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ");
         const labelSummary = rowQuiet && item.labelIds.length > 0
           ? <span className="flex max-w-24 min-w-0 items-center gap-1.5">{item.labelIds.slice(0, 2).map((id) => { const label = labels.find((candidate) => candidate.id === id); return label && <span key={id} className="inline-flex min-w-0 items-center gap-1"><span aria-hidden className="size-2 rounded-full shrink-0" style={{ backgroundColor: label.color }} /><span className="truncate" title={label.name}>{label.name}</span></span>; })}{item.labelIds.length > 2 && <span className="shrink-0">+{item.labelIds.length - 2}</span>}</span>
-          : item.labelIds.length === 0 ? rowQuiet ? <span className="text-tertiary">—</span> : compact ? <span className="hidden text-11 max-sm:inline">{t("layout.noLabel")}</span> : <span className="text-secondary">{t("layout.noLabel")}</span> : <span className="block max-w-28 truncate" title={labelNames}>{labelNames}</span>;
-        return <MultiSelect label={t("workItems.labels")} readOnly={readOnly} selected={item.labelIds} quiet={rowQuiet} icon={<Tag aria-hidden size={14} className="text-secondary" />}
+          : item.labelIds.length === 0 ? rowQuiet ? <span className="text-muted-foreground">—</span> : compact ? <span className="hidden text-11 max-sm:inline">{t("layout.noLabel")}</span> : <span className="text-muted-foreground">{t("layout.noLabel")}</span> : <span className="block max-w-28 truncate" title={labelNames}>{labelNames}</span>;
+        return <MultiSelect label={t("workItems.labels")} readOnly={readOnly} selected={item.labelIds} quiet={rowQuiet} icon={<Tag aria-hidden size={14} className="text-muted-foreground" />}
           summary={labelSummary}
           options={labels.map((label) => ({ id: label.id, name: label.name, icon: <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: label.color }} /> }))}
           onToggle={(id, on) => void change(item, { labelIds: on ? [...item.labelIds, id] : item.labelIds.filter((other) => other !== id) })} />;
       }
       case "estimate": return <EstimateSelect estimate={estimate} pointId={item.estimatePointId ?? null} readOnly={readOnly} iconOnlyWhenEmpty={compact} quiet={rowQuiet} emptyLabel={rowQuiet ? "—" : undefined} onSelect={(estimatePointId) => void change(item, { estimatePointId })} />;
       case "dates": return <DatesMenu iconOnlyWhenEmpty={compact} startDate={item.startDate} dueDate={item.dueDate} stateGroup={states.find((state) => state.id === item.stateId)?.group} readOnly={readOnly} quiet={rowQuiet} emptyLabel={rowQuiet ? "—" : undefined} onChange={(dates) => void change(item, dates)} />;
-      case "cycle": return <SingleSelect iconOnly={compact && !cycleOf[item.id]} label={t("workItems.cycle")} readOnly={readOnly} quiet={rowQuiet} value={cycleOf[item.id] ?? ""} icon={<RefreshCw aria-hidden size={14} className="text-secondary" />}
+      case "cycle": return <SingleSelect iconOnly={compact && !cycleOf[item.id]} label={t("workItems.cycle")} readOnly={readOnly} quiet={rowQuiet} value={cycleOf[item.id] ?? ""} icon={<RefreshCw aria-hidden size={14} className="text-muted-foreground" />}
           summary={cycleOptions.find((cycle) => cycle.id === cycleOf[item.id])?.name ?? t("workItems.noCycle")} display={rowQuiet && !cycleOf[item.id] ? "—" : undefined}
           options={[{ id: "", name: t("workItems.noCycle") }, ...cycleOptions.filter((cycle) => cycle.status !== "completed" || cycle.id === cycleOf[item.id]).map((cycle) => ({ id: cycle.id, name: cycle.name }))]} onSelect={(id) => void setCycle(item, id)} />;
       case "modules": {
         const moduleNames = mine.map((id) => moduleOptions.find((module) => module.id === id)?.name).filter(Boolean).join(", ");
-        return <MultiSelect label={t("workItems.modules")} readOnly={readOnly} selected={mine} quiet={rowQuiet} icon={<Package aria-hidden size={14} className="text-secondary" />}
-          summary={mine.length === 0 ? rowQuiet ? <span className="text-tertiary">—</span> : compact ? <span className="hidden text-11 max-sm:inline">{t("workItems.noModules")}</span> : <span className="text-secondary">{t("workItems.noModules")}</span> : <span className="block max-w-28 truncate" title={moduleNames}>{moduleNames}</span>}
+        return <MultiSelect label={t("workItems.modules")} readOnly={readOnly} selected={mine} quiet={rowQuiet} icon={<Package aria-hidden size={14} className="text-muted-foreground" />}
+          summary={mine.length === 0 ? rowQuiet ? <span className="text-muted-foreground">—</span> : compact ? <span className="hidden text-11 max-sm:inline">{t("workItems.noModules")}</span> : <span className="text-muted-foreground">{t("workItems.noModules")}</span> : <span className="block max-w-28 truncate" title={moduleNames}>{moduleNames}</span>}
           options={moduleOptions.map((module) => ({ id: module.id, name: module.name }))} onToggle={(id, on) => void setModule(item, id, on)} />;
       }
       default: return null;
@@ -486,7 +486,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const gridColumns = columnTracks.join(" ");
   const oneLine = listWidth >= widthFor(shownProperties);
   const columnStyle = { "--cols": gridColumns } as React.CSSProperties;
-  const propertyCell = (item: Item, property: (typeof allListProperties)[number], mobile = false) => <span key={property} className={`flex min-w-0 items-center justify-end whitespace-nowrap sm:order-6 ${mobile ? "rounded-md bg-layer-1 px-1.5 py-0.5 text-11 text-secondary [&_button]:px-1 [&_button]:py-0 [&_button]:text-11" : ""} ${isEmptyProperty(item, property) ? "[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-hover/row:pointer-events-auto [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:pointer-events-auto" : ""} [&>*]:max-w-full [&_*]:min-w-0 [&_svg]:shrink-0`}>
+  const propertyCell = (item: Item, property: (typeof allListProperties)[number], mobile = false) => <span key={property} className={`flex min-w-0 items-center justify-end whitespace-nowrap sm:order-6 ${mobile ? "rounded-md bg-muted px-1.5 py-0.5 text-11 text-muted-foreground [&_button]:px-1 [&_button]:py-0 [&_button]:text-11" : ""} ${isEmptyProperty(item, property) ? "[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-hover/row:pointer-events-auto [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:pointer-events-auto" : ""} [&>*]:max-w-full [&_*]:min-w-0 [&_svg]:shrink-0`}>
     {cellOf(item, property, false, true)}
   </span>;
   const rowOf = (item: Item) => {
@@ -494,15 +494,15 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     const rowActionCell = rowAction?.(item);
     const phoneProperties = allListProperties.filter((property) => !isEmptyProperty(item, property));
     const priorityEmpty = isEmptyProperty(item, "priority");
-    return <li key={item.id} data-testid={`row-${item.displayId}`} className="group/row border-b border-subtle px-1 py-0.5">
-      <div style={columnStyle} className={`mx-1 grid min-w-0 grid-cols-1 gap-y-1 rounded-lg px-3 py-1 ${selected.includes(item.id) ? "bg-layer-2" : "bg-transparent hover:bg-layer-transparent-hover"} sm:grid-cols-[var(--cols)] sm:gap-x-2 sm:gap-y-0 sm:py-0`}>
+    return <li key={item.id} data-testid={`row-${item.displayId}`} className="group/row border-b border-border px-1 py-0.5">
+      <div style={columnStyle} className={`mx-1 grid min-w-0 grid-cols-1 gap-y-1 rounded-lg px-3 py-1 ${selected.includes(item.id) ? "bg-background" : "bg-transparent hover:bg-accent"} sm:grid-cols-[var(--cols)] sm:gap-x-2 sm:gap-y-0 sm:py-0`}>
         <div className="flex min-w-0 items-center gap-2 sm:contents">
           <span className="flex size-4 shrink-0 items-center justify-center sm:order-1">{checkbox ? React.cloneElement(checkbox, { className: `${checkbox.props.className ?? ""} rounded-sm` }) : <span aria-hidden />}</span>
-          <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="line-clamp-2 min-w-0 flex-1 text-14 font-medium text-primary sm:order-5 sm:truncate">{item.title}</Link>
+          <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="line-clamp-2 min-w-0 flex-1 text-14 font-medium text-foreground sm:order-5 sm:truncate">{item.title}</Link>
         </div>
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-1 [@media(pointer:coarse)]:gap-2 sm:contents max-sm:flex-nowrap max-sm:justify-start max-sm:overflow-x-auto">
           {leadingProperties.includes("priority") && <span className={`flex min-w-7 shrink-0 items-center justify-center sm:order-2 ${priorityEmpty ? "[@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/row:pointer-events-auto [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:pointer-events-auto [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100" : ""}`}>{cellOf(item, "priority", false, true, true)}</span>}
-          {shows("id") ? <span title={item.displayId} className="min-w-0 shrink-0 truncate whitespace-nowrap text-11 tabular-nums text-tertiary sm:order-3 sm:text-12">{item.displayId}</span> : <span aria-hidden className="sm:order-3" />}
+          {shows("id") ? <span title={item.displayId} className="min-w-0 shrink-0 truncate whitespace-nowrap text-11 tabular-nums text-muted-foreground sm:order-3 sm:text-12">{item.displayId}</span> : <span aria-hidden className="sm:order-3" />}
           {leadingProperties.includes("state") && <span className="flex min-w-7 shrink-0 items-center justify-center sm:order-4">{cellOf(item, "state", false, true, true)}</span>}
           {allListProperties.filter((property) => !shownProperties.includes(property) && !isEmptyProperty(item, property)).map((property) => <span key={property} className="shrink-0 sm:hidden">{propertyCell(item, property, true)}</span>)}
           {oneLine ? shownProperties.map((property) => propertyCell(item, property))
@@ -513,12 +513,12 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     </li>;
   };
 
-  const quickForm = (groupKey: string) => <form className="mx-1 my-1 flex flex-wrap items-center gap-2 rounded-xl border border-subtle bg-layer-1 px-3 py-2" onSubmit={(event) => { event.preventDefault(); void create(groupKey); }}>
+  const quickForm = (groupKey: string) => <form className="mx-1 my-1 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-muted px-3 py-2" onSubmit={(event) => { event.preventDefault(); void create(groupKey); }}>
     <Input autoFocus aria-label={t("workItems.titleField")} placeholder={t("workItems.quickTitle")} value={quickTitle} maxLength={500} className="min-w-0 flex-1 max-sm:basis-full" onChange={(event) => setQuickTitle(event.target.value)}
       onKeyDown={(event) => { if (event.key === "Escape") { setQuick(null); setQuickTitle(""); } }} />
     <Button type="submit" className={`${ghost} max-sm:ml-auto whitespace-nowrap`}>{t("workItems.create")}</Button>
   </form>;
-  const newButton = (groupKey: string) => <Button type="button" className="mx-1 my-1 flex w-[calc(100%-0.5rem)] items-center gap-2 rounded-lg bg-layer-1 px-3 py-2 text-left text-13 font-medium text-secondary hover:bg-layer-transparent-hover" onClick={() => { setQuick(groupKey); setQuickTitle(""); }}>
+  const newButton = (groupKey: string) => <Button type="button" className="mx-1 my-1 flex w-[calc(100%-0.5rem)] items-center gap-2 rounded-lg bg-muted px-3 py-2 text-left text-13 font-medium text-muted-foreground hover:bg-accent" onClick={() => { setQuick(groupKey); setQuickTitle(""); }}>
     <Plus aria-hidden size={14} />{t("workItems.new")}</Button>;
 
   const groupedItems = items.map((item) => ({ ...item, cycleId: cycleOf[item.id] ?? null, moduleIds: modulesOf[item.id] ?? [], creatorId: item.createdBy }));
@@ -526,7 +526,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const groups = grouped.map((group) => ({ ...group, items: group.items.map((item) => items.find((row) => row.id === item.id)!) }));
   // The project's Work items page (the only caller with onAddItem) shows one empty state in the list, board and spreadsheet layouts, not five empty status groups. Cycles, Modules and Views keep their groups.
   const emptyProject = onAddItem !== undefined && loaded && !filtered && items.length === 0 && (params.layout === "list" || board || sheet);
-  const emptyBlock = <div className="rounded-xl border border-subtle bg-surface-1"><EmptyState title={t("workItems.empty")} description={t("workItems.emptyHint")}
+  const emptyBlock = <div className="rounded-xl border border-border bg-card"><EmptyState title={t("workItems.empty")} description={t("workItems.emptyHint")}
     action={onAddItem && canCreate && canWrite ? <Button type="button" className="primary flex items-center gap-1.5" onClick={onAddItem}><Plus aria-hidden size={14} />{t("workItems.addNew")}</Button> : undefined} /></div>;
 
   const boardStateIds = stateIds.filter((id) => !chips || chips.state.length === 0 || chips.state.includes(id));
@@ -560,31 +560,31 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   React.useEffect(() => setSelected((ids) => ids.every((id) => orderedIds.includes(id)) ? ids : ids.filter((id) => orderedIds.includes(id))), [visibleKey]);
   const allPicked = orderedIds.length > 0 && orderedIds.every((id) => selected.includes(id));
   const columns = params.props.filter((property) => property !== "id" && listShows(property));
-  const cell = "border-b border-subtle px-3 py-2 text-left align-middle whitespace-nowrap";
+  const cell = "border-b border-border px-3 py-2 text-left align-middle whitespace-nowrap";
   const sheetColumnMinWidth: Partial<Record<DisplayProperty, string>> = {
     state: "min-w-28", priority: "min-w-28", assignee: "min-w-28", labels: "min-w-32", dates: "min-w-32", cycle: "min-w-28", modules: "min-w-32", estimate: "min-w-24",
   };
-  const sheetView = <div className="min-w-0 max-w-full rounded-xl border border-subtle bg-surface-1">
-    {filtered && items.length === 0 && <p className="border-b border-subtle bg-surface-1 px-5 py-3 text-14 text-secondary">{t("layout.noMatch")}</p>}
+  const sheetView = <div className="min-w-0 max-w-full rounded-xl border border-border bg-card">
+    {filtered && items.length === 0 && <p className="border-b border-border bg-card px-5 py-3 text-14 text-muted-foreground">{t("layout.noMatch")}</p>}
     <div role="region" aria-label={t("layout.spreadsheet")} tabIndex={0} className="min-w-0 max-w-full overflow-x-auto rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary" data-testid="sheet-scroll"
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
         event.preventDefault();
         event.currentTarget.scrollLeft += (event.key === "ArrowRight" ? 1 : -1) * Math.max(80, event.currentTarget.clientWidth * 0.8);
       }}>
-      <table className="w-max min-w-full table-auto border-separate border-spacing-0 bg-surface-1 text-13">
+      <table className="w-max min-w-full table-auto border-separate border-spacing-0 bg-card text-13">
         <caption className="sr-only">{t("layout.spreadsheet")}</caption>
-        <thead><tr className="bg-layer-1 text-12 font-medium text-tertiary">
-          <th scope="col" className={`${cell} sticky left-0 z-10 w-80 min-w-64 max-sm:w-52 max-sm:min-w-52 bg-layer-1`}>{t("layout.sheet.workItem")}</th>
+        <thead><tr className="bg-muted text-12 font-medium text-muted-foreground">
+          <th scope="col" className={`${cell} sticky left-0 z-10 w-80 min-w-64 max-sm:w-52 max-sm:min-w-52 bg-muted`}>{t("layout.sheet.workItem")}</th>
           {columns.map((property) => <th key={property} scope="col" className={`${cell} ${sheetColumnMinWidth[property] ?? ""}`}>{t(`layout.property.${property}`)}</th>)}
           {rowAction && <th scope="col" className={`${cell} min-w-24`}><span className="sr-only">{t("layout.sheet.actions")}</span></th>}
         </tr></thead>
         <tbody>{items.map((item) => <tr key={item.id} data-testid={`row-${item.displayId}`} className="group">
-          <th scope="row" className={`${cell} sticky left-0 z-10 w-80 min-w-64 max-sm:w-52 max-sm:min-w-52 bg-surface-1 font-normal group-hover:bg-layer-1`}>
-            <span className="flex min-w-0 items-center gap-3">{pickBox(item)}{shows("id") && <span className="shrink-0 text-12 text-tertiary">{item.displayId}</span>}
-              <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="block min-w-0 max-w-48 whitespace-normal text-14 font-medium text-primary [overflow-wrap:anywhere]">{item.title}</Link></span>
+          <th scope="row" className={`${cell} sticky left-0 z-10 w-80 min-w-64 max-sm:w-52 max-sm:min-w-52 bg-card font-normal group-hover:bg-muted`}>
+            <span className="flex min-w-0 items-center gap-3">{pickBox(item)}{shows("id") && <span className="shrink-0 text-12 text-muted-foreground">{item.displayId}</span>}
+              <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="block min-w-0 max-w-48 whitespace-normal text-14 font-medium text-foreground [overflow-wrap:anywhere]">{item.title}</Link></span>
           </th>
-          {columns.map((property) => <td key={property} className={`${cell} ${sheetColumnMinWidth[property] ?? ""} [&_button]:rounded-md [&_button]:border-transparent [&_button]:bg-transparent [&_button]:px-1 [&_button]:py-1 group-hover:bg-layer-1`}>{cellOf(item, property, false, true)}</td>)}
+          {columns.map((property) => <td key={property} className={`${cell} ${sheetColumnMinWidth[property] ?? ""} [&_button]:rounded-md [&_button]:border-transparent [&_button]:bg-transparent [&_button]:px-1 [&_button]:py-1 group-hover:bg-muted`}>{cellOf(item, property, false, true)}</td>)}
           {rowAction && <td className={`${cell} min-w-24`}>{rowAction(item)}</td>}
         </tr>)}</tbody>
       </table>
@@ -595,41 +595,41 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const calendar = calendarPlacement(items, calendarMonth);
   const weekdays = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
   const monthName = new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(calendarMonth);
-  const calendarView = <section aria-label={t("layout.calendar")} className="rounded-xl border border-subtle bg-surface-1 p-2" data-testid="calendar-layout">
-    <header className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-layer-1 px-3 py-2">
-      <div className="flex items-center gap-1"><Button type="button" aria-label={t("layout.calendar.previous")} className="rounded-md p-1.5 text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}><ChevronLeft aria-hidden size={16} /></Button>
-        <h2 className="min-w-36 text-center text-14 font-medium text-primary">{monthName}</h2><Button type="button" aria-label={t("layout.calendar.next")} className="rounded-md p-1.5 text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}><ChevronRight aria-hidden size={16} /></Button></div>
+  const calendarView = <section aria-label={t("layout.calendar")} className="rounded-xl border border-border bg-card p-2" data-testid="calendar-layout">
+    <header className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted px-3 py-2">
+      <div className="flex items-center gap-1"><Button type="button" aria-label={t("layout.calendar.previous")} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}><ChevronLeft aria-hidden size={16} /></Button>
+        <h2 className="min-w-36 text-center text-14 font-medium text-foreground">{monthName}</h2><Button type="button" aria-label={t("layout.calendar.next")} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}><ChevronRight aria-hidden size={16} /></Button></div>
       <Button type="button" className={ghost} onClick={() => setCalendarMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1))}><CalendarDays aria-hidden size={14} />{t("layout.calendar.today")}</Button>
     </header>
-    <div className="mt-2 grid grid-cols-7 gap-1 max-[767px]:hidden">{weekdays.map((day) => <div key={day} className="px-2 py-1 text-12 font-medium text-tertiary">{t(`layout.weekday.${day}`)}</div>)}</div>
+    <div className="mt-2 grid grid-cols-7 gap-1 max-[767px]:hidden">{weekdays.map((day) => <div key={day} className="px-2 py-1 text-12 font-medium text-muted-foreground">{t(`layout.weekday.${day}`)}</div>)}</div>
     <div className="grid grid-cols-7 max-[767px]:grid-cols-1" data-testid="calendar-days">
       {calendar.days.map((day) => <div key={day.date} data-calendar-date={day.date} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const id = event.dataTransfer.getData("text/plain"); if (id) void reschedule(id, day.date); }}
-        className={`min-h-28 rounded-lg border border-subtle p-2 max-[767px]:min-h-0 ${day.date.slice(0, 7) === `${calendarMonth.getFullYear()}-${String(calendarMonth.getMonth() + 1).padStart(2, "0")}` ? "bg-surface-1" : "bg-layer-1/40 text-tertiary"}`}>
+        className={`min-h-28 rounded-lg border border-border p-2 max-[767px]:min-h-0 ${day.date.slice(0, 7) === `${calendarMonth.getFullYear()}-${String(calendarMonth.getMonth() + 1).padStart(2, "0")}` ? "bg-card" : "bg-muted/40 text-muted-foreground"}`}>
         <div className="mb-1 flex items-center justify-between text-12"><time dateTime={day.date}>{new Intl.DateTimeFormat(undefined, { day: "numeric", weekday: "short", month: "short" }).format(new Date(`${day.date}T12:00:00`))}</time>
-          {canCreate && canWrite && <Button type="button" aria-label={t("layout.calendar.add").replace("{date}", day.date)} className="rounded-md px-1.5 text-secondary hover:bg-layer-transparent-hover" onClick={() => { setQuick(day.date); setQuickTitle(""); }}>+</Button>}</div>
+          {canCreate && canWrite && <Button type="button" aria-label={t("layout.calendar.add").replace("{date}", day.date)} className="rounded-md px-1.5 text-muted-foreground hover:bg-accent" onClick={() => { setQuick(day.date); setQuickTitle(""); }}>+</Button>}</div>
         <div className="grid gap-1">{day.items.map((item) => <Link key={item.id} to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} draggable={canWrite} onDragStart={(event) => { event.dataTransfer.setData("text/plain", item.id); event.dataTransfer.effectAllowed = "move"; }} data-testid={`calendar-card-${item.displayId}`}
-          className="block truncate rounded-md border border-transparent bg-layer-1 px-2 py-1.5 text-12 font-medium text-primary hover:bg-layer-transparent-hover">{item.title}</Link>)}</div>
+          className="block truncate rounded-md border border-transparent bg-muted px-2 py-1.5 text-12 font-medium text-foreground hover:bg-accent">{item.title}</Link>)}</div>
         {quick === day.date && <form className="mt-1 flex gap-1" onSubmit={(event) => { event.preventDefault(); void createForDate(day.date); }}><Input autoFocus aria-label={t("workItems.titleField")} value={quickTitle} className="min-w-0 w-full" onChange={(event) => setQuickTitle(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setQuick(null); }} /><Button type="submit" aria-label={t("workItems.create")}>+</Button></form>}
       </div>)}
     </div>
-    <aside aria-label={t("layout.calendar.undated")} className="mt-2 rounded-lg bg-layer-1 p-3"><h3 className="mb-2 text-13 font-medium">{t("layout.calendar.undated")}</h3>
-      {calendar.undated.length ? <ul className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">{calendar.undated.map((item) => <li key={item.id}><Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="block rounded border border-subtle px-2 py-1.5 text-13 text-primary hover:bg-layer-transparent-hover">{item.title}</Link></li>)}</ul> : <p className="text-13 text-tertiary">{t("layout.calendar.noUndated")}</p>}
+    <aside aria-label={t("layout.calendar.undated")} className="mt-2 rounded-lg bg-muted p-3"><h3 className="mb-2 text-13 font-medium">{t("layout.calendar.undated")}</h3>
+      {calendar.undated.length ? <ul className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">{calendar.undated.map((item) => <li key={item.id}><Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="block rounded border border-border px-2 py-1.5 text-13 text-foreground hover:bg-accent">{item.title}</Link></li>)}</ul> : <p className="text-13 text-muted-foreground">{t("layout.calendar.noUndated")}</p>}
     </aside>
   </section>;
 
-  const ganttView = <section aria-label={t("layout.gantt")} data-testid="gantt-layout" data-gantt-start={gantt.start} data-gantt-days={gantt.days.length} className={`min-w-0 max-w-full rounded-xl border border-subtle bg-surface-1 p-2 ${ganttDrag ? "select-none" : ""}`}>
-    <p className="m-0 border-b border-subtle px-3 py-2 text-12 text-secondary md:hidden">{t("layout.gantt.scrollHint")}</p>
-    <header className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-layer-1 px-3 py-2">
-      <div className="flex items-center gap-1"><Button type="button" aria-label={t("layout.gantt.previous")} className="rounded-md p-1.5 text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={() => shiftGanttAnchor(-1)}><ChevronLeft aria-hidden size={16} /></Button>
+  const ganttView = <section aria-label={t("layout.gantt")} data-testid="gantt-layout" data-gantt-start={gantt.start} data-gantt-days={gantt.days.length} className={`min-w-0 max-w-full rounded-xl border border-border bg-card p-2 ${ganttDrag ? "select-none" : ""}`}>
+    <p className="m-0 border-b border-border px-3 py-2 text-12 text-muted-foreground md:hidden">{t("layout.gantt.scrollHint")}</p>
+    <header className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted px-3 py-2">
+      <div className="flex items-center gap-1"><Button type="button" aria-label={t("layout.gantt.previous")} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => shiftGanttAnchor(-1)}><ChevronLeft aria-hidden size={16} /></Button>
         <h2 className="min-w-36 text-center text-14 font-medium">{new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(ganttAnchor)}</h2>
-        <Button type="button" aria-label={t("layout.gantt.next")} className="rounded-md p-1.5 text-secondary hover:bg-layer-transparent-hover hover:text-primary" onClick={() => shiftGanttAnchor(1)}><ChevronRight aria-hidden size={16} /></Button>
+        <Button type="button" aria-label={t("layout.gantt.next")} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => shiftGanttAnchor(1)}><ChevronRight aria-hidden size={16} /></Button>
         <Button type="button" className={ghost} onClick={() => setGanttAnchor(new Date())}>{t("layout.calendar.today")}</Button></div>
       <label className="flex items-center gap-2 text-13">{t("layout.gantt.zoom")}<select aria-label={t("layout.gantt.zoom")} value={ganttZoom} onChange={(event) => setGanttZoom(event.target.value as GanttZoom)}>{(["week", "month", "quarter"] as const).map((zoom) => <option key={zoom} value={zoom}>{t(`layout.gantt.${zoom}`)}</option>)}</select></label>
     </header>
-    <div className="mt-2 overflow-x-auto rounded-lg border border-subtle"><div style={{ minWidth: `calc(20rem + ${Math.max(gantt.days.length * 12, 580)}px)` }}>
-      <div className="grid grid-cols-[minmax(12rem,20rem)_minmax(0,1fr)] border-b border-subtle bg-layer-1"><div className="px-3 py-2 text-12 font-medium text-tertiary">{t("layout.sheet.workItem")}</div><div className="grid" style={{ gridTemplateColumns: `repeat(${gantt.days.length}, minmax(0, 1fr))` }}>{gantt.days.map((date, index) => <div key={date} title={date} className="border-l border-subtle px-0.5 py-2 text-center text-[9px] text-tertiary">{index % (ganttZoom === "week" ? 1 : 7) === 0 ? Number(date.slice(-2)) : ""}</div>)}</div></div>
+    <div className="mt-2 overflow-x-auto rounded-lg border border-border"><div style={{ minWidth: `calc(20rem + ${Math.max(gantt.days.length * 12, 580)}px)` }}>
+      <div className="grid grid-cols-[minmax(12rem,20rem)_minmax(0,1fr)] border-b border-border bg-muted"><div className="px-3 py-2 text-12 font-medium text-muted-foreground">{t("layout.sheet.workItem")}</div><div className="grid" style={{ gridTemplateColumns: `repeat(${gantt.days.length}, minmax(0, 1fr))` }}>{gantt.days.map((date, index) => <div key={date} title={date} className="border-l border-border px-0.5 py-2 text-center text-[9px] text-muted-foreground">{index % (ganttZoom === "week" ? 1 : 7) === 0 ? Number(date.slice(-2)) : ""}</div>)}</div></div>
       <div className="relative">
-        {gantt.today >= 0 && gantt.today < gantt.days.length && <div aria-label={t("layout.gantt.todayMarker")} data-testid="gantt-today" className="pointer-events-none absolute bottom-0 top-0 z-10 border-l-2 border-danger-text" style={{ left: `calc(20rem + (100% - 20rem) * ${gantt.today / gantt.days.length})` }} />}
+        {gantt.today >= 0 && gantt.today < gantt.days.length && <div aria-label={t("layout.gantt.todayMarker")} data-testid="gantt-today" className="pointer-events-none absolute bottom-0 top-0 z-10 border-l-2 border-destructive" style={{ left: `calc(20rem + (100% - 20rem) * ${gantt.today / gantt.days.length})` }} />}
         {gantt.bars.map(({ item, left, width }) => {
           const drag = ganttDrag?.id === item.id ? ganttDrag : ganttSaving[item.id] ?? null;
           const end = left + width;
@@ -639,27 +639,27 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
           const invalid = !oneSided && (drag?.kind === "start" ? drag.at > end - 1 : drag?.kind === "due" ? drag.at < left : false);
           const shownLeft = drag?.kind === "move" ? left + drag.at : oneSided ? drag!.at : drag?.kind === "start" ? Math.min(drag.at, end - 1) : left;
           const shownWidth = oneSided ? 1 : drag?.kind === "start" ? end - shownLeft : drag?.kind === "due" ? Math.max(1, drag.at - left + 1) : width;
-          return <div key={item.id} className="grid min-h-11 grid-cols-[minmax(12rem,20rem)_minmax(0,1fr)] border-b border-subtle" data-testid={`gantt-row-${item.displayId}`}>
-          <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="truncate px-3 py-3 text-13 font-medium text-primary">{item.title}</Link>
+          return <div key={item.id} className="grid min-h-11 grid-cols-[minmax(12rem,20rem)_minmax(0,1fr)] border-b border-border" data-testid={`gantt-row-${item.displayId}`}>
+          <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="truncate px-3 py-3 text-13 font-medium text-foreground">{item.title}</Link>
           <div className="relative">
             {gantt.days.map((date, index) => <div key={date} data-gantt-date={date} data-testid={`gantt-drop-${date}`} className="absolute inset-y-0" style={{ left: `${index / gantt.days.length * 100}%`, width: `${100 / gantt.days.length}%` }} />)}
-            {drag && <div aria-hidden data-testid="gantt-origin" className="pointer-events-none absolute top-2 h-7 rounded border border-dashed border-accent-strong" style={{ left: `${left / gantt.days.length * 100}%`, width: `${Math.max(width / gantt.days.length * 100, 1.2)}%` }} />}
-            <div onPointerDown={canWrite ? (event) => { if (ganttSaving[item.id] || (event.target as HTMLElement).closest("[data-gantt-edge]")) return; event.currentTarget.setPointerCapture(event.pointerId); ganttPointerStart.current = { x: event.clientX }; } : undefined} onPointerMove={canWrite ? (event) => ganttMovePreview(event, item) : undefined} onPointerUp={canWrite ? (event) => ganttMove(event, item) : undefined} onPointerCancel={() => { ganttPointerStart.current = null; ganttEdgeStart.current = null; setGanttDrag(null); }} onDragStart={(event) => event.preventDefault()} className={`absolute top-2 h-7 select-none rounded bg-accent-primary/80 text-white ${canWrite ? "cursor-grab active:cursor-grabbing" : ""} ${drag ? `z-30 shadow-xl ring-2 ${invalid ? "ring-danger-strong" : "ring-accent-strong"}` : "shadow-sm"}`} style={{ left: `${shownLeft / gantt.days.length * 100}%`, width: `${Math.max(shownWidth / gantt.days.length * 100, 1.2)}%` }} data-testid={`gantt-bar-${item.displayId}`}>
-              {canWrite && !startClipped(item) && <span data-gantt-edge role="button" tabIndex={0} aria-keyshortcuts="ArrowLeft ArrowRight" aria-label={`${t("layout.gantt.resizeStart")} ${item.displayId}`} onKeyDown={(event) => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); void ganttResizeByKeyboard(item, "start", event.key === "ArrowLeft" ? -1 : 1); }} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); if (ganttSaving[item.id]) return; event.currentTarget.setPointerCapture(event.pointerId); ganttEdgeStart.current = { x: event.clientX }; }} onPointerMove={(event) => ganttEdgePreview(event, item, "start")} onPointerUp={(event) => ganttResize(event, item, "start")} className="absolute inset-y-0 left-0 z-20 w-1 cursor-ew-resize rounded-l bg-accent-primary" />}
+            {drag && <div aria-hidden data-testid="gantt-origin" className="pointer-events-none absolute top-2 h-7 rounded border border-dashed border-ring" style={{ left: `${left / gantt.days.length * 100}%`, width: `${Math.max(width / gantt.days.length * 100, 1.2)}%` }} />}
+            <div onPointerDown={canWrite ? (event) => { if (ganttSaving[item.id] || (event.target as HTMLElement).closest("[data-gantt-edge]")) return; event.currentTarget.setPointerCapture(event.pointerId); ganttPointerStart.current = { x: event.clientX }; } : undefined} onPointerMove={canWrite ? (event) => ganttMovePreview(event, item) : undefined} onPointerUp={canWrite ? (event) => ganttMove(event, item) : undefined} onPointerCancel={() => { ganttPointerStart.current = null; ganttEdgeStart.current = null; setGanttDrag(null); }} onDragStart={(event) => event.preventDefault()} className={`absolute top-2 h-7 select-none rounded bg-primary/80 text-white ${canWrite ? "cursor-grab active:cursor-grabbing" : ""} ${drag ? `z-30 shadow-xl ring-2 ${invalid ? "ring-destructive" : "ring-ring"}` : "shadow-sm"}`} style={{ left: `${shownLeft / gantt.days.length * 100}%`, width: `${Math.max(shownWidth / gantt.days.length * 100, 1.2)}%` }} data-testid={`gantt-bar-${item.displayId}`}>
+              {canWrite && !startClipped(item) && <span data-gantt-edge role="button" tabIndex={0} aria-keyshortcuts="ArrowLeft ArrowRight" aria-label={`${t("layout.gantt.resizeStart")} ${item.displayId}`} onKeyDown={(event) => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); void ganttResizeByKeyboard(item, "start", event.key === "ArrowLeft" ? -1 : 1); }} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); if (ganttSaving[item.id]) return; event.currentTarget.setPointerCapture(event.pointerId); ganttEdgeStart.current = { x: event.clientX }; }} onPointerMove={(event) => ganttEdgePreview(event, item, "start")} onPointerUp={(event) => ganttResize(event, item, "start")} className="absolute inset-y-0 left-0 z-20 w-1 cursor-ew-resize rounded-l bg-primary" />}
               <span className="block truncate px-2 text-12 leading-7">{item.displayId}</span>
-              {canWrite && !dueClipped(item) && <span data-gantt-edge role="button" tabIndex={0} aria-keyshortcuts="ArrowLeft ArrowRight" aria-label={`${t("layout.gantt.resizeDue")} ${item.displayId}`} onKeyDown={(event) => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); void ganttResizeByKeyboard(item, "due", event.key === "ArrowLeft" ? -1 : 1); }} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); if (ganttSaving[item.id]) return; event.currentTarget.setPointerCapture(event.pointerId); ganttEdgeStart.current = { x: event.clientX }; }} onPointerMove={(event) => ganttEdgePreview(event, item, "due")} onPointerUp={(event) => ganttResize(event, item, "due")} className="absolute inset-y-0 right-0 z-20 w-1 cursor-ew-resize rounded-r bg-accent-primary" />}
+              {canWrite && !dueClipped(item) && <span data-gantt-edge role="button" tabIndex={0} aria-keyshortcuts="ArrowLeft ArrowRight" aria-label={`${t("layout.gantt.resizeDue")} ${item.displayId}`} onKeyDown={(event) => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); void ganttResizeByKeyboard(item, "due", event.key === "ArrowLeft" ? -1 : 1); }} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); if (ganttSaving[item.id]) return; event.currentTarget.setPointerCapture(event.pointerId); ganttEdgeStart.current = { x: event.clientX }; }} onPointerMove={(event) => ganttEdgePreview(event, item, "due")} onPointerUp={(event) => ganttResize(event, item, "due")} className="absolute inset-y-0 right-0 z-20 w-1 cursor-ew-resize rounded-r bg-primary" />}
             </div>
           </div>
         </div>; })}
       </div>
     </div></div>
-    <aside aria-label={t("layout.gantt.undated")} className="mt-2 rounded-lg bg-layer-1 p-3"><h3 className="mb-2 text-13 font-medium">{t("layout.gantt.undated")}</h3>{gantt.undated.length ? <ul className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">{gantt.undated.map((item) => <li key={item.id}><Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="block rounded-md px-2 py-1.5 text-13 text-primary hover:bg-layer-transparent-hover">{item.title}</Link></li>)}</ul> : <p className="text-13 text-tertiary">{t("layout.gantt.noUndated")}</p>}</aside>
+    <aside aria-label={t("layout.gantt.undated")} className="mt-2 rounded-lg bg-muted p-3"><h3 className="mb-2 text-13 font-medium">{t("layout.gantt.undated")}</h3>{gantt.undated.length ? <ul className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">{gantt.undated.map((item) => <li key={item.id}><Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="block rounded-md px-2 py-1.5 text-13 text-foreground hover:bg-accent">{item.title}</Link></li>)}</ul> : <p className="text-13 text-muted-foreground">{t("layout.gantt.noUndated")}</p>}</aside>
   </section>;
 
   const toolbar = <div className="flex flex-wrap items-center gap-2 [@media(max-height:480px)]:[&_span]:sr-only [@media(pointer:coarse)]:[&_button]:min-h-11 [@media(pointer:coarse)]:[&_label]:min-h-11">
-    <div role="group" aria-label={t("layout.switch")} className="flex items-center gap-0.5 rounded-lg bg-layer-1 p-0.5">
+    <div role="group" aria-label={t("layout.switch")} className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
       {(["list", "board", "spreadsheet", "calendar", "gantt"] as const).map((layout) => { const Icon = layout === "list" ? List : layout === "board" ? Columns3 : layout === "spreadsheet" ? Table2 : layout === "calendar" ? CalendarDays : BarChart3; return <Button key={layout} type="button" aria-pressed={params.layout === layout} aria-label={t(`layout.${layout}`)} title={t(`layout.${layout}`)}
-        className={`inline-flex items-center rounded-md p-1.5 max-sm:min-h-9 max-sm:min-w-9 max-sm:flex-col max-sm:justify-center max-sm:gap-0.5 ${params.layout === layout ? "bg-surface-1 text-primary shadow-sm" : "bg-transparent text-secondary hover:bg-layer-transparent-hover"} hover:text-primary`} onClick={() => update({ layout })}><Icon aria-hidden size={16} /><span className="hidden text-11 leading-none max-sm:inline">{t(`layout.${layout}`)}</span></Button>; })}
+        className={`inline-flex items-center rounded-md p-1.5 max-sm:min-h-9 max-sm:min-w-9 max-sm:flex-col max-sm:justify-center max-sm:gap-0.5 ${params.layout === layout ? "bg-card text-foreground shadow-sm" : "bg-transparent text-muted-foreground hover:bg-accent"} hover:text-foreground`} onClick={() => update({ layout })}><Icon aria-hidden size={16} /><span className="hidden text-11 leading-none max-sm:inline">{t(`layout.${layout}`)}</span></Button>; })}
     </div>
     {selectable && <label className={`${ghost} cursor-pointer max-sm:min-h-9 max-sm:gap-1`} title={t("bulk.selectAll")}><Checkbox className="size-4" checked={allPicked} onChange={() => setSelected(allPicked ? [] : orderedIds.slice(0, 500))} /><span className="sr-only">{t("bulk.selectAll")}</span><span aria-hidden className="text-12">{t("bulk.selectShown")}</span></label>}
     <FilterPicker sections={sections} filters={chips ?? emptyFilters()} count={filterCount} onChange={setFilters} onClear={() => update({ q: "" })} />
@@ -680,13 +680,13 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
             {(["asc", "desc"] as const).map((value) => <option key={value} value={value}>{t(`layout.direction.${value}`)}</option>)}
           </select></label>
         </>}
-        <fieldset className="grid gap-1.5"><legend className="pb-1 text-12 font-medium text-tertiary">{t("layout.properties")}</legend>
+        <fieldset className="grid gap-1.5"><legend className="pb-1 text-12 font-medium text-muted-foreground">{t("layout.properties")}</legend>
           {(sheet ? [...params.props, ...displayProperties.filter((property) => !params.props.includes(property))] : [...displayProperties]).filter((property) => property !== "estimate" || !!estimate?.enabled).map((property) => <div key={property} className="flex items-center gap-1">
             <label className={`${checkRow} flex-1`}>
               <Checkbox checked={params.props.includes(property)} onChange={(event) => update({ props: sheet ? (event.target.checked ? [...params.props, property] : params.props.filter((other) => other !== property)) : displayProperties.filter((other) => other === property ? event.target.checked : params.props.includes(other)) })} />{t(`layout.property.${property}`)}</label>
             {sheet && params.props.includes(property) && <>
-              <Button type="button" className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={`${t("layout.column.earlier")}: ${t(`layout.property.${property}`)}`} onClick={() => update({ props: moveProperty(params.props, property, -1) })}><ArrowLeft aria-hidden size={14} /></Button>
-              <Button type="button" className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={`${t("layout.column.later")}: ${t(`layout.property.${property}`)}`} onClick={() => update({ props: moveProperty(params.props, property, 1) })}><ArrowRight aria-hidden size={14} /></Button>
+              <Button type="button" className="rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent" aria-label={`${t("layout.column.earlier")}: ${t(`layout.property.${property}`)}`} onClick={() => update({ props: moveProperty(params.props, property, -1) })}><ArrowLeft aria-hidden size={14} /></Button>
+              <Button type="button" className="rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent" aria-label={`${t("layout.column.later")}: ${t(`layout.property.${property}`)}`} onClick={() => update({ props: moveProperty(params.props, property, 1) })}><ArrowRight aria-hidden size={14} /></Button>
             </>}
           </div>)}
         </fieldset>
@@ -700,16 +700,16 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     onAdd={(column) => { setQuick(column); setQuickTitle(""); }} quick={quick} quickForm={quickForm}
     renderCard={(item, reorderHandle) => <div className="grid gap-2">
       <div className="flex items-start justify-between gap-2">{pickBox(item)}<div className="grid min-w-0 flex-1 gap-1">
-        {shows("id") && <span className="text-12 text-tertiary">{item.displayId}</span>}
-        <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} draggable={false} data-testid="card-title" className="text-14 font-medium text-primary [overflow-wrap:anywhere]">{item.title}</Link></div>
+        {shows("id") && <span className="text-12 text-muted-foreground">{item.displayId}</span>}
+        <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} draggable={false} data-testid="card-title" className="text-14 font-medium text-foreground [overflow-wrap:anywhere]">{item.title}</Link></div>
         {reorderHandle}{rowAction && <span data-no-drag>{rowAction(item)}</span>}</div>
       <div className="flex flex-wrap items-center gap-1.5 [@media(pointer:coarse)]:gap-2">{propertiesOf(item, boardGroup === "state", true)}</div>
     </div>}
-    ghost={(item) => <div className="flex items-baseline gap-2"><span className="text-12 text-tertiary">{item.displayId}</span><span className="text-14 font-medium text-primary">{item.title}</span></div>} />;
+    ghost={(item) => <div className="flex items-baseline gap-2"><span className="text-12 text-muted-foreground">{item.displayId}</span><span className="text-14 font-medium text-foreground">{item.title}</span></div>} />;
 
   const peekPanel = peek && <>
-    <div aria-hidden className="fixed inset-0 z-40 bg-backdrop" onClick={() => setPeek(null)} />
-    <aside data-peek role="dialog" aria-label={t("workItems.peek.title")} className="@container fixed inset-y-0 right-0 z-50 w-full rounded-l-xl border-l border-subtle bg-surface-1 shadow-xl sm:w-[80vw] sm:max-w-[1160px]">
+    <div aria-hidden className="fixed inset-0 z-40 bg-black/30" onClick={() => setPeek(null)} />
+    <aside data-peek role="dialog" aria-label={t("workItems.peek.title")} className="@container fixed inset-y-0 right-0 z-50 w-full rounded-l-xl border-l border-border bg-card shadow-xl sm:w-[80vw] sm:max-w-[1160px]">
       <WorkItemDetail key={peek} displayId={peek} mode="peek" onChanged={() => void load()} onClose={() => setPeek(null)} />
     </aside>
   </>;
@@ -719,28 +719,28 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     {toolbar}
     <FilterChips filters={chips ?? emptyFilters()} sections={sections} custom={chips === null} onChange={setFilters} onClear={() => update({ q: "" })} />
     {(filterQueryOpen || queryError !== null) && <FilterQueryEditor text={params.q} error={queryError} onApply={(text) => void applyFilterQuery(text)} generate={{ projectId }} />}
-    {note && <p role="alert" className="text-danger-text">{note}</p>}
+    {note && <p role="alert" className="text-destructive">{note}</p>}
     {selectable && selected.length > 0 && <BulkBar projectId={projectId} selected={items.filter((item) => selected.includes(item.id))} states={states} people={people} labels={labels} estimate={estimate} run={run}
       cycleOptions={cyclesEnabled && !cycleId ? cycleOptions : null} moduleOptions={modulesEnabled && !moduleId ? moduleOptions : null} onClear={() => { setSelected([]); anchor.current = null; }} onApplied={() => void load()} />}
     {emptyProject && emptyBlock}
     {sheet && !emptyProject && sheetView}
     {params.layout === "calendar" && calendarView}
     {params.layout === "gantt" && ganttView}
-    {!board && !sheet && !emptyProject && params.layout !== "calendar" && params.layout !== "gantt" && <div ref={setListBox} className="overflow-hidden rounded-xl border border-subtle bg-surface-1">
-      {filtered && items.length === 0 && <p className="border-b border-subtle bg-surface-1 px-5 py-3 text-14 text-secondary">{t("layout.noMatch")}</p>}
+    {!board && !sheet && !emptyProject && params.layout !== "calendar" && params.layout !== "gantt" && <div ref={setListBox} className="overflow-hidden rounded-xl border border-border bg-card">
+      {filtered && items.length === 0 && <p className="border-b border-border bg-card px-5 py-3 text-14 text-muted-foreground">{t("layout.noMatch")}</p>}
       {groups.map((group) => {
         const empty = group.items.length === 0;
         // An empty group stays open while its quick-create form is open; the toggle collapses it and closes the form, so it never traps.
         const open = empty ? expandedEmpty.includes(group.key) || quick === group.key : !collapsed.includes(group.key);
         const name = params.group === "none" ? "" : groupLabel(group.key);
         return <section key={group.key} aria-label={params.group === "none" ? undefined : name}>
-          {params.group !== "none" && <div className="mx-1 my-1 flex items-center gap-2 rounded-lg border border-subtle bg-layer-1 px-3 py-1.5">
-            <Button type="button" aria-expanded={open} aria-label={`${t("layout.toggleGroup")}: ${name}`} className="flex flex-1 items-center gap-2 bg-transparent p-0 text-left text-14 font-medium text-primary hover:bg-transparent"
+          {params.group !== "none" && <div className="mx-1 my-1 flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-1.5">
+            <Button type="button" aria-expanded={open} aria-label={`${t("layout.toggleGroup")}: ${name}`} className="flex flex-1 items-center gap-2 bg-transparent p-0 text-left text-14 font-medium text-foreground hover:bg-transparent"
               onClick={() => empty ? (open ? (setExpandedEmpty(expandedEmpty.filter((key) => key !== group.key)), quick === group.key && setQuick(null)) : setExpandedEmpty([...expandedEmpty, group.key])) : setCollapsed(open ? [...collapsed, group.key] : collapsed.filter((key) => key !== group.key))}>
-              {open ? <ChevronDown aria-hidden size={14} className="text-secondary" /> : <ChevronRight aria-hidden size={14} className="text-secondary" />}
-              {groupIcon(group.key)}<span>{name}</span><span className="text-13 font-normal text-tertiary">{formatNumber(group.items.length)}</span>
+              {open ? <ChevronDown aria-hidden size={14} className="text-muted-foreground" /> : <ChevronRight aria-hidden size={14} className="text-muted-foreground" />}
+              {groupIcon(group.key)}<span>{name}</span><span className="text-13 font-normal text-muted-foreground">{formatNumber(group.items.length)}</span>
             </Button>
-            {canCreate && canWrite && <Button type="button" aria-label={t("layout.addToGroup").replace("{group}", name)} title={t("layout.addToGroup").replace("{group}", name)} className="inline-flex items-center gap-1 rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover hover:text-primary"
+            {canCreate && canWrite && <Button type="button" aria-label={t("layout.addToGroup").replace("{group}", name)} title={t("layout.addToGroup").replace("{group}", name)} className="inline-flex items-center gap-1 rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
               onClick={() => { setCollapsed(collapsed.filter((key) => key !== group.key)); setExpandedEmpty(expandedEmpty.includes(group.key) ? expandedEmpty : [...expandedEmpty, group.key]); setQuick(group.key); setQuickTitle(""); }}><Plus aria-hidden size={14} /><span className="hidden text-11 max-sm:inline">{t("layout.addShort")}</span></Button>}
           </div>}
           {open && <>
@@ -748,11 +748,11 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
               const key = `${group.key}:${sub.key}`;
               const subOpen = !collapsed.includes(key);
               const subName = labelFor(subGroup, sub.key);
-              return <section key={sub.key} aria-label={subName} className="border-b border-subtle">
-                <div className="flex items-center gap-2 bg-surface-1 px-6 py-2">
-                  <Button type="button" aria-expanded={subOpen} aria-label={`${t("layout.toggleGroup")}: ${subName}`} className="flex flex-1 items-center gap-2 bg-transparent p-0 text-left text-13 font-medium text-secondary hover:bg-transparent"
+              return <section key={sub.key} aria-label={subName} className="border-b border-border">
+                <div className="flex items-center gap-2 bg-card px-6 py-2">
+                  <Button type="button" aria-expanded={subOpen} aria-label={`${t("layout.toggleGroup")}: ${subName}`} className="flex flex-1 items-center gap-2 bg-transparent p-0 text-left text-13 font-medium text-muted-foreground hover:bg-transparent"
                     onClick={() => setCollapsed(subOpen ? [...collapsed, key] : collapsed.filter((value) => value !== key))}>
-                    {subOpen ? <ChevronDown aria-hidden size={14} /> : <ChevronRight aria-hidden size={14} />}{groupIconFor(subGroup, sub.key)}<span>{subName}</span><span className="text-12 font-normal text-tertiary">{formatNumber(sub.items.length)}</span>
+                    {subOpen ? <ChevronDown aria-hidden size={14} /> : <ChevronRight aria-hidden size={14} />}{groupIconFor(subGroup, sub.key)}<span>{subName}</span><span className="text-12 font-normal text-muted-foreground">{formatNumber(sub.items.length)}</span>
                   </Button>
                 </div>
                 {subOpen && <ul className="m-0 list-none p-0">{sub.items.map((item) => rowOf(items.find((row) => row.id === item.id)!))}</ul>}
@@ -767,7 +767,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       const laneItems = new Set(lane.items.map((item) => item.id));
       const laneName = labelFor(subGroup, lane.key);
       return <section key={lane.key} aria-label={`${t(`layout.group.${subGroup}`)}: ${laneName}`} className="grid gap-1">
-        <h3 className="m-0 flex items-center gap-2 border-b border-subtle pb-2 text-14 font-semibold text-primary">{groupIconFor(subGroup, lane.key)}{laneName}</h3>
+        <h3 className="m-0 flex items-center gap-2 border-b border-border pb-2 text-14 font-semibold text-foreground">{groupIconFor(subGroup, lane.key)}{laneName}</h3>
         {renderBoard(boardColumns.map((column) => ({ ...column, items: column.items.filter((item) => laneItems.has(item.id)) })))}
       </section>;
     })}</div>)}

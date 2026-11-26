@@ -164,28 +164,28 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
     const result = await action<Version[]>("list_comment_versions", { commentId: current.commentId, limit: VERSIONS_PAGE, after: last.id });
     setVersions((now) => now && now.commentId === current.commentId ? (result === null ? { ...now, loading: false, failed: true } : { ...now, rows: [...now.rows, ...result], more: result.length >= VERSIONS_PAGE, loading: false, failed: false }) : now);
   };
-  const item = (row: CommentRow, replies: CommentRow[]) => <li key={row.id} id={`comment-${row.id}`} className={`grid min-w-0 list-none gap-2 rounded-xl border border-subtle p-4 ${row.parentId === null ? "bg-surface-1" : "bg-layer-1"}`}>
-    <div className="flex flex-wrap items-center gap-x-2"><Avatar name={row.authorName} id={row.authorId} agent={row.authorIsAgent} /><strong className="text-13 text-primary">{row.authorName}</strong>{row.authorIsAgent && <> <mark data-agent-marker title={translate("avatar.agentHint")} className="inline-flex items-center gap-1 rounded bg-layer-1 px-1.5 py-0.5 text-10 font-medium text-secondary"><span title={translate("comments.agent")}><Bot aria-hidden size={12} className="inline" /></span> {translate("comments.agent")}</mark>{row.authorCodeCapable && <span className="inline-flex items-center gap-1 rounded bg-layer-1 px-1.5 py-0.5 text-10 text-secondary" title={translate("agents.codeCapable")}><Code2 aria-hidden size={13} className="text-warning-primary" />{translate("agents.canEditCode")}</span>}</>} <small className="text-12 text-tertiary">{formatDate(row.createdAt)}{row.editedAt ? ` · ${translate("comments.edited")}` : ""}</small>
+  const item = (row: CommentRow, replies: CommentRow[]) => <li key={row.id} id={`comment-${row.id}`} className={`grid min-w-0 list-none gap-2 rounded-xl border border-border p-4 ${row.parentId === null ? "bg-card" : "bg-muted"}`}>
+    <div className="flex flex-wrap items-center gap-x-2"><Avatar name={row.authorName} id={row.authorId} agent={row.authorIsAgent} /><strong className="text-13 text-foreground">{row.authorName}</strong>{row.authorIsAgent && <> <mark data-agent-marker title={translate("avatar.agentHint")} className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-10 font-medium text-muted-foreground"><span title={translate("comments.agent")}><Bot aria-hidden size={12} className="inline" /></span> {translate("comments.agent")}</mark>{row.authorCodeCapable && <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-10 text-muted-foreground" title={translate("agents.codeCapable")}><Code2 aria-hidden size={13} className="text-amber-700 dark:text-amber-400" />{translate("agents.canEditCode")}</span>}</>} <small className="text-12 text-muted-foreground">{formatDate(row.createdAt)}{row.editedAt ? ` · ${translate("comments.edited")}` : ""}</small>
     {row.runId && <small> <a href={runFocusHref(row.runId)}>{translate("comments.viewRun")}</a></small>}</div>
     {editing === row.id
       ? <CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} initial={row.body} submitLabel={translate("comments.save")} onCancel={() => setEditing(null)} onSubmit={async (body) => { await guard(await actionResult("update_comment", { commentId: row.id, body })); setEditing(null); }} />
       : <CommentBody body={row.body} />}
     <div data-comment-actions={row.id} className="flex flex-wrap items-center gap-2">
-      {editing !== row.id && row.parentId === null && canComment && replying !== row.id && <Button type="button" className="rounded-md bg-transparent px-1 py-0.5 text-13 font-medium text-accent-text hover:underline" onClick={() => setReplying(row.id)}>{translate("comments.reply")}</Button>}
-      {editing !== row.id && <Popover label={translate("comments.more")} className="flex items-center rounded-md border border-subtle bg-surface-1 px-2 py-0.5 text-13 font-medium text-primary hover:bg-layer-transparent-hover" panelRole="dialog" panelClassName="grid min-w-40 gap-1 p-2" trigger={<span>{translate("comments.more")}</span>}>
+      {editing !== row.id && row.parentId === null && canComment && replying !== row.id && <Button type="button" className="rounded-md bg-transparent px-1 py-0.5 text-13 font-medium text-foreground hover:underline" onClick={() => setReplying(row.id)}>{translate("comments.reply")}</Button>}
+      {editing !== row.id && <Popover label={translate("comments.more")} className="flex items-center rounded-md border border-border bg-card px-2 py-0.5 text-13 font-medium text-foreground hover:bg-accent" panelRole="dialog" panelClassName="grid min-w-40 gap-1 p-2" trigger={<span>{translate("comments.more")}</span>}>
         {(close) => <>
-          <Button type="button" className="rounded-md bg-transparent px-2 py-1 text-left text-13 text-primary hover:bg-layer-transparent-hover" onClick={() => { close(); void copy(row.id); }}>{translate("comments.copyLink")}</Button>
-          {row.editedAt && <Button type="button" className="rounded-md bg-transparent px-2 py-1 text-left text-13 text-primary hover:bg-layer-transparent-hover" onClick={() => { close(); void showVersions(row.id); }}>{translate("comments.history")}</Button>}
+          <Button type="button" className="rounded-md bg-transparent px-2 py-1 text-left text-13 text-foreground hover:bg-accent" onClick={() => { close(); void copy(row.id); }}>{translate("comments.copyLink")}</Button>
+          {row.editedAt && <Button type="button" className="rounded-md bg-transparent px-2 py-1 text-left text-13 text-foreground hover:bg-accent" onClick={() => { close(); void showVersions(row.id); }}>{translate("comments.history")}</Button>}
           {row.authorId === selfId && <>
-            <Button type="button" className="rounded-md bg-transparent px-2 py-1 text-left text-13 text-primary hover:bg-layer-transparent-hover" onClick={() => { close(); setEditing(row.id); }}>{translate("comments.edit")}</Button>
-            <Button type="button" className="rounded-md bg-transparent px-2 py-1 text-left text-13 text-danger-text hover:bg-layer-transparent-hover" onClick={() => { close(); setConfirmDelete(row.id); }}>{translate("comments.delete")}</Button>
+            <Button type="button" className="rounded-md bg-transparent px-2 py-1 text-left text-13 text-foreground hover:bg-accent" onClick={() => { close(); setEditing(row.id); }}>{translate("comments.edit")}</Button>
+            <Button type="button" className="rounded-md bg-transparent px-2 py-1 text-left text-13 text-destructive hover:bg-accent" onClick={() => { close(); setConfirmDelete(row.id); }}>{translate("comments.delete")}</Button>
           </>}
         </>}
       </Popover>}
     </div>
-    {confirmDelete === row.id && <div role="alertdialog" aria-label={translate("comments.deleteConfirm")} className="flex flex-wrap items-center gap-2 text-13 text-primary">
+    {confirmDelete === row.id && <div role="alertdialog" aria-label={translate("comments.deleteConfirm")} className="flex flex-wrap items-center gap-2 text-13 text-foreground">
       <span>{translate("comments.deleteConfirm")}</span>
-      <Button type="button" className="rounded-md bg-danger-primary px-3 py-1 text-13 font-medium text-on-color hover:bg-danger-primary-hover" onClick={async () => { setConfirmDelete(null); guard(await action("delete_comment", { commentId: row.id })); }}>{translate("comments.delete")}</Button>
+      <Button type="button" className="rounded-md bg-destructive px-3 py-1 text-13 font-medium text-primary-foreground hover:bg-destructive" onClick={async () => { setConfirmDelete(null); guard(await action("delete_comment", { commentId: row.id })); }}>{translate("comments.delete")}</Button>
       <Button type="button" className="secondary" autoFocus onClick={() => { setConfirmDelete(null); requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-comment-actions="${row.id}"] button[aria-haspopup]`)?.focus()); }}>{translate("comments.cancel")}</Button>
     </div>}
     {versions?.commentId === row.id && <ol aria-label={translate("comments.history")}>
@@ -195,8 +195,8 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
       {versions.more && <li><Button type="button" className="secondary" data-testid="show-older-comment-versions" disabled={versions.loading} aria-busy={versions.loading} onClick={() => void showOlderVersions()}>{versions.loading ? translate("workItems.loadingOlderVersions") : versions.failed ? translate("workItems.retryOlderVersions") : translate("workItems.showOlderVersions")}</Button></li>}
     </ol>}
     {row.parentId === null && row.replyCount > 0 && <small>{translate(row.replyCount === 1 ? "comments.repliesOne" : "comments.repliesMany").replace("{count}", String(row.replyCount))} · {row.participants.map((person) => person.name).join(", ")}</small>}
-    {replies.length > 0 && <ul className="m-0 grid list-none gap-2 border-l-2 border-subtle !pl-3">{replies.map((reply) => item(reply, []))}</ul>}
-    {replying === row.id && <div className="grid gap-1"><p className="m-0 text-13 text-secondary">{translate("comments.replyingTo").replace("{name}", row.authorName)}</p><CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} focusOnMount submitLabel={translate("comments.reply")} onCancel={() => setReplying(null)} onSubmit={async (body) => { await guard(await actionResult("create_comment", { workItemId, body, parentId: row.id })); setReplying(null); }} /></div>}
+    {replies.length > 0 && <ul className="m-0 grid list-none gap-2 border-l-2 border-border !pl-3">{replies.map((reply) => item(reply, []))}</ul>}
+    {replying === row.id && <div className="grid gap-1"><p className="m-0 text-13 text-muted-foreground">{translate("comments.replyingTo").replace("{name}", row.authorName)}</p><CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} focusOnMount submitLabel={translate("comments.reply")} onCancel={() => setReplying(null)} onSubmit={async (body) => { await guard(await actionResult("create_comment", { workItemId, body, parentId: row.id })); setReplying(null); }} /></div>}
   </li>;
   const activityText = (row: ActivityRow) => row.field === "created" ? translate("workItems.activity.created") : row.field === "deleted" ? translate("workItems.activity.deleted") : row.field === "attachment_added" ? translate("workItems.activity.attachment_added") : row.field === "wake_skipped" ? translate(`workItems.activity.wake_skipped.${String((row.newValue as { reason?: unknown } | null)?.reason)}` as never) : row.field === "archived" || row.field === "restored" || row.field === "run_waiting" || row.field === "run_started" || row.field === "run_steered" ? translate(`workItems.activity.${row.field}` as never) : row.field.startsWith("web_link_") || row.field.startsWith("pull_request_") || row.field === "relation_added" || row.field === "relation_removed" ? translate(`workItems.activity.${row.field}` as never) : translate("workItems.activity.changed").replace("{field}", translateDynamic(`activity.field.${row.field}`) ?? (row.field.startsWith("property:") ? row.field.slice("property:".length) : row.field));
   const activityRows = groupActivities(entries.flatMap((entry) => entry.activity ? [entry.activity] : []), showAllChanges);
@@ -206,7 +206,7 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
     else if (showAllChanges) for (const activity of row.activities) displayByActivityId.set(activity.id, { kind: "activity", activity });
     else displayByActivityId.set(row.id, { kind: "group", group: row });
   }
-  const actor = (row: ActivityRow) => <><Avatar name={row.actorName} id={row.actorId} agent={row.actorIsAgent} /><strong className="font-medium text-primary">{row.actorName}</strong>{row.actorIsAgent && <> <mark data-agent-marker title={translate("avatar.agentHint")} className="inline-flex items-center gap-1 rounded bg-layer-1 px-1.5 py-0.5 text-10 font-medium text-secondary"><span title={translate("comments.agent")}><Bot aria-hidden size={12} className="inline" /></span> {translate("comments.agent")}</mark>{row.actorCodeCapable && <span className="inline-flex items-center gap-1 rounded bg-layer-1 px-1.5 py-0.5 text-10 text-secondary" title={translate("agents.codeCapable")}><Code2 aria-hidden size={13} className="text-warning-primary" />{translate("agents.canEditCode")}</span>}</>}</>;
+  const actor = (row: ActivityRow) => <><Avatar name={row.actorName} id={row.actorId} agent={row.actorIsAgent} /><strong className="font-medium text-foreground">{row.actorName}</strong>{row.actorIsAgent && <> <mark data-agent-marker title={translate("avatar.agentHint")} className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-10 font-medium text-muted-foreground"><span title={translate("comments.agent")}><Bot aria-hidden size={12} className="inline" /></span> {translate("comments.agent")}</mark>{row.actorCodeCapable && <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-10 text-muted-foreground" title={translate("agents.codeCapable")}><Code2 aria-hidden size={13} className="text-amber-700 dark:text-amber-400" />{translate("agents.canEditCode")}</span>}</>}</>;
   // An automatic rule is shown as the system, with its reason and an undo while the change is still the item's latest.
   const undoAutoRule = async (row: ActivityRow) => {
     const result = await action("undo_auto_rule_change", { activityId: row.id });
@@ -225,18 +225,18 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
     <span>· {translate("runs.wokenByDepth").replace("{depth}", String(row.wokenBy.depth))}</span>
   </span> : null;
   const renderActivity = (row: ActivityRow) => row.source === "auto_rule" ? <>
-    <strong className="font-medium text-primary">{translate("autoRules.systemActor")}</strong> {autoRuleReasonText(row.reason ?? null, translate) ?? activityText(row)}{transition(row)}{" "}
+    <strong className="font-medium text-foreground">{translate("autoRules.systemActor")}</strong> {autoRuleReasonText(row.reason ?? null, translate) ?? activityText(row)}{transition(row)}{" "}
     {canComment && undoable.has(row.id) && <Button type="button" className="secondary ml-1 !px-2 !py-0.5 text-12" onClick={() => void undoAutoRule(row)}>{translate("autoRules.undo")}</Button>}{" "}
-    <small className="text-12 text-tertiary">{formatDate(row.createdAt)}</small></> : <>{actor(row)} {row.field === "recurrence_created" ? translate("workItems.activity.fromRecurrence").replace("{name}", String((row.newValue as { name?: string } | null)?.name ?? "")) : activityText(row)}{transition(row)}{wokenByText(row)}{" "}
-    <small className="text-12 text-tertiary">{["agent", "agent_autopilot"].includes(row.source) && row.originatorName ? translate(row.source === "agent_autopilot" ? "activity.byAutopilotAgent" : "activity.byAgent").replace("{originator}", row.originatorName) : translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${row.source}`) ?? row.source)} · {formatDate(row.createdAt)}</small></>;
+    <small className="text-12 text-muted-foreground">{formatDate(row.createdAt)}</small></> : <>{actor(row)} {row.field === "recurrence_created" ? translate("workItems.activity.fromRecurrence").replace("{name}", String((row.newValue as { name?: string } | null)?.name ?? "")) : activityText(row)}{transition(row)}{wokenByText(row)}{" "}
+    <small className="text-12 text-muted-foreground">{["agent", "agent_autopilot"].includes(row.source) && row.originatorName ? translate(row.source === "agent_autopilot" ? "activity.byAutopilotAgent" : "activity.byAgent").replace("{originator}", row.originatorName) : translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${row.source}`) ?? row.source)} · {formatDate(row.createdAt)}</small></>;
   return <section className="min-w-0 max-w-full">
     <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
     <h3>{translate("timeline.title")}</h3>
     <div className="flex flex-wrap items-center gap-2">
-      <label className="flex items-center gap-1 text-11 text-secondary"><span>{translate("timeline.filter")}</span><select aria-label={translate("timeline.filter")} value={filter} onChange={(event) => setFilter(event.target.value as Filter)}>
+      <label className="flex items-center gap-1 text-11 text-muted-foreground"><span>{translate("timeline.filter")}</span><select aria-label={translate("timeline.filter")} value={filter} onChange={(event) => setFilter(event.target.value as Filter)}>
         <option value="comments">{translate("timeline.comments")}</option><option value="updates">{translate("timeline.activity")}</option><option value="all">{translate("timeline.all")}</option>
       </select></label>
-      <label className="flex items-center gap-1 text-11 text-secondary"><span>{translate("timeline.sort")}</span><select aria-label={translate("timeline.sort")} value={sort} onChange={(event) => setSort(event.target.value as Sort)}>
+      <label className="flex items-center gap-1 text-11 text-muted-foreground"><span>{translate("timeline.sort")}</span><select aria-label={translate("timeline.sort")} value={sort} onChange={(event) => setSort(event.target.value as Sort)}>
         <option value="oldest">{translate("timeline.oldest")}</option><option value="newest">{translate("timeline.newest")}</option>
       </select></label>
     </div>
@@ -248,22 +248,22 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
       : (() => {
         const display = displayByActivityId.get(entry.activity!.id);
         if (!display) return null;
-        const listClass = "flex list-none flex-wrap items-baseline gap-x-1.5 rounded-lg px-2 py-1.5 text-13 text-secondary before:mr-1 before:size-1.5 before:self-center before:rounded-full before:bg-[var(--border)] before:content-['']";
+        const listClass = "flex list-none flex-wrap items-baseline gap-x-1.5 rounded-lg px-2 py-1.5 text-13 text-muted-foreground before:mr-1 before:size-1.5 before:self-center before:rounded-full before:bg-[var(--border)] before:content-['']";
         if (display.kind === "activity") return <li key={entry.activity!.id} className={listClass}>{renderActivity(display.activity)}</li>;
         const group = display.group;
         const oldText = readableActivityValue(group.oldValue); const newText = readableActivityValue(group.newValue);
         const latest = group.activities.reduce((a, b) => Date.parse(b.createdAt) > Date.parse(a.createdAt) ? b : a);
         const expanded = expandedActivityId === group.id;
-        return <li key={group.id} className="list-none min-w-0 max-w-full rounded-lg bg-layer-1 px-2 py-1.5 text-13 text-secondary">
-          <Button type="button" aria-expanded={expanded} aria-controls={`activity-group-${group.id}`} onClick={() => setExpandedActivityId((current) => current === group.id ? null : group.id)} className="grid w-full min-w-0 max-w-full box-border grid-cols-[0.75rem_minmax(0,1fr)] items-start gap-x-1.5 gap-y-1 whitespace-normal border-0 bg-transparent p-1 text-left text-secondary">
+        return <li key={group.id} className="list-none min-w-0 max-w-full rounded-lg bg-muted px-2 py-1.5 text-13 text-muted-foreground">
+          <Button type="button" aria-expanded={expanded} aria-controls={`activity-group-${group.id}`} onClick={() => setExpandedActivityId((current) => current === group.id ? null : group.id)} className="grid w-full min-w-0 max-w-full box-border grid-cols-[0.75rem_minmax(0,1fr)] items-start gap-x-1.5 gap-y-1 whitespace-normal border-0 bg-transparent p-1 text-left text-muted-foreground">
             <span aria-hidden className="inline-block w-3 shrink-0">{expanded ? "▾" : "▸"}</span><span className="flex min-w-0 flex-wrap items-center gap-x-1.5">{actor(latest)}<span className="activity-group-summary min-w-0">{activityText(group.activities[0]!)} · {translate("timeline.changeCount").replace("{count}", String(group.count))}</span></span>
             {oldText !== null && newText !== null && <span className="activity-group-summary col-span-2 min-w-0 pl-4">{oldText}<br />{translate("timeline.valueNewLabel")} {newText}</span>}
-            <small className="activity-group-summary col-span-2 min-w-0 pl-4 text-12 text-tertiary">{latest.source === "agent" && latest.originatorName ? translate("activity.byAgent").replace("{originator}", latest.originatorName) : translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${latest.source}`) ?? latest.source)} · {formatDate(latest.createdAt)}</small>
+            <small className="activity-group-summary col-span-2 min-w-0 pl-4 text-12 text-muted-foreground">{latest.source === "agent" && latest.originatorName ? translate("activity.byAgent").replace("{originator}", latest.originatorName) : translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${latest.source}`) ?? latest.source)} · {formatDate(latest.createdAt)}</small>
           </Button>
           {expanded && <ol id={`activity-group-${group.id}`} className="ml-4 mt-2 grid gap-1">{group.activities.map((activity) => <li key={activity.id}>{renderActivity(activity)}</li>)}</ol>}
         </li>;
       })())}</ul>
-    {canComment && <div className="sticky bottom-0 z-10 mt-4 grid gap-3 rounded-xl border border-subtle bg-surface-1 p-4"><CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} submitLabel={translate("comments.add")} onSubmit={async (body) => guard(await actionResult("create_comment", { workItemId, body }))} /></div>}
+    {canComment && <div className="sticky bottom-0 z-10 mt-4 grid gap-3 rounded-xl border border-border bg-card p-4"><CommentEditor workspaceId={workspaceId} workItemId={workItemId} people={people} submitLabel={translate("comments.add")} onSubmit={async (body) => guard(await actionResult("create_comment", { workItemId, body }))} /></div>}
     {note && <p role="alert">{note}</p>}
   </section>;
 }

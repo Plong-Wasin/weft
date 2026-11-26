@@ -26,20 +26,20 @@ export type Option = { id: string; name: string; icon?: React.ReactNode; isAgent
 
 export function StateIcon({ group }: { group: StateGroup }) {
   const common = { "aria-hidden": true, size: 14 } as const;
-  if (group === "backlog") return <CircleDashed {...common} className="text-tertiary" />;
-  if (group === "started") return <CircleDot {...common} className="text-warning-primary" />;
-  if (group === "completed") return <CircleCheck {...common} className="text-success-text" />;
-  if (group === "cancelled") return <CircleX {...common} className="text-danger-text" />;
-  return <Circle {...common} className="text-secondary" />;
+  if (group === "backlog") return <CircleDashed {...common} className="text-muted-foreground" />;
+  if (group === "started") return <CircleDot {...common} className="text-amber-700 dark:text-amber-400" />;
+  if (group === "completed") return <CircleCheck {...common} className="text-emerald-700 dark:text-emerald-400" />;
+  if (group === "cancelled") return <CircleX {...common} className="text-destructive" />;
+  return <Circle {...common} className="text-muted-foreground" />;
 }
 
 export function PriorityIcon({ priority }: { priority: string }) {
   const common = { "aria-hidden": true, size: 14 } as const;
-  if (priority === "urgent") return <CircleAlert {...common} className="text-danger-text" />;
-  if (priority === "high") return <SignalHigh {...common} className="text-warning-primary" />;
-  if (priority === "medium") return <SignalMedium {...common} className="text-warning-primary" />;
-  if (priority === "low") return <SignalLow {...common} className="text-accent-text" />;
-  return <Ban {...common} className="text-tertiary" />;
+  if (priority === "urgent") return <CircleAlert {...common} className="text-destructive" />;
+  if (priority === "high") return <SignalHigh {...common} className="text-amber-700 dark:text-amber-400" />;
+  if (priority === "medium") return <SignalMedium {...common} className="text-amber-700 dark:text-amber-400" />;
+  if (priority === "low") return <SignalLow {...common} className="text-foreground" />;
+  return <Ban {...common} className="text-muted-foreground" />;
 }
 
 /** A calendar day (YYYY-MM-DD) in the locale's own calendar. */
@@ -55,7 +55,7 @@ function Static({ label, children, quiet, className }: { label: string; children
   // The same read-only value can fit or clip depending on font metrics, zoom, and viewport width.
   // Always provide a reveal action so touch and keyboard users never depend on hover or guessed text lengths.
   return <Popover label={label} className={`flex items-center gap-1.5 rounded-md ${className ?? chipClass(quiet)}`} panelRole="dialog" panelClassName="w-72 max-w-[calc(100vw-2rem)] p-3" trigger={content}>
-    {() => <p tabIndex={0} className="m-0 whitespace-normal break-words text-13 text-primary">{label}</p>}
+    {() => <p tabIndex={0} className="m-0 whitespace-normal break-words text-13 text-foreground">{label}</p>}
   </Popover>;
 }
 
@@ -108,12 +108,12 @@ function PickerBody({ label, options, onPick, searchAlways, children }: { label:
 export function SingleSelect({ label, summary, display, options, value, onSelect, readOnly, icon, iconOnly, hideIconOnlyTextOnPhone, quiet }: { label: string; summary: string; /** Visible text when it differs from the accessible value (a muted dash for an empty list cell). */ display?: string; options: Option[]; value: string; onSelect: (id: string) => void; readOnly?: boolean; icon?: React.ReactNode; iconOnly?: boolean; hideIconOnlyTextOnPhone?: boolean; quiet?: boolean }) {
   const name = `${label}: ${summary}`;
   const className = chipClass(quiet, iconOnly);
-  if (readOnly) return <Static label={name} quiet={quiet} className={className}>{icon}{!iconOnly && <span className={`max-w-32 truncate ${display ? "text-tertiary" : ""}`} title={summary}>{display ?? summary}</span>}</Static>;
-  return <Popover label={name} className={className} panelRole="dialog" panelClassName="max-h-72 w-52 overflow-auto" trigger={<Trigger label={name}>{icon}<span className={`${iconOnly ? hideIconOnlyTextOnPhone ? "hidden" : "hidden text-11 max-sm:inline" : "max-w-32 truncate"} ${display ? "text-tertiary" : ""}`}>{display ?? summary}</span></Trigger>}>
+  if (readOnly) return <Static label={name} quiet={quiet} className={className}>{icon}{!iconOnly && <span className={`max-w-32 truncate ${display ? "text-muted-foreground" : ""}`} title={summary}>{display ?? summary}</span>}</Static>;
+  return <Popover label={name} className={className} panelRole="dialog" panelClassName="max-h-72 w-52 overflow-auto" trigger={<Trigger label={name}>{icon}<span className={`${iconOnly ? hideIconOnlyTextOnPhone ? "hidden" : "hidden text-11 max-sm:inline" : "max-w-32 truncate"} ${display ? "text-muted-foreground" : ""}`}>{display ?? summary}</span></Trigger>}>
     {(close) => <PickerBody label={label} options={options} onPick={(option) => { close(); if (option.id !== value) onSelect(option.id); }}>
       {(visible, activeId, optionId) => visible.map((option) => <Button key={option.id} id={optionId(option)} type="button" role="menuitemradio" aria-checked={option.id === value} data-active={option.id === activeId || undefined} className={cn(optionClass, "data-[active=true]:bg-accent")}
         onClick={() => { close(); if (option.id !== value) onSelect(option.id); }}>
-        {option.icon}<span className="min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]">{option.name}</span>{option.id === value && <Check aria-hidden size={14} className="text-secondary" />}
+        {option.icon}<span className="min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]">{option.name}</span>{option.id === value && <Check aria-hidden size={14} className="text-muted-foreground" />}
       </Button>)}
     </PickerBody>}
   </Popover>;
@@ -124,7 +124,7 @@ export function EstimateSelect({ estimate, pointId, onSelect, readOnly, iconOnly
   if (!estimate?.enabled) return null;
   const point = estimate.points.find((candidate) => candidate.id === pointId)?.value;
   const summary = point ?? t("workItems.noEstimate");
-  const icon = <Sigma aria-hidden size={14} className="text-secondary" />;
+  const icon = <Sigma aria-hidden size={14} className="text-muted-foreground" />;
   return <SingleSelect label={t("workItems.estimate")} summary={summary} display={point === undefined ? emptyLabel : undefined} value={pointId ?? ""} readOnly={readOnly} quiet={quiet} icon={icon} iconOnly={iconOnlyWhenEmpty && !pointId}
     options={[{ id: "", name: t("workItems.noEstimate") }, ...estimate.points.map((point) => ({ id: point.id, name: point.value }))]} onSelect={(id) => onSelect(id || null)} />;
 }
@@ -134,7 +134,7 @@ export function MultiSelect({ label, summary, options, selected, onToggle, readO
   const name = `${label}: ${selected.map((id) => options.find((option) => option.id === id)?.name ?? "").filter(Boolean).join(", ") || "—"}`;
   if (readOnly) return <Static label={name} quiet={quiet}>{icon}{summary}</Static>;
   return <Popover label={name} className={chipClass(quiet)} panelRole="dialog" panelClassName="max-h-72 w-52 !min-w-0 overflow-auto" onOpen={onOpen} trigger={<Trigger label={name}>{icon}{summary}</Trigger>}>
-    {() => options.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-tertiary">—</p> : <PickerBody label={label} options={options} searchAlways={searchAlways} onPick={(option) => { if (isPickable(option)) onToggle(option.id, !selected.includes(option.id)); }}>
+    {() => options.length === 0 ? <p className="px-2.5 py-1.5 text-13 text-muted-foreground">—</p> : <PickerBody label={label} options={options} searchAlways={searchAlways} onPick={(option) => { if (isPickable(option)) onToggle(option.id, !selected.includes(option.id)); }}>
       {(visible, activeId, optionId) => <>{[false, true].map((agents) => {
       const group = visible.filter((option) => !!option.isAgent === agents);
       if (!group.length) return null;
@@ -144,7 +144,7 @@ export function MultiSelect({ label, summary, options, selected, onToggle, readO
       const on = selected.includes(option.id);
       const unavailable = option.isAgent && option.hasAccess === false;
       return <Button key={option.id} id={optionId(option)} type="button" role="menuitemcheckbox" aria-checked={on} aria-disabled={unavailable || undefined} data-active={option.id === activeId || undefined} title={unavailable ? option.accessReason ?? undefined : undefined} className={cn(optionClass, "data-[active=true]:bg-accent", option.codeCapable && "flex-wrap gap-1 text-xs", unavailable && "flex-wrap cursor-not-allowed")} onClick={() => { if (!unavailable) onToggle(option.id, !on); }}>
-        {option.icon}<span className={cn("min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]", unavailable && "text-muted-foreground")}>{option.name}{option.isAgent && <> <AgentLabel /></>}</span>{option.codeCapable && <span className="ml-5 inline-flex shrink-0 basis-[calc(100%_-_1.25rem)] items-center gap-1 whitespace-nowrap rounded bg-muted px-2 py-1 text-xs text-muted-foreground" title={t("agents.codeCapable")}><Code2 aria-hidden size={13} className="text-warning-primary" />{t("agents.canEditCode")}</span>}{on && <Check aria-hidden size={14} className="text-secondary" />}
+        {option.icon}<span className={cn("min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]", unavailable && "text-muted-foreground")}>{option.name}{option.isAgent && <> <AgentLabel /></>}</span>{option.codeCapable && <span className="ml-5 inline-flex shrink-0 basis-[calc(100%_-_1.25rem)] items-center gap-1 whitespace-nowrap rounded bg-muted px-2 py-1 text-xs text-muted-foreground" title={t("agents.codeCapable")}><Code2 aria-hidden size={13} className="text-amber-700 dark:text-amber-400" />{t("agents.canEditCode")}</span>}{on && <Check aria-hidden size={14} className="text-muted-foreground" />}
         {unavailable && <span className="w-full basis-full min-w-0 whitespace-normal pl-5 text-xs text-muted-foreground">{option.accessReason}</span>}
       </Button>;
       });
@@ -168,7 +168,7 @@ export function DateChip({ label, field, range, onChange, readOnly, stateGroup, 
   const late = field === "due" && isOverdue(value, todayKey(), stateGroup);
   // The overdue word is part of the accessible name: the trigger's aria-label replaces its visible text for screen readers.
   const name = late ? `${label}: ${text}, ${t("datePicker.overdue")}` : `${label}: ${text}`;
-  const body = <>{icon}<span className={`min-w-0 max-w-32 truncate ${late ? "text-danger-text" : ""}`} title={late ? t("datePicker.overdue") : undefined}>{text}</span>{late && <span className="sr-only">{t("datePicker.overdue")}</span>}</>;
+  const body = <>{icon}<span className={`min-w-0 max-w-32 truncate ${late ? "text-destructive" : ""}`} title={late ? t("datePicker.overdue") : undefined}>{text}</span>{late && <span className="sr-only">{t("datePicker.overdue")}</span>}</>;
   if (readOnly) return <Static label={name} quiet={quiet}>{body}</Static>;
   return <DatePopover label={name} range={range} field={field} onChange={onChange} className={chipClass(quiet)} trigger={<Trigger label={name}>{body}</Trigger>} />;
 }
@@ -181,7 +181,7 @@ export function DatesMenu({ startDate, dueDate, onChange, readOnly, iconOnlyWhen
   const iconOnly = iconOnlyWhenEmpty && !startDate && !dueDate;
   const late = isOverdue(dueDate, todayKey(), stateGroup);
   const name = `${t("layout.property.dates")}: ${text}${late ? `, ${t("datePicker.overdue")}` : ""}`;
-  const body = <><CalendarDays aria-hidden size={14} className="text-secondary" /><span className={`min-w-0 max-w-32 truncate ${iconOnly ? "hidden text-11 max-sm:inline" : ""} ${late ? "text-danger-text" : ""} ${empty && emptyLabel ? "text-tertiary" : ""}`} title={late ? t("datePicker.overdue") : undefined}>{shown}</span>{late && <span className="sr-only">{t("datePicker.overdue")}</span>}</>;
+  const body = <><CalendarDays aria-hidden size={14} className="text-muted-foreground" /><span className={`min-w-0 max-w-32 truncate ${iconOnly ? "hidden text-11 max-sm:inline" : ""} ${late ? "text-destructive" : ""} ${empty && emptyLabel ? "text-muted-foreground" : ""}`} title={late ? t("datePicker.overdue") : undefined}>{shown}</span>{late && <span className="sr-only">{t("datePicker.overdue")}</span>}</>;
   const className = chipClass(quiet, iconOnly);
   if (readOnly) return <Static label={name} quiet={quiet} className={className}>{body}</Static>;
   return <DatePopover label={name} className={className} trigger={<Trigger label={name}>{body}</Trigger>} range={{ startDate, dueDate }} field={startDate || !dueDate ? "start" : "due"} onChange={onChange} clearable={clearable} />;

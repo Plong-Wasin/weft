@@ -2,6 +2,8 @@
 @import "@fontsource-variable/inter";
 @import "./tokens.css";
 
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+
 /* Tailwind consumes the tokens in tokens.css (defined once, light and dark). Colour utilities: bg-canvas, bg-surface-1, bg-layer-1, text-primary, text-secondary, border-subtle, ... */
 @theme {
   --font-body: "Inter Variable", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";

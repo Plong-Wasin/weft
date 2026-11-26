@@ -34,7 +34,7 @@ export function EntityDescription({ action, workspaceId, owner, mentionPeople = 
     mentionPeople={mentionPeople}
     initial={initial}
     editable={editable}
-    status={<p role="status" data-testid="entity-description-save-status" className={`m-0 min-w-0 text-12 ${status === "failed" || status === "notSaved" ? "text-danger-text" : "text-tertiary"}`}>{status === "failed" ? translate("workItems.descriptionSave.failed") : statusText}{status === "failed" && <Button type="button" className="ml-2 underline" onClick={() => void flush()}>{translate("workItems.descriptionSave.retry")}</Button>}</p>}
+    status={<p role="status" data-testid="entity-description-save-status" className={`m-0 min-w-0 text-12 ${status === "failed" || status === "notSaved" ? "text-destructive" : "text-muted-foreground"}`}>{status === "failed" ? translate("workItems.descriptionSave.failed") : statusText}{status === "failed" && <Button type="button" className="ml-2 underline" onClick={() => void flush()}>{translate("workItems.descriptionSave.retry")}</Button>}</p>}
     onSourceDraftChange={(hasDraft) => { if (hasDraft) setStatus("notSaved"); }}
     onChange={(doc) => { pending.current = doc; revision.current += 1; setStatus("saving"); if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(() => void flush(), 700); }}
   /></div>;

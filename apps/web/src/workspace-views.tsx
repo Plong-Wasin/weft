@@ -17,9 +17,9 @@ import type { Member, Project, StateGroup, Workspace } from "./types";
 
 import { Checkbox } from "@/ui/checkbox";
 const t = (key: string) => translate(key as MessageKey);
-const primary = "rounded-md border-0 bg-accent-primary px-3 py-1 text-13 font-medium text-on-color hover:bg-accent-primary-hover disabled:opacity-60";
-const ghost = "flex items-center gap-1.5 rounded-md border border-subtle bg-surface-1 px-2.5 py-1 text-13 font-medium text-primary hover:bg-layer-transparent-hover";
-const cell = "border-b border-subtle px-3 py-2 text-left align-middle whitespace-nowrap";
+const primary = "rounded-md border-0 bg-primary px-3 py-1 text-13 font-medium text-primary-foreground hover:bg-primary disabled:opacity-60";
+const ghost = "flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1 text-13 font-medium text-foreground hover:bg-accent";
+const cell = "border-b border-border px-3 py-2 text-left align-middle whitespace-nowrap";
 
 /** Plane's four built-in workspace views, addressed by the same URL keys. */
 export const builtinViews = [
@@ -48,33 +48,33 @@ function WorkspaceSheet({ items, projects, states, labels, people, workspaceSlug
     switch (property) {
       case "state": return <span className="flex items-center gap-1.5"><StateIcon group={stateOf(item)?.group ?? "unstarted"} />{stateOf(item)?.name}</span>;
       case "priority": return <span className="flex items-center gap-1.5"><PriorityIcon priority={item.priority} />{t(`workItems.priority.${item.priority}`)}</span>;
-      case "assignee": return item.assigneeIds.length === 0 ? <span className="text-tertiary">—</span>
+      case "assignee": return item.assigneeIds.length === 0 ? <span className="text-muted-foreground">—</span>
         : <span className="flex items-center -space-x-1">{item.assigneeIds.slice(0, 3).map((id) => { const person = peopleById.get(id); return <Avatar key={id} name={person?.name ?? "?"} id={id} agent={person?.isAgent} />; })}</span>;
-      case "labels": return item.labelIds.length === 0 ? <span className="text-tertiary">—</span> : <span>{item.labelIds.map((id) => labelsById.get(id)?.name).filter(Boolean).join(", ")}</span>;
+      case "labels": return item.labelIds.length === 0 ? <span className="text-muted-foreground">—</span> : <span>{item.labelIds.map((id) => labelsById.get(id)?.name).filter(Boolean).join(", ")}</span>;
       case "dates": return <span>{item.startDate && item.dueDate ? `${formatDay(item.startDate)} – ${formatDay(item.dueDate)}` : item.startDate ? formatDay(item.startDate) : item.dueDate ? formatDay(item.dueDate) : "—"}</span>;
       default: return null;
     }
   };
-  return <div className="overflow-hidden rounded-lg border border-subtle">
-    {items.length === 0 && <p role="status" className="border-b border-subtle bg-surface-1 px-5 py-3 text-14 text-secondary">{empty}</p>}
+  return <div className="overflow-hidden rounded-lg border border-border">
+    {items.length === 0 && <p role="status" className="border-b border-border bg-card px-5 py-3 text-14 text-muted-foreground">{empty}</p>}
     <div role="region" aria-label={t("workspaceViews.table")} tabIndex={0} className="overflow-x-auto focus-visible:outline-2 focus-visible:outline-accent-primary" data-testid="sheet-scroll"
       onKeyDown={(event) => {
         if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
         event.preventDefault();
         event.currentTarget.scrollLeft += (event.key === "ArrowRight" ? 1 : -1) * Math.max(80, event.currentTarget.clientWidth * 0.8);
       }}>
-      <table className="w-full border-separate border-spacing-0 bg-surface-1 text-13">
-        <thead><tr className="bg-layer-1 text-12 font-medium text-tertiary">
-          <th scope="col" className={`${cell} sticky left-0 z-10 min-w-64 bg-layer-1`}>{t("layout.sheet.workItem")}</th>
+      <table className="w-full border-separate border-spacing-0 bg-card text-13">
+        <thead><tr className="bg-muted text-12 font-medium text-muted-foreground">
+          <th scope="col" className={`${cell} sticky left-0 z-10 min-w-64 bg-muted`}>{t("layout.sheet.workItem")}</th>
           <th scope="col" className={cell}>{t("workspaceViews.project")}</th>
           {columns.map((property) => <th key={property} scope="col" className={cell}>{t(`layout.property.${property}`)}</th>)}
         </tr></thead>
-        <tbody>{items.map((item) => <tr key={item.id} data-testid={`row-${item.displayId}`} className="group hover:bg-layer-transparent-hover">
-          <th scope="row" className={`${cell} sticky left-0 z-10 min-w-64 bg-surface-1 font-normal group-hover:bg-layer-1`}>
-            <span className="flex items-center gap-3">{props.includes("id") && <span className="shrink-0 text-12 text-tertiary">{item.displayId}</span>}
-              <Link to={paths.workItem(workspaceSlug, item.displayId)} className="max-w-72 truncate text-14 font-medium text-primary">{item.title}</Link></span>
+        <tbody>{items.map((item) => <tr key={item.id} data-testid={`row-${item.displayId}`} className="group hover:bg-accent">
+          <th scope="row" className={`${cell} sticky left-0 z-10 min-w-64 bg-card font-normal group-hover:bg-muted`}>
+            <span className="flex items-center gap-3">{props.includes("id") && <span className="shrink-0 text-12 text-muted-foreground">{item.displayId}</span>}
+              <Link to={paths.workItem(workspaceSlug, item.displayId)} className="max-w-72 truncate text-14 font-medium text-foreground">{item.title}</Link></span>
           </th>
-          <td className={cell}><Link to={paths.workItems(workspaceSlug, item.projectKey)} className="text-secondary hover:text-primary">{item.projectName}</Link></td>
+          <td className={cell}><Link to={paths.workItems(workspaceSlug, item.projectKey)} className="text-muted-foreground hover:text-foreground">{item.projectName}</Link></td>
           {columns.map((property) => <td key={property} className={cell}>{cellOf(item, property)}</td>)}
         </tr>)}</tbody>
       </table>
@@ -152,17 +152,17 @@ export function WorkspaceViewPage({ workspace, selfId, viewId }: { workspace: Wo
   const link = `${window.location.origin}${paths.workspaceView(workspace.slug, builtin ? builtin.slug : viewId)}`;
   const entries = [...builtinViews.map((entry) => ({ slug: entry.slug as string, name: t(entry.label), isPrivate: false })), ...(saved ?? []).map((entry) => ({ slug: entry.id, name: entry.name, isPrivate: entry.access === "private" }))];
   return <section className="grid gap-3">
-    <header data-testid="workspace-view-header" className="grid gap-2 border-b border-subtle pb-3 sm:flex sm:flex-wrap sm:items-center">
-      <nav aria-label={t("views.breadcrumb")} className="flex min-w-0 flex-wrap items-center gap-1.5 text-14 text-secondary sm:flex-1">
+    <header data-testid="workspace-view-header" className="grid gap-2 border-b border-border pb-3 sm:flex sm:flex-wrap sm:items-center">
+      <nav aria-label={t("views.breadcrumb")} className="flex min-w-0 flex-wrap items-center gap-1.5 text-14 text-muted-foreground sm:flex-1">
         <Layers aria-hidden size={14} /><span>{t("views.title")}</span><ChevronRight aria-hidden size={14} />
         {/* The h1 sits beside the trigger: a heading inside a button is not exposed as a heading. */}
         <h1 className="sr-only">{title}</h1>
-        <Popover label={t("workspaceViews.switch")} className="max-w-full whitespace-nowrap text-14 font-medium text-primary" panelClassName="max-h-80 w-64 overflow-auto" trigger={<><span aria-hidden className="max-w-[min(60vw,20rem)] truncate">{title}</span><ChevronDown aria-hidden size={14} /></>}>
+        <Popover label={t("workspaceViews.switch")} className="max-w-full whitespace-nowrap text-14 font-medium text-foreground" panelClassName="max-h-80 w-64 overflow-auto" trigger={<><span aria-hidden className="max-w-[min(60vw,20rem)] truncate">{title}</span><ChevronDown aria-hidden size={14} /></>}>
           {(close) => entries.map((entry) => <Button key={entry.slug} type="button" role="menuitemradio" aria-checked={entry.slug === viewId} className={menuItemClass}
             onClick={() => { close(); navigate(paths.workspaceView(workspace.slug, entry.slug)); }}>
-            <Layers aria-hidden size={14} className="text-secondary" /><span className="flex-1 truncate">{entry.name}</span>{entry.isPrivate && <Lock aria-hidden size={12} className="text-tertiary" />}{entry.slug === viewId && <Check aria-hidden size={14} />}</Button>)}
+            <Layers aria-hidden size={14} className="text-muted-foreground" /><span className="flex-1 truncate">{entry.name}</span>{entry.isPrivate && <Lock aria-hidden size={12} className="text-muted-foreground" />}{entry.slug === viewId && <Check aria-hidden size={14} />}</Button>)}
         </Popover>
-        {view && <span title={t(`views.access.${view.access}`)} className="text-12 text-tertiary">{t(`views.access.${view.access}`)}</span>}
+        {view && <span title={t(`views.access.${view.access}`)} className="text-12 text-muted-foreground">{t(`views.access.${view.access}`)}</span>}
       </nav>
       <div data-testid="workspace-view-controls" className="flex min-w-0 flex-wrap items-center gap-2 sm:ml-auto">
       <FilterQueryToggle open={filterQueryOpen || queryError !== null} onToggle={() => setFilterQueryOpen(!filterQueryOpen)} />
@@ -172,7 +172,7 @@ export function WorkspaceViewPage({ workspace, selfId, viewId }: { workspace: Wo
             {sortFields.map((value) => <option key={value} value={value}>{value === "manual" ? t("workspaceViews.sort.manual") : t(`layout.sort.${value}`)}</option>)}</select></label>
           <label>{t("layout.direction")}<select value={params.dir} onChange={(event) => update({ dir: event.target.value as LayoutParams["dir"] })}>
             {(["asc", "desc"] as const).map((value) => <option key={value} value={value}>{t(`layout.direction.${value}`)}</option>)}</select></label>
-          <fieldset className="m-0 grid gap-1 border-0 p-0"><legend className="text-12 font-medium text-tertiary">{t("layout.properties")}</legend>
+          <fieldset className="m-0 grid gap-1 border-0 p-0"><legend className="text-12 font-medium text-muted-foreground">{t("layout.properties")}</legend>
             {columnProperties.map((property) => <label key={property} className="flex items-center gap-2 text-13"><Checkbox checked={params.props.includes(property)}
               onChange={(event) => update({ props: columnProperties.filter((other) => other === property ? event.target.checked : params.props.includes(other)) })} />{t(`layout.property.${property}`)}</label>)}</fieldset>
         </>}
@@ -193,10 +193,10 @@ export function WorkspaceViewPage({ workspace, selfId, viewId }: { workspace: Wo
       </Popover>
       </div>
     </header>
-    {view?.description && <p className="m-0 text-13 text-secondary">{view.description}</p>}
-    {status && <p role="status" className="m-0 text-13 text-secondary">{status}</p>}
+    {view?.description && <p className="m-0 text-13 text-muted-foreground">{view.description}</p>}
+    {status && <p role="status" className="m-0 text-13 text-muted-foreground">{status}</p>}
     {(filterQueryOpen || queryError !== null) && <FilterQueryEditor text={params.q} error={queryError} onApply={(text) => update({ q: text })} generate={{ workspaceId: workspace.id }} />}
-    {truncated && <p role="status" className="m-0 rounded-md border-l-4 border-warning-strong bg-warning-subtle px-3 py-2 text-13 text-warning-text">{t("workspaceViews.truncated")}</p>}
+    {truncated && <p role="status" className="m-0 rounded-md border-l-4 border-amber-600 dark:border-amber-400 bg-amber-500/10 px-3 py-2 text-13 text-amber-700 dark:text-amber-400">{t("workspaceViews.truncated")}</p>}
     {items !== null && <WorkspaceSheet items={items} projects={projects} states={states} labels={labels} people={people} workspaceSlug={workspace.slug} props={params.props} empty={t(params.q.trim() ? "layout.noMatch" : "workspaceViews.empty")} />}
     {form === "save" && <ViewFormModal mode="save" target={{ workspaceId: workspace.id }} settings={paramsToSettings(params)} onClose={() => setForm(null)} onSaved={(next) => { setForm(null); void reloadList(); navigate(paths.workspaceView(workspace.slug, next.id)); }} />}
     {form === "edit" && view && <ViewFormModal mode="edit" view={view} target={{ workspaceId: workspace.id }} onClose={() => setForm(null)} onSaved={(next) => { setForm(null); setView(next); void reloadList(); }} />}

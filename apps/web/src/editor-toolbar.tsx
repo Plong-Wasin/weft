@@ -22,7 +22,7 @@ export function EditorToolbar({ editor, label, testId, onImage, source, end }: {
   };
   const separator = (id: string) => <span key={id} aria-hidden className="editor-tool-sep" />;
   const ed = editor;
-  return <div role="toolbar" aria-label={label} data-testid={testId} className="editor-toolbar rounded-lg bg-layer-1 p-0">
+  return <div role="toolbar" aria-label={label} data-testid={testId} className="editor-toolbar rounded-lg bg-muted p-0">
     {tool(translate("wiki.tool.bold"), "B", Bold, run((chain) => chain.toggleBold().run()), ed?.isActive("bold"))}
     {tool(translate("wiki.tool.italic"), "I", Italic, run((chain) => chain.toggleItalic().run()), ed?.isActive("italic"))}
     {tool(translate("wiki.tool.underline"), "U", Underline, run((chain) => chain.toggleUnderline().run()), ed?.isActive("underline"))}

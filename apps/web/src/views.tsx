@@ -17,8 +17,8 @@ import type { Member, Project } from "./types";
 import { Input } from "@/ui/input";
 import { Textarea } from "@/ui/textarea";
 const t = (key: string) => translate(key as MessageKey);
-const primary = "rounded-md border-0 bg-accent-primary px-3 py-1 text-13 font-medium text-on-color hover:bg-accent-primary-hover disabled:opacity-60";
-const ghost = "flex items-center gap-1.5 rounded-md border border-subtle bg-surface-1 px-2.5 py-1 text-13 font-medium text-primary hover:bg-layer-transparent-hover";
+const primary = "rounded-md border-0 bg-primary px-3 py-1 text-13 font-medium text-primary-foreground hover:bg-primary disabled:opacity-60";
+const ghost = "flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1 text-13 font-medium text-foreground hover:bg-accent";
 
 /** Native modal behavior keeps focus inside the overlay and returns it to the opener. */
 function ViewDialog({ title, onClose, children, className = "", descriptionId, safeFocus = false }: { title: string; onClose: () => void; children: React.ReactNode; className?: string; descriptionId?: string; safeFocus?: boolean }) {
@@ -37,8 +37,8 @@ function ViewDialog({ title, onClose, children, className = "", descriptionId, s
     const rect = event.currentTarget.getBoundingClientRect();
     return event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom;
   };
-  return <dialog ref={dialog} aria-labelledby={titleId} aria-describedby={descriptionId} {...({ closedby: "any" } as Record<string, string>)} className={`fixed inset-0 m-auto grid max-h-[calc(100dvh-2rem)] gap-4 overflow-auto rounded-lg border border-subtle bg-surface-1 p-5 text-primary shadow-xl backdrop:bg-backdrop [overscroll-behavior:contain] ${className}`} onClose={onClose} onPointerDown={(event) => { pointerStartedOutside.current = isOutside(event); }} onPointerUp={(event) => { if (pointerStartedOutside.current && isOutside(event)) dialog.current?.close(); pointerStartedOutside.current = false; }}>
-    <h2 id={titleId} className="m-0 text-18 font-semibold text-primary">{title}</h2>
+  return <dialog ref={dialog} aria-labelledby={titleId} aria-describedby={descriptionId} {...({ closedby: "any" } as Record<string, string>)} className={`fixed inset-0 m-auto grid max-h-[calc(100dvh-2rem)] gap-4 overflow-auto rounded-lg border border-border bg-card p-5 text-foreground shadow-xl backdrop:bg-black/30 [overscroll-behavior:contain] ${className}`} onClose={onClose} onPointerDown={(event) => { pointerStartedOutside.current = isOutside(event); }} onPointerUp={(event) => { if (pointerStartedOutside.current && isOutside(event)) dialog.current?.close(); pointerStartedOutside.current = false; }}>
+    <h2 id={titleId} className="m-0 text-18 font-semibold text-foreground">{title}</h2>
     {children}
   </dialog>;
 }
@@ -49,7 +49,7 @@ const canChange = (view: SavedView, scope: Scope) => view.ownerId === scope.self
 
 function AccessBadge({ access }: { access: SavedView["access"] }) {
   const Icon = access === "private" ? Lock : Globe;
-  return <span title={t(`views.access.${access}`)} aria-label={t(`views.access.${access}`)} className="flex items-center text-secondary"><Icon aria-hidden size={14} /></span>;
+  return <span title={t(`views.access.${access}`)} aria-label={t(`views.access.${access}`)} className="flex items-center text-muted-foreground"><Icon aria-hidden size={14} /></span>;
 }
 
 /** Create, edit and Save-as-view all use one modal: name, description, access. */
@@ -76,14 +76,14 @@ export function ViewFormModal({ mode, view, target, settings, onClose, onSaved }
   };
   return <ViewDialog title={title} onClose={onClose} className="max-w-lg">
       <form className="my-0 grid gap-4" onSubmit={(event) => void submit(event)}>
-        <Button type="button" className="absolute right-4 top-4 rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={t("views.cancel")} onClick={onClose}><X aria-hidden size={16} /></Button>
-        <label className="grid gap-1 text-13 text-secondary">{t("views.name")}<Input required maxLength={100} value={name} className="w-full text-14" onChange={(event) => setName(event.target.value)} /></label>
-        <label className="grid gap-1 text-13 text-secondary">{t("views.description")}<Textarea rows={3} maxLength={2000} value={description} className="w-full text-14" onChange={(event) => setDescription(event.target.value)} /></label>
-        <label className="grid gap-1 text-13 text-secondary">{t("views.access")}
+        <Button type="button" className="absolute right-4 top-4 rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent" aria-label={t("views.cancel")} onClick={onClose}><X aria-hidden size={16} /></Button>
+        <label className="grid gap-1 text-13 text-muted-foreground">{t("views.name")}<Input required maxLength={100} value={name} className="w-full text-14" onChange={(event) => setName(event.target.value)} /></label>
+        <label className="grid gap-1 text-13 text-muted-foreground">{t("views.description")}<Textarea rows={3} maxLength={2000} value={description} className="w-full text-14" onChange={(event) => setDescription(event.target.value)} /></label>
+        <label className="grid gap-1 text-13 text-muted-foreground">{t("views.access")}
           <select value={access} className="text-14" onChange={(event) => setAccess(event.target.value as SavedView["access"])}>
             {(["public", "private"] as const).map((value) => <option key={value} value={value}>{t(`views.access.${value}`)}</option>)}
           </select></label>
-        {note && <p role="alert" className="m-0 text-13 text-danger-text">{note}</p>}
+        {note && <p role="alert" className="m-0 text-13 text-destructive">{note}</p>}
         <div className="flex justify-end gap-2">
           <Button type="button" className="secondary" onClick={onClose}>{t("views.cancel")}</Button>
           <Button type="submit" variant="primary" disabled={busy || name.trim() === ""}>{t(mode === "edit" ? "views.save" : "views.create")}</Button>
@@ -96,8 +96,8 @@ export function DeleteViewModal({ view, onClose, onDeleted }: { view: SavedView;
   const [note, setNote] = React.useState<string | null>(null);
   const label = t("views.delete");
   return <ViewDialog title={label} onClose={onClose} descriptionId="delete-view-description" safeFocus>
-      <p id="delete-view-description" className="m-0 text-14 text-secondary">{t("views.deleteConfirm").replace("{name}", view.name)}</p>
-      {note && <p role="alert" className="m-0 text-13 text-danger-text">{note}</p>}
+      <p id="delete-view-description" className="m-0 text-14 text-muted-foreground">{t("views.deleteConfirm").replace("{name}", view.name)}</p>
+      {note && <p role="alert" className="m-0 text-13 text-destructive">{note}</p>}
       <div className="flex justify-end gap-2">
         <Button type="button" data-safe-action className="secondary" onClick={onClose}>{t("views.cancel")}</Button>
         <Button type="button" variant="primary" onClick={async () => { if ((await action("delete_view", { viewId: view.id })) === null) setNote(t("views.failed")); else onDeleted(); }}>{t("views.deleteAction")}</Button>
@@ -141,30 +141,30 @@ export function ViewsPage({ workspaceSlug, project, selfId }: Scope) {
   const shown = (views ?? []).filter((view) => !needle || view.name.toLowerCase().includes(needle));
   const ownerOf = (view: SavedView) => people.find((person) => person.userId === view.ownerId)?.name ?? "";
   return <section className="grid gap-3">
-    <header className="flex flex-wrap items-center gap-2 rounded-xl bg-layer-1 p-3">
-      <nav aria-label={t("views.breadcrumb")} className="flex min-w-0 flex-1 items-center gap-1.5 text-14 text-secondary">
-        <Link to={paths.workItems(workspaceSlug, project.key)} className="truncate text-secondary hover:text-primary">{project.name}</Link>
-        <ChevronRight aria-hidden size={14} /><Layers aria-hidden size={14} /><h2 className="m-0 text-14 font-medium text-primary">{t("views.title")}</h2>
+    <header className="flex flex-wrap items-center gap-2 rounded-xl bg-muted p-3">
+      <nav aria-label={t("views.breadcrumb")} className="flex min-w-0 flex-1 items-center gap-1.5 text-14 text-muted-foreground">
+        <Link to={paths.workItems(workspaceSlug, project.key)} className="truncate text-muted-foreground hover:text-foreground">{project.name}</Link>
+        <ChevronRight aria-hidden size={14} /><Layers aria-hidden size={14} /><h2 className="m-0 text-14 font-medium text-foreground">{t("views.title")}</h2>
       </nav>
       <label className="relative my-0 block w-full sm:w-auto"><span className="sr-only">{t("views.search")}</span>
-        <Search aria-hidden size={14} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-tertiary" />
+        <Search aria-hidden size={14} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
         <Input type="search" value={search} placeholder={t("views.search")} className="w-full pl-7 text-13 sm:w-48" onChange={(event) => setSearch(event.target.value)} /></label>
       {canWrite && <Button type="button" variant="primary" className="flex items-center gap-1.5" onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{t("views.add")}</Button>}
     </header>
-    {loadFailed && <div role="alert" className="flex flex-wrap items-center gap-2 px-3 py-6 text-14 text-secondary">
+    {loadFailed && <div role="alert" className="flex flex-wrap items-center gap-2 px-3 py-6 text-14 text-muted-foreground">
       <span>{t("views.loadFailed")}</span>
       <Button type="button" variant="ghost" onClick={() => { void load(); }}>{t("views.retry")}</Button>
     </div>}
-    {views !== null && shown.length === 0 && <div className="rounded-xl bg-layer-1 px-4 py-6"><p role="status" className="m-0 text-14 text-secondary">{t(views.length === 0 ? "views.empty" : "views.noMatch")}</p></div>}
-    <ul aria-label={t("views.title")} className="m-0 grid list-none gap-1 rounded-xl border border-subtle bg-surface-1 p-1 empty:hidden">{shown.map((view) => <li key={view.id} data-testid={`view-row-${view.name}`} className="flex items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-layer-transparent-hover">
-      <Layers aria-hidden size={16} className="shrink-0 text-secondary" />
+    {views !== null && shown.length === 0 && <div className="rounded-xl bg-muted px-4 py-6"><p role="status" className="m-0 text-14 text-muted-foreground">{t(views.length === 0 ? "views.empty" : "views.noMatch")}</p></div>}
+    <ul aria-label={t("views.title")} className="m-0 grid list-none gap-1 rounded-xl border border-border bg-card p-1 empty:hidden">{shown.map((view) => <li key={view.id} data-testid={`view-row-${view.name}`} className="flex items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-accent">
+      <Layers aria-hidden size={16} className="shrink-0 text-muted-foreground" />
       <div className="grid min-w-0 flex-1">
-        <Link to={paths.view(workspaceSlug, project.key, view.id)} className="truncate text-14 font-medium text-primary">{view.name}</Link>
-        {view.description && <span className="truncate text-12 text-tertiary">{view.description}</span>}
+        <Link to={paths.view(workspaceSlug, project.key, view.id)} className="truncate text-14 font-medium text-foreground">{view.name}</Link>
+        {view.description && <span className="truncate text-12 text-muted-foreground">{view.description}</span>}
       </div>
-      <span className="hidden text-12 text-tertiary sm:inline">{t("views.updatedAt").replace("{date}", formatDate(view.updatedAt))}</span>
+      <span className="hidden text-12 text-muted-foreground sm:inline">{t("views.updatedAt").replace("{date}", formatDate(view.updatedAt))}</span>
       <AccessBadge access={view.access} />
-      <span className="flex items-center gap-1.5 text-12 text-secondary" title={t("views.owner")}>{ownerOf(view) && <><Avatar name={ownerOf(view)} id={view.ownerId} /><span className="hidden max-w-28 truncate md:inline">{ownerOf(view)}</span></>}</span>
+      <span className="flex items-center gap-1.5 text-12 text-muted-foreground" title={t("views.owner")}>{ownerOf(view) && <><Avatar name={ownerOf(view)} id={view.ownerId} /><span className="hidden max-w-28 truncate md:inline">{ownerOf(view)}</span></>}</span>
       <ViewMenu view={view} scope={scope} onEdit={() => setEditing(view)} onDelete={() => setDeleting(view)} />
     </li>)}</ul>
     {creating && <ViewFormModal mode="create" target={{ projectId: project.id }} onClose={() => setCreating(false)} onSaved={() => { setCreating(false); void load(); }} />}
@@ -215,18 +215,18 @@ export function ViewDetailPage({ workspaceSlug, project, selfId, viewId }: Scope
   const canWrite = project.role !== "Guest";
   const owner = people.find((person) => person.userId === view.ownerId)?.name;
   return <section className="grid gap-4">
-    <header className="flex flex-wrap items-center gap-2 rounded-xl bg-layer-1 p-3">
-      <nav aria-label={t("views.breadcrumb")} className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 text-14 text-secondary">
-        <Link to={paths.workItems(workspaceSlug, project.key)} className="text-secondary hover:text-primary">{project.name}</Link><ChevronRight aria-hidden size={14} />
-        <Link to={paths.views(workspaceSlug, project.key)} className="flex items-center gap-1.5 text-secondary hover:text-primary"><Layers aria-hidden size={14} />{t("views.title")}</Link><ChevronRight aria-hidden size={14} />
-        <h3 className="m-0 text-14 font-medium text-primary [overflow-wrap:anywhere]">{view.name}</h3><AccessBadge access={view.access} />
-        {owner && <span className="hidden items-center gap-1.5 text-12 text-tertiary md:flex"><Avatar name={owner} id={view.ownerId} />{owner}</span>}
+    <header className="flex flex-wrap items-center gap-2 rounded-xl bg-muted p-3">
+      <nav aria-label={t("views.breadcrumb")} className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 text-14 text-muted-foreground">
+        <Link to={paths.workItems(workspaceSlug, project.key)} className="text-muted-foreground hover:text-foreground">{project.name}</Link><ChevronRight aria-hidden size={14} />
+        <Link to={paths.views(workspaceSlug, project.key)} className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground"><Layers aria-hidden size={14} />{t("views.title")}</Link><ChevronRight aria-hidden size={14} />
+        <h3 className="m-0 text-14 font-medium text-foreground [overflow-wrap:anywhere]">{view.name}</h3><AccessBadge access={view.access} />
+        {owner && <span className="hidden items-center gap-1.5 text-12 text-muted-foreground md:flex"><Avatar name={owner} id={view.ownerId} />{owner}</span>}
       </nav>
       {canWrite && !project.archived && <Button type="button" variant="primary" className="flex items-center gap-1.5" onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{t("workItems.addNew")}</Button>}
       <ViewMenu view={view} scope={scope} onEdit={() => setEditing(true)} onDelete={() => setDeleting(true)} />
     </header>
-    {view.description && <p className="m-0 text-13 text-secondary">{view.description}</p>}
-    {status && <p role="status" className="m-0 text-13 text-secondary">{status}</p>}
+    {view.description && <p className="m-0 text-13 text-muted-foreground">{view.description}</p>}
+    {status && <p role="status" className="m-0 text-13 text-muted-foreground">{status}</p>}
     {ready && <WorkItemLayouts key={`${view.id}`} projectId={project.id} workspaceSlug={workspaceSlug} action={action} refreshKey={refreshKey} cyclesEnabled={project.features.cycles} modulesEnabled={project.features.modules} typesEnabled={project.features.types} canWrite={canWrite} canCreate
       toolbarExtra={(params) => canChange(view, scope) && differsFromView(view, params) ? <Button type="button" variant="primary" onClick={async () => {
         const saved = await action<SavedView>("update_view", { viewId: view.id, ...paramsToSettings(params) });

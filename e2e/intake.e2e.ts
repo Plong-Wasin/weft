@@ -6,6 +6,7 @@ import { eq, like } from "drizzle-orm";
 import { createDatabase, projectMembers, projects as dbProjects, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { chooseDate } from "../tools/choose-date";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3108);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5208);
@@ -379,7 +380,11 @@ try {
   await page.getByRole("menuitem", { name: translate("intake.snooze"), exact: true }).click();
   const tomorrow = new Date(Date.now() + 86_400_000);
   const pad = (n: number) => String(n).padStart(2, "0");
-  await page.getByRole("dialog").getByLabel(translate("intake.snoozeTill")).fill(`${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())}T10:00`);
+  const snoozeDialog = page.getByRole("dialog");
+  await chooseDate(snoozeDialog.getByRole("button", { name: new RegExp(`^${translate("intake.snoozeTill")}:`) }), `${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())}`);
+  await snoozeDialog.getByRole("combobox", { name: translate("intake.snoozeTill"), exact: true }).click();
+  await page.getByRole("option", { name: "10:00", exact: true }).click();
+  check((await snoozeDialog.getByRole("combobox", { name: translate("intake.snoozeTill"), exact: true }).innerText()).trim() === "10:00", "snooze time must show 10:00 before saving");
   await page.getByRole("dialog").getByRole("button", { name: translate("intake.snooze"), exact: true }).click();
   await page.getByRole("dialog").waitFor({ state: "detached" });
   await page.getByTestId("intake-MOB-3").getByTestId("intake-status").getByText(translate("intake.status.snoozed")).waitFor();

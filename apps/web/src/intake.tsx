@@ -181,13 +181,23 @@ function SubmitModal({ action, workspaceId, projectId, onClose, onSubmitted }: {
   </Modal>;
 }
 
+const snoozeTimes = Array.from({ length: 48 }, (_, index) => `${String(Math.floor(index / 2)).padStart(2, "0")}:${index % 2 ? "30" : "00"}`);
+
 function SnoozeModal({ onClose, onSnooze }: { onClose: () => void; onSnooze: (till: string) => void }) {
-  const [till, setTill] = React.useState("");
+  const [day, setDay] = React.useState("");
+  const [time, setTime] = React.useState("");
+  const till = day && time ? `${day}T${time}` : "";
   return <Modal title={t("intake.snoozeTitle")} onClose={onClose}>
-    <form className="my-0 grid gap-3" onSubmit={(event) => { event.preventDefault(); onSnooze(new Date(till).toISOString()); }}>
-      <label className="grid gap-1 text-13 text-muted-foreground">{t("intake.snoozeTill")}
-        <Input autoFocus required type="datetime-local" value={till} className={field} onChange={(event) => setTill(event.target.value)} />
-      </label>
+    <form className="my-0 grid gap-3" onSubmit={(event) => { event.preventDefault(); if (till) onSnooze(new Date(till).toISOString()); }}>
+      <div className="grid gap-1 text-13 text-muted-foreground"><span>{t("intake.snoozeTill")}</span>
+        <div className="grid grid-cols-[minmax(0,1fr)_7rem] gap-2">
+          <DatePicker label={t("intake.snoozeTill")} value={day} onChange={setDay} />
+          <Select value={time} items={snoozeTimes.map((value) => ({ value, label: value }))} onValueChange={(value) => { if (value) setTime(value); }}>
+            <SelectTrigger aria-label={t("intake.snoozeTill")}><SelectValue /></SelectTrigger>
+            <SelectContent>{snoozeTimes.map((value) => <SelectItem key={value} value={value}><SelectItemText>{value}</SelectItemText></SelectItem>)}</SelectContent>
+          </Select>
+        </div>
+      </div>
       <div className="flex justify-end gap-2">
         <Button type="button" className={quietButton} onClick={onClose}>{t("intake.cancel")}</Button>
         <Button className={primaryButton} disabled={!till}>{t("intake.snooze")}</Button>

@@ -122,8 +122,8 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
           <DialogTitle className="m-0 flex-1">{t("workItems.modal.title")}</DialogTitle>
           <Button type="button" className="size-11 rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent hover:text-accent-foreground" aria-label={t("workItems.modal.cancel")} onClick={onClose}><X aria-hidden size={16} /></Button>
         </div>
-        <Input autoFocus required aria-label={t("workItems.titleField")} placeholder={t("workItems.titleField")} value={title} maxLength={500} className="w-full text-16 focus-visible:ring-2 focus-visible:ring-ring/35" onChange={(event) => setTitle(event.target.value)} />
-        <Textarea aria-label={t("workItems.description")} placeholder={t("workItems.descriptionHint")} rows={4} value={description} className="w-full text-14" onChange={(event) => setDescription(event.target.value)} />
+        <Input autoFocus required aria-label={t("workItems.titleField")} placeholder={t("workItems.titleField")} value={title} maxLength={500} className="w-full text-16" onChange={(event) => setTitle(event.target.value)} />
+        <Textarea aria-label={t("workItems.description")} placeholder={t("workItems.descriptionHint")} rows={4} value={description} className="w-full resize-none text-14" onChange={(event) => setDescription(event.target.value)} />
         {typesOn && types.length > 0 && <div className="grid gap-3">
           <div className="grid gap-1"><span className="text-12 font-medium text-muted-foreground">{t("types.type")}</span><div className={chipRow}><TypePicker types={types} value={typeId} onSelect={chooseType} /></div></div>
           <PropertyFields properties={propertiesOfType(properties, typeId)} values={propertyValues} members={people} idPrefix="create"

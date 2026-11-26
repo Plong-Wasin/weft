@@ -1,4 +1,5 @@
 import { Button } from "@/ui/button";
+import { cn } from "@/lib/utils";
 import { CalendarDays, ChevronDown } from "lucide-react";
 import { translate, type MessageKey } from "@weft/shared";
 import { Popover } from "../shell/popover";
@@ -22,9 +23,9 @@ export function DatePicker({ label, value, onChange, field = "start", min, max, 
   const shown = value ? shortDay(value) : t("datePicker.noDate");
   const trigger = <span data-date-value={value} className="flex min-w-0 w-full items-center justify-between gap-2"><span className="flex min-w-0 items-center gap-2"><CalendarDays aria-hidden size={15} className="shrink-0 text-muted-foreground" /><span className="truncate">{shown}</span></span><ChevronDown aria-hidden size={15} className="shrink-0 text-muted-foreground" /></span>;
   const triggerClass = `h-9 w-full justify-between rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-xs hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50 ${className}`;
-  if (disabled) return <Button type="button" aria-label={`${label}: ${shown}`} data-date-value={value} disabled className={triggerClass}>{trigger}</Button>;
+  if (disabled) return <Button type="button" aria-label={`${label}: ${shown}`} data-date-value={value} disabled className={cn(triggerClass, className)}>{trigger}</Button>;
   return <Popover label={`${label}: ${shown}`} panelRole="dialog" panelClassName="grid w-[22rem] max-w-[calc(100vw-2rem)] gap-2 p-3"
-    className={triggerClass} trigger={trigger}>
+    className={cn(triggerClass, className)} trigger={trigger}>
     {(close) => <div data-date-picker><DatePanel range={range} field={field} single label={label} min={min as DayKey | undefined} max={max as DayKey | undefined}
       onChange={(change) => { const next = field === "start" ? change.startDate : change.dueDate; if (next !== undefined) { onChange(next ?? ""); close(); } }} /></div>}
   </Popover>;

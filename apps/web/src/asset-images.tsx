@@ -235,7 +235,7 @@ export function AttachmentsPanel({ workItemId, ownerType = "work_item", canWrite
       {translate("assets.dropHint")}
     </div>}
     {busy && <p role="status">{translate("assets.uploading")}</p>}
-    {canWrite && retryFiles.length > 0 && <div role="alert" className="grid gap-1 text-13 text-destructive"><p className="m-0">{translate("assets.uploadFailed")}</p><ul className="m-0 list-disc pl-5">{retryFiles.map((file, index) => <li key={`${file.name}-${index}`}>{file.name}</li>)}</ul><Button type="button" className="w-fit rounded-md border border-border bg-card px-2 py-1 text-foreground" disabled={busy} onClick={() => void attach([])}>{translate("assets.retryFailed")}</Button></div>}
+    {canWrite && retryFiles.length > 0 && <div role="alert" className="grid gap-1 text-13 text-destructive"><p className="m-0">{translate("assets.uploadFailed")}</p><ul className="m-0 list-disc pl-5">{retryFiles.map((file, index) => <li key={`${file.name}-${index}`}>{file.name}</li>)}</ul><Button type="button" className="w-fit rounded-md border border-border bg-card px-2 text-foreground" disabled={busy} onClick={() => void attach([])}>{translate("assets.retryFailed")}</Button></div>}
     {error && <p role="alert">{error}</p>}
     {preview && <AttachmentPreviewDialog preview={preview} onClose={() => setPreview(null)} />}
   </section>;
@@ -271,7 +271,7 @@ function AttachmentPreviewDialog({ preview, onClose }: { preview: { row: AssetRo
     onClose={() => { if (dialog.current?.returnValue !== "unmount") onClose(); }} onClick={(event) => { if (event.target === event.currentTarget) dialog.current?.close(); }}>
     <header className="flex items-center gap-3 border-b border-border px-4 py-3">
       <h2 id={titleId} className="m-0 min-w-0 flex-1 truncate text-16 font-semibold text-foreground">{row.filename}</h2>
-      <Button type="button" autoFocus className="rounded-md border border-border bg-card px-3 py-2 text-foreground" aria-label={translate("assets.closePreview")} onClick={() => dialog.current?.close()}>{translate("assets.closePreview")}</Button>
+      <Button type="button" autoFocus className="rounded-md border border-border bg-card py-2 text-foreground" aria-label={translate("assets.closePreview")} onClick={() => dialog.current?.close()}>{translate("assets.closePreview")}</Button>
     </header>
     <div className="asset-preview-content p-3 sm:p-5">{media}</div>
   </dialog>;

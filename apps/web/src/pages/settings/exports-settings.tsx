@@ -97,14 +97,14 @@ export function WorkspaceExports() {
       <Note note={note} error={error} />
     </SettingsBlock>
     <SettingsBlock title={translate("exports.previous")}>
-      {listFailed ? <div className="flex flex-wrap items-center gap-3" role="alert"><p className="m-0 text-sm text-destructive">{translate("exports.listFailed")}</p><Button type="button" className="secondary" onClick={() => void load()}>{translate("exports.retry")}</Button></div> : items === null ? <p role="status" className="text-muted-foreground">{translate("exports.loading")}</p> : items.length === 0 ? <p className="text-muted-foreground">{translate("exports.none")}</p> : <RowList>{items.map((item) => <Row key={item.id}>
+      {listFailed ? <div className="flex flex-wrap items-center gap-3" role="alert"><p className="m-0 text-sm text-destructive">{translate("exports.listFailed")}</p><Button type="button" onClick={() => void load()}>{translate("exports.retry")}</Button></div> : items === null ? <p role="status" className="text-muted-foreground">{translate("exports.loading")}</p> : items.length === 0 ? <p className="text-muted-foreground">{translate("exports.none")}</p> : <RowList>{items.map((item) => <Row key={item.id}>
         <div className="grid min-w-0 flex-1 gap-1">
           <span className="font-medium">{item.projects.map((project) => `${project.key} · ${project.name}`).join(", ")} · {item.format.toUpperCase()}</span>
           <span className="text-sm text-muted-foreground">{translate("exports.requestedAt")}: {formatDate(item.createdAt)}</span>
           {item.status === "failed" && item.failureReason && <span className="text-sm text-destructive">{translate("exports.reason")}: {item.failureReason}</span>}
         </div>
         <span className="text-sm" data-status={item.status}>{expired(item) ? translate("exports.expired") : translate(`exports.status.${item.status}` as MessageKey)}</span>
-        {item.status === "completed" && !expired(item) && <Button type="button" className="secondary" onClick={() => void download(item)}>{translate("exports.download")}</Button>}
+        {item.status === "completed" && !expired(item) && <Button type="button" onClick={() => void download(item)}>{translate("exports.download")}</Button>}
       </Row>)}</RowList>}
     </SettingsBlock>
     </>}

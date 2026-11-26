@@ -111,7 +111,7 @@ export function WorkspaceUsage() {
     <div className="mb-5 flex flex-wrap items-end gap-3">
       <label>{translate("usage.from")}<Input type="date" value={from} onChange={(event) => setFrom(event.target.value)} /></label>
       <label>{translate("usage.to")}<Input type="date" value={to} onChange={(event) => setTo(event.target.value)} /></label>
-      <Button type="button" className="secondary" disabled={!summary || rows.length === 0} onClick={() => download(`usage-${from}-${to}.csv`, usageCsv(rows, agentLabel, (row) => row.personName))}>{translate("usage.exportCsv")}</Button>
+      <Button type="button" disabled={!summary || rows.length === 0} onClick={() => download(`usage-${from}-${to}.csv`, usageCsv(rows, agentLabel, (row) => row.personName))}>{translate("usage.exportCsv")}</Button>
     </div>
     <Note note={!range ? translate("usage.invalidRange") : failed ? translate("usage.loadFailed") : null} error />
     {totals && <>
@@ -134,8 +134,8 @@ export function WorkspaceUsage() {
         {prices.map((price) => <Row key={price.id}>
           <span className="min-w-40 flex-1 font-medium text-foreground">{price.model}</span>
           <span className="text-13 text-muted-foreground">{formatUsd(price.inputUsdPerMillion)} / {formatUsd(price.outputUsdPerMillion)}{price.cachedInputUsdPerMillion !== null && ` · ${fill(translate("usage.priceCachedShown"), { price: formatUsd(price.cachedInputUsdPerMillion) ?? "" })}`}</span>
-          <Button type="button" className="secondary" onClick={() => setDraft({ model: price.model, input: String(price.inputUsdPerMillion), output: String(price.outputUsdPerMillion), cached: price.cachedInputUsdPerMillion === null ? "" : String(price.cachedInputUsdPerMillion) })}>{translate("agents.edit")}</Button>
-          <Button type="button" className="secondary" onClick={() => void removePrice(price)}>{translate("usage.priceRemove")}</Button>
+          <Button type="button" onClick={() => setDraft({ model: price.model, input: String(price.inputUsdPerMillion), output: String(price.outputUsdPerMillion), cached: price.cachedInputUsdPerMillion === null ? "" : String(price.cachedInputUsdPerMillion) })}>{translate("agents.edit")}</Button>
+          <Button type="button" onClick={() => void removePrice(price)}>{translate("usage.priceRemove")}</Button>
         </Row>)}
       </RowList>}
       <div className="grid gap-3 md:grid-cols-4">

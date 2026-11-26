@@ -50,7 +50,7 @@ function ProjectFilter({ projects, selected, onChange }: { projects: Project[]; 
   const [query, setQuery] = React.useState("");
   const shown = projects.filter((project) => `${project.key} ${project.name}`.toLowerCase().includes(query.trim().toLowerCase()));
   const toggle = (id: string) => onChange(selected.includes(id) ? selected.filter((item) => item !== id) : [...selected, id]);
-  return <div className="grid min-w-40 gap-1 text-sm font-medium text-foreground"><span>{t("analytics.projects")}</span><Popover label={t("analytics.projects")} panelRole="dialog" panelClassName="w-72 max-w-[85vw] rounded-xl p-2" className="h-9 w-full justify-between border border-input bg-background px-3 text-sm text-foreground shadow-xs hover:bg-accent"
+  return <div className="grid min-w-40 gap-1 text-sm font-medium text-foreground"><span>{t("analytics.projects")}</span><Popover label={t("analytics.projects")} panelRole="dialog" panelClassName="w-72 max-w-[85vw] rounded-xl p-2" className="h-9 w-full justify-between border border-input bg-background text-sm text-foreground shadow-xs hover:bg-accent"
     trigger={<><span className="truncate">{selected.length === 0 ? t("analytics.allProjects") : t("analytics.projectsSelected", { count: selected.length })}</span><ChevronDown aria-hidden size={14} /></>}>
     {() => <div className="grid gap-1">
       <Input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("analytics.searchProjects")} aria-label={t("analytics.searchProjects")} className="rounded-lg border border-border px-3 py-1.5 text-sm" />

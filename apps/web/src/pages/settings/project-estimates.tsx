@@ -36,11 +36,11 @@ function ValueList({ values, onChange, disabled, numeric }: { values: Draft[]; o
         return <>
           {!disabled && grip}
           <Input className="min-w-0 flex-1" required inputMode={numeric ? "decimal" : "text"} maxLength={20} disabled={disabled} aria-label={`${translate("estimates.value")} ${index + 1}`} value={entry.value} onChange={(event) => set(index, event.target.value)} />
-          {!disabled && <Button type="button" className="secondary hover:!text-destructive" disabled={values.length <= estimateLimits.min} onClick={() => onChange(values.filter((_, at) => at !== index))}>{translate("estimates.removeValue")}</Button>}
+          {!disabled && <Button type="button" className="hover:!text-destructive" disabled={values.length <= estimateLimits.min} onClick={() => onChange(values.filter((_, at) => at !== index))}>{translate("estimates.removeValue")}</Button>}
         </>;
       }} />
     {!disabled && <div className="flex flex-wrap items-center gap-3">
-      <Button type="button" className="secondary" disabled={values.length >= estimateLimits.max} onClick={() => onChange([...values, { value: "" }])}>{translate("estimates.addValue")}</Button>
+      <Button type="button" disabled={values.length >= estimateLimits.max} onClick={() => onChange([...values, { value: "" }])}>{translate("estimates.addValue")}</Button>
       <span className="text-sm text-muted-foreground">{translate("estimates.rangeHint")}</span>
     </div>}
   </div>;
@@ -126,7 +126,7 @@ export function ProjectEstimates() {
     </form>
     {canAdmin && <SettingsBlock title={translate("estimates.danger")} description={translate("estimates.dangerDesc")}>
       <div className="flex flex-wrap gap-3">
-        {estimate.enabled && <Button type="button" className="secondary" onClick={() => void clearing("estimates.switchConfirm", () => send("switch_estimate_type", { type: other, values: other === "points" ? estimateTemplates.fibonacci : categoryStarter }), translate(`estimates.type.${other}` as MessageKey))}>{translate(`estimates.switchTo.${other}` as MessageKey)}</Button>}
+        {estimate.enabled && <Button type="button" onClick={() => void clearing("estimates.switchConfirm", () => send("switch_estimate_type", { type: other, values: other === "points" ? estimateTemplates.fibonacci : categoryStarter }), translate(`estimates.type.${other}` as MessageKey))}>{translate(`estimates.switchTo.${other}` as MessageKey)}</Button>}
         <Button type="button" className={dangerButton} onClick={() => void clearing("estimates.deleteConfirm", async () => {
           const result = await actionResult("delete_estimate", { projectId: project.id });
           if ("error" in result) { setNote(`${translate("estimates.failed")} ${result.error}`); return false; }

@@ -18,7 +18,7 @@ import type { Member, Project, StateGroup, Workspace } from "./types";
 import { Checkbox } from "@/ui/checkbox";
 const t = (key: string) => translate(key as MessageKey);
 const primary = "rounded-md border-0 bg-primary px-3 py-1 text-13 font-medium text-primary-foreground hover:bg-primary disabled:opacity-60";
-const ghost = "flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1 text-13 font-medium text-foreground hover:bg-accent";
+const ghost = "flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 font-medium text-foreground hover:bg-accent";
 const cell = "border-b border-border px-3 py-2 text-left align-middle whitespace-nowrap";
 
 /** Plane's four built-in workspace views, addressed by the same URL keys. */
@@ -57,7 +57,7 @@ function WorkspaceSheet({ items, projects, states, labels, people, workspaceSlug
   };
   return <div className="overflow-hidden rounded-lg border border-border">
     {items.length === 0 && <p role="status" className="border-b border-border bg-card px-5 py-3 text-14 text-muted-foreground">{empty}</p>}
-    <div role="region" aria-label={t("workspaceViews.table")} tabIndex={0} className="overflow-x-auto focus-visible:outline-2 focus-visible:outline-accent-primary" data-testid="sheet-scroll"
+    <div role="region" aria-label={t("workspaceViews.table")} tabIndex={0} className="overflow-x-auto focus-visible:outline-2 focus-visible:outline-ring" data-testid="sheet-scroll"
       onKeyDown={(event) => {
         if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
         event.preventDefault();

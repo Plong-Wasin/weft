@@ -109,7 +109,7 @@ try {
   await panel.getByRole("button", { name: translate("sidecar.close") }).click();
   await nav(`/${slug}/browse/${(item as unknown as { displayId: string }).displayId}`);
   await page.getByRole("button", { name: translate("sidecar.open"), exact: true }).first().waitFor();
-  await page.locator("header button.secondary", { hasText: translate("sidecar.open") }).click();
+  await page.locator("header button", { hasText: translate("sidecar.open") }).click();
   await panel.getByText("Original title").waitFor();
   await panel.getByText("Hello there").waitFor();
   await ask("What is this?");
@@ -123,7 +123,7 @@ try {
   await panel.getByRole("button", { name: translate("sidecar.close") }).click();
   await panel.waitFor({ state: "hidden" });
   await nav(`/${slug}/wiki/${wikiPage.id}`);
-  await page.locator("nav button.secondary", { hasText: translate("sidecar.open") }).click();
+  await page.locator("nav button", { hasText: translate("sidecar.open") }).click();
   await panel.getByText("Handbook").first().waitFor();
   const before = sent.length;
   await ask("Summarize it");

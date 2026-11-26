@@ -1,32 +1,34 @@
 # Design system
 
-This document describes the shadcn/ui design system adopted across the web app. New and migrated screens follow shadcn defaults unless a documented product behavior needs an override. During the staged migration, unmigrated screens may still use legacy token utilities; each surface moves to the shadcn theme with its migration ticket.
+This document describes the web app's design system: shadcn/ui on Base UI with the default neutral theme. Every screen follows shadcn defaults unless a documented product behavior needs an override.
 
 Product context and terms: see the product brief and the glossary at the repo root. UI copy uses glossary terms (Work item, Project, Cycle, Module, Intake, Wiki page) and avoids the terms the glossary lists as alternatives.
 
 ## Direction
 
-The web UI follows shadcn/ui's default neutral theme and component styling. The same features remain available while surfaces move over incrementally. Keep layouts airy, calm and predictable, with stable dimensions and aligned controls.
+The web UI follows shadcn/ui's default neutral theme and component styling. Keep layouts airy, calm and predictable, with stable dimensions and aligned controls.
 
 - **Capability stays, clutter goes.** Every capability remains reachable; it is not all visible at once.
 - **One primary action per row, card and screen.** The other actions live one step away: a "more" menu, or on hover and focus. They are always reachable by keyboard and by touch, so nothing depends on hover alone.
 - **Separate with space and type, not boxes.** Use whitespace, weight and size to group. A border or card must carry meaning (a container the person acts on, a boundary of a danger zone), not decorate.
-- **Quiet by default.** Neutral surfaces. The accent colour marks the primary action and focus; the status colours mark status only.
+- **Quiet by default.** Neutral surfaces. `primary` marks the main action and `ring` marks focus; the status colours mark status only.
 - **Conversation reads as a calm stream.** Comments, activity and the AI chat are stacked, lightly separated entries with the reply field next to what is being replied to.
 - **Keyboard is the fast path.** The command palette and shortcuts reach every frequent action; every menu item also has a keyboard path.
 - **Destructive actions ask.** Delete and similar actions confirm and sit apart from the safe ones.
 
 ## Tokens
 
-- The active theme uses shadcn roles such as `--background`, `--foreground`, `--card`, `--popover`, `--primary`, `--secondary`, `--muted`, `--accent`, `--destructive`, `--border`, `--input`, `--ring` and `--radius`.
-- Theme values are defined in `apps/web/src/tokens.css` in oklch. Light is the default; dark overrides the same roles under `:root[data-theme="dark"]`.
-- Tailwind classes use the matching utilities (`bg-background`, `text-foreground`, `bg-muted`, `text-muted-foreground`, `border-border`, `ring-ring`) rather than the legacy Weft aliases. Work item lists, boards, spreadsheets, details and peek, creation, property chips, filters, intake and their supporting panels now use the shadcn theme utilities; other surfaces remain on legacy aliases until their migration stage. Keep this transition limited to the affected surface and remove legacy definitions only in the final migration stage.
-- Status and label colours may use standard Tailwind palette utilities where semantic status color is needed, with `dark:` variants following the app's `data-theme="dark"` setting; neutral app chrome stays on shadcn theme roles.
+- The theme is the set of shadcn roles: `--background`, `--foreground`, `--card`, `--popover`, `--primary`, `--secondary`, `--muted`, `--accent`, `--destructive` (each surface with its `-foreground`), `--border`, `--input`, `--ring`, `--chart-1` to `--chart-5`, `--sidebar*` and `--radius`. There is no second token set.
+- Values are defined in `apps/web/src/tokens.css` in oklch. Light is the default; dark overrides the same roles under `:root[data-theme="dark"]`. The only other values there are the native select chevron and the eight editor text colours (`--editor-palette-0` to `7`).
+- `apps/web/src/style.css` maps the roles to Tailwind colours, so a utility means what it means in shadcn: `bg-primary` and `text-primary` are the primary role, `bg-secondary` the secondary surface. Body text is `text-foreground` and secondary text is `text-muted-foreground`.
+- Hover and selection fills are `accent`; quiet fills (group headers, disabled controls) are `muted`; lines are `border`.
+- Status and label colours may use standard Tailwind palette utilities where semantic status color is needed (amber for warnings, green for progress), with `dark:` variants following the app's `data-theme="dark"` setting; neutral app chrome stays on the roles.
+- `apps/web/test/legacy-tokens.test.ts` fails when a retired token, utility or component class returns.
 
 ## Type
 
 - Body face: Inter (variable). Code face: IBM Plex Mono, used for code blocks, inline code and the ProseMirror code marks.
-- Body text follows the app's 14px base. Use the shadcn type scale for new work; existing screens may keep explicit pixel sizes during migration when that preserves alignment and row rhythm.
+- Body text follows the app's 14px base. Use the shadcn type scale for new work. `text-9` to `text-40` (defined in `style.css`; 9 to 12 all render at 12px) stay where a screen's alignment and row rhythm depend on them.
 - Weights: regular 400 is the base weight; labels, headings and large counts use the heavier weights the variable face provides. The heavy 800 weight is defined as a token.
 - Text uses theme roles: `foreground` for primary content and `muted-foreground` for secondary labels and metadata.
 
@@ -40,20 +42,20 @@ The web UI follows shadcn/ui's default neutral theme and component styling. The 
 
 ## Radius and elevation
 
-- Use shadcn radius utilities and the shared `--radius` token. Prefer the primitive defaults; use modest rounding for controls and menus, and larger radii only for cards, dialogs and sheets.
+- Use Tailwind's radius scale (`rounded-md` 6px, `rounded-lg` 8px, `rounded-xl` 12px, `rounded-2xl` 16px); the shared `--radius` token (10px) shapes cards and menu rows. Prefer the primitive defaults; use modest rounding for controls and menus, and larger radii only for cards, dialogs and sheets.
 - Elevation stays restrained: cards are flat with a border, while menus and popups use the shadcn shadow treatment.
 
 ## Components
 
 ### shadcn/ui primitives
 
-Shared primitives live in `apps/web/src/ui/` and use Base UI 1.9.0 for accessible interaction behavior. Shadcn's default light and dark neutral theme variables are used by migrated controls; legacy screens retain their existing classes until their own migration. Keep Tailwind class names literal and combine conditional classes with `cn()` from `apps/web/src/lib/utils.ts`. Use shadcn's default component styling; override only for a documented Weft behavior.
+Shared primitives live in `apps/web/src/ui/` and use Base UI 1.9.0 for accessible interaction behavior. Keep Tailwind class names literal and combine conditional classes with `cn()` from `apps/web/src/lib/utils.ts`. Use shadcn's default component styling; override only for a documented Weft behavior.
 
-- Buttons: controls use shadcn's 6px radius and 36px default height; `Button` variants are `primary`, `secondary`, `ghost` and `danger`. Use primary for the main action, secondary for other actions, ghost in toolbars and danger only for destructive actions. The default is secondary while legacy call sites are migrated.
-- Text fields and selects: migrated controls use shadcn's `border-input`, `bg-background`, `text-foreground`, `text-muted-foreground`, and `ring-ring` tokens, with a 6px radius and a visible keyboard focus ring. Labels sit above fields. Native `<select>` remains for compact, phone-oriented forms where the platform picker is the more usable control.
+- Buttons: controls use shadcn's 6px radius and 36px default height; `Button` variants are `primary`, `secondary`, `ghost` and `danger`, chosen with the `variant` prop only. Use primary for the main action, secondary (the default) for other actions, ghost in toolbars and danger only for destructive actions.
+- Text fields and selects use shadcn's `border-input`, `bg-background`, `text-foreground`, `text-muted-foreground`, and `ring-ring` tokens, with a 6px radius and a visible keyboard focus ring. Labels sit above fields. Native `<select>` remains for compact, phone-oriented forms where the platform picker is the more usable control.
 - Input and Textarea use shadcn's neutral border, background, placeholder and focus tokens. Inputs stay 36px high on fine pointers and grow to at least 44px on coarse pointers; 16px text below the `md` breakpoint avoids mobile focus zoom. Textarea keeps native resizing and a 64px minimum height.
 - Checkbox uses the Base UI shadcn primitive, including checked, unchecked, indeterminate, disabled and invalid states. It is 16px on fine pointers and a 44px target on coarse pointers. Switch is used for on/off settings and is at least 44px in each dimension on coarse pointers.
-- Cards and popups: cards use a flat surface with a subtle border; dropdown menus use shadcn popover and border tokens with a restrained shadow. Menu rows use shadcn accent hover and focus fills; dialogs and sheets use their primitive defaults.
+- Cards and popups: `Card` (`apps/web/src/ui/card.tsx`, with `as` for a section, form or list) is a flat `card` surface with a `border`; dropdown menus use shadcn popover and border tokens with a restrained shadow. Menu rows use shadcn accent hover and focus fills; dialogs and sheets use their primitive defaults.
 - Dialog and Sheet: modal forms and confirmations use the Base UI Dialog primitive styled with shadcn neutral tokens, a dimmed backdrop, focus containment, Escape dismissal and focus return. The mobile navigation uses Sheet as a left-side modal drawer with the same navigation content, a labeled 44px close target and an 85vw width cap. The wide work item peek stays independent.
   - Dialog keeps `rounded-2xl` (16px) as the documented Weft behavior requested for ticket 04, and constrains height to the viewport with internal scrolling.
   - Sheet uses `side="left"`, `w-72 max-w-[85vw]` and `rounded-r-2xl` to keep the existing navigation drawer's placement and width; its 44px close target stays reachable on touch screens.
@@ -82,6 +84,9 @@ Shared primitives live in `apps/web/src/ui/` and use Base UI 1.9.0 for accessibl
 - Global search uses the shadcn input treatment and a popover-like results surface. Inbox notifications and profile actions use the same neutral theme and menu row behavior.
 
 ## Patterns
+
+- Links: an anchor takes the `primary` colour. A bare anchor in running text is underlined; a styled anchor chooses its own look, and list titles underline on hover.
+- Classless buttons get the neutral secondary look from `style.css`; every other button uses `Button`.
 
 - Screen header: a back link ("Back to projects") above a title; the title row carries the project key and name, then page actions at the right (Settings, Add work item, Add page).
 - Lists grouped by state or by section, with counts in the group header; collapsed groups stay visible as headers.

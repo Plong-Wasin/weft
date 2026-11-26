@@ -47,9 +47,11 @@ export function Popover({ label, panelLabel = label, trigger, align = "left", cl
       window.removeEventListener("resize", closeWhenAnchorIsHidden);
     };
   }, [open, panelRole]);
+  const triggerClass = cn("flex items-center gap-1.5 rounded-md bg-transparent p-1.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background pointer-coarse:min-h-11 pointer-coarse:min-w-11", className, "pointer-coarse:min-h-11 pointer-coarse:min-w-11");
+  // A trigger that brings no surface of its own is a ghost button; one with a background keeps the bordered secondary.
   if (panelRole === "menu") return <DropdownMenu open={open} onOpenChange={(nextOpen) => { if (nextOpen && !open) onOpen?.(); setOpen(nextOpen); }}>
     <div ref={root} className="relative">
-      <DropdownMenuTrigger aria-label={label} title={label} className={cn("flex items-center gap-1.5 rounded-md bg-transparent p-1.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background pointer-coarse:min-h-11 pointer-coarse:min-w-11", className, "pointer-coarse:min-h-11 pointer-coarse:min-w-11")}>{trigger}</DropdownMenuTrigger>
+      <DropdownMenuTrigger aria-label={label} title={label} className={triggerClass}>{trigger}</DropdownMenuTrigger>
       <DropdownMenuContent container={panelContainer} align={align === "right" ? "end" : "start"} sideOffset={4} data-popover-panel aria-label={panelLabel} className={cn("max-h-[min(32rem,var(--available-height))] min-w-56", panelClassName)}>
         {children(() => setOpen(false))}
       </DropdownMenuContent>
@@ -63,7 +65,7 @@ export function Popover({ label, panelLabel = label, trigger, align = "left", cl
         setOpen(false);
       }
     }}>
-      <PopoverTrigger render={<Button type="button" aria-label={label} title={label} className={cn("flex items-center gap-1.5 rounded-md bg-transparent p-1.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background pointer-coarse:min-h-11 pointer-coarse:min-w-11", className, "pointer-coarse:min-h-11 pointer-coarse:min-w-11")} />}>{trigger}</PopoverTrigger>
+      <PopoverTrigger render={<Button variant={triggerClass.split(" ").includes("bg-transparent") ? "ghost" : "secondary"} type="button" aria-label={label} title={label} className={triggerClass} />}>{trigger}</PopoverTrigger>
       <PopoverContent container={panelContainer} align={align === "right" ? "end" : "start"} sideOffset={4} role={panelRole} aria-label={panelLabel} data-popover-panel className={cn("w-auto p-1", panelClassName)}>
         {children(() => setOpen(false))}
       </PopoverContent>

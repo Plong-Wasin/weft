@@ -66,7 +66,7 @@ export function ProjectArchivesRoute() {
       <ul className="m-0 grid list-none gap-1 rounded-xl border border-border bg-card p-1 empty:hidden">{(structures ?? []).map((row) => <li key={row.id} data-testid={`archived-row-${row.id}`} className="flex flex-wrap items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-accent max-sm:grid max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:gap-x-3 max-sm:gap-y-2">
         <Link to={active === "cycles" ? paths.cycle(workspace.slug, project.key, row.id) : paths.module(workspace.slug, project.key, row.id)} className="min-w-0 flex-1 truncate text-sm font-medium text-foreground max-sm:col-span-2">{row.name}</Link>
         {row.startDate && row.endDate && <span className="text-xs text-muted-foreground">{formatDate(row.startDate)} – {formatDate(row.endDate)}</span>}
-        {canRestoreStructure && <Button type="button" className="secondary max-sm:min-h-11 shrink-0" aria-label={t("archives.restoreItem").replace("{name}", row.name)} onClick={() => void restoreStructure(row)}>{t("archives.restore")}</Button>}
+        {canRestoreStructure && <Button type="button" className="max-sm:min-h-11 shrink-0" aria-label={t("archives.restoreItem").replace("{name}", row.name)} onClick={() => void restoreStructure(row)}>{t("archives.restore")}</Button>}
     </li>)}</ul>
     </div>}
     {active === "workItems" && <div>
@@ -75,7 +75,7 @@ export function ProjectArchivesRoute() {
       <span className="text-xs text-muted-foreground max-sm:col-span-2">{item.displayId}</span>
       <Link to={paths.workItem(workspace.slug, item.displayId)} className="min-w-0 flex-1 truncate text-sm font-medium text-foreground max-sm:col-span-2 max-sm:overflow-visible max-sm:whitespace-normal max-sm:[overflow-wrap:anywhere]">{item.title}</Link>
       <span className="text-xs text-muted-foreground">{t("archives.archivedAt").replace("{date}", formatDate(item.archivedAt))}</span>
-      {canWrite && <Button type="button" className="secondary max-sm:min-h-11 shrink-0" aria-label={t("archives.restoreItem").replace("{name}", item.displayId)} onClick={() => void restore(item)}>{t("archives.restore")}</Button>}
+      {canWrite && <Button type="button" className="max-sm:min-h-11 shrink-0" aria-label={t("archives.restoreItem").replace("{name}", item.displayId)} onClick={() => void restore(item)}>{t("archives.restore")}</Button>}
     </li>)}</ul>
     </div>}
       </TabsContent>

@@ -48,10 +48,10 @@ function Connection({ provider, row, secret, onChanged, onSecret, say }: { provi
       <p className="m-0 text-sm text-muted-foreground">{translate("integrations.secretOnce")}</p>
       <div className="flex flex-wrap items-center gap-2">
         <Input readOnly value={secret} aria-label={translate("integrations.secretTitle")} onFocus={(event) => event.target.select()} className="min-w-0 flex-1 bg-muted" />
-        <Button type="button" className="secondary" onClick={async () => { if (await copyText(secret, translate("integrations.secretCopied"), translate("comments.copyFailed"))) say(translate("integrations.secretCopied")); }}>{translate("integrations.copySecret")}</Button>
+        <Button type="button" onClick={async () => { if (await copyText(secret, translate("integrations.secretCopied"), translate("comments.copyFailed"))) say(translate("integrations.secretCopied")); }}>{translate("integrations.copySecret")}</Button>
       </div>
     </div>}
-    <Button type="button" className="secondary w-fit" onClick={async () => {
+    <Button type="button" className="w-fit" onClick={async () => {
       if (!window.confirm(translate("integrations.rotateConfirm"))) return;
       const result = await action<{ secret: string }>("rotate_work_item_integration_secret", { integrationId: row.id });
       if (!result) { say(translate("integrations.failed"), true); return; }
@@ -62,7 +62,7 @@ function Connection({ provider, row, secret, onChanged, onSecret, say }: { provi
       <Textarea rows={4} value={draft} placeholder={repositoryExample} onChange={(event) => setDraft(event.target.value)} />
     </label>
     <p className="m-0 text-sm text-muted-foreground">{translate("integrations.repositoriesDesc")}</p>
-    <Button type="button" className="secondary w-fit" onClick={async () => {
+    <Button type="button" className="w-fit" onClick={async () => {
       const lines = draft.split("\n").map((line) => line.trim()).filter(Boolean);
       if (lines.some((line) => !repositoryLine.test(line))) { say(translate("integrations.invalidRepository"), true); return; }
       const result = await action("update_work_item_integration", { integrationId: row.id, repositories: lines });
@@ -103,7 +103,7 @@ export function WorkspaceIntegrations() {
     <SettingsHeader title={translate("integrations.title")} description={translate("integrations.desc")} />
     {!adminLoading && !isAdmin && <p role="status" className="text-muted-foreground">{translate("integrations.adminOnly")}</p>}
     {!adminLoading && isAdmin && !loaded && <p role="status" className="text-muted-foreground">{translate("account.loading")}</p>}
-    {!adminLoading && isAdmin && loaded && rows === null && <p role="status" className="text-muted-foreground">{translate("integrations.failed")}<Button type="button" className="secondary ml-2" onClick={() => void load()}>{translate("integrations.retry")}</Button></p>}
+    {!adminLoading && isAdmin && loaded && rows === null && <p role="status" className="text-muted-foreground">{translate("integrations.failed")}<Button type="button" className="ml-2" onClick={() => void load()}>{translate("integrations.retry")}</Button></p>}
   </section>;
 
   return <section>

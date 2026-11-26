@@ -29,7 +29,7 @@ type Label = { id: string; name: string; color: string };
 type Item = { id: string; displayId: string; title: string; stateId: string; priority: string; estimatePointId?: string | null; assigneeIds: string[]; labelIds: string[]; createdBy: string; startDate: string | null; dueDate: string | null };
 type Named = { id: string; name: string; status?: string };
 const t = (key: string) => translate(key as MessageKey);
-const ghost = "flex items-center gap-1.5 rounded-lg border border-transparent bg-muted px-2.5 py-1 text-13 font-medium text-muted-foreground hover:bg-accent hover:text-foreground";
+const ghost = "flex items-center gap-1.5 border border-transparent bg-muted px-2.5 font-medium text-muted-foreground hover:bg-accent hover:text-foreground";
 const toolbarSecondarySm = cn(buttonVariants({ variant: "secondary", size: "sm" }), "bg-transparent text-foreground");
 const checkRow = "flex items-center gap-2 text-13";
 
@@ -559,7 +559,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       onKeyDown={(event) => { if (event.key === "Escape") { setQuick(null); setQuickTitle(""); } }} />
     <Button type="submit" className={`${ghost} max-sm:ml-auto whitespace-nowrap`}>{t("workItems.create")}</Button>
   </form>;
-  const newButton = (groupKey: string) => <Button type="button" className="mx-1 my-1 flex w-[calc(100%-0.5rem)] items-center gap-2 rounded-lg bg-muted px-3 py-2 text-left text-13 font-medium text-muted-foreground hover:bg-accent" onClick={() => { setQuick(groupKey); setQuickTitle(""); }}>
+  const newButton = (groupKey: string) => <Button type="button" className="mx-1 my-1 flex w-[calc(100%-0.5rem)] items-center gap-2 bg-muted py-2 text-left font-medium text-muted-foreground hover:bg-accent" onClick={() => { setQuick(groupKey); setQuickTitle(""); }}>
     <Plus aria-hidden size={14} />{t("workItems.new")}</Button>;
 
   const groupedItems = items.map((item) => ({ ...item, cycleId: cycleOf[item.id] ?? null, moduleIds: modulesOf[item.id] ?? [], creatorId: item.createdBy }));
@@ -568,7 +568,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   // The project's Work items page (the only caller with onAddItem) shows one empty state in the list, board and spreadsheet layouts, not five empty status groups. Cycles, Modules and Views keep their groups.
   const emptyProject = onAddItem !== undefined && loaded && !filtered && items.length === 0 && (params.layout === "list" || board || sheet);
   const emptyBlock = <div className="rounded-xl border border-border bg-card"><EmptyState title={t("workItems.empty")} description={t("workItems.emptyHint")}
-    action={onAddItem && canCreate && canWrite ? <Button type="button" className="primary flex items-center gap-1.5" onClick={onAddItem}><Plus aria-hidden size={14} />{t("workItems.addNew")}</Button> : undefined} /></div>;
+    action={onAddItem && canCreate && canWrite ? <Button variant="primary" type="button" className="flex items-center gap-1.5" onClick={onAddItem}><Plus aria-hidden size={14} />{t("workItems.addNew")}</Button> : undefined} /></div>;
 
   const boardStateIds = stateIds.filter((id) => !chips || chips.state.length === 0 || chips.state.includes(id));
   const boardPeople = people.length > 0 ? people.map((person) => person.userId) : [];
@@ -611,7 +611,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   };
   const sheetView = <div className="min-w-0 max-w-full rounded-xl border border-border bg-card">
     {filtered && items.length === 0 && <p className="border-b border-border bg-card px-5 py-3 text-14 text-muted-foreground">{t("layout.noMatch")}</p>}
-    <div role="region" aria-label={t("layout.spreadsheet")} tabIndex={0} className="min-w-0 max-w-full overflow-x-auto rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary" data-testid="sheet-scroll"
+    <div role="region" aria-label={t("layout.spreadsheet")} tabIndex={0} className="min-w-0 max-w-full overflow-x-auto rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" data-testid="sheet-scroll"
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
         event.preventDefault();
@@ -673,7 +673,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     <header className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted px-3 py-2">
       <div className="flex items-center gap-1"><Button type="button" aria-label={t("layout.calendar.previous")} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}><ChevronLeft aria-hidden size={16} /></Button>
         <h2 className="min-w-36 text-center text-14 font-medium text-foreground">{monthName}</h2><Button type="button" aria-label={t("layout.calendar.next")} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}><ChevronRight aria-hidden size={16} /></Button></div>
-      <Button type="button" className="rounded-md border border-border bg-background px-2.5 py-1 text-13 font-medium text-foreground hover:bg-accent" onClick={() => setCalendarMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1))}><CalendarDays aria-hidden size={14} />{t("layout.calendar.today")}</Button>
+      <Button type="button" className="rounded-md border border-border bg-background px-2.5 font-medium text-foreground hover:bg-accent" onClick={() => setCalendarMonth(new Date(new Date().getFullYear(), new Date().getMonth(), 1))}><CalendarDays aria-hidden size={14} />{t("layout.calendar.today")}</Button>
     </header>
     <div className="mt-2 hidden grid-cols-7 gap-px rounded-md bg-border md:grid">{weekdays.map((day) => <div key={day} className="bg-card px-2 py-1 text-12 font-medium text-muted-foreground">{t(`layout.weekday.${day}`)}</div>)}</div>
     <div className="hidden gap-px overflow-hidden rounded-md bg-border md:grid" data-testid="calendar-month-grid">
@@ -753,7 +753,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
 
   const toolbar = <div data-testid="work-items-toolbar" className="work-items-toolbar @container/work-items-toolbar flex min-w-0 flex-wrap items-center gap-2 pointer-coarse:gap-y-3 [@media(max-height:480px)]:[&_span:not([data-slot=checkbox]):not([data-slot=checkbox]_*):not(:has([data-slot=checkbox]))]:sr-only">
     <div role="group" aria-label={t("layout.switch")} className="flex min-w-0 flex-wrap items-center gap-0.5 rounded-lg bg-muted p-0.5">
-      {(["list", "board", "spreadsheet", "calendar", "gantt"] as const).map((layout) => { const Icon = layout === "list" ? List : layout === "board" ? Columns3 : layout === "spreadsheet" ? Table2 : layout === "calendar" ? CalendarDays : BarChart3; return <Button key={layout} type="button" data-layout-switch aria-pressed={params.layout === layout} aria-label={t(`layout.${layout}`)} title={t(`layout.${layout}`)}
+      {(["list", "board", "spreadsheet", "calendar", "gantt"] as const).map((layout) => { const Icon = layout === "list" ? List : layout === "board" ? Columns3 : layout === "spreadsheet" ? Table2 : layout === "calendar" ? CalendarDays : BarChart3; return <Button key={layout} variant={params.layout === layout ? "secondary" : "ghost"} type="button" data-layout-switch aria-pressed={params.layout === layout} aria-label={t(`layout.${layout}`)} title={t(`layout.${layout}`)}
         className={cn(
           "inline-flex items-center rounded-md p-1.5 hover:text-foreground max-sm:min-h-9 max-sm:min-w-9 max-sm:flex-col max-sm:justify-center max-sm:gap-0.5 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:rounded-none",
           params.layout === layout ? "bg-card text-foreground shadow-sm" : "bg-transparent text-muted-foreground hover:bg-accent max-sm:text-foreground",
@@ -783,8 +783,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
             <label className={`${checkRow} flex-1`}>
               <Checkbox checked={params.props.includes(property)} onChange={(event) => update({ props: sheet ? (event.target.checked ? [...params.props, property] : params.props.filter((other) => other !== property)) : displayProperties.filter((other) => other === property ? event.target.checked : params.props.includes(other)) })} />{t(`layout.property.${property}`)}</label>
             {sheet && params.props.includes(property) && <>
-              <Button type="button" className="rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent" aria-label={`${t("layout.column.earlier")}: ${t(`layout.property.${property}`)}`} onClick={() => update({ props: moveProperty(params.props, property, -1) })}><ArrowLeft aria-hidden size={14} /></Button>
-              <Button type="button" className="rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent" aria-label={`${t("layout.column.later")}: ${t(`layout.property.${property}`)}`} onClick={() => update({ props: moveProperty(params.props, property, 1) })}><ArrowRight aria-hidden size={14} /></Button>
+              <Button variant="ghost" type="button" className="rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent" aria-label={`${t("layout.column.earlier")}: ${t(`layout.property.${property}`)}`} onClick={() => update({ props: moveProperty(params.props, property, -1) })}><ArrowLeft aria-hidden size={14} /></Button>
+              <Button variant="ghost" type="button" className="rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent" aria-label={`${t("layout.column.later")}: ${t(`layout.property.${property}`)}`} onClick={() => update({ props: moveProperty(params.props, property, 1) })}><ArrowRight aria-hidden size={14} /></Button>
             </>}
           </div>)}
         </fieldset>
@@ -816,7 +816,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
           {hiddenCardProperties.length > 0 && <span data-testid="card-overflow-properties" onFocus={(event) => event.target.scrollIntoView({ block: "nearest", inline: "nearest" })} className={`flex shrink-0 items-center gap-1.5 [@media(pointer:coarse)]:gap-2 ${expandedCards.includes(item.id) ? "" : "max-w-0 overflow-hidden focus-within:max-w-none focus-within:overflow-visible"}`}>
             {hiddenCardProperties.map((property) => <React.Fragment key={property}>{cellOf(item, property, true)}</React.Fragment>)}
           </span>}
-          {hiddenCardProperties.length > 0 && !expandedCards.includes(item.id) && <Button type="button" data-no-drag aria-expanded={false} aria-label={`${t("workItems.more")}: ${hiddenCardProperties.map((property) => t(`layout.property.${property}`)).join(", ")}`} title={hiddenCardProperties.map((property) => t(`layout.property.${property}`)).join(", ")}
+          {hiddenCardProperties.length > 0 && !expandedCards.includes(item.id) && <Button variant="ghost" type="button" data-no-drag aria-expanded={false} aria-label={`${t("workItems.more")}: ${hiddenCardProperties.map((property) => t(`layout.property.${property}`)).join(", ")}`} title={hiddenCardProperties.map((property) => t(`layout.property.${property}`)).join(", ")}
             className="shrink-0 rounded-md bg-transparent px-1.5 py-0.5 text-12 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => setExpandedCards((list) => [...list, item.id])}>+{hiddenCardProperties.length}</Button>}
           {cardProperties.filter((property) => isEmptyProperty(item, property)).map((property) => <span key={property} className={active ? "" : "opacity-0"}>{cellOf(item, property, true)}</span>)}
         </div>}
@@ -852,12 +852,12 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
         const name = params.group === "none" ? "" : groupLabel(group.key);
         return <section key={group.key} aria-label={params.group === "none" ? undefined : name}>
           {params.group !== "none" && <div className="mx-1 my-1 flex items-center gap-2 border-b border-border bg-muted px-3 py-1.5">
-            <Button type="button" aria-expanded={open} aria-label={`${t("layout.toggleGroup")}: ${name}`} className="flex flex-1 items-center justify-start gap-2 bg-transparent p-0 text-left text-14 font-medium text-foreground hover:bg-transparent max-[360px]:h-auto max-[360px]:min-h-9 max-[360px]:min-w-0 max-[360px]:whitespace-normal max-[360px]:[&_svg]:shrink-0"
+            <Button variant="ghost" type="button" aria-expanded={open} aria-label={`${t("layout.toggleGroup")}: ${name}`} className="flex flex-1 items-center justify-start gap-2 bg-transparent p-0 text-left font-medium text-foreground hover:bg-transparent max-[360px]:h-auto max-[360px]:min-h-9 max-[360px]:min-w-0 max-[360px]:whitespace-normal max-[360px]:[&_svg]:shrink-0"
               onClick={() => empty ? (open ? (setExpandedEmpty(expandedEmpty.filter((key) => key !== group.key)), quick === group.key && setQuick(null)) : setExpandedEmpty([...expandedEmpty, group.key])) : setCollapsed(open ? [...collapsed, group.key] : collapsed.filter((key) => key !== group.key))}>
               {open ? <ChevronDown aria-hidden size={14} className="text-muted-foreground" /> : <ChevronRight aria-hidden size={14} className="text-muted-foreground" />}
               {groupIcon(group.key)}<span className="max-[360px]:[overflow-wrap:anywhere]">{name}</span><span className="text-13 font-normal text-muted-foreground max-[360px]:shrink-0">{formatNumber(group.items.length)}</span>
             </Button>
-            {canCreate && canWrite && <Button type="button" aria-label={t("layout.addToGroup").replace("{group}", name)} title={t("layout.addToGroup").replace("{group}", name)} className="inline-flex items-center gap-1 rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+            {canCreate && canWrite && <Button variant="ghost" type="button" aria-label={t("layout.addToGroup").replace("{group}", name)} title={t("layout.addToGroup").replace("{group}", name)} className="inline-flex items-center gap-1 rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
               onClick={() => { setCollapsed(collapsed.filter((key) => key !== group.key)); setExpandedEmpty(expandedEmpty.includes(group.key) ? expandedEmpty : [...expandedEmpty, group.key]); setQuick(group.key); setQuickTitle(""); }}><Plus aria-hidden size={14} /><span className="hidden text-11 max-sm:inline">{t("layout.addShort")}</span></Button>}
           </div>}
           {open && <>
@@ -867,7 +867,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
               const subName = labelFor(subGroup, sub.key);
               return <section key={sub.key} aria-label={subName} className="border-b border-border">
                 <div className="flex items-center gap-2 bg-card px-6 py-2">
-                  <Button type="button" aria-expanded={subOpen} aria-label={`${t("layout.toggleGroup")}: ${subName}`} className="flex flex-1 items-center gap-2 bg-transparent p-0 text-left text-13 font-medium text-muted-foreground hover:bg-transparent"
+                  <Button variant="ghost" type="button" aria-expanded={subOpen} aria-label={`${t("layout.toggleGroup")}: ${subName}`} className="flex flex-1 items-center gap-2 bg-transparent p-0 text-left font-medium text-muted-foreground hover:bg-transparent"
                     onClick={() => setCollapsed(subOpen ? [...collapsed, key] : collapsed.filter((value) => value !== key))}>
                     {subOpen ? <ChevronDown aria-hidden size={14} /> : <ChevronRight aria-hidden size={14} />}{groupIconFor(subGroup, sub.key)}<span>{subName}</span><span className="text-12 font-normal text-muted-foreground">{formatNumber(sub.items.length)}</span>
                   </Button>

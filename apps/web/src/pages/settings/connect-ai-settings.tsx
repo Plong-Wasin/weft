@@ -138,7 +138,7 @@ async function fetchPublicUrl(): Promise<string | null> {
 function CopyBlock({ text, label }: { text: string; label: string }) {
   return <div className="grid gap-2">
     <pre aria-label={label} className="m-0 overflow-x-auto rounded-md border border-border bg-muted p-3 font-mono text-xs text-foreground">{text}</pre>
-    <Button type="button" className="secondary justify-self-start" onClick={() => void copyText(text, translate("connectAi.copied"), translate("connectAi.copyFailed"))}>{translate("connectAi.copy")}</Button>
+    <Button type="button" className="justify-self-start" onClick={() => void copyText(text, translate("connectAi.copied"), translate("connectAi.copyFailed"))}>{translate("connectAi.copy")}</Button>
   </div>;
 }
 
@@ -173,7 +173,7 @@ function McpCard({ publicUrl }: { publicUrl: string | null }) {
 function GuideCard({ publicUrl }: { publicUrl: string | null }) {
   const { workspace } = useWorkspace();
   return <SettingsBlock title={translate("connectAi.guideTitle")} description={translate("connectAi.guideDescription")}>
-    <Button type="button" className="secondary justify-self-start" onClick={() => { void copyText(guidePrompt(publicUrl, cliServerUrl(publicUrl), `${location.origin}${paths.workspaceApiTokens(workspace.slug)}`), translate("connectAi.copied"), translate("connectAi.copyFailed")); }}>{translate("connectAi.copyGuide")}</Button>
+    <Button type="button" className="justify-self-start" onClick={() => { void copyText(guidePrompt(publicUrl, cliServerUrl(publicUrl), `${location.origin}${paths.workspaceApiTokens(workspace.slug)}`), translate("connectAi.copied"), translate("connectAi.copyFailed")); }}>{translate("connectAi.copyGuide")}</Button>
   </SettingsBlock>;
 }
 

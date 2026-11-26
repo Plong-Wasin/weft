@@ -505,7 +505,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
         <TabsContent value={pane} className="grid gap-3">
       {pane === "info" && <div className="grid gap-3">{info}</div>}
       {pane === "outline" && <nav aria-label={translate("wiki.outline")} data-testid="wiki-outline">
-        {headings.length === 0 ? <p className="m-0 text-muted-foreground">{translate("wiki.outlineEmpty")}</p> : <ul className="m-0 grid list-none gap-0.5 p-0">{headings.map((heading, index) => <li key={`${heading.pos}-${index}`} style={{ paddingLeft: `${(heading.level - 1) * 12}px` }}><Button type="button" className="w-full truncate rounded-md !bg-transparent !px-2 !py-1 text-left !font-normal !text-muted-foreground hover:!bg-accent hover:!text-foreground" onClick={() => { editor?.chain().focus().setTextSelection(heading.pos + 1).run(); editor?.view.domAtPos(heading.pos).node.parentElement?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>{heading.text || translate("wiki.outlineUntitled")}</Button></li>)}</ul>}
+        {headings.length === 0 ? <p className="m-0 text-muted-foreground">{translate("wiki.outlineEmpty")}</p> : <ul className="m-0 grid list-none gap-0.5 p-0">{headings.map((heading, index) => <li key={`${heading.pos}-${index}`} style={{ paddingLeft: `${(heading.level - 1) * 12}px` }}><Button type="button" className="w-full thai-room truncate rounded-md !bg-transparent !px-2 !py-1 text-left !font-normal !text-muted-foreground hover:!bg-accent hover:!text-foreground" onClick={() => { editor?.chain().focus().setTextSelection(heading.pos + 1).run(); editor?.view.domAtPos(heading.pos).node.parentElement?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>{heading.text || translate("wiki.outlineUntitled")}</Button></li>)}</ul>}
       </nav>}
       {pane === "links" && <OutlinksPanel kind={page.projectId ? "page" : "wiki"} id={page.id} run={call} />}
       {pane === "comments" && <section aria-label={translate("wiki.comments")} className="grid gap-3">
@@ -542,7 +542,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
         <Activity pageId={page.id} refresh={status} />
         <section aria-label={translate("wiki.history")} className="grid gap-2 border-t border-border pt-3">
           <h3 className="m-0 text-13 font-semibold text-foreground">{translate("wiki.history")}</h3>
-          <ul className="m-0 grid list-none gap-2 p-0">{versions.map((version) => <li key={version.id} className="flex items-center justify-between gap-2 text-muted-foreground"><span className="min-w-0 truncate">{formatDate(version.createdAt)} — {version.title}</span><Button className="!px-2 !py-0.5 !text-12" disabled={!page.canEdit} onClick={() => void restore(version.id)}>{translate("wiki.restore")}</Button></li>)}</ul>
+          <ul className="m-0 grid list-none gap-2 p-0">{versions.map((version) => <li key={version.id} className="flex items-center justify-between gap-2 text-muted-foreground"><span className="min-w-0 thai-room truncate">{formatDate(version.createdAt)} — {version.title}</span><Button className="!px-2 !py-0.5 !text-12" disabled={!page.canEdit} onClick={() => void restore(version.id)}>{translate("wiki.restore")}</Button></li>)}</ul>
         </section>
       </div>}
         </TabsContent>
@@ -703,8 +703,8 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
           </>}
         </Popover></div></th></tr>
         {flatten(shown.filter((page) => page.collectionId === collection.id)).map(({ page, depth, nested }) => <tr key={page.id} className="border-b border-border hover:bg-accent">
-        <td className="py-2" style={{ paddingLeft: `${depth * 1.25}rem` }}><Link className={rowLink} to={paths.wikiPage(workspace.slug, page.id)}><FileText aria-hidden size={14} className="shrink-0 text-muted-foreground" /><span className="min-w-0 truncate">{page.title}</span></Link></td>
-        <td className="overflow-hidden py-2 pr-2 align-middle text-muted-foreground"><span className="flex min-w-0 items-center gap-1.5">{roleIcon(page)}<span className="min-w-0 truncate" title={translate(`wiki.access.${page.access}` as MessageKey)}>{translate(`wiki.access.${page.access}` as MessageKey)}</span></span></td>
+        <td className="py-2" style={{ paddingLeft: `${depth * 1.25}rem` }}><Link className={rowLink} to={paths.wikiPage(workspace.slug, page.id)}><FileText aria-hidden size={14} className="shrink-0 text-muted-foreground" /><span className="min-w-0 thai-room truncate">{page.title}</span></Link></td>
+        <td className="py-2 pr-2 align-middle text-muted-foreground"><span className="flex min-w-0 items-center gap-1.5">{roleIcon(page)}<span className="min-w-0 [overflow-wrap:anywhere]" title={translate(`wiki.access.${page.access}` as MessageKey)}>{translate(`wiki.access.${page.access}` as MessageKey)}</span></span></td>
         <td className="hidden py-2 text-muted-foreground md:table-cell">{formatDay(page.createdAt)}</td><td className="py-2 text-muted-foreground">{formatDay(page.updatedAt)}</td>
         <td className="hidden py-2 text-muted-foreground md:table-cell">{nested}</td>
       </tr>)}

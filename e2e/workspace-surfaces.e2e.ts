@@ -72,6 +72,7 @@ try {
   await database.db.insert(aiMessages).values({ id: crypto.randomUUID(), chatId: chat!.id, role: "assistant", parts: [{ type: "text", text: `${longThai}\n\n- ${longUrl}\n- ${longWord}${longWord}\n\n| A | B |\n|---|---|\n| ${longEnglish} | ${longEnglish} |\n\n\`\`\`\n${longUrl}${longUrl}\n\`\`\`\n` }] });
   await database.client.end();
 
+  await client.action("create_wiki_page", { workspaceId, title: "Public handbook" });
   const base = `/${slug}`;
   const routes: Record<string, string> = {
     projects: `${base}/projects`, wiki: `${base}/wiki`, wikiPage: `${base}/wiki/${seed.wikiPageId}`, inbox: `${base}/notifications`, intake: `${base}/projects/REF/intake`,
@@ -112,6 +113,15 @@ try {
     const overlap = await page.locator("main table tbody tr").evaluateAll((rows) => rows.filter((row) => [...row.querySelectorAll("td")].some((cell) => cell.scrollWidth > cell.clientWidth + 1 && getComputedStyle(cell).overflowX === "visible")).length);
     check(`wiki table cells do not run into each other (${viewport.width})`, overlap === 0, overlap);
     if (viewport.touch) {
+      const access = await page.locator("main table tbody td:nth-child(2) span[title]").evaluateAll((labels) => labels.map((label) => {
+        const bounds = label.closest("td")!.getBoundingClientRect();
+        const range = document.createRange();
+        range.selectNodeContents(label);
+        const fits = label.scrollWidth <= label.clientWidth + 1 && label.scrollHeight <= label.clientHeight + 1
+          && Array.from(range.getClientRects()).every((rect) => rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1 && rect.bottom <= bounds.bottom + 1);
+        return { text: label.textContent, fits };
+      }));
+      check("wiki Access label is fully readable on touch", access.length > 0 && access.every((label) => label.fits), access);
       await open(page, routes.general!);
       const box = page.locator('main [data-slot="checkbox"]').first();
       const geometry = await box.evaluate((element) => ({ target: element.getBoundingClientRect().width, painted: getComputedStyle(element).backgroundColor, border: getComputedStyle(element).borderTopColor, visual: getComputedStyle(element, "::before").width }));

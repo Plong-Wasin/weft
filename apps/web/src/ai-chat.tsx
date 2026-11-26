@@ -259,7 +259,7 @@ function Sources({ sources }: { sources: { url: string; title: string }[] }) {
   return <div className="grid gap-1 text-13 text-muted-foreground">
     <p className="m-0 font-medium">{translate("ai.sources")}</p>
     <ul className="m-0 grid list-none gap-0.5 p-0">
-      {sources.map((source) => <li key={source.url} className="truncate"><a href={source.url} target="_blank" rel="noreferrer noopener" className="text-foreground hover:underline">{source.title}</a></li>)}
+      {sources.map((source) => <li key={source.url} className="thai-room truncate"><a href={source.url} target="_blank" rel="noreferrer noopener" className="text-foreground hover:underline">{source.title}</a></li>)}
     </ul>
   </div>;
 }
@@ -362,7 +362,7 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
     {error && <p role="alert" className="px-4 text-14 text-destructive">{translate(error.message.includes("rate_limited") ? "ai.rateLimited" : "ai.failed")}</p>}
     <div className="mx-auto w-full max-w-3xl px-4 pb-2">
       <Card as="form" ref={composerForm} onSubmit={(event) => { event.preventDefault(); const text = input.trim(); if (!text || busy) return; setInput(""); send(text); }} className="rounded-2xl p-3 shadow-sm sm:p-4">
-        <span title={translate("ai.contextHint")} className="mb-2 flex w-fit max-w-full items-center gap-1.5 truncate rounded-md border border-border px-2 py-1 text-14 text-foreground"><span className="sr-only">{translate("ai.contextPill")}: </span>{pill}</span>
+        <span title={translate("ai.contextHint")} className="mb-2 flex w-fit max-w-full items-center gap-1.5 thai-room truncate rounded-md border border-border px-2 py-1 text-14 text-foreground"><span className="sr-only">{translate("ai.contextPill")}: </span>{pill}</span>
         <label className="sr-only" htmlFor={`composer-${chatId}`}>{translate("ai.message")}</label>
         {selectedSkill && <Button type="button" onClick={() => setSelectedSkill(null)} className="mb-2 inline-flex rounded-md border border-border px-2 text-foreground">/{selectedSkill.name} · {translate(selectedSkill.scope === "personal" ? "skills.personal" : "skills.workspace")} ×</Button>}
         {skillPickerOpen && <div role="listbox" aria-label={translate("skills.picker")} className="mb-2 max-h-44 overflow-auto rounded-md border border-border bg-card">{matchingSkills.map((skill) => <Button key={skill.id} type="button" role="option" onClick={() => pickSkill(skill)} className="flex w-full items-center justify-between py-2 text-left hover:bg-muted"><span>/{skill.name}</span><span className="text-12 text-muted-foreground">{translate(skill.scope === "personal" ? "skills.personal" : "skills.workspace")}</span></Button>)}{matchingSkills.length === 0 && <p className="px-3 py-2 text-13 text-muted-foreground">{translate("skills.empty")}</p>}</div>}
@@ -435,11 +435,11 @@ export function AiSidebar({ workspace, activeId }: { workspace: Workspace; activ
               <Button type="button" onClick={() => setRenaming(null)} className="shrink-0 !border-0 !bg-transparent !px-1 !py-0.5 !text-foreground hover:!bg-accent">{translate("ai.cancel")}</Button>
             </form>
             : deleting === chat.id
-              ? <div className="flex items-center gap-1 px-2 py-1.5 text-13"><span className="flex-1 truncate">{translate("ai.deleteConfirm")}</span>
+              ? <div className="flex items-center gap-1 px-2 py-1.5 text-13"><span className="flex-1 thai-room truncate">{translate("ai.deleteConfirm")}</span>
                 <Button variant="danger" type="button" onClick={() => void remove(chat.id)} className="px-1.5 py-0.5">{translate("ai.deleteYes")}</Button>
                 <Button type="button" onClick={() => setDeleting(null)} className="px-1.5 py-0.5">{translate("ai.cancel")}</Button></div>
               : <div className="flex items-center">
-                <Link to={paths.aiChat(workspace.slug, chat.id)} title={chat.title} aria-current={chat.id === activeId ? "page" : undefined} className="min-w-0 flex-1 truncate px-2.5 py-1.5 text-14 text-foreground">{chat.title}</Link>
+                <Link to={paths.aiChat(workspace.slug, chat.id)} title={chat.title} aria-current={chat.id === activeId ? "page" : undefined} className="min-w-0 flex-1 thai-room truncate px-2.5 py-1.5 text-14 text-foreground">{chat.title}</Link>
                 <span className="flex pr-1 opacity-0 focus-within:opacity-100 group-hover:opacity-100 max-md:opacity-100">
                   <Button variant="ghost" type="button" className={iconButton} aria-label={`${translate("ai.rename")}: ${chat.title}`} onClick={() => setRenaming({ id: chat.id, title: chat.title })}><Pencil aria-hidden size={13} /></Button>
                   <Button variant="ghost" type="button" className={iconButton} aria-label={`${translate("ai.delete")}: ${chat.title}`} onClick={() => setDeleting(chat.id)}><Trash2 aria-hidden size={13} /></Button>

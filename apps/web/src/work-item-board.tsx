@@ -329,7 +329,7 @@ export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag
         className={`flex w-[22rem] max-w-[85vw] shrink-0 flex-col gap-2 rounded-xl border border-border bg-card p-2 ${over ? "border-ring bg-accent" : ""}`}>
         <header className="flex items-center gap-2 px-1 py-0.5">
           {column.icon}
-          <h4 className="m-0 flex-1 truncate text-16 font-medium text-foreground">{column.name} <span className="font-normal text-muted-foreground">{formatNumber(column.items.length)}</span></h4>
+          <h4 className="m-0 flex-1 thai-room truncate text-16 font-medium text-foreground">{column.name} <span className="font-normal text-muted-foreground">{formatNumber(column.items.length)}</span></h4>
           <Button variant="ghost" type="button" aria-expanded aria-label={`${t("layout.toggleGroup")}: ${column.name}`} title={t("layout.toggleGroup")} className="grid size-8 shrink-0 place-items-center rounded-md bg-transparent p-0 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => onToggle(column.key)}><ChevronsLeft aria-hidden size={14} /></Button>
           {canAdd && <Button variant="ghost" type="button" aria-label={t("layout.addToGroup").replace("{group}", column.name)} title={t("layout.addToGroup").replace("{group}", column.name)} className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md bg-transparent px-1 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => onAdd(column.key)}><Plus aria-hidden size={14} /><span className="hidden text-11 max-sm:inline">{t("layout.addShort")}</span></Button>}
         </header>

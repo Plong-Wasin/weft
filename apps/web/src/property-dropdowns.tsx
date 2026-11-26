@@ -108,8 +108,8 @@ function PickerBody({ label, options, onPick, searchAlways, children }: { label:
 export function SingleSelect({ label, summary, display, options, value, onSelect, readOnly, icon, iconOnly, hideIconOnlyTextOnPhone, quiet, className: triggerClass }: { label: string; summary: string; /** Visible text when it differs from the accessible value (a muted dash for an empty list cell). */ display?: string; options: Option[]; value: string; onSelect: (id: string) => void; readOnly?: boolean; icon?: React.ReactNode; iconOnly?: boolean; hideIconOnlyTextOnPhone?: boolean; quiet?: boolean; className?: string }) {
   const name = `${label}: ${summary}`;
   const buttonClass = triggerClass ? `${chipClass(quiet, iconOnly)} ${triggerClass}` : chipClass(quiet, iconOnly);
-  if (readOnly) return <Static label={name} quiet={quiet} className={buttonClass}>{icon}{!iconOnly && <span className={`max-w-32 truncate ${display ? "text-muted-foreground" : ""}`} title={summary}>{display ?? summary}</span>}</Static>;
-  return <Popover label={name} className={buttonClass} panelRole="dialog" panelClassName="max-h-72 w-52 overflow-auto" trigger={<Trigger label={name}>{icon}<span className={`${iconOnly ? hideIconOnlyTextOnPhone ? "hidden" : "hidden text-11 max-sm:inline" : "min-w-0 flex-1 max-w-32 truncate"} ${display ? "text-muted-foreground" : ""}`}>{display ?? summary}</span></Trigger>}>
+  if (readOnly) return <Static label={name} quiet={quiet} className={buttonClass}>{icon}{!iconOnly && <span className={`max-w-32 thai-room truncate ${display ? "text-muted-foreground" : ""}`} title={summary}>{display ?? summary}</span>}</Static>;
+  return <Popover label={name} className={buttonClass} panelRole="dialog" panelClassName="max-h-72 w-52 overflow-auto" trigger={<Trigger label={name}>{icon}<span className={`${iconOnly ? hideIconOnlyTextOnPhone ? "hidden" : "hidden text-11 max-sm:inline" : "min-w-0 flex-1 max-w-32 thai-room truncate"} ${display ? "text-muted-foreground" : ""}`}>{display ?? summary}</span></Trigger>}>
     {(close) => <PickerBody label={label} options={options} onPick={(option) => { close(); if (option.id !== value) onSelect(option.id); }}>
       {(visible, activeId, optionId) => visible.map((option) => <Button variant="ghost" key={option.id} id={optionId(option)} type="button" role="menuitemradio" aria-checked={option.id === value} data-active={option.id === activeId || undefined} className={cn(optionClass, "data-[active=true]:bg-accent")}
         onClick={() => { close(); if (option.id !== value) onSelect(option.id); }}>
@@ -169,7 +169,7 @@ export function DateChip({ label, field, range, onChange, readOnly, stateGroup, 
   const late = field === "due" && isOverdue(value, todayKey(), stateGroup);
   // The overdue word is part of the accessible name: the trigger's aria-label replaces its visible text for screen readers.
   const name = late ? `${label}: ${text}, ${t("datePicker.overdue")}` : `${label}: ${text}`;
-  const body = <>{icon}<span className={`min-w-0 max-w-32 truncate ${late ? "text-destructive" : ""}`} title={late ? t("datePicker.overdue") : undefined}>{text}</span>{late && <span className="sr-only">{t("datePicker.overdue")}</span>}</>;
+  const body = <>{icon}<span className={`min-w-0 max-w-32 thai-room truncate ${late ? "text-destructive" : ""}`} title={late ? t("datePicker.overdue") : undefined}>{text}</span>{late && <span className="sr-only">{t("datePicker.overdue")}</span>}</>;
   if (readOnly) return <Static label={name} quiet={quiet}>{body}</Static>;
   return <DatePopover label={name} range={range} field={field} onChange={onChange} className={chipClass(quiet)} trigger={<Trigger label={name}>{body}</Trigger>} />;
 }
@@ -182,7 +182,7 @@ export function DatesMenu({ startDate, dueDate, onChange, readOnly, iconOnlyWhen
   const iconOnly = iconOnlyWhenEmpty && !startDate && !dueDate;
   const late = isOverdue(dueDate, todayKey(), stateGroup);
   const name = `${t("layout.property.dates")}: ${text}${late ? `, ${t("datePicker.overdue")}` : ""}`;
-  const body = <><CalendarDays aria-hidden size={14} className="text-muted-foreground" /><span className={`min-w-0 max-w-32 truncate ${iconOnly ? "hidden text-11 max-sm:inline" : ""} ${late ? "text-destructive" : ""} ${empty && emptyLabel ? "text-muted-foreground" : ""}`} title={late ? t("datePicker.overdue") : undefined}>{shown}</span>{late && <span className="sr-only">{t("datePicker.overdue")}</span>}</>;
+  const body = <><CalendarDays aria-hidden size={14} className="text-muted-foreground" /><span className={`min-w-0 max-w-32 thai-room truncate ${iconOnly ? "hidden text-11 max-sm:inline" : ""} ${late ? "text-destructive" : ""} ${empty && emptyLabel ? "text-muted-foreground" : ""}`} title={late ? t("datePicker.overdue") : undefined}>{shown}</span>{late && <span className="sr-only">{t("datePicker.overdue")}</span>}</>;
   const className = chipClass(quiet, iconOnly);
   if (readOnly) return <Static label={name} quiet={quiet} className={className}>{body}</Static>;
   return <DatePopover label={name} className={className} trigger={<Trigger label={name}>{body}</Trigger>} range={{ startDate, dueDate }} field={startDate || !dueDate ? "start" : "due"} onChange={onChange} clearable={clearable} />;

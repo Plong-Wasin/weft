@@ -143,7 +143,7 @@ export function ViewsPage({ workspaceSlug, project, selfId }: Scope) {
   return <section className="grid grid-cols-[minmax(0,1fr)] gap-3">
     <header className="flex flex-wrap items-center gap-2 rounded-xl bg-muted p-3">
       <nav aria-label={t("views.breadcrumb")} className="flex min-w-0 flex-1 items-center gap-1.5 text-14 text-muted-foreground">
-        <Link to={paths.workItems(workspaceSlug, project.key)} className="truncate text-muted-foreground hover:text-foreground">{project.name}</Link>
+        <Link to={paths.workItems(workspaceSlug, project.key)} className="thai-room truncate text-muted-foreground hover:text-foreground">{project.name}</Link>
         <ChevronRight aria-hidden size={14} /><Layers aria-hidden size={14} /><h2 className="m-0 text-14 font-medium text-foreground">{t("views.title")}</h2>
       </nav>
       <label className="relative my-0 block w-full sm:w-auto"><span className="sr-only">{t("views.search")}</span>
@@ -159,12 +159,12 @@ export function ViewsPage({ workspaceSlug, project, selfId }: Scope) {
     <ul aria-label={t("views.title")} className="m-0 grid list-none gap-1 rounded-xl border border-border bg-card p-1 empty:hidden">{shown.map((view) => <li key={view.id} data-testid={`view-row-${view.name}`} className="flex items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-accent">
       <Layers aria-hidden size={16} className="shrink-0 text-muted-foreground" />
       <div className="grid min-w-0 flex-1">
-        <Link to={paths.view(workspaceSlug, project.key, view.id)} title={view.name} className="flex min-w-0 items-center text-14 font-medium text-foreground pointer-coarse:min-h-11"><span className="min-w-0 [overflow-wrap:anywhere] max-sm:line-clamp-2 sm:truncate">{view.name}</span></Link>
-        {view.description && <span className="truncate text-12 text-muted-foreground">{view.description}</span>}
+        <Link to={paths.view(workspaceSlug, project.key, view.id)} title={view.name} className="flex min-w-0 items-center text-14 font-medium text-foreground pointer-coarse:min-h-11"><span className="min-w-0 [overflow-wrap:anywhere] thai-room max-sm:line-clamp-2 sm:truncate">{view.name}</span></Link>
+        {view.description && <span className="thai-room truncate text-12 text-muted-foreground">{view.description}</span>}
       </div>
       <span className="hidden text-12 text-muted-foreground sm:inline">{t("views.updatedAt").replace("{date}", formatDate(view.updatedAt))}</span>
       <AccessBadge access={view.access} />
-      <span className="flex items-center gap-1.5 text-12 text-muted-foreground" title={t("views.owner")}>{ownerOf(view) && <><Avatar name={ownerOf(view)} id={view.ownerId} /><span className="hidden max-w-28 truncate md:inline">{ownerOf(view)}</span></>}</span>
+      <span className="flex items-center gap-1.5 text-12 text-muted-foreground" title={t("views.owner")}>{ownerOf(view) && <><Avatar name={ownerOf(view)} id={view.ownerId} /><span className="hidden max-w-28 thai-room truncate md:inline">{ownerOf(view)}</span></>}</span>
       <ViewMenu view={view} scope={scope} onEdit={() => setEditing(view)} onDelete={() => setDeleting(view)} />
     </li>)}</ul>
     {creating && <ViewFormModal mode="create" target={{ projectId: project.id }} onClose={() => setCreating(false)} onSaved={() => { setCreating(false); void load(); }} />}

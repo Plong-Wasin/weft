@@ -63,12 +63,19 @@ try {
   const seed = await seedWeft(client, slug);
   const cookie = client.cookies().map((c) => `${c.name}=${c.value}`).join("; ");
   const me = await (await fetch(`${api}/api/me`, { headers: { cookie } })).json() as any;
+  const longMember = "Alexandria Catherine Montgomery-Worthington, International Delivery Operations";
+  const rename = await fetch(`${api}/api/auth/update-user`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: web, cookie },
+    body: JSON.stringify({ name: longMember }),
+  });
+  if (!rename.ok) throw new Error(`Could not seed long member name: ${rename.status}`);
   const [project] = await client.action("list_projects", { workspaceId: me.workspaces[0].id });
   const longTh = "รอบการพัฒนาไตรมาสที่สี่ปรับปรุงประสบการณ์ผู้ใช้และความเสถียรของแอปบนมือถือ";
   const longName = `${longTh} and mobile sprint`;
   const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
   const cycle = await client.action("create_cycle", { projectId: project.id, name: longName, startDate: day(20), endDate: day(34) });
-  const module = await client.action("create_module", { projectId: project.id, name: longName, status: "in-progress", startDate: day(-3), endDate: day(30), descriptionMarkdown: `${longTh}\n\nhttps://example.com/${"x".repeat(90)}` });
+  const module = await client.action("create_module", { projectId: project.id, name: longName, leadId: me.user.id, status: "in-progress", startDate: day(-3), endDate: day(30), descriptionMarkdown: `${longTh}\n\nhttps://example.com/${"x".repeat(90)}` });
   await client.action("add_module_items", { moduleId: module.id, workItemIds: [seed.workItemId] });
   if (seed.moduleId) await client.action("add_module_items", { moduleId: seed.moduleId, workItemIds: [seed.workItemId] });
   const view = await client.action("create_view", { projectId: project.id, name: longName, description: longName, query: "priority = high", layout: "list" });
@@ -172,6 +179,19 @@ try {
     check(nameBox.width >= (phone ? 200 : 300), `modules at ${width}px: the long name is only ${nameBox.width}px wide`);
     await touch("modules header", page.getByRole("button", { name: new RegExp(`^(${translate("modules.display.list")}|${translate("modules.display.grid")}|${translate("modules.addNew")})$`) }));
 
+    const lead = filters.getByRole("combobox", { name: translate("modules.leadFilter") });
+    await lead.click();
+    await page.getByRole("option", { name: longMember, exact: true }).click();
+    const leadFits = await lead.evaluate((trigger, name) => {
+      const value = trigger.querySelector<HTMLElement>("[data-slot=select-value]")!;
+      const chevron = trigger.querySelector("svg")!.getBoundingClientRect();
+      const bounds = trigger.getBoundingClientRect();
+      return value.textContent === name && getComputedStyle(value).textOverflow === "ellipsis"
+        && value.getBoundingClientRect().right <= chevron.left
+        && chevron.width >= 15 && chevron.right <= bounds.right;
+    }, longMember);
+    check(leadFits, `Module Lead filter at ${width}px: long selected name ellipsizes and leaves the chevron inside the trigger`);
+
     await open(`${root}/modules/${module.id}`);
     const panel = page.locator("#module-details-panel");
     await panel.getByTestId("module-items-count").waitFor();
@@ -182,7 +202,16 @@ try {
     check(status.y < risks.y, "module detail: the properties come after the risk breakdown");
     const itemRow = page.getByTestId(`row-${seed.workItem}`);
     check(await itemRow.getByRole("button", { name: translate("modules.remove"), exact: true }).count() === 0, "module detail: removal must sit in the row menu");
-    check(await itemRow.getByRole("button", { name: new RegExp(`^${translate("modules.actions")}: ${seed.workItem}`) }).count() === 1, "module detail: the row has no actions menu");
+    const rowAction = itemRow.getByRole("button", { name: new RegExp(`^${translate("modules.actions")}: ${seed.workItem}`) });
+    check(await rowAction.count() === 1, "module detail: the row has no actions menu");
+    if (!phone) {
+      const row = await box(itemRow);
+      const action = await box(rowAction);
+      const title = await box(itemRow.getByRole("link", { name: "Set up CI pipeline" }));
+      const labels = await box(itemRow.getByRole("button", { name: new RegExp(`^${translate("workItems.labels")}:`) }));
+      check(row.x + row.width - action.x - action.width <= 24 && title.width >= 112 && labels.x >= title.x + title.width,
+        "Module detail List: the menu sits at the row edge and leaves space for the title and Labels");
+    }
 
     // Views list and detail.
     await open(`${root}/views`);

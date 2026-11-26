@@ -215,7 +215,7 @@ export function ModulesPage({ workspaceId, workspaceSlug, projectKey, projectId,
     {display === "list"
       ? <ul aria-label={t("modules.title")} className="m-0 grid list-none gap-1 rounded-xl border border-border bg-card p-1 empty:hidden">{(modules ?? []).map((module) => <li key={module.id} data-testid={`module-row-${module.name}`} className="flex flex-wrap items-center gap-3 rounded-lg px-4 py-3 transition-colors hover:bg-accent">
         <ProgressRing percent={module.progress.percent} />
-        <Link to={paths.module(workspaceSlug, projectKey, module.id)} title={module.name} className="flex min-w-48 flex-1 basis-[calc(100%-4rem)] items-center text-sm font-medium text-foreground pointer-coarse:min-h-11 lg:basis-48"><span className="min-w-0 [overflow-wrap:anywhere] max-lg:line-clamp-2 lg:truncate">{module.name}</span></Link>
+        <Link to={paths.module(workspaceSlug, projectKey, module.id)} title={module.name} className="flex min-w-48 flex-1 basis-[calc(100%-4rem)] items-center text-sm font-medium text-foreground pointer-coarse:min-h-11 lg:basis-48"><span className="min-w-0 [overflow-wrap:anywhere] thai-room max-lg:line-clamp-2 lg:truncate">{module.name}</span></Link>
         <span className="flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground"><CalendarRange aria-hidden size={13} />{dateRange(module)}</span>
         <StatusBadge status={module.status} />
         <span className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">{t("modules.itemCount").replace("{count}", formatNumber(module.itemCount))}</span>
@@ -225,7 +225,7 @@ export function ModulesPage({ workspaceId, workspaceSlug, projectKey, projectId,
       </li>)}</ul>
       : <ul aria-label={t("modules.title")} className="m-0 grid list-none grid-cols-1 gap-2 rounded-xl border border-border bg-card p-2 empty:hidden sm:grid-cols-2 xl:grid-cols-3">{(modules ?? []).map((module) => <li key={module.id} data-testid={`module-card-${module.name}`} className="grid content-between gap-4 rounded-lg bg-muted p-4 transition-colors hover:bg-background">
         <div className="flex items-start gap-2">
-          <Link to={paths.module(workspaceSlug, projectKey, module.id)} className="min-w-0 flex-1 truncate text-base font-medium text-foreground">{module.name}</Link>
+          <Link to={paths.module(workspaceSlug, projectKey, module.id)} className="min-w-0 flex-1 thai-room truncate text-base font-medium text-foreground">{module.name}</Link>
           {menu(module)}
         </div>
         <div className="flex items-center gap-2"><StatusBadge status={module.status} /><span className="text-xs text-muted-foreground">{t("modules.itemCount").replace("{count}", formatNumber(module.itemCount))}</span></div>
@@ -256,7 +256,7 @@ function AddItemsModal({ candidates, onAdd, onClose }: { candidates: Item[]; onA
       <ul className="m-0 grid max-h-72 list-none gap-0.5 overflow-auto p-0">{shown.map((item) => <li key={item.id}>
         <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-foreground hover:bg-accent">
           <Checkbox checked={selected.includes(item.id)} onChange={(event) => setSelected(event.target.checked ? [...selected, item.id] : selected.filter((id) => id !== item.id))} />
-          <span className="text-muted-foreground">{item.displayId}</span><span className="truncate">{item.title}</span>
+          <span className="text-muted-foreground">{item.displayId}</span><span className="thai-room truncate">{item.title}</span>
         </label>
       </li>)}</ul>
       <div className="flex justify-end gap-2 border-t border-border pt-4">
@@ -270,7 +270,7 @@ function AddItemsModal({ candidates, onAdd, onClose }: { candidates: Item[]; onA
 function PropertyRow({ icon, label, children }: { icon: React.ReactNode; label: string; children: React.ReactNode }) {
   return <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-2 text-sm">
     <span className="flex items-center gap-2 text-muted-foreground">{icon}{label}</span>
-    <div className="flex min-w-0 flex-wrap items-center gap-1">{children}</div>
+    <div className="flex min-w-0 flex-wrap items-center gap-1 [&>*]:min-w-0 [&>*]:max-w-full [&_button]:max-w-full">{children}</div>
   </div>;
 }
 
@@ -315,7 +315,7 @@ export function ModuleDetailPage({ workspaceId, workspaceSlug, projectKey, proje
       <nav aria-label={t("workItems.breadcrumb")} className="flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap text-sm text-muted-foreground">
         <Link to={paths.workItems(workspaceSlug, projectKey)} className="text-muted-foreground hover:text-foreground">{projectKey}</Link><ChevronRight aria-hidden size={12} />
         <Link to={back} aria-label={t("modules.back")} className="text-muted-foreground hover:text-foreground">{t("modules.title")}</Link><ChevronRight aria-hidden size={12} />
-        <span className="truncate font-medium text-foreground">{module.name}</span>
+        <span className="thai-room truncate font-medium text-foreground">{module.name}</span>
       </nav>
       <div className="ml-auto flex items-center gap-2">
         <DetailsPanelToggle open={detailsPanel.open} onToggle={detailsPanel.toggle} panelId="module-details-panel" />
@@ -357,7 +357,7 @@ export function ModuleDetailPage({ workspaceId, workspaceSlug, projectKey, proje
         </PropertyRow>
         <PropertyRow icon={<Users aria-hidden size={15} />} label={t("modules.members")}>
           <MultiSelect label={t("modules.members")} readOnly={!editable} selected={module.memberIds}
-            summary={module.memberIds.length === 0 ? <span className="text-muted-foreground">{t("modules.noMembers")}</span> : <span className="flex items-center gap-1">{module.memberIds.slice(0, 3).map((id) => <Avatar key={id} name={nameOf(id)} id={id} agent={people.find((person) => person.userId === id)?.isAgent} />)}<span className="max-w-32 truncate">{module.memberIds.map(nameOf).join(", ")}</span></span>}
+            summary={module.memberIds.length === 0 ? <span className="text-muted-foreground">{t("modules.noMembers")}</span> : <span className="flex items-center gap-1">{module.memberIds.slice(0, 3).map((id) => <Avatar key={id} name={nameOf(id)} id={id} agent={people.find((person) => person.userId === id)?.isAgent} />)}<span className="max-w-32 thai-room truncate">{module.memberIds.map(nameOf).join(", ")}</span></span>}
             options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} /> }))}
             onToggle={(id, on) => void patch({ memberIds: on ? [...module.memberIds, id] : module.memberIds.filter((other) => other !== id) })} />
         </PropertyRow>

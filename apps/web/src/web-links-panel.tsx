@@ -41,7 +41,7 @@ export function WebLinksPanel({ personName, workItemId, canWrite, action, onChan
   return <section>
     {rows.length > 0 && <ul className="m-0 grid list-none grid-cols-[minmax(0,1fr)] gap-1.5 !pl-0">{rows.map((row) => <li key={row.id} className="flex items-center gap-2 rounded-md bg-muted px-2.5 py-1.5 text-13">
       <ExternalLink aria-hidden size={13} className="shrink-0 text-muted-foreground" />
-      <a href={row.url} target="_blank" rel="noreferrer" className="min-w-0 truncate text-foreground hover:underline" title={row.url}>{row.title || host(row.url)}</a>
+      <a href={row.url} target="_blank" rel="noreferrer" className="min-w-0 thai-room truncate text-foreground hover:underline" title={row.url}>{row.title || host(row.url)}</a>
       {row.title && <span className="min-w-0 shrink truncate text-muted-foreground">{host(row.url)}</span>}
       {row.createdAt && <span className="hidden shrink-0 text-12 text-muted-foreground sm:inline">{row.createdBy && personName ? `${personName(row.createdBy)} · ` : ""}{formatDate(row.createdAt)}</span>}
       <span className="ml-auto flex shrink-0 gap-0.5">

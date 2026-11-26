@@ -31,6 +31,7 @@ The web UI follows shadcn/ui's default neutral theme and component styling. Keep
 - Body text follows the app's 14px base. Use the shadcn type scale for new work. `text-9` to `text-40` (defined in `style.css`; 9 to 12 all render at 12px) stay where a screen's alignment and row rhythm depend on them.
 - Weights: regular 400 is the base weight; labels, headings and large counts use the heavier weights the variable face provides. The heavy 800 weight is defined as a token.
 - Text uses theme roles: `foreground` for primary content and `muted-foreground` for secondary labels and metadata.
+- A truncated or clamped element that shows user or translated text also takes `thai-room`, which keeps Thai tone marks inside the clip box. IDs, e-mail addresses and URL hosts do not need it.
 
 ## Spacing and layout
 

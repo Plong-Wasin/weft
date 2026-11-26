@@ -17,7 +17,7 @@ export function PullRequestsPanel({ workItemId, action, onCount }: { workItemId:
   return <section>
     <p className="m-0 mb-2 text-13 text-muted-foreground">{t("pullRequests.help")}</p>
     {rows.length > 0 && <ul className="m-0 grid list-none gap-1.5 !pl-0">{rows.map((row) => <li key={row.id} className="grid gap-0.5 rounded-md bg-muted px-2.5 py-1.5 text-13">
-      <span className="min-w-0 truncate">
+      <span className="min-w-0 thai-room truncate">
         <span className="text-muted-foreground">{t(`pullRequests.kind.${row.provider}`)} {reference(row)} · </span>
         <a href={row.url} target="_blank" rel="noreferrer" className="text-foreground hover:underline" title={row.url}>{row.title}</a>
       </span>

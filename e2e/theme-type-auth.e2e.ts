@@ -75,6 +75,9 @@ const clippedThai = (page: Page) => page.evaluate(async () => {
   return clipped;
 });
 
+const reviewFailures: string[] = [];
+const reviewCheck = (condition: boolean, message: string) => { if (!condition) reviewFailures.push(message); };
+
 let failed = false;
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
@@ -85,6 +88,10 @@ try {
   const [workspace] = (await (await fetch(`${api}/api/me`, { headers: { cookie: client.cookies().map((c) => `${c.name}=${c.value}`).join("; ") } })).json() as { workspaces: { id: string }[] }).workspaces;
   const [project] = await client.action<{ id: string }[]>("list_projects", { workspaceId: workspace!.id });
   const thai = "ปรับปรุงหน้าตั้งค่าที่ผู้ใช้ป้อนข้อมูลปู่ย่า";
+  const planningName = "ปู่ที่ผู้ตั้งค่าระบบใหม่และปรับปรุงประสบการณ์ผู้ใช้งานบนมือถือให้ดียิ่งขึ้น";
+  const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+  await client.action("create_cycle", { projectId: project!.id, name: planningName, startDate: day(-1), endDate: day(10) });
+  await client.action("create_module", { projectId: project!.id, name: planningName });
   await client.action("create_work_item", { projectId: project!.id, title: thai });
   await client.action("create_label", { projectId: project!.id, name: "ฟีเจอร์ใหม่", color: "#3b82f6" });
 
@@ -135,10 +142,10 @@ try {
   // Board "+N": a toggle that keeps focus and says whether the card is open. Wide touch lists: long titles get two lines.
   {
     const labels = await client.action<{ id: string }>("create_label", { projectId: project!.id, name: "Overflow", color: "#ef4444" });
-    const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
     const me = (await (await fetch(`${api}/api/me`, { headers: { cookie: client.cookies().map((c) => `${c.name}=${c.value}`).join("; ") } })).json() as { user: { id: string } }).user.id;
     const full = await client.action<{ id: string }>("create_work_item", { projectId: project!.id, title: "A deliberately long work item title that cannot possibly fit on one phone line at all", priority: "high", assigneeIds: [me], labelIds: [labels.id], startDate: day(1), dueDate: day(5) });
     await client.action("add_cycle_items", { cycleId: seed.cycleId, workItemIds: [full.id], moveFromCurrentCycle: true });
+    if (seed.moduleId) await client.action("add_module_items", { moduleId: seed.moduleId, workItemIds: [full.id] });
     await client.action("add_module_items", { moduleId: seed.moduleId, workItemIds: [full.id] });
     const board = await open(browser, "1440", "light", "en", client);
     await board.page.goto(`${web}/${slug}/projects/${seed.key}/issues?layout=board`);
@@ -149,9 +156,35 @@ try {
       await board.page.keyboard.press("Enter");
       check(await more.getAttribute("aria-expanded") === expanded, `+N reports aria-expanded=${expanded}`);
       check(await more.evaluate((element) => element === document.activeElement), "+N keeps focus when it toggles");
+      if (expanded === "true") {
+        const revealed = board.page.getByTestId("card-overflow-properties").locator(":focus");
+        // The three populated chips remain before the newly revealed chips.
+        for (let step = 0; step < 4 && await revealed.count() === 0; step++) await board.page.keyboard.press("Tab");
+        reviewCheck(await revealed.count() === 1, "Board disclosure: Tab from the expanded toggle reaches a revealed property");
+        await more.focus();
+      }
     }
     await board.page.screenshot({ path: `${shots}/board-overflow.png` });
     await board.context.close();
+    const touchBoard = await open(browser, "390", "light", "en", client);
+    await touchBoard.page.goto(`${web}/${slug}/projects/${seed.key}/issues?layout=board`);
+    const touchMore = touchBoard.page.getByRole("button", { name: new RegExp(`^${translate("workItems.more")}: `) }).first();
+    await touchMore.tap();
+    const overflow = touchBoard.page.getByTestId("card-overflow-properties").first();
+    await overflow.locator("button").last().scrollIntoViewIfNeeded();
+    const reachable = await touchMore.evaluate((button) => {
+      const card = button.closest("[data-card-id]")!;
+      const strip = card.querySelector<HTMLElement>("[data-testid=card-properties]")!;
+      const distance = strip.scrollWidth - strip.clientWidth;
+      return distance > 0 && [0, distance].every((offset) => {
+        strip.scrollLeft = offset;
+        const { x, y, width, height } = button.getBoundingClientRect();
+        return button.contains(document.elementFromPoint(x + width / 2, y + height / 2));
+      });
+    });
+    if (reachable) await touchMore.tap();
+    reviewCheck(reachable && await touchMore.getAttribute("aria-expanded") === "false", "Board disclosure: touch can collapse after scrolling to the last revealed property");
+    await touchBoard.context.close();
     for (const viewport of [{ width: 844, height: 390 }, { width: 980, height: 800 }]) {
       const list = await open(browser, "390", "light", "en", client);
       await list.page.setViewportSize(viewport);
@@ -169,6 +202,7 @@ try {
   const routes = [
     ["list", `/projects/${seed.key}/issues?layout=list`], ["board", `/projects/${seed.key}/issues?layout=board`], ["spreadsheet", `/projects/${seed.key}/issues?layout=spreadsheet`],
     ["detail", `/browse/${seed.workItem}`], ["settings", "/settings"], ["projects", "/projects"],
+    ["cycles", `/projects/${seed.key}/cycles`], ["modules", `/projects/${seed.key}/modules`],
   ] as const;
   await client.action("set_my_locale", { locale: "th" });
   for (const size of Object.keys(sizes) as Size[]) {
@@ -176,11 +210,20 @@ try {
     for (const [name, path] of routes) {
       await page.goto(`${web}/${slug}${path}`);
       await page.locator("main").getByText(/[ก-๛]/).first().waitFor({ state: "attached" });
+      if (name === "cycles" || name === "modules") await page.getByRole("link", { name: planningName, exact: true }).waitFor();
       await page.waitForTimeout(500);
       const clipped = await clippedThai(page);
-      check(clipped.length === 0, `Thai clipped on ${name} at ${size}:\n${clipped.join("\n")}`);
+      reviewCheck(clipped.length === 0, `Thai clipped on ${name} at ${size}:\n${clipped.join("\n")}`);
       await page.screenshot({ path: `${shots}/th-${name}-${size}.png` });
     }
+    const untouched = await page.evaluate(() => {
+      const probe = document.body.appendChild(document.createElement("span"));
+      probe.className = "truncate";
+      const { paddingTop, marginTop } = getComputedStyle(probe);
+      probe.remove();
+      return `${paddingTop} ${marginTop}`;
+    });
+    reviewCheck(untouched === "0px 0px", `Thai room is opt-in: a plain truncate at ${size} got padding and margin ${untouched}`);
     check(await page.evaluate(() => [...document.fonts].some((face) => face.family.includes("Weft Thai") && face.status === "loaded")), "the Thai face is loaded");
     check(outside.length === 0, `requests left this origin: ${outside.join(", ")}`);
     if (size === "1440") {
@@ -191,8 +234,9 @@ try {
     await context.close();
   }
 
-  console.log("e2e theme-type-auth: ok");
   await browser.close();
+  check(reviewFailures.length === 0, reviewFailures.join("\n"));
+  console.log("e2e theme-type-auth: ok");
 } catch (error) {
   failed = true;
   console.error(error);

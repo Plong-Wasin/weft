@@ -185,7 +185,7 @@ export function WorkspaceRuntimes() {
             <div className="grid min-w-0 gap-0.5 sm:mr-auto">
               <span className="flex min-w-0 items-center gap-2 font-medium">
                 <span aria-hidden className={`size-2 shrink-0 rounded-full ${runtime.online ? "bg-green-600" : "bg-amber-500"}`} />
-                <span className="truncate">{runtime.ownerName} · {runtime.agentCli}</span>
+                <span className="thai-room truncate">{runtime.ownerName} · {runtime.agentCli}</span>
               </span>
               <span className="break-words text-sm text-muted-foreground">{runtime.hostname} · {runtime.online ? translate("runtimes.online") : offlineText(runtime)}</span>
             </div>

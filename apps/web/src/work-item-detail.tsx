@@ -105,7 +105,7 @@ function TypeRows({ project, item, canWrite, people, onSaved }: { project: Proje
 
 function PropertyRow({ icon, label, children }: { icon: React.ReactNode; label: string; children: React.ReactNode }) {
   return <div data-property-row className="grid min-h-8 grid-cols-[minmax(6.5rem,0.85fr)_minmax(0,1.15fr)] items-center gap-2 rounded-lg px-1 text-13 transition-colors hover:bg-accent">
-    <span className="flex min-w-0 items-center gap-2 text-muted-foreground">{icon}<span className="truncate" title={label}>{label}</span></span>
+    <span className="flex min-w-0 items-center gap-2 text-muted-foreground">{icon}<span className="thai-room truncate" title={label}>{label}</span></span>
     <div className="flex min-w-0 flex-nowrap items-center gap-1 [&>*]:min-w-0 [&>div]:w-full [&>div>button]:w-full [&>div>button]:justify-start [&_button]:h-auto [&_button]:min-h-9 pointer-coarse:[&_button]:min-h-11">{children}</div>
   </div>;
 }
@@ -317,7 +317,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
         <Button variant="ghost" type="button" className={`${iconButton} max-sm:flex max-sm:h-auto max-sm:w-auto pointer-coarse:min-h-11 pointer-coarse:min-w-11 max-sm:pointer-coarse:w-auto max-sm:items-center max-sm:gap-1 max-sm:px-1.5 max-sm:py-1`} aria-label={t("workItems.peek.close")} title={t("workItems.peek.close")} onClick={onClose}><X aria-hidden size={16} /><span className="hidden text-10 max-sm:inline">{t("workItems.peek.close")}</span></Button>
       </>
       : <nav aria-label={t("workItems.breadcrumb")} className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden whitespace-nowrap text-13 text-muted-foreground">
-        {project && <Link to={paths.workItems(workspace.slug, project.key)} className="hidden truncate text-muted-foreground hover:text-foreground sm:inline">{project.name}</Link>}
+        {project && <Link to={paths.workItems(workspace.slug, project.key)} className="hidden thai-room truncate text-muted-foreground hover:text-foreground sm:inline">{project.name}</Link>}
         <span aria-hidden className="hidden sm:inline">›</span>
         <Link to={back} className="hidden text-muted-foreground hover:text-foreground sm:inline">{t("workItems.title")}</Link>
         <span aria-hidden className="hidden sm:inline">›</span>
@@ -386,7 +386,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
           options={priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> }))} onSelect={(priority) => void change({ priority })} />,
     assignees: <MultiSelect label={t("workItems.assignees")} readOnly={!canWrite} selected={assignees} searchAlways
           onOpen={() => { void action<Member[]>("list_project_members", { projectId: item.projectId }).then((rows) => rows && setPeople(rows)); }}
-          summary={assignees.length === 0 ? <span className="text-muted-foreground">{t("workItems.noAssignee")}</span> : <span className="flex items-center gap-1">{assignees.slice(0, 3).map((id) => <Avatar key={id} name={personName(id)} id={id} agent={isAgentId(id)} />)}<span className="max-w-32 truncate">{assignees.map(personName).join(", ")}</span></span>}
+          summary={assignees.length === 0 ? <span className="text-muted-foreground">{t("workItems.noAssignee")}</span> : <span className="flex items-center gap-1">{assignees.slice(0, 3).map((id) => <Avatar key={id} name={personName(id)} id={id} agent={isAgentId(id)} />)}<span className="max-w-32 thai-room truncate">{assignees.map(personName).join(", ")}</span></span>}
           options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: accessReasonText(person) }))}
           onToggle={(id, on) => void change({ assigneeIds: on ? [...assignees, id] : assignees.filter((other) => other !== id) })} />,
     due: <DateChip label={t("workItems.dueDate")} field="due" range={{ startDate: item.startDate, dueDate: item.dueDate }} stateGroup={stateOf?.group} readOnly={!canWrite} onChange={(dates) => void change(dates)} />,
@@ -494,7 +494,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       </PropertyRow>
       <PropertyRow icon={<Tag aria-hidden size={15} />} label={t("workItems.labels")}>
         <MultiSelect label={t("workItems.labels")} readOnly={!canWrite} selected={item.labelIds} icon={undefined}
-          summary={item.labelIds.length === 0 ? <span className="text-muted-foreground">{t("workItems.noLabels")}</span> : <span className="flex min-w-0 flex-wrap items-center gap-1 whitespace-normal text-left">{item.labelIds.map((id) => labels.find((label) => label.id === id)).filter((label): label is Label => !!label).map((label) => <span key={label.id} className="flex min-w-0 max-w-full items-center gap-1"><span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: label.color }} /><span className="truncate">{label.name}</span></span>)}</span>}
+          summary={item.labelIds.length === 0 ? <span className="text-muted-foreground">{t("workItems.noLabels")}</span> : <span className="flex min-w-0 flex-wrap items-center gap-1 whitespace-normal text-left">{item.labelIds.map((id) => labels.find((label) => label.id === id)).filter((label): label is Label => !!label).map((label) => <span key={label.id} className="flex min-w-0 max-w-full items-center gap-1"><span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: label.color }} /><span className="thai-room truncate">{label.name}</span></span>)}</span>}
           options={labels.map((label) => ({ id: label.id, name: label.name, icon: <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: label.color }} /> }))}
           onToggle={(id, on) => void change({ labelIds: on ? [...item.labelIds, id] : item.labelIds.filter((other) => other !== id) })} />
       </PropertyRow>
@@ -512,7 +512,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       </PropertyRow>}
       {project?.features.modules && <PropertyRow icon={<Package aria-hidden size={15} />} label={t("workItems.modules")}>
         <MultiSelect label={t("workItems.modules")} readOnly={!canWrite} selected={moduleIds}
-          summary={moduleIds.length === 0 ? <span className="text-muted-foreground">{t("workItems.noModules")}</span> : <span className="min-w-0 truncate">{moduleIds.map((id) => modules.find((module) => module.id === id)?.name).filter(Boolean).join(", ")}</span>}
+          summary={moduleIds.length === 0 ? <span className="text-muted-foreground">{t("workItems.noModules")}</span> : <span className="min-w-0 thai-room truncate">{moduleIds.map((id) => modules.find((module) => module.id === id)?.name).filter(Boolean).join(", ")}</span>}
           options={modules.map((module) => ({ id: module.id, name: module.name }))} onToggle={(id, on) => void setModule(id, on)} />
       </PropertyRow>}
       <PropertyRow icon={<Layers aria-hidden size={15} />} label={t("workItems.parent")}>
@@ -523,7 +523,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
     </>)}
     {propSection("details", <>
       <PropertyRow icon={<CircleUserRound aria-hidden size={15} />} label={t("workItems.createdBy")}>
-        <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap px-1 text-13 font-medium text-foreground"><Avatar name={creator} id={item.createdBy} agent={isAgentId(item.createdBy)} /><span className="min-w-0 truncate" title={creator}>{creator}</span></span>
+        <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap px-1 text-13 font-medium text-foreground"><Avatar name={creator} id={item.createdBy} agent={isAgentId(item.createdBy)} /><span className="min-w-0 thai-room truncate" title={creator}>{creator}</span></span>
       </PropertyRow>
       {project && <TypeRows project={project} item={item} canWrite={canWrite} people={people} onSaved={async () => { await load(); onChanged?.(); }} />}
     </>)}

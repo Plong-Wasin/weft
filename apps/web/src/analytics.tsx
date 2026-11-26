@@ -51,13 +51,13 @@ function ProjectFilter({ projects, selected, onChange }: { projects: Project[]; 
   const shown = projects.filter((project) => `${project.key} ${project.name}`.toLowerCase().includes(query.trim().toLowerCase()));
   const toggle = (id: string) => onChange(selected.includes(id) ? selected.filter((item) => item !== id) : [...selected, id]);
   return <div className="grid min-w-40 gap-1 text-sm font-medium text-foreground"><span>{t("analytics.projects")}</span><Popover label={t("analytics.projects")} panelRole="dialog" panelClassName="w-72 max-w-[85vw] rounded-xl p-2" className="h-9 w-full justify-between border border-input bg-background text-sm text-foreground shadow-xs hover:bg-accent"
-    trigger={<><span className="truncate">{selected.length === 0 ? t("analytics.allProjects") : t("analytics.projectsSelected", { count: selected.length })}</span><ChevronDown aria-hidden size={14} /></>}>
+    trigger={<><span className="thai-room truncate">{selected.length === 0 ? t("analytics.allProjects") : t("analytics.projectsSelected", { count: selected.length })}</span><ChevronDown aria-hidden size={14} /></>}>
     {() => <div className="grid gap-1">
       <Input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("analytics.searchProjects")} aria-label={t("analytics.searchProjects")} className="rounded-lg border border-border px-3 py-1.5 text-sm" />
       <ul className="m-0 grid max-h-64 list-none gap-0.5 overflow-y-auto p-0">
         {shown.map((project) => <li key={project.id}><label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-sm hover:bg-accent">
           <Checkbox checked={selected.includes(project.id)} onChange={() => toggle(project.id)} />
-          <span className="rounded-md bg-muted px-1.5 text-xs text-muted-foreground">{project.key}</span><span className="truncate">{project.name}</span>
+          <span className="rounded-md bg-muted px-1.5 text-xs text-muted-foreground">{project.key}</span><span className="thai-room truncate">{project.name}</span>
           {selected.includes(project.id) && <Check aria-hidden size={12} className="ml-auto shrink-0" />}
         </label></li>)}
       </ul>
@@ -82,7 +82,7 @@ export function Chart({ insights, stateGroupsByName = {} }: { insights: Insights
     </ul>}
     <ul className="m-0 grid list-none gap-2 p-0">
       {insights.buckets.map((bucket) => <li key={bucket.key ?? "none"} className="grid grid-cols-[minmax(0,9rem)_minmax(0,1fr)_auto] items-center gap-3 text-sm max-md:grid-cols-[minmax(0,6rem)_minmax(0,1fr)_auto]">
-        <span className="truncate text-muted-foreground" title={bucketLabel(insights.x, bucket)}>{bucketLabel(insights.x, bucket)}</span>
+        <span className="thai-room truncate text-muted-foreground" title={bucketLabel(insights.x, bucket)}>{bucketLabel(insights.x, bucket)}</span>
         <span className="flex h-5 overflow-hidden rounded-sm bg-muted" role="img" aria-label={`${bucketLabel(insights.x, bucket)}: ${bucket.count}`}>
           {insights.groupBy
             ? bucket.groups.map((group) => <span key={group.key ?? "none"} title={`${bucketLabel(insights.groupBy!, group)}: ${group.count}`} style={{ width: `${(group.count / max) * 100}%`, background: colorFor(insights.groupBy!, group, groupIndex(group.key)) }} />)
@@ -123,7 +123,7 @@ function CreatedVsResolved({ months }: { months: Month[] }) {
     </ul>
     <ul className="m-0 grid list-none gap-2.5 p-0">
       {months.map((row) => <li key={row.month} className="grid grid-cols-[minmax(0,6rem)_minmax(0,1fr)] items-center gap-3 text-sm max-md:grid-cols-[minmax(0,4.5rem)_minmax(0,1fr)]">
-        <span className="truncate text-muted-foreground">{monthText(row.month)}</span>
+        <span className="thai-room truncate text-muted-foreground">{monthText(row.month)}</span>
         <span className="grid gap-1">
           {series.map(([key, label, color]) => <span key={key} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
             <span className="flex h-3.5 overflow-hidden rounded-sm bg-muted" role="img" aria-label={`${monthText(row.month)}, ${t(label)}: ${row[key]}`}><span style={{ width: `${(row[key] / max) * 100}%`, background: color }} /></span>
@@ -177,7 +177,7 @@ export function AnalyticsOverviewPage({ workspaceId, workspaceSlug, run }: { wor
           <tbody>
             {state.projects.map((project) => <tr key={project.id} className="border-t border-border text-sm">
               <th scope="row" className="py-2 pr-2 text-left font-normal">
-                <span className="flex min-w-0 items-center gap-x-2"><span className="shrink-0 rounded-md bg-muted px-1.5 text-xs text-muted-foreground">{project.key}</span><span className="line-clamp-2 min-h-10 min-w-0 break-words leading-5 sm:line-clamp-none sm:min-h-0 sm:truncate" title={project.name}>{project.name}</span></span>
+                <span className="flex min-w-0 items-center gap-x-2"><span className="shrink-0 rounded-md bg-muted px-1.5 text-xs text-muted-foreground">{project.key}</span><span className="thai-room line-clamp-2 min-h-10 min-w-0 break-words leading-5 sm:line-clamp-none sm:min-h-0 sm:truncate" title={project.name}>{project.name}</span></span>
               </th>
               <td className="py-2 text-right tabular-nums">{formatNumber(project.total)}</td>
               <td className="py-2 text-right tabular-nums">{formatNumber(project.open)}</td>

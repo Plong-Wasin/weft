@@ -30,7 +30,7 @@ function PageTree({ workspace, pages, parentId, activeId, open, toggle, depth, d
         {children.length > 0
           ? <Button type="button" aria-expanded={expanded} aria-label={`${translate("wikiSidebar.toggle")}: ${page.title}`} onClick={() => toggle(page.id)} className="grid size-5 max-md:size-11 shrink-0 place-items-center !bg-transparent !p-0 text-muted-foreground hover:!bg-accent"><ChevronRight aria-hidden size={12} className={`transition-transform ${expanded ? "rotate-90" : ""}`} /></Button>
           : <span className="size-5 shrink-0" />}
-        <NavLink to={paths.wikiPage(workspace.slug, page.id)} className={({ isActive }) => `${row(isActive)} min-w-0 flex-1`}><FileText aria-hidden size={13} className="shrink-0" /><span className="truncate">{page.title}</span></NavLink>
+        <NavLink to={paths.wikiPage(workspace.slug, page.id)} className={({ isActive }) => `${row(isActive)} min-w-0 flex-1`}><FileText aria-hidden size={13} className="shrink-0" /><span className="thai-room truncate">{page.title}</span></NavLink>
         {over === `page:${page.id}` && <span className="px-1 text-[12px] font-medium text-foreground">{translate(overKind === "before" ? "wikiSidebar.dropBefore" : overKind === "after" ? "wikiSidebar.dropAfter" : "wikiSidebar.dropNest")}</span>}
         {page.canEdit && <Button type="button" aria-label={`${translate("sortable.reorder")}: ${page.title}`} data-wiki-drag-handle={page.id} onPointerDown={(event) => dragStart(page.id, event)} onKeyDown={(event) => {
           // Arrow Up places the page before its previous sibling and Arrow Down after its next one, in the order shown here.
@@ -54,7 +54,7 @@ function Group({ label, icon, count, defaultOpen, holdsActive = false, dropHint,
   React.useEffect(() => { if (holdsActive) setOpen(true); }, [holdsActive]);
   return <section className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-0.5">
     <Button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className={heading}>
-      <ChevronRight aria-hidden size={12} className={`transition-transform ${open ? "rotate-90" : ""}`} />{icon}<span className="min-w-0 flex-1 truncate" title={label}>{label}</span>{dropHint && <span className="text-[12px] font-medium text-foreground">{dropHint}</span>}{count !== undefined && <span className="font-normal">{count}</span>}
+      <ChevronRight aria-hidden size={12} className={`transition-transform ${open ? "rotate-90" : ""}`} />{icon}<span className="min-w-0 flex-1 thai-room truncate" title={label}>{label}</span>{dropHint && <span className="text-[12px] font-medium text-foreground">{dropHint}</span>}{count !== undefined && <span className="font-normal">{count}</span>}
     </Button>
     {open && <div className="grid gap-0.5 pl-1">{children}</div>}
   </section>;

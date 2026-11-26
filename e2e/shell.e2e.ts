@@ -313,10 +313,14 @@ try {
   await results.getByRole("link", { name: /Alpha handbook/ }).waitFor();
   await results.getByRole("link", { name: /Alpha handbook/ }).click();
   await page.waitForURL(new RegExp(`/${slug}/wiki/`));
+  await results.waitFor({ state: "detached" });
   await searchInput.fill("");
   await searchInput.fill("Alpha");
-  await results.getByRole("link", { name: /Alpha shell item/ }).click({ force: true });
+  const workItemResult = results.getByRole("link", { name: /Alpha shell item/ });
+  await workItemResult.waitFor();
+  await workItemResult.click();
   await page.waitForURL(`${web}/${slug}/browse/MOB-1`);
+  await results.waitFor({ state: "detached" });
   console.log("shell ok: search");
 
   // Notifications icon opens the inbox.

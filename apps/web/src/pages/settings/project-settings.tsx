@@ -207,7 +207,7 @@ export function ProjectStates() {
     {canAdmin && <div className="mb-5 grid justify-items-start gap-3">
       <Button ref={addStateButton} type="button" data-testid="add-state" className="secondary pointer-coarse:min-h-11" aria-expanded={adding} onClick={() => setAdding(!adding)}>{translate("states.add")}</Button>
       {adding && <form className="my-0 flex flex-wrap items-end gap-3" onSubmit={(event) => void createState(event)}>
-        <label><span id={groupLabelId}>{translate("analytics.axis.stateGroup")}</span><select aria-labelledby={groupLabelId} required autoFocus className="pointer-coarse:min-h-11" value={newGroup} onChange={(event) => setNewGroup(event.target.value as (typeof stateGroups)[number])}>
+        <label><span id={groupLabelId}>{translate("analytics.axis.stateGroup")}</span><select aria-labelledby={groupLabelId} required autoFocus className="h-9 min-w-40 pointer-coarse:min-h-11" value={newGroup} onChange={(event) => setNewGroup(event.target.value as (typeof stateGroups)[number])}>
           <option value="" disabled hidden />
           {stateGroups.map((group) => <option key={group} value={group}>{translate(`states.group.${group}`)}</option>)}
         </select></label>

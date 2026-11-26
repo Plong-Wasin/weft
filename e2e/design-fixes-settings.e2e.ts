@@ -58,6 +58,23 @@ try {
   const secondProjectName = "Regional customer support workspace project with a long name";
   await call("create_project", { workspaceId, name: secondProjectName, key: "SUP", visibility: "public" });
 
+  const checkProjectsHeader = async (width: number) => {
+    // The content column can clip its own overflow, so measure the header actions against the header itself.
+    await page.locator("[data-project-row]").first().waitFor();
+    const header = await page.evaluate(() => {
+      const node = document.querySelector("[data-testid='page-header']")!;
+      const box = node.getBoundingClientRect();
+      const controls = [...node.querySelectorAll("input, button, label")].map((control) => control.getBoundingClientRect()).filter((control) => control.width > 1 && control.height > 1);
+      const range = document.createRange();
+      range.selectNodeContents(node.querySelector("h1")!);
+      const titleLines = new Set([...range.getClientRects()].filter((rect) => rect.width > 0).map((rect) => Math.round(rect.top))).size;
+      return { titleLines, left: box.left, right: box.right, scrollWidth: node.scrollWidth, clientWidth: node.clientWidth, controls: controls.map((control) => [Math.round(control.left), Math.round(control.right)]) };
+    });
+    check(header.titleLines === 1, `the Projects title wraps onto ${header.titleLines} lines at ${width}px`);
+    check(header.scrollWidth <= header.clientWidth + 1 && header.controls.every(([left, right]) => left! >= header.left - 1 && right! <= header.right + 1), `the Projects header actions overflow the header at ${width}px: ${JSON.stringify(header)}`);
+    console.log(`projects header at ${width}px: ${Math.round(header.right - header.left)}px wide, controls ${JSON.stringify(header.controls)}`);
+  };
+
   // Every settings route fits the phone and the desktop width without a sideways scroll.
   const routes = ["projects", "settings", "settings/members", "settings/projects/SET", "settings/projects/SET/states", "settings/projects/SET/estimates", "settings/projects/SET/labels", "settings/projects/SET/features"];
   for (const width of [390, 768, 820, 1024, 1440]) {
@@ -67,20 +84,18 @@ try {
       try { await page.getByRole("heading").first().waitFor(); }
       catch { throw new Error(`/${route} did not render a heading at ${width}px: ${await page.locator("body").innerText()}`); }
       check(await noSideScroll(), `/${route} scrolls the page sideways at ${width}px`);
-      if (route === "projects") {
-        // The content column can clip its own overflow, so measure the header actions against the header itself.
-        await page.locator("[data-project-row]").first().waitFor();
-        const header = await page.evaluate(() => {
-          const node = document.querySelector("[data-testid='page-header']")!;
-          const box = node.getBoundingClientRect();
-          const controls = [...node.querySelectorAll("input, button, label")].map((control) => control.getBoundingClientRect()).filter((control) => control.width > 1 && control.height > 1);
-          return { left: box.left, right: box.right, scrollWidth: node.scrollWidth, clientWidth: node.clientWidth, controls: controls.map((control) => [Math.round(control.left), Math.round(control.right)]) };
-        });
-        check(header.scrollWidth <= header.clientWidth + 1 && header.controls.every(([left, right]) => left! >= header.left - 1 && right! <= header.right + 1), `the Projects header actions overflow the header at ${width}px: ${JSON.stringify(header)}`);
-        console.log(`projects header at ${width}px: ${Math.round(header.right - header.left)}px wide, controls ${JSON.stringify(header.controls)}`);
-      }
+      if (route === "projects") await checkProjectsHeader(width);
     }
   }
+  // Thai labels are longer: the Projects title stays on one line and the actions stay inside the header at tablet widths.
+  await call("set_my_locale", { locale: "th" });
+  for (const width of [768, 820, 1024]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto(`${web}/${slug}/projects`);
+    await page.getByRole("heading", { name: translate("projects.title", "th"), exact: true }).waitFor();
+    await checkProjectsHeader(width);
+  }
+  await call("set_my_locale", { locale: "en" });
   console.log("settings ok: Projects and all settings routes fit at 390, 768, 820, 1024 and 1440 without a sideways scroll");
 
   // The Projects page has one finder, aligns it with the title, and keeps every project row on one shared rhythm.

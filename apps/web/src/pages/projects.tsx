@@ -77,7 +77,7 @@ export function ProjectsPanel() {
       {note && <p role="alert" className="m-0 text-sm text-destructive">{note}</p>}
     </form>;
   return <section className="grid gap-4">
-    <PageHeader title={translate("projects.title")} actions={<div className="flex w-screen max-w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
+    <PageHeader title={translate("projects.title")} actions={<div className="flex w-screen max-w-full flex-wrap items-center gap-2 lg:w-auto lg:justify-end">
       <Input aria-label={translate("projects.find")} type="search" className="w-full max-w-80 sm:w-64 sm:max-w-none" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={translate("projects.searchPlaceholder")} />
       <label className="secondary flex items-center gap-2 text-sm pointer-coarse:min-h-11"><Checkbox checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />{translate("projects.showArchived")}</label>
       {!creating && <Button type="button" className="flex items-center gap-1.5 pointer-coarse:min-h-11" onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{translate("projects.new")}</Button>}

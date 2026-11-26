@@ -23,6 +23,7 @@ import { createProjectActions } from "./projects";
 import { createProjectPreferenceActions } from "./project-preferences";
 import { createRelationActions } from "./relations";
 import { createSearchActions } from "./search";
+import { createTargetActions } from "./targets";
 import { createViewActions } from "./views";
 import { createWikiActions } from "./wiki";
 import { createWorkItemActions } from "./work-items";
@@ -100,6 +101,7 @@ export function createActionList(db: Database, options: { integrations?: boolean
     outbound.listOutboundWebhooks, outbound.createOutboundWebhook, outbound.updateOutboundWebhook, outbound.rotateOutboundWebhookSecret, outbound.deleteOutboundWebhook,
     outbound.testOutboundWebhook, outbound.listOutboundWebhookDeliveries, outbound.redeliverOutboundWebhookDelivery,
     search.searchWorkItems,
+    createTargetActions(db).resolveTargets,
     assets.requestAssetUpload, assets.completeAssetUpload, assets.cancelAssetUpload, assets.listAssets, assets.getAssetDownloadUrl, assets.deleteAsset,
     wiki.createWikiPageTemplate, wiki.listWikiPageTemplates, wiki.deleteWikiPageTemplate,
     wiki.createCollection, wiki.listCollections, wiki.renameCollection, wiki.setCollectionVisibility, wiki.shareCollection, wiki.listCollectionMembers, wiki.revokeCollectionShare, wiki.deleteCollection,

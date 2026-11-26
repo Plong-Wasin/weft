@@ -112,7 +112,7 @@ if (!FormatRegistry.Has("uuid")) FormatRegistry.Set("uuid", (value) => /^[0-9a-f
 
 /** Read actions the AI must not see even though they only read. */
 // Account security: sessions, members' tokens and the audit log are for an Admin or the person themselves, never for an assistant.
-export const HIDDEN_FROM_AI = new Set(["list_api_tokens", "list_managed_credentials", "list_cli_devices", "revoke_cli_device", "list_authorized_apps", "get_my_locale", "get_my_email_preferences", "get_my_ai_preferences", "set_my_ai_preferences", "list_open_invites", "list_comment_versions", "get_export_download_url", "list_my_sessions", "list_member_accounts", "list_member_api_tokens", "list_audit_log", "export_audit_log"]);
+export const HIDDEN_FROM_AI = new Set(["list_api_tokens", "list_managed_credentials", "list_cli_devices", "revoke_cli_device", "list_authorized_apps", "get_my_locale", "get_my_email_preferences", "get_my_ai_preferences", "set_my_ai_preferences", "list_open_invites", "list_comment_versions", "get_export_download_url", "list_my_sessions", "list_member_accounts", "list_member_api_tokens", "list_audit_log", "export_audit_log", "resolve_targets"]);
 
 export interface AiTool {
   name: string;

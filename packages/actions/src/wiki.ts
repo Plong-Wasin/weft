@@ -75,8 +75,8 @@ function canWriteWikiPage(input: {
 }
 
 /** Shared authorization entry point for Wiki pages and their attached assets. */
-export async function requireWikiPageAccess(db: Database, userId: string, pageId: string, requirement: "read" | "write") {
-  const [page] = await db.select().from(wikiPages).where(and(eq(wikiPages.id, pageId), isNull(wikiPages.deletedAt)));
+export async function requireWikiPageAccess(db: Database, userId: string, pageId: string, requirement: "read" | "write", options: { includeDeleted?: boolean } = {}) {
+  const [page] = await db.select().from(wikiPages).where(and(eq(wikiPages.id, pageId), options.includeDeleted ? undefined : isNull(wikiPages.deletedAt)));
   if (!page) throw new ActionError(currentAgentProjectScope() ? "Not found" : "Wiki page not found", 404);
   let shareRole: WikiShareRole | null = null;
   if (!page.projectId) {
@@ -84,7 +84,8 @@ export async function requireWikiPageAccess(db: Database, userId: string, pageId
     if (share && wikiShareRoles.includes(share.role as WikiShareRole)) shareRole = share.role as WikiShareRole;
   }
   if (!page.projectId && page.collectionId) {
-    const [collection] = await db.select().from(collections).where(and(eq(collections.id, page.collectionId), isNull(collections.deletedAt)));
+    // A deleted Collection stays as private as it was: includeDeleted still returns its deleted pages.
+    const [collection] = await db.select().from(collections).where(eq(collections.id, page.collectionId));
     const [shared] = await db.select({ userId: collectionMembers.userId }).from(collectionMembers).where(and(eq(collectionMembers.collectionId, page.collectionId), eq(collectionMembers.userId, userId)));
     if (collection?.visibility === "private" && collection.ownerId !== userId && !shared && !shareRole) throw new ActionError(wikiPageNotFound(), 404);
   }

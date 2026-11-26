@@ -64,7 +64,7 @@ export function WorkspaceChooser({ current, languageSwitch, signOut, refresh }: 
     </form>}
     {needsFirstWorkspace && !current.canCreateWorkspace && <p className="text-14 text-muted-foreground">{translate("workspace.noAccess")}</p>}
     {error && <p role="alert" className="text-13 text-destructive">{error}</p>}
-    <div className="flex items-center gap-4 pt-2 text-13 text-muted-foreground">{languageSwitch}<ThemeSwitch /></div>
+    <div className="flex flex-wrap items-center gap-4 pt-2 text-13 text-muted-foreground">{languageSwitch}<ThemeSwitch /></div>
   </OnboardingShell>;
 }
 

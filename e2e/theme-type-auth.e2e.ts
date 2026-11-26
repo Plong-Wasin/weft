@@ -132,7 +132,7 @@ try {
     await context.close();
   }
 
-  // Board "+N": a toggle that keeps focus and says whether the card is open. Touch lists: long titles get two lines.
+  // Board "+N": a toggle that keeps focus and says whether the card is open. Wide touch lists: long titles get two lines.
   {
     const labels = await client.action<{ id: string }>("create_label", { projectId: project!.id, name: "Overflow", color: "#ef4444" });
     const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
@@ -152,7 +152,7 @@ try {
     }
     await board.page.screenshot({ path: `${shots}/board-overflow.png` });
     await board.context.close();
-    for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }]) {
+    for (const viewport of [{ width: 844, height: 390 }, { width: 980, height: 800 }]) {
       const list = await open(browser, "390", "light", "en", client);
       await list.page.setViewportSize(viewport);
       await list.page.goto(`${web}/${slug}/projects/${seed.key}/issues?layout=list`);

@@ -537,7 +537,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       )}>
         <div className="flex min-h-10 min-w-0 items-center gap-2 sm:contents [@media(pointer:coarse)]:max-sm:gap-3.5">
           <span className="flex size-4 shrink-0 items-center justify-center sm:order-1 sm:justify-self-center">{checkbox ? React.cloneElement(checkbox, { className: cn(checkbox.props.className, "rounded-sm") }) : <span aria-hidden />}</span>
-          <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} title={item.title} className="min-w-0 flex-1 truncate text-14 font-medium text-foreground [overflow-wrap:anywhere] max-sm:line-clamp-2 max-sm:whitespace-normal [@media(hover:none)]:line-clamp-2 [@media(hover:none)]:whitespace-normal sm:order-5">{item.title}</Link>
+          <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} title={item.title} className="min-w-0 flex-1 truncate text-14 font-medium text-foreground sm:order-5 sm:[@media(hover:none)]:line-clamp-2 sm:[@media(hover:none)]:whitespace-normal sm:[@media(hover:none)]:[overflow-wrap:anywhere]">{item.title}</Link>
         </div>
         <div data-testid="work-item-row-metadata" className={cn(
           "work-item-row-metadata flex min-h-10 min-w-0 flex-wrap items-center justify-end gap-1 [@media(pointer:coarse)]:gap-2 sm:contents max-sm:flex-wrap max-sm:gap-1 max-sm:justify-start max-sm:overflow-visible [@media(hover:none)]:max-sm:gap-y-4",

@@ -17,6 +17,7 @@ import { DetailsPanelToggle, useDetailsPanel } from "./details-panel";
 
 import { Checkbox } from "@/ui/checkbox";
 import { Input } from "@/ui/input";
+import { Select, SelectContent, SelectItem, SelectItemText, SelectTrigger, SelectValue } from "@/ui/select";
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
 const statuses = ["backlog", "planned", "in-progress", "paused", "completed", "cancelled"] as const;
@@ -41,19 +42,19 @@ const primaryButton = "flex items-center gap-1.5 whitespace-nowrap rounded-md px
 const iconButton = "grid size-7 place-items-center rounded-md border-0 bg-transparent p-0 text-muted-foreground hover:bg-accent hover:text-foreground";
 
 function StatusBadge({ status }: { status: Status }) {
-  return <span className={`inline-flex items-center whitespace-nowrap rounded-md px-2 py-0.5 text-xs font-medium ${statusTone[status]}`}>{t(`modules.status.${status}`)}</span>;
+  return <span className={`inline-flex items-center whitespace-nowrap rounded-md border border-border px-2 py-1 text-xs font-medium ${statusTone[status]}`}>{t(`modules.status.${status}`)}</span>;
 }
 
 /** Plane's circular progress: the ring fills with the completed share. */
 function ProgressRing({ percent }: { percent: number }) {
-  const radius = 11;
+  const radius = 15;
   const circumference = 2 * Math.PI * radius;
-  return <span role="img" aria-label={`${t("modules.progress")}: ${t("modules.percent").replace("{percent}", formatNumber(percent))}`} data-testid="module-progress" data-percent={percent} className="relative grid size-7 shrink-0 place-items-center">
-    <svg aria-hidden viewBox="0 0 28 28" className="absolute inset-0 -rotate-90">
-      <circle cx="14" cy="14" r={radius} fill="none" strokeWidth="2.5" className="stroke-[var(--color-layer-3)]" />
-      <circle cx="14" cy="14" r={radius} fill="none" strokeWidth="2.5" strokeLinecap="round" className="stroke-[var(--color-success-primary)]" strokeDasharray={circumference} strokeDashoffset={circumference * (1 - percent / 100)} />
+  return <span role="img" aria-label={`${t("modules.progress")}: ${t("modules.percent").replace("{percent}", formatNumber(percent))}`} data-testid="module-progress" data-percent={percent} className="relative grid size-9 shrink-0 place-items-center">
+    <svg aria-hidden viewBox="0 0 36 36" className="absolute inset-0 -rotate-90">
+      <circle cx="18" cy="18" r="15" fill="none" strokeWidth="2.5" className="stroke-[var(--color-layer-3)]" />
+      <circle cx="18" cy="18" r="15" fill="none" strokeWidth="2.5" strokeLinecap="round" className="stroke-[var(--color-success-primary)]" strokeDasharray={circumference} strokeDashoffset={circumference * (1 - percent / 100)} />
     </svg>
-    <span aria-hidden className="text-xs font-medium text-muted-foreground">{formatNumber(percent)}%</span>
+    <span aria-hidden className="whitespace-nowrap text-[10px] font-medium tabular-nums text-muted-foreground">{formatNumber(percent)}%</span>
   </span>;
 }
 
@@ -113,10 +114,6 @@ function ModuleFormModal({ action, projectId, workspaceId, module, onClose, onSa
       </div>
       <Input autoFocus required aria-label={t("modules.name")} placeholder={t("modules.name")} value={name} maxLength={255} className="w-full text-base" onChange={(event) => setName(event.target.value)} />
       <div className="grid gap-1 text-sm text-muted-foreground"><span>{t("workItems.description")}</span><DescriptionEditor workspaceId={workspaceId} owner={module ? { ownerType: "module", ownerId: module.id } : undefined} mentionPeople={people} initial={description} editable onChange={setDescription} /></div>
-      <div className="flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-2 text-sm text-muted-foreground">{t("modules.start")}<Input type="date" value={startDate} max={endDate || undefined} className="w-auto" onChange={(event) => setStartDate(event.target.value)} /></label>
-        <label className="flex items-center gap-2 text-sm text-muted-foreground">{t("modules.end")}<Input type="date" value={endDate} min={startDate || undefined} className="w-auto" onChange={(event) => setEndDate(event.target.value)} /></label>
-      </div>
       <div className="flex flex-wrap items-center gap-2">
         <SingleSelect label={t("modules.status")} summary={t(`modules.status.${status}`)} value={status} options={statuses.map((value) => ({ id: value, name: t(`modules.status.${value}`) }))} onSelect={(value) => setStatus(value as Status)} />
         <SingleSelect label={t("modules.lead")} summary={leadId ? nameOf(leadId) : t("modules.noLead")} value={leadId} icon={<CircleUserRound aria-hidden size={14} className="text-muted-foreground" />}
@@ -125,6 +122,10 @@ function ModuleFormModal({ action, projectId, workspaceId, module, onClose, onSa
           summary={memberIds.length === 0 ? <span className="text-muted-foreground">{t("modules.members")}</span> : <span>{memberIds.map(nameOf).filter(Boolean).join(", ")}</span>}
           options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} /> }))}
           onToggle={(id, on) => setMemberIds(on ? [...memberIds, id] : memberIds.filter((other) => other !== id))} />
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="flex items-center gap-2 text-sm text-muted-foreground">{t("modules.start")}<Input type="date" value={startDate} max={endDate || undefined} className="w-auto" onChange={(event) => setStartDate(event.target.value)} /></label>
+        <label className="flex items-center gap-2 text-sm text-muted-foreground">{t("modules.end")}<Input type="date" value={endDate} min={startDate || undefined} className="w-auto" onChange={(event) => setEndDate(event.target.value)} /></label>
       </div>
       {note && <p role="alert" className="m-0 text-destructive">{note}</p>}
       <div className="flex justify-end gap-2 border-t border-border pt-4">
@@ -191,18 +192,18 @@ export function ModulesPage({ workspaceId, workspaceSlug, projectKey, projectId,
   const toggle = (value: Display, icon: React.ReactNode) => <Button type="button" aria-pressed={display === value} aria-label={t(`modules.display.${value}`)} title={t(`modules.display.${value}`)}
     className={`${iconButton} ${display === value ? "bg-accent text-foreground" : ""}`} onClick={() => setDisplay(value)}>{icon}</Button>;
   return <section className="grid gap-4">
-    <PageHeader level={2} title={<><Package aria-hidden size={20} />{t("modules.title")}</>} breadcrumb={<><Link to={paths.workItems(workspaceSlug, projectKey)} className="hover:text-foreground">{projectKey}</Link><ChevronRight aria-hidden size={14} /></>} actions={<>
+    <PageHeader level={2} title={<><Package aria-hidden size={20} />{t("modules.title")}</>} actions={<>
         <label className="flex items-center gap-1.5 whitespace-nowrap text-sm text-muted-foreground"><Checkbox checked={archived} onChange={(event) => setArchived(event.target.checked)} />{t("modules.showArchived")}</label>
         <div role="group" aria-label={t("modules.display")} className="flex items-center gap-0.5 rounded-md bg-muted p-0.5">{toggle("list", <List aria-hidden size={15} />)}{toggle("grid", <LayoutGrid aria-hidden size={15} />)}</div>
         {canWrite && !archived && <Button type="button" className={primaryButton} onClick={() => setForm({})}><Plus aria-hidden size={14} />{t("modules.addNew")}</Button>}
     </>} className="border-b border-border pb-3" />
-    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card p-3">
-      <Input type="search" aria-label={t("modules.searchModules")} placeholder={t("modules.searchModules")} value={search} onChange={(event) => setSearch(event.target.value)} className="w-48" />
-      <select aria-label={t("modules.statusFilter")} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">{t("modules.anyStatus")}</option>{statuses.map((value) => <option key={value} value={value}>{t(`modules.status.${value}`)}</option>)}</select>
-      <select aria-label={t("modules.leadFilter")} value={leadFilter} onChange={(event) => setLeadFilter(event.target.value)}><option value="">{t("modules.anyLead")}</option>{people.filter((person) => !person.isAgent).map((person) => <option key={person.userId} value={person.userId}>{person.name}</option>)}</select>
-      <select aria-label={t("modules.memberFilter")} value={memberFilter} onChange={(event) => setMemberFilter(event.target.value)}><option value="">{t("modules.anyMember")}</option>{people.map((person) => <option key={person.userId} value={person.userId}>{person.name}</option>)}</select>
-      <label className="flex items-center gap-1 text-xs text-muted-foreground">{t("modules.dateFrom")}<Input aria-label={t("modules.dateFrom")} type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /></label>
-      <label className="flex items-center gap-1 text-xs text-muted-foreground">{t("modules.dateTo")}<Input aria-label={t("modules.dateTo")} type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /></label>
+    <div data-testid="module-filters" className="grid grid-cols-1 items-end gap-3 rounded-xl border border-border bg-card p-3 sm:grid-cols-2 xl:grid-cols-6">
+      <label className="grid min-w-0 gap-1 text-sm font-medium">{t("modules.searchModules")}<Input type="search" aria-label={t("modules.searchModules")} value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+      <label className="grid min-w-0 gap-1 text-sm font-medium">{t("modules.statusFilter")}<Select value={statusFilter || "any"} items={[{ value: "any", label: t("modules.anyStatus") }, ...statuses.map((value) => ({ value, label: t(`modules.status.${value}`) }))]} onValueChange={(value) => setStatusFilter(!value || value === "any" ? "" : value)}><SelectTrigger aria-label={t("modules.statusFilter")}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="any"><SelectItemText>{t("modules.anyStatus")}</SelectItemText></SelectItem>{statuses.map((value) => <SelectItem key={value} value={value}><SelectItemText>{t(`modules.status.${value}`)}</SelectItemText></SelectItem>)}</SelectContent></Select></label>
+      <label className="grid min-w-0 gap-1 text-sm font-medium">{t("modules.leadFilter")}<Select value={leadFilter || "any"} items={[{ value: "any", label: t("modules.anyLead") }, ...people.filter((person) => !person.isAgent).map((person) => ({ value: person.userId, label: person.name }))]} onValueChange={(value) => setLeadFilter(!value || value === "any" ? "" : value)}><SelectTrigger aria-label={t("modules.leadFilter")}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="any"><SelectItemText>{t("modules.anyLead")}</SelectItemText></SelectItem>{people.filter((person) => !person.isAgent).map((person) => <SelectItem key={person.userId} value={person.userId}><SelectItemText>{person.name}</SelectItemText></SelectItem>)}</SelectContent></Select></label>
+      <label className="grid min-w-0 gap-1 text-sm font-medium">{t("modules.memberFilter")}<Select value={memberFilter || "any"} items={[{ value: "any", label: t("modules.anyMember") }, ...people.map((person) => ({ value: person.userId, label: person.name }))]} onValueChange={(value) => setMemberFilter(!value || value === "any" ? "" : value)}><SelectTrigger aria-label={t("modules.memberFilter")}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="any"><SelectItemText>{t("modules.anyMember")}</SelectItemText></SelectItem>{people.map((person) => <SelectItem key={person.userId} value={person.userId}><SelectItemText>{person.name}</SelectItemText></SelectItem>)}</SelectContent></Select></label>
+      <label className="grid min-w-0 gap-1 text-sm font-medium">{t("modules.dateFrom")}<Input aria-label={t("modules.dateFrom")} type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /></label>
+      <label className="grid min-w-0 gap-1 text-sm font-medium">{t("modules.dateTo")}<Input aria-label={t("modules.dateTo")} type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /></label>
       {(search || statusFilter || leadFilter || memberFilter || dateFrom || dateTo) && <Button type="button" className={primaryButton} onClick={() => { setSearch(""); setStatusFilter(""); setLeadFilter(""); setMemberFilter(""); setDateFrom(""); setDateTo(""); }}>{t("modules.clearFilters")}</Button>}
     </div>
     {note && <p role="alert" className="m-0 px-4 py-2 text-destructive">{note}</p>}
@@ -215,7 +216,7 @@ export function ModulesPage({ workspaceId, workspaceSlug, projectKey, projectId,
         <Link to={paths.module(workspaceSlug, projectKey, module.id)} className="min-w-48 flex-1 truncate text-sm font-medium text-foreground">{module.name}</Link>
         <span className="flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground"><CalendarRange aria-hidden size={13} />{dateRange(module)}</span>
         <StatusBadge status={module.status} />
-        <span className="text-xs text-muted-foreground">{t("modules.itemCount").replace("{count}", formatNumber(module.itemCount))}</span>
+        <span className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">{t("modules.itemCount").replace("{count}", formatNumber(module.itemCount))}</span>
         <Members ids={module.memberIds} people={people} />
         {leadOf(module) && <span title={`${t("modules.lead")}: ${leadOf(module)?.name}`}><Avatar name={leadOf(module)?.name ?? ""} id={module.leadId ?? undefined} /></span>}
         {menu(module)}

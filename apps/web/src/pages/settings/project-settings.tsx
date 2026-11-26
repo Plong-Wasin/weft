@@ -11,7 +11,7 @@ import { useWorkspace } from "../../layouts/workspace-layout";
 import { Avatar } from "../../avatar";
 import { SortableList, SortMenu } from "../../sortable-list";
 import { Popover, menuItemClass } from "../../shell/popover";
-import { roles, stateGroups, type Label, type Member, type Project, type WorkState } from "../../types";
+import { roles, stateGroupColors, stateGroups, type Label, type Member, type Project, type WorkState } from "../../types";
 import { ProjectMergeSetting } from "./project-merge-setting";
 import { dangerOutline, DangerZone, Note, Row, RowList, SettingsBlock, SettingsHeader } from "./settings-ui";
 import { WorkItemTypesSettings } from "./project-work-item-types";
@@ -181,36 +181,39 @@ export function ProjectLabels() {
   </section>;
 }
 
-const groupDot: Record<(typeof stateGroups)[number], string> = { backlog: "#a3a3a3", unstarted: "#737373", started: "#f59e0b", completed: "#16a34a", cancelled: "#dc2626" };
 
 export function ProjectStates() {
   const { project } = useProject();
-  const groupSelectId = React.useId();
+  const groupLabelId = React.useId();
+  const addStateButton = React.useRef<HTMLButtonElement>(null);
   const canAdmin = canAdminOf(project);
   const [states, setStates] = React.useState<WorkState[]>([]);
   const [newName, setNewName] = React.useState("");
-  const [newGroup, setNewGroup] = React.useState<(typeof stateGroups)[number]>("backlog");
+  const [newGroup, setNewGroup] = React.useState<(typeof stateGroups)[number] | "">("");
   const [adding, setAdding] = React.useState(false);
   const [editing, setEditing] = React.useState<{ id: string; name: string } | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
   const load = React.useCallback(async () => setStates(await action<WorkState[]>("list_states", { projectId: project.id }) ?? []), [project.id]);
   React.useEffect(() => { void load(); }, [load]);
   const guard = async (result: unknown) => { setNote(result === null ? translate("states.failed") : null); await load(); return result !== null; };
+  // The form unmounts on close, so focus goes back to the Add state button instead of falling to <body>.
+  const closeAdd = () => { setNewName(""); setNewGroup(""); setAdding(false); requestAnimationFrame(() => addStateButton.current?.focus()); };
   const createState = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (await guard(await action("create_state", { projectId: project.id, group: newGroup, name: newName }))) { setNewName(""); setAdding(false); }
+    if (newGroup && await guard(await action("create_state", { projectId: project.id, group: newGroup, name: newName }))) closeAdd();
   };
   return <section>
     <SettingsHeader title={translate("states.title")} description={translate("settings.statesDesc")} />
     {canAdmin && <div className="mb-5 grid justify-items-start gap-3">
-      <Button type="button" data-testid="add-state" className="secondary pointer-coarse:min-h-11" aria-expanded={adding} onClick={() => setAdding(!adding)}>{translate("states.add")}</Button>
+      <Button ref={addStateButton} type="button" data-testid="add-state" className="secondary pointer-coarse:min-h-11" aria-expanded={adding} onClick={() => setAdding(!adding)}>{translate("states.add")}</Button>
       {adding && <form className="my-0 flex flex-wrap items-end gap-3" onSubmit={(event) => void createState(event)}>
-        <label htmlFor={groupSelectId}>{translate("layout.group")}</label><select id={groupSelectId} className="pointer-coarse:min-h-11" value={newGroup} onChange={(event) => setNewGroup(event.target.value as (typeof stateGroups)[number])}>
+        <label><span id={groupLabelId}>{translate("analytics.axis.stateGroup")}</span><select aria-labelledby={groupLabelId} required autoFocus className="pointer-coarse:min-h-11" value={newGroup} onChange={(event) => setNewGroup(event.target.value as (typeof stateGroups)[number])}>
+          <option value="" disabled hidden />
           {stateGroups.map((group) => <option key={group} value={group}>{translate(`states.group.${group}`)}</option>)}
-        </select>
-        <label>{translate("states.name")}<Input required autoFocus value={newName} onChange={(event) => setNewName(event.target.value)} /></label>
+        </select></label>
+        <label>{translate("states.name")}<Input required value={newName} onChange={(event) => setNewName(event.target.value)} /></label>
         <Button className="pointer-coarse:min-h-11">{translate("states.create")}</Button>
-        <Button type="button" className="secondary pointer-coarse:min-h-11" onClick={() => setAdding(false)}>{translate("settings.cancel")}</Button>
+        <Button type="button" className="secondary pointer-coarse:min-h-11" onClick={closeAdd}>{translate("settings.cancel")}</Button>
       </form>}
     </div>}
     {stateGroups.map((group) => {
@@ -222,7 +225,7 @@ export function ProjectStates() {
         return reorder(ids);
       };
       return <section key={group} className="mb-6 grid gap-2">
-        <h2 className="m-0 flex items-center gap-2 text-sm font-medium text-muted-foreground"><span aria-hidden className="size-2.5 rounded-full" style={{ background: groupDot[group] }} />{translate(`states.group.${group}`)}</h2>
+        <h2 className="m-0 flex items-center gap-2 text-sm font-medium text-muted-foreground"><span aria-hidden className="size-2.5 rounded-full" style={{ background: stateGroupColors[group] }} />{translate(`states.group.${group}`)}</h2>
         {inGroup.length > 0 && <SortableList ids={inGroup.map((state) => state.id)} disabled={!canAdmin || editing !== null} gripClassName="border-0 shadow-none pointer-coarse:size-11" label={(id) => inGroup.find((state) => state.id === id)?.name ?? ""}
           onReorder={async (ids) => { setStates((current) => [...current.filter((state) => state.group !== group), ...ids.map((id) => current.find((state) => state.id === id)!)]); await guard(await reorder(ids)); }}
           renderRow={(id, grip) => {

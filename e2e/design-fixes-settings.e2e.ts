@@ -6,6 +6,7 @@
 import { chromium } from "playwright";
 import { createDatabase, notifications } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
+import { stateGroupColors } from "../apps/web/src/types";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31440);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52440);
@@ -58,17 +59,29 @@ try {
   await call("create_project", { workspaceId, name: secondProjectName, key: "SUP", visibility: "public" });
 
   // Every settings route fits the phone and the desktop width without a sideways scroll.
-  const routes = ["settings", "settings/members", "settings/projects/SET", "settings/projects/SET/states", "settings/projects/SET/estimates", "settings/projects/SET/labels", "settings/projects/SET/features"];
-  for (const width of [390, 1440]) {
+  const routes = ["projects", "settings", "settings/members", "settings/projects/SET", "settings/projects/SET/states", "settings/projects/SET/estimates", "settings/projects/SET/labels", "settings/projects/SET/features"];
+  for (const width of [390, 768, 820, 1024, 1440]) {
     await page.setViewportSize({ width, height: 844 });
     for (const route of routes) {
       await page.goto(`${web}/${slug}/${route}`);
       try { await page.getByRole("heading").first().waitFor(); }
       catch { throw new Error(`/${route} did not render a heading at ${width}px: ${await page.locator("body").innerText()}`); }
       check(await noSideScroll(), `/${route} scrolls the page sideways at ${width}px`);
+      if (route === "projects") {
+        // The content column can clip its own overflow, so measure the header actions against the header itself.
+        await page.locator("[data-project-row]").first().waitFor();
+        const header = await page.evaluate(() => {
+          const node = document.querySelector("[data-testid='page-header']")!;
+          const box = node.getBoundingClientRect();
+          const controls = [...node.querySelectorAll("input, button, label")].map((control) => control.getBoundingClientRect()).filter((control) => control.width > 1 && control.height > 1);
+          return { left: box.left, right: box.right, scrollWidth: node.scrollWidth, clientWidth: node.clientWidth, controls: controls.map((control) => [Math.round(control.left), Math.round(control.right)]) };
+        });
+        check(header.scrollWidth <= header.clientWidth + 1 && header.controls.every(([left, right]) => left! >= header.left - 1 && right! <= header.right + 1), `the Projects header actions overflow the header at ${width}px: ${JSON.stringify(header)}`);
+        console.log(`projects header at ${width}px: ${Math.round(header.right - header.left)}px wide, controls ${JSON.stringify(header.controls)}`);
+      }
     }
   }
-  console.log("settings ok: all routes fit at 390 and 1440 without a sideways scroll");
+  console.log("settings ok: Projects and all settings routes fit at 390, 768, 820, 1024 and 1440 without a sideways scroll");
 
   // The Projects page has one finder, aligns it with the title, and keeps every project row on one shared rhythm.
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -86,9 +99,10 @@ try {
     const range = document.createRange();
     range.selectNodeContents(node);
     const glyph = range.getBoundingClientRect();
-    return { fits: node.scrollWidth <= node.clientWidth + 1 || node.getAttribute("title") === node.textContent, glyphInside: glyph.left >= box.left - 1 && glyph.right <= box.right + 1 };
+    const truncated = node.scrollWidth > node.clientWidth + 1;
+    return { fits: !truncated || (node.getAttribute("title") === node.textContent && getComputedStyle(node).textOverflow === "ellipsis"), glyphInside: glyph.left >= box.left - 1 && glyph.right <= box.right + 1 };
   });
-  check(projectNameFit.fits, "a long project name is clipped without a full-text title");
+  check(projectNameFit.fits, "a long project name is clipped without an ellipsis and a full-text title");
   check(projectNameFit.glyphInside, "project-name glyphs render outside their text box");
   const headerCenters = await page.evaluate(() => {
     const title = document.querySelector("[data-testid='page-header'] h1")!.getBoundingClientRect();
@@ -106,6 +120,8 @@ try {
     const rowRight = document.querySelector("[data-project-row]")!.getBoundingClientRect().right;
     return { title, search, rowRight, pageWidth: document.documentElement.scrollWidth };
   });
+  const phoneLongName = await page.locator("[data-project-row]").filter({ hasText: secondProjectName }).locator("a .truncate").evaluate((node) => ({ truncated: node.scrollWidth > node.clientWidth + 1, title: node.getAttribute("title"), text: node.textContent, ellipsis: getComputedStyle(node).textOverflow === "ellipsis" }));
+  check(phoneLongName.truncated && phoneLongName.ellipsis && phoneLongName.title === phoneLongName.text, `the long project name at 390px is not truncated with an ellipsis and a full-text title: ${JSON.stringify(phoneLongName)}`);
   check(phoneHeaderBounds.pageWidth <= 390 && phoneHeaderBounds.search.right <= phoneHeaderBounds.rowRight + 1 && (phoneHeaderBounds.title.bottom <= phoneHeaderBounds.search.top || phoneHeaderBounds.search.bottom <= phoneHeaderBounds.title.top), `Projects title and search overlap or overflow on phone: ${JSON.stringify(phoneHeaderBounds)}`);
   await page.setViewportSize({ width: 1440, height: 900 });
   console.log("projects ok: one finder, aligned header, equal row heights, measured title text");
@@ -119,19 +135,33 @@ try {
   const projectSection = await settingsFinder.evaluate((node) => node.closest("label")!.previousElementSibling!.getBoundingClientRect().top);
   const workspaceHeading = await sidebar.getByText(translate("sidebar.workspace"), { exact: true }).boundingBox();
   check(workspaceHeading !== null && projectSection < workspaceHeading.y, "the project picker appears below the Workspace settings group");
-  const settingInputs = [translate("settings.workspaceName"), translate("settings.workspaceUrl"), translate("settings.runsPerPersonPerHour"), translate("settings.runsPerAgentPerHour")];
-  const inputStyles = await Promise.all(settingInputs.map((label) => page.getByLabel(label).evaluate((node) => ({ height: node.getBoundingClientRect().height, background: getComputedStyle(node).backgroundColor }))));
-  check(inputStyles.every((style) => Math.abs(style.height - inputStyles[0]!.height) <= 1 && style.background === inputStyles[0]!.background), `workspace inputs use inconsistent styles: ${JSON.stringify(inputStyles)}`);
+  const inputStyle = (label: string) => page.getByLabel(label).evaluate((node) => ({ height: node.getBoundingClientRect().height, background: getComputedStyle(node).backgroundColor, color: getComputedStyle(node).color, readOnly: (node as HTMLInputElement).readOnly, tabIndex: (node as HTMLInputElement).tabIndex }));
+  // Run limits are disabled until the admin check loads; measure them once they are editable and colour transitions settle.
+  await page.waitForFunction((labels) => labels.every((label) => [...document.querySelectorAll("label")].some((node) => node.textContent?.startsWith(label) && node.querySelector("input:not(:disabled)"))), [translate("settings.runsPerPersonPerHour"), translate("settings.runsPerAgentPerHour")]);
+  await page.waitForTimeout(300);
+  const editableStyles = await Promise.all([translate("settings.runsPerPersonPerHour"), translate("settings.runsPerAgentPerHour")].map(inputStyle));
+  const readOnlyStyles = await Promise.all([translate("settings.workspaceName"), translate("settings.workspaceUrl")].map(inputStyle));
+  const inputStyles = [...editableStyles, ...readOnlyStyles];
+  check(inputStyles.every((style) => Math.abs(style.height - inputStyles[0]!.height) <= 1), `workspace inputs differ in height: ${JSON.stringify(inputStyles)}`);
+  check(editableStyles.every((style) => style.background === editableStyles[0]!.background), `editable workspace inputs use inconsistent surfaces: ${JSON.stringify(editableStyles)}`);
+  check(readOnlyStyles.every((style) => style.readOnly && style.tabIndex < 0 && style.background !== editableStyles[0]!.background && style.color !== editableStyles[0]!.color), `read-only workspace inputs look editable or sit in the tab order: ${JSON.stringify({ readOnlyStyles, editableStyles })}`);
   const dangerButton = page.getByRole("button", { name: translate("settings.leave"), exact: true });
   const dangerStyles = await dangerButton.evaluate((node) => {
     const probe = document.createElement("span");
     probe.style.backgroundColor = "var(--destructive)";
     document.body.append(probe);
     const expectedDanger = getComputedStyle(probe).backgroundColor;
+    probe.style.backgroundColor = "var(--border)";
+    const neutralBorder = getComputedStyle(probe).backgroundColor;
+    probe.style.backgroundColor = "var(--background)";
+    const pageBackground = getComputedStyle(probe).backgroundColor;
     probe.remove();
-    return { background: getComputedStyle(node).backgroundColor, expectedDanger };
+    const style = getComputedStyle(node);
+    return { background: style.backgroundColor, color: style.color, borderWidth: style.borderTopWidth, borderColor: style.borderTopColor, expectedDanger, neutralBorder, pageBackground };
   });
   check(dangerStyles.background !== dangerStyles.expectedDanger, "the danger-zone action is still a filled destructive button");
+  // Outlined destructive: no coloured fill (transparent or the page background), destructive text, a visible border that is not the neutral one.
+  check((dangerStyles.background === "rgba(0, 0, 0, 0)" || dangerStyles.background === dangerStyles.pageBackground) && dangerStyles.color === dangerStyles.expectedDanger && parseFloat(dangerStyles.borderWidth) >= 1 && dangerStyles.borderColor !== dangerStyles.neutralBorder && dangerStyles.borderColor !== "rgba(0, 0, 0, 0)", `the danger-zone action is not an outlined destructive button: ${JSON.stringify(dangerStyles)}`);
   // Workspace navigation: the section links stack without overlapping boxes, share one row height, and the divider adds no row.
   const navLinkNames = [translate("settings.general"), translate("members.title"), translate("settings.invites"), translate("settings.agents"), translate("settings.connectAi"), translate("tokens.title"), translate("runtimes.title"), translate("settings.skills"), translate("settings.exports"), translate("settings.projectOrder")];
   const navBoxes = await Promise.all(navLinkNames.map((name) => sidebar.getByRole("link", { name, exact: true }).boundingBox()));
@@ -183,13 +213,28 @@ try {
   const reveal = page.getByRole("button", { name: translate("states.add"), exact: true });
   await reveal.click();
   check((await reveal.getAttribute("aria-expanded")) === "true", "Add state does not report that it is open");
-  await page.getByLabel(translate("layout.group"), { exact: true }).selectOption("started");
+  // The State group is named as such (not "Group by"), has no silent default, and takes focus first.
+  check(await page.getByLabel(translate("layout.group"), { exact: true }).count() === 0, "the add form labels the State group as Group by");
+  const groupSelect = page.getByLabel(translate("analytics.axis.stateGroup"), { exact: true });
+  check(await groupSelect.inputValue() === "", "the add form preselects a State group");
+  check(await groupSelect.evaluate((node) => node === document.activeElement), "the State group is not focused when the add form opens");
+  const statesBefore = (await call<unknown[]>("list_states", { projectId: project.id })).length;
+  await page.getByLabel(translate("states.name"), { exact: true }).fill("No group chosen");
+  await page.getByLabel(translate("states.name"), { exact: true }).press("Enter");
+  await Bun.sleep(300);
+  check((await call<unknown[]>("list_states", { projectId: project.id })).length === statesBefore && await groupSelect.count() === 1, "Enter without a State group created a state");
+  await page.getByRole("button", { name: translate("settings.cancel"), exact: true }).click();
+  await page.waitForFunction(() => document.activeElement?.getAttribute("data-testid") === "add-state");
+  await reveal.click();
+  check(await page.getByLabel(translate("states.name"), { exact: true }).inputValue() === "", "Cancel kept the typed state name");
+  await groupSelect.selectOption("started");
   await page.getByLabel(translate("states.name"), { exact: true }).fill("Review");
   await page.getByRole("button", { name: translate("states.create"), exact: true }).click();
   await startedBlock.getByText("Review", { exact: true }).waitFor();
   check((await page.getByLabel(translate("states.name"), { exact: true }).count()) === 0, "the add field stays open after a state is created");
+  await page.waitForFunction(() => document.activeElement?.getAttribute("data-testid") === "add-state");
   check(await page.getByRole("button", { name: translate("states.add"), exact: true }).count() === 1, "creating a state duplicates the Add state action");
-  console.log("states ok: one add form targets Started, creates a state and closes");
+  console.log("states ok: one add form asks for the State group, targets Started, creates a state, closes and returns focus");
 
   // Analytics keeps numeric headings separated and gives completed/cancelled status bars distinct state colours.
   const states = await call<Array<{ id: string; name: string; group: string }>>("list_states", { projectId: project.id });
@@ -200,7 +245,7 @@ try {
   await page.goto(`${web}/${slug}/analytics/overview`);
   const analyticsTable = page.getByRole("table", { name: translate("analytics.projectList") });
   await analyticsTable.waitFor();
-  const numericHeaders = analyticsTable.getByRole("columnheader").filter({ hasText: /Total work items|Open|Completed/ });
+  const numericHeaders = analyticsTable.getByRole("columnheader").filter({ hasText: new RegExp([translate("analytics.total"), translate("analytics.open"), translate("analytics.completed")].map((text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")) });
   const headerTextBounds = await numericHeaders.evaluateAll((nodes) => nodes.map((node) => {
     const range = document.createRange();
     range.selectNodeContents(node);
@@ -226,10 +271,17 @@ try {
     });
     const rows = [...node.querySelectorAll("tbody tr")];
     const rowHeights = rows.map((row) => row.getBoundingClientRect().height);
-    const names = [...node.querySelectorAll<HTMLElement>("tbody th [title]")].map((name) => name.scrollWidth <= name.clientWidth + 1 || (name.title === name.textContent && getComputedStyle(name).textOverflow === "ellipsis"));
-    return { fits: node.scrollWidth <= parent.clientWidth + 1, text, rowHeights, names, tableWidth: node.getBoundingClientRect().width, tableScrollWidth: node.scrollWidth, parentWidth: parent.clientWidth, parentScrollWidth: parent.scrollWidth };
+    // A name shows whole, or it is line-clamped (ellipsis on the last line) and carries its full text in a title.
+    const nameStates = [...node.querySelectorAll<HTMLElement>("tbody th [title]")].map((name) => {
+      const clipped = name.scrollHeight > name.clientHeight + 1 || name.scrollWidth > name.clientWidth + 1;
+      const clamp = getComputedStyle(name).webkitLineClamp;
+      return { clipped, ok: !clipped || (name.title === name.textContent && clamp !== "none" && clamp !== "") };
+    });
+    const names = nameStates.map((name) => name.ok);
+    const clampedNames = nameStates.filter((name) => name.clipped).length;
+    return { fits: node.scrollWidth <= parent.clientWidth + 1, text, rowHeights, names, clampedNames, tableWidth: node.getBoundingClientRect().width, tableScrollWidth: node.scrollWidth, parentWidth: parent.clientWidth, parentScrollWidth: parent.scrollWidth };
   });
-  check(phoneTableFits.fits && phoneTableFits.text.every(Boolean) && phoneTableFits.rowHeights.every((height) => Math.abs(height - phoneTableFits.rowHeights[0]!) <= 1) && phoneTableFits.names.length > 0 && phoneTableFits.names.every(Boolean) && await noSideScroll(), `Analytics table rows or heading glyphs clip at 390px: ${JSON.stringify(phoneTableFits)}`);
+  check(phoneTableFits.fits && phoneTableFits.text.every(Boolean) && phoneTableFits.rowHeights.every((height) => Math.abs(height - phoneTableFits.rowHeights[0]!) <= 1) && phoneTableFits.names.length > 0 && phoneTableFits.names.every(Boolean) && phoneTableFits.clampedNames > 0 && await noSideScroll(), `Analytics table rows or heading glyphs clip at 390px: ${JSON.stringify(phoneTableFits)}`);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`${web}/${slug}/analytics/work-items`);
   await page.getByRole("heading", { name: translate("analytics.insights"), exact: true }).waitFor();
@@ -237,20 +289,36 @@ try {
   await axisControls.nth(1).waitFor();
   const axisLabels = await axisControls.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-label")));
   check(axisLabels.includes(translate("analytics.xAxis")) && axisLabels.includes(translate("analytics.groupBy")), `Analytics selects do not expose their visible labels: ${JSON.stringify(axisLabels)}`);
+  // The accessible name comes from the visible label, and the trigger shows the translated option, never the internal value.
+  const xAxisSelect = page.getByRole("combobox", { name: translate("analytics.xAxis"), exact: true });
+  const groupBySelect = page.getByRole("combobox", { name: translate("analytics.groupBy"), exact: true });
+  const shownValues = [(await xAxisSelect.innerText()).trim(), (await groupBySelect.innerText()).trim()];
+  check(shownValues[0] === translate("analytics.axis.state") && shownValues[1] === translate("analytics.groupNone"), `Analytics selects show internal values instead of their labels: ${JSON.stringify(shownValues)}`);
+  const waitForGroupByText = async (label: string) => {
+    for (let attempt = 0; attempt < 50 && (await groupBySelect.innerText()).trim() !== label; attempt += 1) await Bun.sleep(100);
+    const shown = (await groupBySelect.innerText()).trim();
+    check(shown === label, `the Group by select shows "${shown}" instead of "${label}"`);
+  };
+  await groupBySelect.click();
+  await page.getByRole("option", { name: translate("analytics.axis.priority"), exact: true }).click();
+  await waitForGroupByText(translate("analytics.axis.priority"));
+  await groupBySelect.click();
+  await page.getByRole("option", { name: translate("analytics.groupNone"), exact: true }).click();
+  await waitForGroupByText(translate("analytics.groupNone"));
   const doneBar = page.getByRole("img", { name: /^Done:/ });
   const cancelledBar = page.getByRole("img", { name: /^Cancelled:/ });
   await doneBar.waitFor();
   await cancelledBar.waitFor();
-  const semanticColors = await page.evaluate(() => {
+  const semanticColors = await page.evaluate((colors) => {
     const probe = document.createElement("span");
     document.body.append(probe);
-    probe.style.backgroundColor = "var(--chart-2)";
+    probe.style.backgroundColor = colors.completed;
     const completed = getComputedStyle(probe).backgroundColor;
-    probe.style.backgroundColor = "var(--destructive)";
+    probe.style.backgroundColor = colors.cancelled;
     const cancelled = getComputedStyle(probe).backgroundColor;
     probe.remove();
     return { completed, cancelled };
-  });
+  }, stateGroupColors);
   await page.waitForFunction(({ completed, cancelled }) => {
     const done = [...document.querySelectorAll<HTMLElement>("[role='img']")].find((node) => node.getAttribute("aria-label")?.startsWith("Done:"));
     const stopped = [...document.querySelectorAll<HTMLElement>("[role='img']")].find((node) => node.getAttribute("aria-label")?.startsWith("Cancelled:"));
@@ -293,10 +361,17 @@ try {
     const heights = await touchPage.locator(selector).evaluateAll((nodes) => nodes.filter((node) => node.getClientRects().length > 0).map((node) => node.getBoundingClientRect().height));
     check(heights.length > 0 && heights.every((height) => height >= 44), `${label} has undersized touch targets: ${heights.join(", ")}`);
   };
+  const assertTouchWidths = async (selector: string, label: string) => {
+    const widths = await touchPage.locator(selector).evaluateAll((nodes) => nodes.filter((node) => node.getClientRects().length > 0).map((node) => node.getBoundingClientRect().width));
+    check(widths.length > 0 && widths.every((width) => width >= 44), `${label} has undersized touch widths: ${widths.join(", ")}`);
+  };
   await touchPage.goto(`${web}/${slug}/projects`);
   await touchPage.getByRole("button", { name: translate("projects.new"), exact: true }).waitFor();
+  await touchPage.locator("[data-project-row] button[aria-label^='Star project']").first().waitFor();
   await assertTouchTargets("[data-project-row] button[aria-label^='Star project']", "project star");
+  await assertTouchWidths("[data-project-row] button[aria-label^='Star project']", "project star");
   await assertTouchTargets("[data-testid='page-header'] button", "Projects page action");
+  await assertTouchTargets("[data-testid='page-header'] label:has([role='checkbox'])", "Show archived projects");
   await touchPage.goto(`${web}/${slug}/settings/projects/SET/states`);
   await touchPage.getByRole("button", { name: new RegExp(`^${translate("sortable.reorder")}`) }).first().waitFor();
   await assertTouchTargets("button[aria-label^='Reorder']", "state reorder handle");

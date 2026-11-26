@@ -6,7 +6,7 @@ import { formatNumber, getLocale, translate, type MessageKey } from "@weft/share
 import { Popover } from "./shell/popover";
 import { PageHeader } from "./shell/page-header";
 import { paths } from "./routes";
-import type { Project, WorkState } from "./types";
+import { stateGroupColors, type Project, type WorkState } from "./types";
 
 import { Checkbox } from "@/ui/checkbox";
 import { Input } from "@/ui/input";
@@ -27,9 +27,6 @@ type Insights = { x: Axis; groupBy: Axis | null; buckets: Array<Bucket & { group
 const palette = ["#3f76ff", "#f59e0b", "#16a34a", "#e11d48", "#8b5cf6", "#0ea5e9", "#f97316", "#14b8a6", "#a3a3a3", "#d946ef"];
 const colorOf = (index: number) => palette[index % palette.length]!;
 const chartColorOf = (index: number) => `color-mix(in srgb, ${colorOf(index)} 86%, var(--background))`;
-const stateGroupColor: Record<WorkState["group"], string> = {
-  backlog: "var(--muted-foreground)", unstarted: "var(--chart-3)", started: "var(--chart-4)", completed: "var(--chart-2)", cancelled: "var(--destructive)",
-};
 
 /** The text of a bucket: enums and months are formatted here, names come from the data, and a null key is "none". */
 export function bucketLabel(axis: Axis, bucket: Bucket): string {
@@ -77,7 +74,7 @@ export function Chart({ insights, stateGroupsByName = {} }: { insights: Insights
   const groupIndex = (key: string | null) => groupKeys.findIndex((known) => known.key === key);
   const colorFor = (axis: Axis, bucket: Bucket, fallback: number) => {
     const group = axis === "stateGroup" ? bucket.key as WorkState["group"] | null : axis === "state" ? stateGroupsByName[bucket.label ?? bucket.key ?? ""] : null;
-    return group && stateGroupColor[group] ? stateGroupColor[group] : chartColorOf(fallback);
+    return group && stateGroupColors[group] ? stateGroupColors[group] : chartColorOf(fallback);
   };
   return <figure className="m-0 grid gap-3 rounded-xl border border-border bg-card p-4" aria-label={t("analytics.chart", { axis: t(`analytics.axis.${insights.x}`) })}>
     {insights.groupBy && <ul className="m-0 flex list-none flex-wrap gap-x-3 gap-y-1 p-0 text-xs text-muted-foreground">
@@ -167,7 +164,7 @@ export function AnalyticsOverviewPage({ workspaceId, workspaceSlug, run }: { wor
       {state.projects.length === 0 ? <p className="m-0 text-muted-foreground">{t("analytics.noProjects")}</p> : <div className="grid min-w-0 gap-3 rounded-xl border border-border bg-card p-4">
         <h2 className="m-0 text-base font-semibold">{t("analytics.projectList")}</h2>
         <div className="min-w-0">
-        <table className="w-full min-w-0 table-fixed border-separate border-spacing-x-1.5 border-spacing-y-0 text-sm sm:border-spacing-x-3">
+        <table className="w-full min-w-0 table-fixed border-collapse text-sm [&_:is(th,td)+:is(th,td)]:pl-1.5 sm:[&_:is(th,td)+:is(th,td)]:pl-3">
           <caption className="sr-only">{t("analytics.projectList")}</caption>
           <thead>
             <tr className="text-xs text-muted-foreground">
@@ -243,9 +240,9 @@ export function AnalyticsPage({ workspaceId, workspaceSlug, action, run }: { wor
         <h2 className="m-0 text-base font-semibold">{t("analytics.insights")}</h2>
         <div className="flex flex-wrap items-end gap-3">
           <div className="grid min-w-40 gap-1 text-sm font-medium text-foreground"><span id={axisLabelId}>{t("analytics.xAxis")}</span>
-            <Select value={x} onValueChange={(value) => value && pickX(value as Axis)}><SelectTrigger className="pointer-coarse:min-h-11" aria-labelledby={axisLabelId} aria-label={t("analytics.xAxis")}><SelectValue /></SelectTrigger><SelectContent>{axes.map((axis) => <SelectItem key={axis} value={axis}><SelectItemText>{t(`analytics.axis.${axis}`)}</SelectItemText></SelectItem>)}</SelectContent></Select></div>
+            <Select value={x} items={axes.map((axis) => ({ value: axis, label: t(`analytics.axis.${axis}`) }))} onValueChange={(value) => value && pickX(value as Axis)}><SelectTrigger className="pointer-coarse:min-h-11" aria-labelledby={axisLabelId} aria-label={t("analytics.xAxis")}><SelectValue /></SelectTrigger><SelectContent>{axes.map((axis) => <SelectItem key={axis} value={axis}><SelectItemText>{t(`analytics.axis.${axis}`)}</SelectItemText></SelectItem>)}</SelectContent></Select></div>
           <div className="grid min-w-40 gap-1 text-sm font-medium text-foreground"><span id={groupLabelId}>{t("analytics.groupBy")}</span>
-            <Select value={groupBy || "none"} onValueChange={(value) => setGroupBy(!value || value === "none" ? "" : value as Axis)}><SelectTrigger className="pointer-coarse:min-h-11" aria-labelledby={groupLabelId} aria-label={t("analytics.groupBy")}><SelectValue /></SelectTrigger><SelectContent>
+            <Select value={groupBy || "none"} items={[{ value: "none", label: t("analytics.groupNone") }, ...axes.filter((axis) => axis !== x).map((axis) => ({ value: axis, label: t(`analytics.axis.${axis}`) }))]} onValueChange={(value) => setGroupBy(!value || value === "none" ? "" : value as Axis)}><SelectTrigger className="pointer-coarse:min-h-11" aria-labelledby={groupLabelId} aria-label={t("analytics.groupBy")}><SelectValue /></SelectTrigger><SelectContent>
               <SelectItem value="none"><SelectItemText>{t("analytics.groupNone")}</SelectItemText></SelectItem>{axes.filter((axis) => axis !== x).map((axis) => <SelectItem key={axis} value={axis}><SelectItemText>{t(`analytics.axis.${axis}`)}</SelectItemText></SelectItem>)}</SelectContent></Select></div>
           <ProjectFilter projects={projects} selected={selected} onChange={setSelected} />
         </div>

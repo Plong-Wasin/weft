@@ -12,6 +12,6 @@ export function PageHeader({ title, breadcrumb, actions, level = 1, className = 
   return <header data-testid="page-header" className={`flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 ${className}`}>
     {breadcrumb && <div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">{breadcrumb}</div>}
     <Heading className="m-0 flex min-w-0 flex-1 items-center gap-2 text-2xl font-semibold leading-tight text-foreground">{title}</Heading>
-    {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
+    {actions && <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">{actions}</div>}
   </header>;
 }

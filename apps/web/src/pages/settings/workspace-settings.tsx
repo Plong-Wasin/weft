@@ -51,8 +51,8 @@ export function WorkspaceGeneral() {
   return <section>
     <SettingsHeader title={translate("settings.workspaceTitle")} description={translate("settings.workspaceGeneralDesc")} />
     <SettingsBlock>
-      <label className="max-w-md">{translate("settings.workspaceName")}<Input readOnly value={workspace.name} /></label>
-      <label className="max-w-md">{translate("settings.workspaceUrl")}<Input readOnly value={workspace.slug} /></label>
+      <label className="max-w-md">{translate("settings.workspaceName")}<Input readOnly tabIndex={-1} value={workspace.name} /></label>
+      <label className="max-w-md">{translate("settings.workspaceUrl")}<Input readOnly tabIndex={-1} value={workspace.slug} /></label>
     </SettingsBlock>
     <SettingsBlock title={translate("settings.autopilot")}>
       <label className="flex items-center gap-2"><Checkbox checked={autopilot?.allowAutopilot ?? false} disabled={!isAdmin || !autopilot} onChange={async (event) => {

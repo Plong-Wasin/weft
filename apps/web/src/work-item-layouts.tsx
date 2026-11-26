@@ -668,6 +668,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
         {gantt.bars.map(({ item, left, width }) => {
           const drag = ganttDrag?.id === item.id ? ganttDrag : ganttSaving[item.id] ?? null;
           const end = left + width;
+          const labelOnRight = end < gantt.days.length - 3;
+          const labelOnLeft = !labelOnRight && left >= 3;
           const stateGroup = states.find((state) => state.id === item.stateId)?.group;
           const barTone = stateGroup === "completed" ? "bg-emerald-500/20 dark:bg-emerald-400/20" : stateGroup === "cancelled" ? "bg-muted" : stateGroup === "started" ? "bg-sky-500/20 dark:bg-sky-400/25" : stateGroup === "backlog" ? "bg-muted-foreground/10 dark:bg-muted-foreground/20" : "bg-primary/20 dark:bg-primary/30";
           /** An item with one date has no other edge to cross: the handle just places that date, and the bar stays one day wide. */
@@ -687,7 +689,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
               {dueClipped(item) && <span aria-hidden data-gantt-overflow="due" className="pointer-events-none absolute inset-y-0 right-0 z-20 flex w-4 items-center justify-center rounded-r-sm bg-card/90 text-muted-foreground"><ChevronRight size={12} /></span>}
               {canWrite && !dueClipped(item) && <span data-gantt-edge role="button" tabIndex={0} aria-keyshortcuts="ArrowLeft ArrowRight" aria-label={`${t("layout.gantt.resizeDue")} ${item.displayId}`} onKeyDown={(event) => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); void ganttResizeByKeyboard(item, "due", event.key === "ArrowLeft" ? -1 : 1); }} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); if (ganttSaving[item.id]) return; event.currentTarget.setPointerCapture(event.pointerId); ganttEdgeStart.current = { x: event.clientX }; }} onPointerMove={(event) => ganttEdgePreview(event, item, "due")} onPointerUp={(event) => ganttResize(event, item, "due")} className="absolute inset-y-0 right-0 z-20 w-1 cursor-ew-resize rounded-r bg-primary" />}
             </div>
-            <span data-testid={`gantt-label-${item.displayId}`} className="pointer-events-none absolute top-2 z-20 h-5 w-14 truncate bg-card px-1 text-12 leading-5 text-foreground" style={{ left: `${(end < gantt.days.length - 3 ? end : Math.max(0, left - 3)) / gantt.days.length * 100}%`, textAlign: end < gantt.days.length - 3 ? "left" : "right" }}>{item.displayId}</span>
+            {(labelOnRight || labelOnLeft) && <span data-testid={`gantt-label-${item.displayId}`} className="pointer-events-none absolute top-2 z-20 h-5 w-14 truncate bg-card px-1 text-12 leading-5 text-foreground" style={{ left: `${(labelOnRight ? end : left - 3) / gantt.days.length * 100}%`, textAlign: labelOnRight ? "left" : "right" }}>{item.displayId}</span>}
           </div>
         </div>; })}
       </div>

@@ -18,7 +18,7 @@ type Named = { id: string; name: string; status?: string };
 const t = (key: string) => translate(key as MessageKey);
 const fill = (key: string, count: number) => t(key).replace("{count}", formatNumber(count));
 const chip = "flex items-center gap-1.5 rounded-md border border-border bg-card px-2 text-12 font-medium text-foreground hover:bg-accent";
-const optionClass = "flex w-full items-center gap-2 rounded-md bg-transparent px-2.5 text-left text-foreground hover:bg-accent";
+const optionClass = "flex h-auto min-h-9 w-full shrink-0 items-center gap-2 rounded-md bg-transparent px-2.5 text-left text-foreground hover:bg-accent";
 
 /** Add or remove values of a set-valued property (assignees, labels, modules) on every selected work item; each pick applies at once. */
 function SetMenu({ label, icon, options, present, onApply }: { label: string; icon: React.ReactNode; options: Option[]; present: Set<string>; onApply: (mode: "add" | "remove", id: string) => Promise<boolean> }) {

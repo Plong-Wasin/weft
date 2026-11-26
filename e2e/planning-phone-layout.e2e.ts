@@ -93,13 +93,17 @@ try {
     const nameFits = await moduleName.evaluate((el) => el.scrollWidth <= el.clientWidth);
     check(nameFits, `module name is truncated at ${width}px`);
 
-    // Cycle detail: Remove from Cycle sits on the same line as the row's properties, not on a line of its own.
+    // Cycle detail: the row menu that holds Remove from Cycle follows the row's properties.
     await open(`/${slug}/projects/REF/cycles/${seed.cycleId}`);
     const row = page.getByTestId("row-REF-1");
     await row.waitFor();
-    const remove = await box(page, row.getByRole("button", { name: translate("cycles.remove") }), "Remove from Cycle");
+    const rowMenu = row.getByRole("button", { name: `${translate("cycles.menu")}: REF-1` });
+    const remove = await box(page, rowMenu, "Cycle row menu");
     const stateChip = await box(page, row.getByRole("button", { name: `${translate("workItems.state")}: Backlog` }), "State control");
     check(width < 640 ? remove.y > stateChip.y : remove.y >= stateChip.y - 1, `Remove from Cycle should follow the State control and wrap onto the phone's second line at ${width}px`);
+    await rowMenu.click();
+    await page.getByRole("menuitem", { name: translate("cycles.remove") }).waitFor();
+    await page.keyboard.press("Escape");
 
     // Intake: Accept and Reject share a line; the title shows whole in its field.
     await open(`/${slug}/projects/REF/intake`);

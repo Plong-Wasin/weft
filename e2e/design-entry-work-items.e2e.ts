@@ -128,7 +128,7 @@ try {
   check(await commentRow.getByRole("button", { name: translate("comments.copyLink"), exact: true }).count() === 0, "Copy link is still a visible comment button");
   await commentRow.getByRole("button", { name: translate("comments.more"), exact: true }).first().click();
   await commentPage.getByRole("dialog", { name: translate("comments.more") }).getByRole("button", { name: translate("comments.delete"), exact: true }).click();
-  const deleteConfirm = commentRow.getByRole("group", { name: translate("comments.deleteConfirm") });
+  const deleteConfirm = commentRow.getByRole("alertdialog", { name: translate("comments.deleteConfirm") });
   await deleteConfirm.waitFor();
   await deleteConfirm.getByRole("button", { name: translate("comments.cancel"), exact: true }).click();
   check(await commentRow.count() === 1 && await deleteConfirm.count() === 0, "cancelling Delete did not keep the comment");

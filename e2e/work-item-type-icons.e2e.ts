@@ -210,6 +210,7 @@ try {
   check(savedProperty.properties.find((value) => value.propertyId === property.id)?.value === "draft note", "ordinary Enter committed the property draft");
   await page.goto(`${web}${paths.projectSettings(slug, "MOB", "features")}`);
   await page.getByRole("heading", { name: t("types.title") }).waitFor();
+  await bugRow.locator('[data-type-icon="rocket"]').first().waitFor();
   check(await bugRow.locator('[data-type-icon="rocket"]').count() >= 1, "the type row keeps the icon after a reload");
 
   await browser.close();

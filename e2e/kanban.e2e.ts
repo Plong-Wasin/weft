@@ -269,7 +269,10 @@ try {
   await page.locator(`[data-testid="column-${high}"] [data-testid="card-MOB-4"]`).waitFor();
   const highTitles = await titlesIn(page, high);
   check(highTitles.indexOf("Delta") + 1 !== priorityInsertionPosition, `fixture did not expose server ordering: ${JSON.stringify(highTitles)}`);
-  const priorityAnnouncement = await page.locator('[data-testid="board"] [role="status"]').textContent();
+  // The card can move optimistically before the board announces the settled update.
+  const moveAnnouncement = page.getByTestId("board").getByRole("status");
+  await moveAnnouncement.filter({ hasText: "MOB-4 moved to High" }).waitFor({ state: "attached" });
+  const priorityAnnouncement = await moveAnnouncement.textContent();
   check(priorityAnnouncement?.includes("MOB-4 moved to High") && !priorityAnnouncement.includes("position"), "priority announcement claimed an unsupported position");
   await page.screenshot({ path: `${shots}/board-priority-1440.png` });
 
@@ -290,8 +293,10 @@ try {
   await page.locator(`[data-testid="column-${personColumn}"] [data-testid="card-MOB-4"]`).waitFor();
   const assignedTitles = await titlesIn(page, personColumn);
   check(assignedTitles.indexOf("Delta") + 1 !== assigneeInsertionPosition, `fixture did not expose assignee ordering: ${JSON.stringify(assignedTitles)}`);
-  check((await page.locator('[data-testid="board"] [role="status"]').textContent())?.includes(`MOB-4 moved to ${personColumn}`), "assignee move announcement omitted its destination");
-  check(!(await page.locator('[data-testid="board"] [role="status"]').textContent())?.includes("position"), "assignee announcement claimed an unsupported position");
+  await moveAnnouncement.filter({ hasText: `MOB-4 moved to ${personColumn}` }).waitFor({ state: "attached" });
+  const assigneeAnnouncement = await moveAnnouncement.textContent();
+  check(assigneeAnnouncement?.includes(`MOB-4 moved to ${personColumn}`), "assignee move announcement omitted its destination");
+  check(!assigneeAnnouncement?.includes("position"), "assignee announcement claimed an unsupported position");
   const focusedAssigneeHandle = await page.evaluate(() => document.activeElement?.getAttribute("data-reorder"));
   check(focusedAssigneeHandle === await page.getByTestId("card-MOB-4").getAttribute("data-card-id"), `assignee cross-column move did not restore focus: active=${focusedAssigneeHandle ?? "none"}`);
 

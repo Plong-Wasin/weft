@@ -1,19 +1,20 @@
 // Runs the e2e/*.e2e.ts flows on several workers at once; add a flow by adding a file, no package.json edit needed.
-// Usage: bun e2e/run-all.ts [--workers=N] [--keep] [--slow] [name-filter]   (set CHROMIUM_PATH as for a single flow)
+// Usage: bun e2e/run-all.ts [--workers=N] [--keep] [--slow] [name-filter ...]   (set CHROMIUM_PATH as for a single flow)
 // The schema is migrated once into a template database; every flow gets a copy of it and a pair of ports of its worker's own, so flows never share rows or ports.
 // Ports: E2E_PORT_BASE (whole number, at most 45534) sets them; unset, the base comes from the checkout's directory name. A flow whose port is busy fails at once, naming the listener; nothing is killed.
 // A flow that fails while the others run is run once more on its own: a browser flow under load can miss a wait that it passes on a quiet machine, and the report says which flows needed it.
 import { randomBytes } from "node:crypto";
-import { readdirSync, statSync } from "node:fs";
+import { closeSync, openSync, readdirSync, statSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { basename } from "node:path";
 import { SQL } from "bun";
 import { listenerOn, resolvePortBase, workerPorts } from "./ports";
+import { cleanUp, stopProcess, withDeadline } from "./shutdown";
 
 const args = process.argv.slice(2);
 const keep = args.includes("--keep");
 const workersFlag = args.find((arg) => arg.startsWith("--workers="));
-const filter = args.find((arg) => !arg.startsWith("--"));
+const filters = args.filter((arg) => !arg.startsWith("--"));
 let portBase: number;
 try { portBase = resolvePortBase(Bun.env.E2E_PORT_BASE, basename(process.cwd())); } catch (error) { console.error((error as Error).message); process.exit(1); }
 
@@ -23,7 +24,9 @@ try { portBase = resolvePortBase(Bun.env.E2E_PORT_BASE, basename(process.cwd()))
  */
 const slowFlows = ["editor-parity.e2e.ts", "responsive.e2e.ts"];
 const withSlow = args.includes("--slow");
-const matching = readdirSync(import.meta.dir).filter((name) => name.endsWith(".e2e.ts") && (!filter || name.includes(filter)) && (withSlow || !slowFlows.includes(name) || filter === name.replace(/\.e2e\.ts$/, "")));
+const matching = readdirSync(import.meta.dir).filter((name) => name.endsWith(".e2e.ts") && (!filters.length || filters.some((filter) => name.includes(filter))) && (
+  withSlow || !slowFlows.includes(name) || filters.some((filter) => filter === name || filter === name.replace(/\.e2e\.ts$/, ""))
+));
 const files = [...matching]
   .sort((a, b) => Number(slowFlows.includes(b)) - Number(slowFlows.includes(a)) || statSync(`${import.meta.dir}/${b}`).size - statSync(`${import.meta.dir}/${a}`).size || a.localeCompare(b));
 const workers = Math.max(1, Math.min(files.length, Number(workersFlag?.slice("--workers=".length)) || Math.min(6, Math.max(2, availableParallelism() - 6))));
@@ -32,7 +35,7 @@ const base = new URL(Bun.env.DATABASE_URL ?? "postgres://weft:weft@localhost:543
 const prefix = `weft_e2e_${basename(process.cwd()).toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 20) || "repo"}_${randomBytes(3).toString("hex")}`;
 const urlFor = (name: string) => { const url = new URL(base); url.pathname = `/${name}`; return url.toString(); };
 const logDir = process.env.TMPDIR ?? "/tmp";
-const admin = new SQL(base.toString());
+const admin = new SQL({ url: base.toString(), connectionTimeout: 5 });
 const created: string[] = [];
 let counter = 0;
 let copying: Promise<void> = Promise.resolve();
@@ -52,8 +55,21 @@ async function waitFree(ports: number[], left: (port: number, listener: string) 
   }
 }
 
+async function dropDatabase(database: string) {
+  const drop = admin.unsafe(`drop database if exists ${database} with (force)`);
+  try {
+    await withDeadline(drop, 5_000, `drop e2e database ${database}`);
+    created.splice(created.indexOf(database), 1);
+  } catch (error) {
+    drop.cancel();
+    throw error;
+  }
+}
+
+type FlowResult = { ok: boolean; blocked?: boolean; seconds: number; output: string };
+
 /** One flow on a database of its own, with the ports of its worker. */
-async function runFlow(file: string, worker: number): Promise<{ ok: boolean; blocked?: boolean; seconds: number; output: string }> {
+async function runFlow(file: string, worker: number): Promise<FlowResult> {
   const ports = workerPorts(portBase, worker);
   const busy = busyPort(ports);
   if (busy) return { ok: false, blocked: true, seconds: 0, output: `${file} did not start: ${busy}. Nothing was stopped; stop that process or set another E2E_PORT_BASE.` };
@@ -63,18 +79,54 @@ async function runFlow(file: string, worker: number): Promise<{ ok: boolean; blo
   await copy;
   created.push(database);
   const started = Date.now();
+  const logPath = `${logDir}/${prefix}_${file.replace(/\.e2e\.ts$/, "")}`;
+  const runningLog = `${logPath}_running.log`;
+  let ok = false;
+  let failure = "";
   try {
     const env = { ...Bun.env, DATABASE_URL: urlFor(database), ALLOW_SIGNUP: "true", ALLOW_WORKSPACE_CREATION: "true", E2E_API_PORT: String(ports.api), E2E_WEB_PORT: String(ports.web), E2E_LIVE_PORT: String(ports.live) };
-    const run = Bun.spawn(["bun", `${import.meta.dir}/${file}`], { env, stdout: "pipe", stderr: "pipe" });
-    const [out, err] = await Promise.all([new Response(run.stdout).text(), new Response(run.stderr).text()]);
-    const ok = (await run.exited) === 0;
-    await Bun.write(`${logDir}/${prefix}_${file.replace(/\.e2e\.ts$/, "")}${ok ? "" : "_failed"}.log`, out + err);
-    return { ok, seconds: Math.round((Date.now() - started) / 1000), output: out + err };
+    // Servers inherit these descriptors. Write to a file so a leaked server cannot keep the runner waiting for pipe EOF.
+    const fd = openSync(runningLog, "w");
+    const run = (() => {
+      try { return Bun.spawn(["bun", `${import.meta.dir}/${file}`], { env, stdout: fd, stderr: fd }); }
+      finally { closeSync(fd); }
+    })();
+    try {
+      ok = (await withDeadline(run.exited, 10 * 60_000, file)) === 0;
+    } catch (error) {
+      failure = `\n${error}\n`;
+      await cleanUp([() => stopProcess(run)], (secondary) => { failure += `warning: ${secondary}\n`; });
+    }
+  } catch (error) {
+    failure = `\n${error}\n`;
   } finally {
-    // A server the flow left behind is reported, not killed: the next flow on this worker then fails at once, naming it.
-    await waitFree([ports.api, ports.web, ports.live], (port, left) => console.log(`warning: ${file} left ${left} on port ${port}`));
-    if (!keep) { await admin.unsafe(`drop database if exists ${database} with (force)`); created.splice(created.indexOf(database), 1); }
+    await cleanUp([
+      async () => {
+        await waitFree([ports.api, ports.web, ports.live], (port, left) => {
+          failure += `\nwarning: ${file} left ${left} on port ${port}\n`;
+          ok = false;
+        });
+      },
+      async () => { if (!keep) await dropDatabase(database); },
+    ], (error) => {
+      failure += `\nwarning: ${error}\n`;
+      ok = false;
+    });
   }
+  const output = (await Bun.file(runningLog).exists() ? await Bun.file(runningLog).text() : "") + failure;
+  await Bun.write(`${logPath}${ok ? "" : "_failed"}.log`, output);
+  await Bun.file(runningLog).delete().catch(() => undefined);
+  return { ok, seconds: Math.round((Date.now() - started) / 1000), output };
+}
+
+async function runQueue(queue: string[], report: (file: string, result: FlowResult) => void) {
+  const results = await Promise.allSettled(Array.from({ length: Math.min(workers, queue.length) }, async (_, worker) => {
+    for (let file = queue.shift(); file; file = queue.shift()) report(file, await runFlow(file, worker));
+  }));
+  // Let every worker finish before the top-level cleanup drops its databases and closes the pool.
+  const errors = results.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, "e2e worker errors");
 }
 
 if (files.length === 0) { console.log("no flow matches"); process.exit(1); }
@@ -92,38 +144,32 @@ try {
   const busyWarm = listenerOn(warmPort);
   if (busyWarm) throw new Error(`port ${warmPort} is in use by ${busyWarm}; no flow started`);
   const warm = Bun.spawn(["bunx", "vite", "--port", String(warmPort), "--strictPort"], { cwd: `${import.meta.dir}/../apps/web`, env: { ...Bun.env, VITE_API_URL: "http://localhost:1" }, stdout: "ignore", stderr: "ignore" });
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(`http://localhost:${warmPort}/`)).status < 500) break; } catch { /* not up yet */ }
-    await Bun.sleep(200);
+  try {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      try { if ((await fetch(`http://localhost:${warmPort}/`, { signal: AbortSignal.timeout(1_000) })).status < 500) break; } catch { /* not up yet */ }
+      await Bun.sleep(200);
+    }
+  } finally {
+    await stopProcess(warm);
   }
-  warm.kill();
-  await warm.exited;
   await waitFree([warmPort], (port, listener) => { throw new Error(`warm-up server still holds port ${port}: ${listener}; no flow started`); });
 
   console.log(`${files.length} flows on ${workers} workers, a database and a pair of ports for each (API ${portBase}+, web ${portBase + 20_000}+, E2E_PORT_BASE ${Bun.env.E2E_PORT_BASE ? "set" : "derived from the directory name"})`);
-  const queue = [...files];
   const failed: { file: string; output: string; blocked?: boolean }[] = [];
-  const passed: string[] = [];
-  await Promise.all(Array.from({ length: workers }, async (_, worker) => {
-    for (let file = queue.shift(); file; file = queue.shift()) {
-      const result = await runFlow(file, worker);
-      console.log(`${result.ok ? "ok  " : "FAIL"} ${file} (${result.seconds}s)`);
-      if (result.ok) passed.push(file); else failed.push({ file, output: result.output, blocked: result.blocked });
-    }
-  }));
+  await runQueue([...files], (file, result) => {
+    console.log(`${result.ok ? "ok  " : "FAIL"} ${file} (${result.seconds}s)`);
+    if (!result.ok) failed.push({ file, output: result.output, blocked: result.blocked });
+  });
 
   // Each flow that failed runs once more, on the same workers: it is only a few flows now, and a flow that missed a wait under load usually passes the second time.
   // A flow blocked by a busy port would fail the same way again, so it is not retried.
   const stillFailing: { file: string; output: string }[] = failed.filter((flow) => flow.blocked);
   const retried: string[] = [];
   const again = failed.filter((flow) => !flow.blocked).map((flow) => flow.file);
-  await Promise.all(Array.from({ length: Math.min(workers, again.length) }, async (_, worker) => {
-    for (let file = again.shift(); file; file = again.shift()) {
-      const result = await runFlow(file, worker);
-      console.log(`${result.ok ? "ok  " : "FAIL"} ${file} again (${result.seconds}s)`);
-      if (result.ok) retried.push(file); else stillFailing.push({ file, output: result.output });
-    }
-  }));
+  await runQueue(again, (file, result) => {
+    console.log(`${result.ok ? "ok  " : "FAIL"} ${file} again (${result.seconds}s)`);
+    if (result.ok) retried.push(file); else stillFailing.push({ file, output: result.output });
+  });
   // The last non-log lines of each failure; the whole output of every flow is in the log directory.
   for (const { file, output } of stillFailing) {
     const lines = output.split("\n").filter((line) => !line.startsWith('{"time"'));
@@ -136,8 +182,17 @@ try {
   if (retried.length) console.log(`passed only on the second run (flaky under load): ${retried.join(", ")}`);
   code = stillFailing.length ? 1 : 0;
 } finally {
-  if (keep) console.log(`kept ${created.join(", ")}`);
-  else for (const name of created) await admin.unsafe(`drop database if exists ${name} with (force)`);
-  await admin.close();
+  try {
+    if (keep) console.log(`kept ${created.join(", ")}`);
+    else await cleanUp([...created].reverse().map((name) => () => dropDatabase(name)), (error) => {
+      console.error(error);
+      code = 1;
+    });
+  } finally {
+    await cleanUp([() => withDeadline(admin.close({ timeout: 1 }), 5_000, "runner database close")], (error) => {
+      console.error(error);
+      code = 1;
+    });
+  }
 }
 process.exit(code);

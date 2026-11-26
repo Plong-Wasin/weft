@@ -1,6 +1,7 @@
 // Work item narrow layout: a key-property bar under the title in the peek panel and on the full page below 1024 px (beside the description
 // from 1024 px it is not shown), a title that wraps at every width, and Properties section headers that are chevron buttons with aria-expanded.
-import { chromium, type Locator, type Page } from "playwright";
+import { chromium, expect, type Locator, type Page } from "playwright/test";
+import { controlAppearance } from "./control-appearance";
 import { createDatabase } from "../packages/db/src";
 import { createProjectActions, createWorkItemActions } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
@@ -68,7 +69,8 @@ try {
 
   // Full page at 900 px: the bar sits under the title, above the description, and shows the same values as the Properties section.
   await page.goto(`${web}/${slug}/browse/MOB-1`);
-  await page.getByRole("heading", { name: "MOB-1" }).waitFor();
+  await page.getByRole("navigation", { name: translate("workItems.breadcrumb") }).getByText("MOB-1", { exact: true }).waitFor();
+  await expect(titleField(), "MOB-1 detail is paired with its seeded title").toHaveValue("Alpha");
   await sidebar().waitFor();
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
   await setWidth(900);
@@ -128,13 +130,20 @@ try {
   await more.focus();
   await page.keyboard.press("Enter");
   check(await more.getAttribute("aria-expanded") === "true", "Enter on the focused header must expand the section");
-  await page.keyboard.press("Shift+Tab");
-  await more.focus();
-  check(await more.evaluate((element) => element.matches(":focus-visible")), "a keyboard-focused header must match :focus-visible");
   for (const theme of ["dark", "light"] as const) {
     await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
-    const ring = await more.evaluate((element) => { const style = getComputedStyle(element); return { style: style.outlineStyle, width: style.outlineWidth, color: style.outlineColor }; });
-    check(ring.style !== "none" && ring.width !== "0px" && ring.color !== "rgba(0, 0, 0, 0)", `the focus ring must be visible in ${theme} theme: ${JSON.stringify(ring)}`);
+    await more.blur();
+    const blurred = await controlAppearance(more);
+    await more.focus();
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Shift+Tab");
+    await expect.poll(async () => {
+      const focused = await controlAppearance(more);
+      return focused.focusVisible && (
+        (focused.outline !== null && focused.outline !== blurred.outline) ||
+        focused.rings.some((ring) => !blurred.rings.includes(ring))
+      );
+    }, { message: `Properties header draws a visible keyboard focus indicator in ${theme}` }).toBe(true);
   }
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
 
@@ -169,7 +178,8 @@ try {
     if (shots) await page.screenshot({ path: `${shots}/ticket13-peek-dark-${width}.png` });
     await peek.getByRole("link", { name: labelOf("workItems.peek.expand") }).click();
     await page.waitForURL(`${web}/${slug}/browse/MOB-1`);
-    await page.getByRole("heading", { name: "MOB-1" }).waitFor();
+    await page.getByRole("navigation", { name: translate("workItems.breadcrumb") }).getByText("MOB-1", { exact: true }).waitFor();
+    await expect(titleField(), "expanded MOB-1 keeps the title edited in this flow").toHaveValue(longTitle);
     if (shots) await page.screenshot({ path: `${shots}/ticket13-page-dark-${width}.png`, fullPage: true });
   }
   if (shots) {

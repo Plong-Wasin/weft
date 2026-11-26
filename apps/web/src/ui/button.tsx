@@ -27,12 +27,19 @@ const buttonVariants = cva(
 /** Touch sizing belongs to real buttons only: `buttonVariants` also styles spans and links inside larger targets. */
 const touchTarget = "pointer-coarse:min-h-11 pointer-coarse:has-[>svg:only-child]:min-w-11";
 
+// Component classes in style.css that set their own box and colours. Variant and size utilities would override them (utilities beat components).
+const selfStyled = /(?:^|\s)(?:attachment-action-button|editor-tool|icon-button-ghost|table-control|wiki-bubble-button|wiki-bubble-reset|wiki-bubble-swatch)(?:\s|$)/;
+// A call site that sizes a square button itself (`size-6`) must not keep the default size's height and padding.
+const squared = /(?:^|\s)!?size-\d/;
+const selfStyledBase = "cursor-pointer disabled:pointer-events-none disabled:opacity-50";
+
 type ButtonProps = Omit<React.ComponentProps<typeof ButtonPrimitive>, "ref"> & VariantProps<typeof buttonVariants>;
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(function Button({ className, variant, size, type = "submit", ...props }, ref) {
-  const mergedClassName = typeof className === "function"
-    ? (state: ButtonPrimitive.State) => cn(buttonVariants({ variant, size }), touchTarget, className(state))
-    : cn(buttonVariants({ variant, size }), touchTarget, className);
+  const merge = (classes: string | undefined) => !variant && !size && selfStyled.test(classes ?? "")
+    ? cn(selfStyledBase, touchTarget, classes)
+    : cn(buttonVariants({ variant, size: size ?? (squared.test(classes ?? "") ? null : undefined) }), touchTarget, classes);
+  const mergedClassName = typeof className === "function" ? (state: ButtonPrimitive.State) => merge(className(state)) : merge(className);
 
   return <ButtonPrimitive ref={ref} data-slot="button" className={mergedClassName} type={type} {...props} />;
 });

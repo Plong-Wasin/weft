@@ -51,7 +51,7 @@ try {
   await page.getByRole("link", { name: /MOB · Mobile/ }).waitFor();
   const me = await (await context.request.get(`${api}/api/me`)).json() as { workspaces: Array<{ id: string }> };
   const [project] = await call<Array<{ id: string }>>("list_projects", { workspaceId: me.workspaces[0]!.id, archived: false });
-  const [item] = await Promise.all([call<{ id: string; displayId: string }>("create_work_item", { projectId: project!.id, title: "Alpha" })]);
+  const [item] = await Promise.all([call<{ id: string; displayId: string }>("create_work_item", { projectId: project!.id, title: "Alpha", dueDate: "2099-03-17" })]);
 
   const t = (key: string) => translate(key as never);
   const base = `${web}/${slug}/browse/${item!.displayId}`;
@@ -71,10 +71,15 @@ try {
   const banner = page.getByRole("status").filter({ hasText: t("workItems.archivedBanner") });
   await banner.waitFor();
   check(await page.getByLabel(t("workItems.titleField")).isEditable() === false, "title still editable on an archived work item");
-  // The key-property bar holds a second Due date picker (hidden beside the description); the Properties section is the last one.
-  // A read-only date is a static span, not a form control, so "disabled" is not defined for it: it must simply not be a button that opens the calendar.
-  const dueDate = page.getByLabel(t("workItems.dueDate")).last();
-  check(await dueDate.evaluate((element) => element.tagName !== "BUTTON" && element.closest("button") === null), "due date still editable on an archived work item");
+  const dateLabel = `${t("workItems.dueDate")}: Mar 17, 2099`;
+  const properties = page.getByRole("complementary", { name: t("workItems.properties"), exact: true });
+  const dueDate = properties.getByRole("button", { name: dateLabel, exact: true });
+  await dueDate.getByText("Mar 17, 2099", { exact: true }).waitFor();
+  await dueDate.click();
+  const reveal = page.getByRole("dialog", { name: dateLabel, exact: true });
+  await reveal.getByText(dateLabel, { exact: true }).waitFor();
+  check(await page.getByRole("grid").count() === 0 && await page.locator("[data-date]").filter({ visible: true }).count() === 0 && await reveal.locator("input, select, button, [contenteditable=true]").count() === 0, "the active archived due date surface shows the seeded date without calendar or editing controls");
+  await page.keyboard.press("Escape");
   console.log("archives: archived from the work item page, banner and read-only fields shown");
 
   // The old link keeps opening it, also on a phone.

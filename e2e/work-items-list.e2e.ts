@@ -848,8 +848,9 @@ try {
     const peekRow = target.locator("[data-list-row]").nth(1);
     await peekRow.locator("a[href]").first().tap();
     const peek = target.locator("[data-peek]");
-    await peek.waitFor();
-    check(await peek.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}`) }).count() > 0, `${label} one tap on a row title opens the peek with its property controls (TouchPeekOneTap)`);
+    // The peek shell opens before its work item and property controls finish loading.
+    await peek.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}`) }).first().waitFor()
+      .catch(() => { throw new Error(`${label} one tap on a row title opens the peek with its property controls (TouchPeekOneTap)`); });
     await target.keyboard.press("Escape");
     await peek.waitFor({ state: "hidden" });
     const firstRowControls = target.getByTestId("row-MOB-1").locator('button[aria-label], [role="checkbox"]');

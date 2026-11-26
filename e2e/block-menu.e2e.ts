@@ -302,7 +302,16 @@ try {
 
   // A collaborator types above the dragged block mid-drag: the source moves, so the drag is cancelled and no block moves.
   const beforeRemoteEdit = await order();
-  await editor.getByText("Quote block", { exact: true }).hover();
+  const quoteBlock = editor.getByText("Quote block", { exact: true });
+  await quoteBlock.hover();
+  await page.waitForFunction((quote) => {
+    const grip = document.querySelector('[data-testid="wiki-block-handle"]');
+    if (!grip) return false;
+    const gripBox = grip.getBoundingClientRect();
+    const quoteBox = quote.getBoundingClientRect();
+    const gripCenter = gripBox.top + gripBox.height / 2;
+    return gripBox.height > 0 && gripCenter >= quoteBox.top && gripCenter <= quoteBox.bottom;
+  }, await quoteBlock.elementHandle());
   const quoteGrip = await blockHandle.boundingBox();
   // The code block's text also holds its copy button's label, so match the <pre> by its start.
   const codeBox = await editor.locator("pre", { hasText: "Code block" }).boundingBox();

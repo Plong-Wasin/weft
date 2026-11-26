@@ -1,11 +1,14 @@
 // UI-only browser flow: a new workspace member signs in a Daemon, shares a Runtime,
 // creates a Code-capable Agent, grants a second member access, and runs it from a work item.
 // A scratch-only fake `codex` executable keeps the real Daemon path deterministic and offline.
-import { chromium } from "playwright";
+import { chromium, type Locator } from "playwright";
 import { rm } from "node:fs/promises";
 import { eq, like } from "drizzle-orm";
 import { agents, createDatabase, daemons, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
+
+// AI is on only with a provider key: a placeholder keeps the AI page shown here, and no model is called.
+Bun.env.OPENAI_API_KEY ??= "sk-e2e-placeholder-no-call";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31214);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52214);
@@ -32,9 +35,11 @@ async function waitFor(url: string) {
   for (let n = 0; n < 120; n += 1) { try { if ((await fetch(url)).status < 500) return; } catch { /* starting */ } await Bun.sleep(250); }
   throw new Error(`${url} did not start`);
 }
-async function screenshotMatrix(page: import("playwright").Page, name: string, focus?: import("playwright").Locator) {
+async function screenshotMatrix(page: import("playwright").Page, name: string, focus?: import("playwright").Locator, opener?: Locator) {
   for (const width of [1440, 768, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    // A new width can hide a picker's trigger, which closes the picker on purpose: open it again.
+    if (opener && focus && !await focus.isVisible()) await opener.click();
     await focus?.scrollIntoViewIfNeeded();
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.waitForTimeout(50); // kept: a repaint after the viewport change; no DOM signal for it
@@ -96,7 +101,7 @@ try {
   await admin.getByRole("link", { name: /ENG · Engineering/ }).waitFor();
   // Runtime Agents always use Autopilot, so the workspace Admin enables it before testing a Run.
   await admin.goto(`${web}/${slug}/settings`);
-  const allowAutopilot = admin.getByLabel(translate("settings.allowAutopilot"));
+  const allowAutopilot = admin.getByRole("checkbox", { name: translate("settings.allowAutopilot") });
   for (let attempt = 0; attempt < 50 && await allowAutopilot.isDisabled(); attempt += 1) await Bun.sleep(100);
   check(!(await allowAutopilot.isDisabled()), "workspace settings did not load the Admin controls");
   // The control is controlled by a query: it reverts until the save refetches, so click and poll instead of check().
@@ -117,7 +122,9 @@ try {
   for (let n = 0; n < 100 && !(await Bun.file(capturePath).exists()); n += 1) await Bun.sleep(100);
   check(await Bun.file(capturePath).exists(), "weft login did not open its browser sign-in page");
   await admin.goto((await Bun.file(capturePath).text()).trim());
-  check((await admin.locator("body").innerText()).includes("Sign-in complete"), "browser sign-in did not complete the Daemon callback");
+  // `weft login` uses device authorization: the signed-in browser reviews the code and approves it.
+  await admin.getByRole("button", { name: "Approve device" }).click();
+  await admin.getByRole("status").filter({ hasText: "Device approved" }).waitFor();
   const loginExit = await login.exited;
   check(loginExit === 0, `weft login exited with ${loginExit}: ${await new Response(login.stderr).text()}`);
   await admin.close();
@@ -165,9 +172,9 @@ try {
   const { page: developer } = await join("Developer", developerEmail, developerInvite);
   const { page: pm } = await join("PM", pmEmail, pmInvite);
   await adminPage.goto(`${web}/${slug}/settings/projects/ENG/members`);
-  await adminPage.getByLabel(translate("projects.addMember"), { exact: true }).selectOption({ label: "Developer" });
+  await adminPage.getByLabel(translate("projects.addMember"), { exact: true }).selectOption({ label: `Developer · ${developerEmail}` });
   await adminPage.getByRole("button", { name: translate("projects.addMember"), exact: true }).click();
-  await adminPage.getByLabel(translate("projects.addMember"), { exact: true }).selectOption({ label: "PM" });
+  await adminPage.getByLabel(translate("projects.addMember"), { exact: true }).selectOption({ label: `PM · ${pmEmail}` });
   await adminPage.getByRole("button", { name: translate("projects.addMember"), exact: true }).click();
 
   // Build and share the Code-capable Agent through Settings.
@@ -185,15 +192,23 @@ try {
   await adminPage.getByRole("button", { name: translate("agents.save") }).click();
   const agentCard = adminPage.locator('[data-agent="Scratch Runtime Agent"]');
   await agentCard.waitFor();
-  const allProjects = agentCard.getByLabel(translate("agents.allProjects"));
+  const saveGroup = async (group: Locator) => {
+    const save = group.getByRole("button", { name: translate("agents.save"), exact: true });
+    await save.click();
+    for (let attempt = 0; attempt < 50 && !await save.isDisabled(); attempt += 1) await Bun.sleep(100);
+    check(await save.isDisabled(), "Agent access was not saved");
+  };
+  const allProjects = agentCard.getByRole("checkbox", { name: translate("agents.allProjects") });
   await allProjects.click();
   for (let attempt = 0; attempt < 50 && await allProjects.getAttribute("aria-checked") !== "true"; attempt += 1) await Bun.sleep(100);
   if (await allProjects.getAttribute("aria-checked") !== "true") throw new Error(`Could not open Agent to all projects; note: ${(await agentCard.getByRole("alert").allTextContents()).join("; ") || "none"}`);
-  const developerAccess = agentCard.getByLabel(`${translate("agents.mayUse")} Developer`);
+  await saveGroup(agentCard.locator("fieldset").filter({ hasText: translate("agents.allProjects") }));
+  const developerAccess = agentCard.getByRole("checkbox", { name: `${translate("agents.mayUse")} Developer` });
   await developerAccess.click();
   for (let attempt = 0; attempt < 50 && await developerAccess.getAttribute("aria-checked") !== "true"; attempt += 1) await Bun.sleep(100);
   if (await developerAccess.getAttribute("aria-checked") !== "true") throw new Error(`Runtime owner could not grant Developer Agent access; note: ${(await agentCard.getByRole("alert").allTextContents()).join("; ") || "none"}`);
-  const pmAccess = agentCard.getByLabel(`${translate("agents.mayUse")} PM`);
+  await saveGroup(agentCard.locator("fieldset").filter({ hasText: translate("agents.peopleAccess") }));
+  const pmAccess = agentCard.getByRole("checkbox", { name: `${translate("agents.mayUse")} PM` });
   check(await pmAccess.getAttribute("aria-checked") === "false", "PM unexpectedly has Code-capable Agent access");
   await screenshotMatrix(adminPage, "agent-access-settings");
   // Agents you can ask: the Developer may use the Agent; the PM sees it greyed with who to ask. Read-only for both.
@@ -217,23 +232,26 @@ try {
   const properties = developer.getByRole("complementary", { name: translate("workItems.properties") });
   await pm.goto(`${web}/${slug}/browse/ENG-1`);
   const pmProperties = pm.getByRole("complementary", { name: translate("workItems.properties") });
-  await pmProperties.getByRole("button", { name: new RegExp(`^${translate("workItems.assignees")}:`) }).click();
+  const pmAssignees = pmProperties.getByRole("button", { name: new RegExp(`^${translate("workItems.assignees")}:`) });
+  await pmAssignees.click();
   const greyedAgent = pm.getByRole("menuitemcheckbox", { name: /Scratch Runtime Agent Agent Can edit code Ask Runtime Owner for access/ });
   await greyedAgent.waitFor();
   check(await greyedAgent.getAttribute("aria-disabled") === "true", "PM picker did not disable the Code-capable Agent");
   const greyBadge = greyedAgent.getByText(translate("agents.canEditCode"));
   const greyBadgeFontSize = await greyBadge.evaluate((node) => getComputedStyle(node).fontSize);
   check(parseFloat(greyBadgeFontSize) >= 12, `greyed code-capable chip is too small (${greyBadgeFontSize})`);
-  await screenshotMatrix(pm, "greyed-code-agent-row", greyedAgent);
+  await screenshotMatrix(pm, "greyed-code-agent-row", greyedAgent, pmAssignees);
   await pm.keyboard.press("Escape");
-  await properties.getByRole("button", { name: new RegExp(`^${translate("workItems.assignees")}:`) }).click();
+  const developerAssignees = properties.getByRole("button", { name: new RegExp(`^${translate("workItems.assignees")}:`) });
+  await developerAssignees.click();
   const codeAgent = developer.getByRole("menuitemcheckbox", { name: "Scratch Runtime Agent Agent Can edit code", exact: true });
   await codeAgent.waitFor();
   const badge = codeAgent.getByText(translate("agents.canEditCode"));
   const badgeStyle = await badge.evaluate((node) => ({ fontSize: getComputedStyle(node).fontSize, color: getComputedStyle(node).color }));
   check(parseFloat(badgeStyle.fontSize) >= 12, `code-capable chip is too small (${badgeStyle.fontSize})`);
-  await screenshotMatrix(developer, "assignee-code-agent-row", badge);
+  await screenshotMatrix(developer, "assignee-code-agent-row", badge, developerAssignees);
   await developer.setViewportSize({ width: 1440, height: 900 });
+  if (!await codeAgent.isVisible()) await developerAssignees.click();
   await codeAgent.scrollIntoViewIfNeeded();
   await codeAgent.click();
   await developer.keyboard.press("Escape");

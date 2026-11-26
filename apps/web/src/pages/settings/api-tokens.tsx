@@ -219,7 +219,7 @@ export function ApiTokensPage() {
         {secret ? <div className="grid gap-3">
           <label>{translate("tokens.secret")}<Input readOnly value={secret.token} className="font-mono" /></label>
           <p role="alert" className="m-0 rounded-md border border-destructive px-3 py-2 text-sm text-destructive">{translate("tokens.secretWarning")}</p>
-          <Button variant="primary" type="button" className="w-full !py-3 !text-base" onClick={async () => { if (await copyText(secret.token, translate("tokens.copied"), translate("comments.copyFailed"))) setNote(translate("tokens.copied")); }}>{translate("tokens.copy")}</Button>
+          <Button variant="primary" type="button" className="h-11 w-full !text-base" onClick={async () => { if (await copyText(secret.token, translate("tokens.copied"), translate("comments.copyFailed"))) setNote(translate("tokens.copied")); }}>{translate("tokens.copy")}</Button>
           <div className="flex justify-end gap-2"><Button type="button" onClick={closeDialog}>{translate("settings.cancel")}</Button></div>
         </div> : <form className="grid gap-3" onSubmit={(event) => void create(event)}>
           <label>{translate("tokens.presetLabel")}<select value={preset} onChange={(event) => choosePreset(event.target.value as TokenPreset)}>

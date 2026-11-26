@@ -1,5 +1,6 @@
-// Browser check for the shared native select style: a visible chevron, a hover ring, a focus ring and a clearly disabled state.
-import { chromium } from "playwright";
+// Browser coverage for the Base UI ordering trigger and the native Wiki detail selects.
+import { chromium, type Locator } from "playwright";
+import { controlAppearance } from "./control-appearance";
 import { translate } from "../packages/shared/src";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31420);
@@ -18,12 +19,6 @@ async function waitFor(url: string) {
   }
   throw new Error(`${url} did not start`);
 }
-
-type Look = { backgroundImage: string; borderColor: string; backgroundColor: string; color: string; cursor: string; boxShadow: string };
-const lookOf = (locator: import("playwright").Locator) => locator.evaluate((element): Look => {
-  const style = getComputedStyle(element);
-  return { backgroundImage: style.backgroundImage, borderColor: style.borderTopColor, backgroundColor: style.backgroundColor, color: style.color, cursor: style.cursor, boxShadow: style.boxShadow };
-});
 
 let failed = false;
 try {
@@ -58,46 +53,57 @@ try {
   await call("archive_wiki_page", { pageId: old.id });
 
   const t = (key: string) => translate(key as never);
-  const enabledOrder = page.getByLabel(t("pages.order"));
+  const enabledOrder = page.getByRole("combobox", { name: t("pages.order"), exact: true });
   await page.goto(`${web}/${slug}/projects/SEL/pages`);
   await enabledOrder.waitFor();
+  const chevron = enabledOrder.locator("svg.lucide-chevron-down[aria-hidden=true]");
+  check(await chevron.count() === 1 && await chevron.isVisible(), "Base UI order trigger has one visible down chevron");
+  const exerciseEnabledSelect = async (control: Locator, name: string) => {
+    const settle = () => control.evaluate(async (element) => {
+      await Promise.allSettled(element.getAnimations().map((animation) => animation.finished));
+    });
+    for (const theme of ["light", "dark"] as const) {
+      await page.evaluate((value) => { document.documentElement.dataset.theme = value; }, theme);
+      await page.mouse.move(0, 0);
+      await settle();
+      const idle = await controlAppearance(control);
+      check(idle.borderVisible, `${name} has a visible border in ${theme}`);
+      await control.hover();
+      await settle();
+      const hovered = await controlAppearance(control);
+      check(hovered.borderVisible && hovered.borderColor !== idle.borderColor, `${name} visibly changes its border on hover in ${theme}`);
+      await page.mouse.move(0, 0);
+      // Shift+Tab from the next position in the sequential order gives the trigger keyboard focus.
+      await control.focus();
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Shift+Tab");
+      await settle();
+      const focused = await controlAppearance(control);
+      check(focused.focusVisible, `${name} has keyboard focus in ${theme}`);
+      check((focused.outline !== null && focused.outline !== hovered.outline) || focused.rings.some((ring) => !hovered.rings.includes(ring)), `${name} draws a visible keyboard focus indicator distinct from hover in ${theme}`);
+      await control.blur();
+    }
+    await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
+  };
+  await exerciseEnabledSelect(enabledOrder, "Base UI order trigger");
 
-  // Rest state: a chevron, a border, and a surface that reads as a control.
-  const rest = await lookOf(enabledOrder);
-  check(rest.backgroundImage.includes("url("), "select should draw its own chevron (background-image)");
-  check(rest.borderColor !== "rgba(0, 0, 0, 0)", "select should have a visible border");
-
-  // Hover: the border changes, and the surface stays a control.
-  await page.mouse.move(0, 0);
-  const idle = await lookOf(enabledOrder);
-  await enabledOrder.hover();
-  const hovered = await lookOf(enabledOrder);
-  check(hovered.borderColor !== idle.borderColor, "hover should change the select border colour");
-  await page.mouse.move(0, 0);
-
-  // Focus: keyboard focus draws a ring (box-shadow), distinct from hover.
-  await enabledOrder.focus();
-  await page.keyboard.press("Shift");
-  check(await enabledOrder.evaluate((element) => element.matches(":focus-visible")), "keyboard focus should match :focus-visible");
-  const focused = await lookOf(enabledOrder);
-  check(focused.boxShadow !== "none", "focus should draw a ring (box-shadow)");
-  check(focused.boxShadow !== hovered.boxShadow, "focus ring should differ from hover");
-  await page.locator("body").click({ position: { x: 1, y: 1 } });
-
-  // Disabled: an archived page locks its Parent page select; it must look different from an enabled select.
+  // An archived page locks its native Parent page select.
   await page.goto(`${web}/${slug}/projects/SEL/pages/${live.id}`);
   // The Details panel starts hidden: open it before looking at its selects.
   const openDetails = async () => { const toggle = page.getByTestId("wiki-details-toggle"); await toggle.waitFor(); if (await toggle.getAttribute("aria-pressed") !== "true") await toggle.click(); };
   await openDetails();
   const enabledAccess = page.locator("label", { hasText: t("wiki.access") }).locator("select").first();
   await enabledAccess.waitFor();
-  const enabled = await lookOf(enabledAccess);
+  const enabled = await controlAppearance(enabledAccess);
+  check(enabled.backgroundImage.includes("url("), "native select draws its down chevron as a background image");
+  await exerciseEnabledSelect(enabledAccess, "native access select");
+
   await page.goto(`${web}/${slug}/projects/SEL/pages/${old.id}`);
   await openDetails();
   const disabledParent = page.locator("label", { hasText: t("wiki.parent") }).locator("select");
   await disabledParent.waitFor();
   check(await disabledParent.isDisabled(), "archived page parent select should be disabled");
-  const disabled = await lookOf(disabledParent);
+  const disabled = await controlAppearance(disabledParent);
   check(disabled.cursor === "not-allowed", "disabled select should show a not-allowed cursor");
   check(disabled.backgroundColor !== enabled.backgroundColor || disabled.color !== enabled.color, "disabled select should look different from an enabled one");
 

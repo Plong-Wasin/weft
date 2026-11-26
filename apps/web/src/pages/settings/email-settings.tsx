@@ -50,12 +50,12 @@ export function AccountNotificationsPage() {
     setNote(translate(response?.ok ? "email.confirmationSent" : "email.saveFailed"));
   }
 
-  if (!prefs) return <main className="mx-auto w-full max-w-[900px]">
+  if (!prefs) return <main className="mx-auto w-full max-w-[900px] px-[var(--padding-page-x)] py-[var(--padding-page-y)]">
     <SettingsHeader title={translate("email.title")} description={translate("email.description")} />
     <Note note={failed ? translate("email.loadFailed") : null} error />
   </main>;
 
-  return <main className="mx-auto w-full max-w-[900px]">
+  return <main className="mx-auto w-full max-w-[900px] px-[var(--padding-page-x)] py-[var(--padding-page-y)]">
     <SettingsHeader title={translate("email.title")} description={translate("email.description")} />
     {!emailEnabled && <p role="status" className="mb-6 rounded-md bg-card px-3 py-2 text-sm text-muted-foreground">{translate("email.off")}</p>}
     <SettingsBlock>

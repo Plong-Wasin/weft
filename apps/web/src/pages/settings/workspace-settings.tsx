@@ -84,7 +84,7 @@ export function WorkspaceMembers() {
   return <section>
     <SettingsHeader title={translate("members.title")} description={translate("settings.membersDesc")} />
     {adminLoading ? <p role="status" className="text-muted-foreground">{translate("account.loading")}</p> : <RowList>{members.map((member) => <Row key={member.userId}>
-      <Avatar name={member.name} id={member.userId} agent={member.isAgent} size="md" /><span className="grid min-w-[min(100%,14rem)] flex-1 gap-0.5"><span className="flex flex-wrap items-center gap-1.5 break-words font-medium">{member.name}{member.isAgent && <AgentLabel />}</span><span className="break-all text-13 text-muted-foreground">{member.email}</span></span>
+      <Avatar name={member.name} id={member.userId} agent={member.isAgent} size="md" /><span className="grid min-w-[min(100%,14rem)] flex-1 gap-0.5"><span className="flex flex-wrap items-center gap-1.5 [overflow-wrap:anywhere] font-medium">{member.name}{member.isAgent && <AgentLabel />}</span><span className="break-all text-13 text-muted-foreground">{member.email}</span></span>
       {isAdmin && !member.isAgent ? <select aria-label={`${translate("settings.roleOf")} ${member.name}`} value={member.role} onChange={async (event) => guard(await action("change_member_role", { workspaceId: workspace.id, userId: member.userId, role: event.target.value }))}>
         {roles.map((role) => <option key={role} value={role}>{translate(`members.role.${role}`)}</option>)}
       </select> : <span className="text-muted-foreground">{translate(`members.role.${member.role}`)}</span>}

@@ -379,7 +379,7 @@ export function WorkspaceAgents() {
     </SettingsBlock>}
     <SettingsBlock>
       {agents.length === 0 ? <p className="text-muted-foreground">{translate("agents.none")}</p> : <RowList>{agents.map((agent) => { const runtime = runtimeParts(agent); return <Row key={agent.id}>
-        <div className="grid min-w-0 flex-1 gap-2" data-agent={agent.name}>
+        <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)] gap-2 [overflow-wrap:anywhere] [&_fieldset]:min-w-0 [&_fieldset>button]:justify-self-start" data-agent={agent.name}>
           <div className="flex flex-wrap items-center gap-2">
             <span className="flex items-center gap-2"><Avatar name={agent.name} id={agent.id} agent size="md" /><span className="font-medium">{agent.name}</span></span>
             <span className="text-sm text-muted-foreground">{translate(agent.enabled ? "agents.enabled" : "agents.disabled")} · {agent.model === "default" ? translate("agents.defaultModel") : agent.model} · {runtime ? [translate("agents.metaComputer").replace("{name}", runtime.computer), agent.runtimeOwnerName ? translate("agents.metaOwner").replace("{name}", agent.runtimeOwnerName) : null, runtime.tool ? translate("agents.metaTool").replace("{name}", capitalize(runtime.tool)) : null, translate(agent.runtimeOnline ? "agents.metaOnline" : "agents.metaOffline"), ...profileSummary(agent)].filter(Boolean).join(" · ") : translate("agents.server")} · {translate("agents.usage").replace("{used}", formatNumber(agent.monthlyTokensUsed))}</span>

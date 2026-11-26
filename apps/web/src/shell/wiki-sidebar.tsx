@@ -52,9 +52,9 @@ function Group({ label, icon, count, defaultOpen, holdsActive = false, dropHint,
   const [open, setOpen] = React.useState(defaultOpen || holdsActive);
   // Landing on a page opens the group it lives in, even when the pages arrive after the first render.
   React.useEffect(() => { if (holdsActive) setOpen(true); }, [holdsActive]);
-  return <section className="grid gap-0.5">
+  return <section className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-0.5">
     <Button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className={heading}>
-      <ChevronRight aria-hidden size={12} className={`transition-transform ${open ? "rotate-90" : ""}`} />{icon}<span className="flex-1 truncate">{label}</span>{dropHint && <span className="text-[12px] font-medium text-foreground">{dropHint}</span>}{count !== undefined && <span className="font-normal">{count}</span>}
+      <ChevronRight aria-hidden size={12} className={`transition-transform ${open ? "rotate-90" : ""}`} />{icon}<span className="min-w-0 flex-1 truncate" title={label}>{label}</span>{dropHint && <span className="text-[12px] font-medium text-foreground">{dropHint}</span>}{count !== undefined && <span className="font-normal">{count}</span>}
     </Button>
     {open && <div className="grid gap-0.5 pl-1">{children}</div>}
   </section>;

@@ -265,7 +265,7 @@ function DuplicateModal({ action, workspaceId, item, onClose, onPick }: { action
 function ListRow({ item, selected, onSelect }: { item: IntakeItem; selected: boolean; onSelect: () => void }) {
   return <li>
     <Button type="button" data-testid={`intake-${item.displayId}`} aria-current={selected ? "true" : undefined} onClick={onSelect}
-      variant="ghost" className={`h-auto min-h-28 w-full items-stretch border-0 bg-transparent px-4 py-3 text-left hover:bg-accent ${selected ? "bg-accent outline outline-1 -outline-offset-1 outline-ring" : ""}`}>
+      variant="ghost" className={`h-auto min-h-28 w-full items-stretch whitespace-normal [overflow-wrap:anywhere] border-0 bg-transparent px-4 py-3 text-left hover:bg-accent ${selected ? "bg-accent outline outline-1 -outline-offset-1 outline-ring" : ""}`}>
       <span className="flex min-w-0 flex-1 flex-col items-stretch justify-center gap-1.5">
         <span className="text-12 leading-4 text-muted-foreground">{item.displayId}</span>
         <span title={item.title} className="line-clamp-2 min-w-0 text-left text-14 leading-5 font-medium text-foreground">{item.title}</span>

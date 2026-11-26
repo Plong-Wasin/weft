@@ -29,7 +29,7 @@ export function SettingsBlock({ title, description, children }: { title?: string
 /** Bordered list of rows (members, invites, labels, states). */
 export function RowList({ children }: { children: React.ReactNode }) {
   const inSettingsBlock = React.useContext(InSettingsBlock);
-  const classes = "m-0 grid list-none divide-y divide-[var(--border)] p-0";
+  const classes = "m-0 grid list-none grid-cols-[minmax(0,1fr)] divide-y divide-[var(--border)] p-0";
   return inSettingsBlock ? <ul className={classes}>{children}</ul> : <Card as="ul" className={`${classes} rounded-xl`}>{children}</Card>;
 }
 

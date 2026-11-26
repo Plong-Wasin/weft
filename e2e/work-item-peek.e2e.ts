@@ -76,8 +76,8 @@ try {
   // Peek opens from the list and closes with Escape.
   await page.goto(`${base}/issues`);
   // UX review matrix: work item pages and list peeks at desktop, tablet and phone widths in both themes.
-  for (const width of [1440, 768, 390]) for (const theme of ["light", "dark"] as const) {
-    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+  for (const width of [1440, 844, 768, 390]) for (const theme of ["light", "dark"] as const) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : width === 844 ? 390 : 900 });
     await page.evaluate((nextTheme) => { localStorage.setItem("weft.theme", nextTheme); document.documentElement.dataset.theme = nextTheme; }, theme);
     await page.goto(`${base}/issues`);
     await page.getByTestId("row-MOB-1").getByRole("link").click();
@@ -85,7 +85,8 @@ try {
     await page.screenshot({ path: `${uxShots}/peek-${width}-${theme}.png` });
     await page.keyboard.press("Escape");
     await page.goto(`${web}/${slug}/browse/MOB-1`);
-    await page.getByRole("heading", { name: "MOB-1" }).waitFor();
+    await page.getByRole("heading", { name: "Alpha", level: 1 }).waitFor();
+    check(await page.getByRole("heading", { name: "Alpha", level: 1 }).evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize) >= 24), `the detail title is below 24px at ${width}px (${theme})`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `work item page scrolls sideways at ${width}px (${theme})`);
     await page.screenshot({ path: `${uxShots}/detail-${width}-${theme}.png`, fullPage: true });
   }
@@ -95,7 +96,7 @@ try {
   await page.getByTestId("row-MOB-1").getByRole("link").click();
   await peek.waitFor();
   check(page.url().includes("peek=MOB-1"), "the peek is not in the URL");
-  await peek.getByRole("heading", { name: "MOB-1" }).waitFor();
+  await peek.getByRole("heading", { name: "Alpha", level: 2 }).waitFor();
   await page.keyboard.press("Escape");
   await peek.waitFor({ state: "detached" });
   check(!page.url().includes("peek="), "closing the peek left it in the URL");
@@ -162,12 +163,13 @@ try {
   // below that they stack, Properties before the Timeline. The header keeps close and expand; Copy link, Archive and Delete sit under Properties.
   const peekHeader = peek.locator("header").first();
   await page.evaluate(() => { localStorage.setItem("weft.theme", "dark"); document.documentElement.dataset.theme = "dark"; });
-  for (const width of [1920, 1440, 1280, 1024, 768, 390]) {
-    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+  for (const width of [1920, 1440, 1280, 1024, 844, 768, 390]) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : width === 844 ? 390 : 900 });
     await page.goto(`${base}/issues`);
     await page.getByTestId("row-MOB-1").getByRole("link").click();
     await peek.waitFor();
-    await peek.getByRole("heading", { name: "MOB-1" }).waitFor();
+    await peek.getByRole("heading", { name: "Alpha", level: 2 }).waitFor();
+    check(await peek.getByRole("heading", { name: "Alpha", level: 2 }).evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize) >= 24), `the peek title is below 24px at ${width}px`);
     const aside = peek.getByRole("complementary", { name: translate("workItems.properties"), exact: true });
     const panel = await peek.boundingBox();
     const side = await aside.boundingBox();
@@ -190,6 +192,12 @@ try {
     const gap = descriptionToolbar!.y - (title!.y + title!.height);
     if (width >= 1024) check(gap <= 48, `the description sits ${gap}px under the title at ${width}px; expected the editor toolbar only (48px or less)`);
     check(JSON.stringify(await aside.locator("[data-props-section]").evaluateAll((nodes) => nodes.map((node) => (node as HTMLElement).dataset.propsSection))) === '["primary","more","details"]', `the peek Properties sections are not the page's at ${width}px`);
+    const propertyButtons = aside.locator('[data-props-section="primary"] [data-property-row] button');
+    const propertyButtonBoxes = await propertyButtons.evaluateAll((nodes) => nodes.slice(0, 4).map((node) => {
+      const rect = node.getBoundingClientRect();
+      return { x: rect.x, width: rect.width };
+    }));
+    check(propertyButtonBoxes.length === 4 && propertyButtonBoxes.every((box) => Math.abs(box.x - propertyButtonBoxes[0]!.x) < 1 && Math.abs(box.width - propertyButtonBoxes[0]!.width) < 1), `the key property values do not share aligned centers and equal widths at ${width}px`);
     const details = await aside.locator('[data-props-section="details"]').boundingBox();
     const actions = await aside.locator("[data-peek-actions]").boundingBox();
     check(!!details && !!actions && actions.y >= details.y, `the peek actions are not under Properties at ${width}px`);
@@ -223,7 +231,7 @@ try {
   await page.goto(`${base}/issues`);
   await page.getByRole("link", { name: "Run context", exact: true }).click();
   await peek.waitFor();
-  await peek.getByRole("heading", { name: runItem.displayId }).waitFor();
+  await peek.getByRole("heading", { name: "Run context", level: 2 }).waitFor();
   const actualViewRun = peek.getByRole("link", { name: translate("comments.viewRun"), exact: true });
   await actualViewRun.waitFor();
   await actualViewRun.click();
@@ -269,7 +277,7 @@ try {
   await page.getByTestId("row-MOB-1").getByRole("link").click();
   await peek.getByRole("link", { name: translate("workItems.peek.expand") }).click();
   await page.waitForURL(`${web}/${slug}/browse/MOB-1`);
-  await page.getByRole("heading", { name: "MOB-1" }).waitFor();
+  await page.getByRole("heading", { name: "Alpha", level: 1 }).waitFor();
   // Empty sections stay hidden; the action row is the way in.
   const actionRow = page.getByRole("group", { name: translate("workItems.actions") });
   for (const key of ["workItems.addSubItemAction", "workItems.addRelationAction", "workItems.addLinkAction", "workItems.attachAction"] as const) await actionRow.getByRole("button", { name: translate(key) }).waitFor();
@@ -378,6 +386,24 @@ try {
   await page.keyboard.type("First comment");
   await page.getByRole("button", { name: translate("comments.add"), exact: true }).click();
   await page.getByText("First comment").waitFor();
+  const commentActions = page.locator('[data-comment-actions]').first();
+  const commentComposer = page.locator('[data-comment-composer]');
+  const actionBox = await commentActions.boundingBox();
+  const composerBox = await commentComposer.boundingBox();
+  check(!!actionBox && !!composerBox && composerBox.y >= actionBox.y + actionBox.height + 20, "the comment composer overlaps or crowds the comment action row");
+  const actionGlyphs = await commentActions.evaluate((element) => {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    const rects: Array<{ bottom: number; text: string }> = [];
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (!node.textContent?.trim()) continue;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      for (const rect of range.getClientRects()) rects.push({ bottom: rect.bottom, text: node.textContent.trim() });
+    }
+    return rects;
+  });
+  check(actionGlyphs.length > 0 && actionGlyphs.every((glyph) => glyph.bottom <= composerBox!.y), "comment action text is clipped behind the composer");
   await page.getByRole("button", { name: translate("comments.reply"), exact: true }).first().click();
   await page.locator(commentEditor).first().click();
   await page.keyboard.type("A reply");
@@ -458,6 +484,9 @@ try {
   for (const key of ["workItems.copyLink", "workItems.delete"] as const) {
     check(await peek.locator("[data-peek-actions]").getByRole("button", { name: translate(key), exact: true }).isVisible(), `${key} is not a visible button under Properties on phone`);
   }
+  const footerCopy = peek.locator("[data-peek-actions]").getByRole("button", { name: translate("workItems.copyLink"), exact: true });
+  const footerDelete = peek.locator("[data-peek-actions]").getByRole("button", { name: translate("workItems.delete"), exact: true });
+  check(await footerCopy.evaluate((node) => getComputedStyle(node).color) !== await footerDelete.evaluate((node) => getComputedStyle(node).color), "Delete in the peek footer has no destructive text treatment");
   await peek.waitFor();
   check(await page.getByText(translate("timeline.filter"), { exact: true }).isVisible(), "timeline filter has no visible label");
   check(await page.getByText(translate("timeline.sort"), { exact: true }).isVisible(), "timeline sort has no visible label");

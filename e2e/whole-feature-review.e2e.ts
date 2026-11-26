@@ -88,6 +88,7 @@ try {
   for (const locale of ["en", "th"] as const) {
     await call("set_my_locale", { locale });
     await page.goto(detail);
+    await page.locator("[data-work-item-links] > summary").click();
     await page.setViewportSize({ width: 390, height: 844 });
     // The Properties panel has a section toggle with the same name ("More"); the header menu comes first in the page.
     await page.getByRole("button", { name: translate("workItems.more", locale), exact: true }).first().click();
@@ -118,6 +119,7 @@ try {
     const descriptionSaved = page.getByTestId("description-save-status").getByText(translate("workItems.descriptionSave.saved", locale), { exact: true });
     await descriptionSaved.waitFor();
     await page.reload();
+    await page.locator("[data-work-item-links] > summary").click();
     await descriptionSaved.waitFor();
     await descriptionLinks.getByRole("link", { name: /Reference page/ }).waitFor();
     // The default timeline shows Comments only: the Activity groups and the Thai value need the Activity filter.

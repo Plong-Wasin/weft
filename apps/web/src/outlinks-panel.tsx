@@ -8,7 +8,7 @@ type Run = (name: string, body: unknown) => Promise<Entry[] | null>;
 const t = (key: string) => translate(key as MessageKey);
 
 /** Shared Outlinks and Backlinks display for Work items, Pages, and Wiki pages. */
-export function OutlinksPanel({ kind, id, run, refreshKey = 0, updating = false, onRefreshComplete }: { kind: Kind; id: string; run: Run; refreshKey?: number; updating?: boolean; onRefreshComplete?: (refreshKey: number) => void }) {
+export function OutlinksPanel({ kind, id, run, refreshKey = 0, updating = false, compact = false, onRefreshComplete }: { kind: Kind; id: string; run: Run; refreshKey?: number; updating?: boolean; compact?: boolean; onRefreshComplete?: (refreshKey: number) => void }) {
   const [outlinks, setOutlinks] = React.useState<Entry[] | null>(null);
   const [backlinks, setBacklinks] = React.useState<Entry[] | null>(null);
   const [unavailable, setUnavailable] = React.useState(false);
@@ -40,9 +40,9 @@ export function OutlinksPanel({ kind, id, run, refreshKey = 0, updating = false,
       </li>)}</ul>}
   </div>;
 
-  return <section aria-label={t("outlinks.title")} className="grid min-w-0 max-w-full gap-3 border-t border-border pt-4">
-    <div><h3 className="m-0 text-15 font-semibold text-foreground">{t("outlinks.title")}</h3>
-      <p className="m-0 mt-1 text-12 text-muted-foreground">{t("outlinks.explanation")}</p></div>
+  return <section aria-label={t("outlinks.title")} className={`grid min-w-0 max-w-full gap-3 ${compact ? "" : "border-t border-border pt-4"}`}>
+    {compact ? <p className="m-0 text-12 text-muted-foreground">{t("outlinks.explanation")}</p> : <div><h3 className="m-0 text-15 font-semibold text-foreground">{t("outlinks.title")}</h3>
+      <p className="m-0 mt-1 text-12 text-muted-foreground">{t("outlinks.explanation")}</p></div>}
     {(updating || refreshing) && <p role="status" data-testid="outlinks-updating" className="m-0 text-12 text-muted-foreground">{t("outlinks.updating")}</p>}
     {failed && <p role="status" className="m-0 text-13 text-muted-foreground">{t("outlinks.loadFailed")}</p>}
     <div className="grid gap-4 sm:grid-cols-2">

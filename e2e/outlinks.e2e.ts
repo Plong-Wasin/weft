@@ -87,7 +87,8 @@ try {
       for (const width of [1280, 390] as const) {
         await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
         await page.goto(targetPage.url);
-        if (targetPage.name !== "work-item") await openLinks(language);
+        if (targetPage.name === "work-item") await page.locator("[data-work-item-links] > summary").click();
+        else await openLinks(language);
         await page.getByRole("region", { name: translate("outlinks.title", language), exact: true }).waitFor();
         await page.getByText(translate("outlinks.explanation", language)).waitFor();
         const panel = page.getByRole("region", { name: translate("outlinks.title", language), exact: true });

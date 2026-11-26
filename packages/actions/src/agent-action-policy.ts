@@ -21,6 +21,8 @@ const baseActions = new Set([
   "restore_work_item", "restore_work_item_description_version", "search_work_items", "unlink_work_item_page", "update_comment", "update_web_link",
   "update_wiki_page_comment", "update_work_item",
 ]);
+// resolve_targets names Wiki pages, Cycles and Modules whose own reads need the feature grant; it only serves the web app's links.
+const peopleOnlyActions = new Set(["resolve_targets"]);
 const projectActions = new Set(["create_project", "update_project", "archive_project", "unarchive_project", "rename_project_key", "join_project"]);
 const memberActions = new Set(["add_project_member", "remove_project_member", "change_project_member_role", "change_member_role", "remove_member"]);
 const exportActions = new Set(["request_export"]);
@@ -38,7 +40,7 @@ export function classifyAgentAction(action: string): AgentActionGroup | undefine
   // Destructive verbs anywhere in the name are refused, not only a delete_ prefix ("purge_work_item", "bulk_delete_work_items").
   if (destructivePattern.test(action)) return "denied";
   if (baseActions.has(action)) return "base";
-  if (peopleOnlyPattern.test(action)) return "denied";
+  if (peopleOnlyActions.has(action) || peopleOnlyPattern.test(action)) return "denied";
   // Membership is checked before the project group: "add_project_member" contains "project" but is a member action.
   if (memberActions.has(action) || action.includes("member")) return "member";
   if (projectActions.has(action) || action.includes("project")) return "project";

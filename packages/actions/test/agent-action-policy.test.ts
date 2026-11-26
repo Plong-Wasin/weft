@@ -125,3 +125,9 @@ test("a work item or comment Action that is not on the allowlist is not open wit
     expect(agentMayUseAction(action, noGrants)).toBe(false);
   }
 });
+
+test("resolve_targets is refused to an Agent, whatever the grants: it names things behind feature grants", () => {
+  expect(classifyAgentAction("resolve_targets")).toBe("denied");
+  expect(agentMayUseAction("resolve_targets", noGrants)).toBe(false);
+  expect(agentMayUseAction("resolve_targets", allGrants)).toBe(false);
+});

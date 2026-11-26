@@ -12,6 +12,9 @@ import { paths } from "./routes";
 import { Markdown } from "./markdown";
 import { DocPreview } from "./doc-preview";
 import { chosenCards } from "./proposal-selection";
+import { appliedResult, autopilotResults, displayIdsIn, isApplied, targetPath, type AppliedResult } from "./ai-results";
+import { ResultList } from "./ai-result-rows";
+import { useTargets } from "./ai-targets";
 import { humanize, summarizeProposal } from "./ai-proposal-summary";
 import type { Project } from "./types";
 import { markdownTitle, markdownToDoc } from "../../../packages/actions/src/markdown-doc";
@@ -30,7 +33,7 @@ export async function post<T>(path: string, body: unknown): Promise<T | null> {
 export const chatsKey = (workspaceId: string) => ["ai-chats", workspaceId] as const;
 type SkillSummary = { id: string; name: string; description: string; scope: "personal" | "workspace" };
 
-type Card = { id: string; action: string; input: Record<string, unknown>; status: "pending" | "confirmed" | "rejected" | "failed" | "expired" | "superseded"; expiresAt: string; error?: string };
+type Card = { id: string; action: string; input: Record<string, unknown>; status: "pending" | "confirmed" | "rejected" | "failed" | "expired" | "superseded"; expiresAt: string; error?: string; result?: unknown };
 type Diff = Array<{ field: string; before: unknown; after: unknown }>;
 
 function proposalId(part: { output?: unknown }) {
@@ -98,7 +101,7 @@ function ResultCard({ card, diff, project, selectable, selected, onSelect, onDec
  * and decides them together (for example 2 of 3). Cards left undecided stay pending until the user writes again, which supersedes them.
  * Each card still expires and re-validates on its own (ADR-0002).
  */
-export function ProposalSet({ ids, refreshKey, onResolved, workspaceId }: { ids: string[]; refreshKey: number; onResolved?: (cards: Card[]) => void; workspaceId?: string }) {
+export function ProposalSet({ ids, refreshKey, onResolved, workspaceId, slug }: { ids: string[]; refreshKey: number; onResolved?: (cards: Card[]) => void; workspaceId?: string; slug?: string }) {
   // Same cache entry as the sidebar project list, used only to name a proposal's project by its key.
   const { data: projects = [] } = useQuery({ queryKey: ["projects", workspaceId ?? ""], queryFn: async () => await action<Project[]>("list_projects", { workspaceId, archived: false }) ?? [], enabled: workspaceId !== undefined });
   const [cards, setCards] = React.useState<Record<string, Card>>({});
@@ -134,8 +137,17 @@ export function ProposalSet({ ids, refreshKey, onResolved, workspaceId }: { ids:
   const soonest = pending.map((card) => card.expiresAt).sort()[0];
   const acknowledged = chosen.some((card) => diffs[card.id] !== undefined);
   const several = pending.length > 1;
+  // An approved card with a target becomes a linked row; neighbours share one list.
+  const groups: Array<Card | AppliedResult[]> = [];
+  for (const card of loaded) {
+    const result = slug && card.status === "confirmed" ? appliedResult(card.action, card.input, card.result) : null;
+    const last = groups.at(-1);
+    if (!result?.refs.length) groups.push(card);
+    else if (Array.isArray(last)) last.push(result);
+    else groups.push([result]);
+  }
   return <div aria-label={translate("ai.confirm.card")} className="grid gap-2">
-    {loaded.map((card) => <ResultCard key={card.id} card={card} diff={diffs[card.id]} project={projects.find((item) => item.id === card.input.projectId)?.key} selectable={several} selected={!unselected[card.id]} busy={busy}
+    {groups.map((card, index) => Array.isArray(card) ? <ResolvedResults key={`applied-${index}`} results={card} workspaceId={workspaceId} slug={slug!} heading={translate("ai.confirm.confirmed")} /> : <ResultCard key={card.id} card={card} diff={diffs[card.id]} project={projects.find((item) => item.id === card.input.projectId)?.key} selectable={several} selected={!unselected[card.id]} busy={busy}
       onSelect={(value) => setUnselected((previous) => { const next = { ...previous }; if (value) delete next[card.id]; else next[card.id] = true; return next; })}
       onDecide={several ? (decision) => void decide([card], decision) : undefined} />)}
     {pending.length > 0 && <div className="rounded-xl bg-muted px-4 py-4">
@@ -148,6 +160,18 @@ export function ProposalSet({ ids, refreshKey, onResolved, workspaceId }: { ids:
       </div>
     </div>}
   </div>;
+}
+
+function ResolvedResults({ results, workspaceId, slug, heading }: { results: AppliedResult[]; workspaceId?: string; slug: string; heading: string }) {
+  const targets = useTargets(workspaceId, { refs: results.flatMap((result) => result.refs) });
+  return <ResultList results={results} targets={targets} slug={slug} heading={heading} />;
+}
+
+/** An answer's text, with the display ids the viewer may open turned into links. */
+function Answer({ text, workspace }: { text: string; workspace: Workspace }) {
+  const targets = useTargets(workspace.id, { displayIds: displayIdsIn(text) });
+  const links = new Map(targets?.filter((target) => target.status !== "deleted").map((target) => [target.ref, targetPath(workspace.slug, target)]));
+  return <Markdown text={text} links={links} />;
 }
 
 async function convertToPage(workspaceId: string, text: string): Promise<{ id: string } | null> {
@@ -336,23 +360,18 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
           if (message.role === "user") return <li key={message.id} data-role="user" className="flex justify-end">
             <div className="min-w-0 max-w-[85%] rounded-2xl bg-card px-4 py-3 text-16 text-foreground"><p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{textOf(message)}</p>{message.parts.filter((part) => part.type === "data-skill").map((part, i) => { const data = (part as { data?: { name?: string } }).data; return <span key={i} className="mt-2 inline-flex rounded-md border border-border px-2 py-0.5 text-12">/{data?.name}</span>; })}</div>
           </li>;
-          const steps = message.parts.flatMap((part) => part.type.startsWith("tool-") && !proposalId(part as { output?: unknown }) ? [part.type.slice(5)] : []);
+          const steps = message.parts.flatMap((part) => part.type.startsWith("tool-") && !proposalId(part as { output?: unknown }) && !isApplied(part as { type: string; output?: unknown }) ? [part.type.slice(5)] : []);
           const ids = message.parts.flatMap((part) => { const id = part.type.startsWith("tool-") ? proposalId(part as { output?: unknown }) : null; return id ? [id] : []; });
           const sources = sourcesOf(message);
-          const applied = message.parts.flatMap((part) => {
-            if (!part.type.startsWith("tool-")) return [];
-            try { const result = JSON.parse(String((part as { output?: unknown }).output)) as { status?: string; action?: string };
-              return result.status === "done" ? [result.action ?? part.type.slice(5)] : [];
-            } catch { return []; }
-          });
+          const applied = autopilotResults(message.parts as Array<{ type: string; input?: unknown; output?: unknown }>);
           const text = textOf(message);
           const last = index === messages.length - 1;
           return <li key={message.id} data-role="assistant" className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
             {steps.length > 0 && <Thoughts steps={steps} />}
-            {applied.map((actionName, resultIndex) => <p key={`done-${resultIndex}`} role="status" className="m-0 rounded-md border border-border bg-muted/30 px-3 py-2 text-13 text-foreground">{translate("ai.autopilot.done")} · {actionName}</p>)}
-            {message.parts.map((part, partIndex) => part.type === "text" ? <Markdown key={partIndex} text={part.text} /> : null)}
+            {applied.length > 0 && <ResolvedResults results={applied} workspaceId={workspace.id} slug={workspace.slug} heading={translate("ai.autopilot.done")} />}
+            {message.parts.map((part, partIndex) => part.type === "text" ? <Answer key={partIndex} text={part.text} workspace={workspace} /> : null)}
             {sources.length > 0 && <Sources sources={sources} />}
-            {ids.length > 0 && <ProposalSet ids={ids} refreshKey={messages.length} workspaceId={workspace.id} onResolved={last ? continueAfterConfirmations : undefined} />}
+            {ids.length > 0 && <ProposalSet ids={ids} refreshKey={messages.length} workspaceId={workspace.id} slug={workspace.slug} onResolved={last ? continueAfterConfirmations : undefined} />}
             {text && !(last && busy) && <AnswerActions text={text} workspace={workspace} onRegenerate={last && lastUser ? () => send(textOf(lastUser)) : undefined} />}
           </li>;
         })}

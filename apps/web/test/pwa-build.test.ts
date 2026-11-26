@@ -5,7 +5,11 @@ import { build } from "vite";
 
 test("production build ships a manifest, offline page, and a service worker that precaches them", async () => {
   const outDir = join(import.meta.dir, "..", ".test-dist");
-  await build({ root: join(import.meta.dir, ".."), logLevel: "silent", build: { outDir, emptyOutDir: true } });
+  // bun test sets NODE_ENV=test, which would bundle React's development build with this checkout's file paths in it: not what ships, and its size follows the folder name.
+  const nodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = "production";
+  try { await build({ root: join(import.meta.dir, ".."), logLevel: "silent", build: { outDir, emptyOutDir: true } }); }
+  finally { process.env.NODE_ENV = nodeEnv; }
   const manifest = JSON.parse(readFileSync(join(outDir, "manifest.webmanifest"), "utf8"));
   expect(manifest.display).toBe("standalone");
   expect(manifest.icons.length).toBeGreaterThan(0);

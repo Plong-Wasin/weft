@@ -18,6 +18,7 @@ import { paths } from "./routes";
 import { useInboxNotificationOpen } from "./inbox";
 
 import { Input } from "@/ui/input";
+import { DatePicker } from "@/ui/date-picker";
 import { Select, SelectContent, SelectItem, SelectItemText, SelectTrigger, SelectValue } from "@/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/ui/tabs";
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
@@ -158,13 +159,14 @@ function SubmitModal({ action, workspaceId, projectId, onClose, onSubmitted }: {
       <Input autoFocus required maxLength={500} aria-label={t("intake.titleField")} placeholder={t("intake.titleField")} value={title} className={`${field} text-16`} onChange={(event) => setTitle(event.target.value)} />
       <div aria-label={t("intake.descriptionField")}><DescriptionEditor workspaceId={workspaceId} workItemId={null} initial={description} editable={!submitting} imageUploads={false} onChange={setDescription} /></div>
       <label className="grid gap-1 text-13 text-muted-foreground">{t("intake.priority")}
-        <select value={priority} className={`${field} h-9`} onChange={(event) => setPriority(event.target.value)}>
-          {["none", "urgent", "high", "medium", "low"].map((value) => <option key={value} value={value}>{t(`workItems.priority.${value}`)}</option>)}
-        </select>
+        <Select value={priority} items={["none", "urgent", "high", "medium", "low"].map((value) => ({ value, label: t(`workItems.priority.${value}`) }))} onValueChange={(value) => { if (value) setPriority(value); }}>
+          <SelectTrigger aria-label={t("intake.priority")}><SelectValue /></SelectTrigger>
+          <SelectContent>{["none", "urgent", "high", "medium", "low"].map((value) => <SelectItem key={value} value={value}><SelectItemText>{t(`workItems.priority.${value}`)}</SelectItemText></SelectItem>)}</SelectContent>
+        </Select>
       </label>
       <div className="grid gap-1 text-13 text-muted-foreground"><span>{t("workItems.assignees")}</span><MultiSelect label={t("workItems.assignees")} searchAlways selected={assigneeIds} summary={<span>{assigneeIds.length ? assigneeIds.map((id) => people.find((person) => person.userId === id)?.name ?? id).join(", ") : t("workItems.noAssignee")}</span>} options={people.map((person) => ({ id: person.userId, name: person.name, isAgent: person.isAgent, hasAccess: person.hasAccess }))} onToggle={(id, on) => setAssigneeIds(on ? [...assigneeIds, id] : assigneeIds.filter((value) => value !== id))} /></div>
       <div className="grid gap-1 text-13 text-muted-foreground"><span>{t("workItems.labels")}</span><MultiSelect label={t("workItems.labels")} searchAlways selected={labelIds} summary={<span>{labelIds.length ? labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ") : t("workItems.noLabels")}</span>} options={labels.map((label) => ({ id: label.id, name: label.name }))} onToggle={(id, on) => setLabelIds(on ? [...labelIds, id] : labelIds.filter((value) => value !== id))} /></div>
-      <label className="grid gap-1 text-13 text-muted-foreground">{t("workItems.dueDate")}<Input type="date" value={dueDate} className={field} onChange={(event) => setDueDate(event.target.value)} /></label>
+      <label className="grid gap-1 text-13 text-muted-foreground">{t("workItems.dueDate")}<DatePicker label={t("workItems.dueDate")} value={dueDate} field="due" onChange={setDueDate} /></label>
       <input ref={picker} hidden type="file" multiple data-testid="intake-attach-input" onChange={(event) => { const selected = Array.from(event.currentTarget.files ?? []); setFiles((current) => [...current, ...selected]); event.currentTarget.value = ""; }} />
       <div className="grid gap-1"><Button type="button" className={quietButton} onClick={() => picker.current?.click()}>{t("assets.attach")}</Button>{files.map((file, index) => <span key={`${file.name}-${index}`} className="text-13 text-muted-foreground">{file.name}</span>)}</div>
       <input ref={imagePicker} hidden type="file" multiple accept="image/png,image/jpeg,image/gif,image/webp" data-testid="intake-inline-image-input" onChange={(event) => { const selected = Array.from(event.currentTarget.files ?? []); setInlineImages((current) => [...current, ...selected]); event.currentTarget.value = ""; }} />
@@ -213,9 +215,10 @@ function AcceptModal({ action, projectId, onClose, onAccept }: { action: Call; p
     <form className="my-0 grid gap-3" onSubmit={(event) => { event.preventDefault(); if (stateId) onAccept(stateId); }}>
       {failed && <p role="alert" className="m-0 text-13 text-destructive">{t("intake.loadFailed")}</p>}
       <label className="grid gap-1 text-13 text-muted-foreground">{t("workItems.state")}
-        <select autoFocus required aria-label={t("workItems.state")} value={stateId} className={`${field} h-9`} onChange={(event) => setStateId(event.target.value)}>
-          {states.map((state) => <option key={state.id} value={state.id}>{state.name}</option>)}
-        </select>
+        <Select required value={stateId} items={states.map((state) => ({ value: state.id, label: state.name }))} onValueChange={(value) => { if (value) setStateId(value); }}>
+          <SelectTrigger autoFocus aria-label={t("workItems.state")} data-value={stateId}><SelectValue /></SelectTrigger>
+          <SelectContent>{states.map((state) => <SelectItem key={state.id} value={state.id} data-value={state.id}><SelectItemText>{state.name}</SelectItemText></SelectItem>)}</SelectContent>
+        </Select>
       </label>
       <div className="flex justify-end gap-2">
         <Button type="button" className={quietButton} onClick={onClose}>{t("intake.cancel")}</Button>
@@ -389,7 +392,7 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
         </label>
         <div className="grid gap-1 text-13 text-muted-foreground"><span>{t("workItems.assignees")}</span><MultiSelect label={t("workItems.assignees")} searchAlways selected={assigneeIds} summary={<span>{assigneeIds.length ? assigneeIds.map((id) => people.find((person) => person.userId === id)?.name ?? id).join(", ") : t("workItems.noAssignee")}</span>} options={people.map((person) => ({ id: person.userId, name: person.name, isAgent: person.isAgent, hasAccess: person.hasAccess }))} onToggle={(id, on) => changeDraft({ assigneeIds: on ? [...assigneeIds, id] : assigneeIds.filter((value) => value !== id) })} /></div>
         <div className="grid gap-1 text-13 text-muted-foreground"><span>{t("workItems.labels")}</span><MultiSelect label={t("workItems.labels")} searchAlways selected={labelIds} summary={<span>{labelIds.length ? labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ") : t("workItems.noLabels")}</span>} options={labels.map((label) => ({ id: label.id, name: label.name }))} onToggle={(id, on) => changeDraft({ labelIds: on ? [...labelIds, id] : labelIds.filter((value) => value !== id) })} /></div>
-        <label className="grid gap-1 text-13 text-muted-foreground">{t("workItems.dueDate")}<Input type="date" aria-label={t("workItems.dueDate")} value={dueDate} className={field} onChange={(event) => changeDraft({ dueDate: event.target.value || null })} /></label>
+        <label className="grid gap-1 text-13 text-muted-foreground">{t("workItems.dueDate")}<DatePicker label={t("workItems.dueDate")} value={dueDate} field="due" onChange={(value) => changeDraft({ dueDate: value || null })} /></label>
         <div className="flex gap-2"><Button type="button" className={primaryButton} disabled={saving || retryingImages || !title.trim()} onClick={() => void save()}>{saving ? t("intake.saving") : t("intake.save")}</Button></div>
       </div> : <><h2 className="m-0 text-24 font-semibold text-foreground">{item.title}</h2>
       {item.descriptionMarkdown ? <DescriptionEditor workspaceId={workspaceId} workItemId={item.workItemId} initial={markdownToDoc(item.descriptionMarkdown)} editable={false} onChange={() => undefined} /> : <p className="m-0 text-14 text-muted-foreground">{t("intake.noDescription")}</p>}</>}

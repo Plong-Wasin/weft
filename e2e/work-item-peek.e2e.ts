@@ -62,6 +62,23 @@ try {
   const [project] = await call<Array<{ id: string }>>("list_projects", { workspaceId: me.workspaces[0]!.id, archived: false });
   const projectId = project!.id;
   const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+  const setDate = async (scope: import("playwright").Locator, label: string, value: string) => {
+    const trigger = scope.getByRole("button", { name: new RegExp(`^${label}:`) });
+    await trigger.click();
+    const panel = page.locator('[data-popover-panel][role="dialog"]').filter({ has: page.locator("[data-date-picker]") }).last();
+    await panel.waitFor();
+    for (let turn = 0; turn < 120; turn++) {
+      const month = await panel.locator("[data-month]").getAttribute("data-month");
+      if (month === value.slice(0, 7)) break;
+      await panel.getByRole("button", { name: month! < value.slice(0, 7) ? t("datePicker.nextMonth") : t("datePicker.previousMonth") }).click();
+    }
+    await panel.locator(`[data-date="${value}"]`).click();
+    for (let attempt = 0; attempt < 50; attempt++) {
+      if (await trigger.locator("[data-date-value]").getAttribute("data-date-value") === value) return;
+      await Bun.sleep(100);
+    }
+    check(false, `${label} did not retain ${value}`);
+  };
   const label = await call<{ id: string }>("create_label", { projectId, name: "Bug" });
   const cycle = await call<{ id: string }>("create_cycle", { projectId, name: "Sprint 1", startDate: day(-1), endDate: day(6) });
   const module = await call<{ id: string }>("create_module", { projectId, name: "Auth" });
@@ -420,6 +437,35 @@ try {
   await page.getByRole("button", { name: translate("workItems.addNew"), exact: true }).first().click();
   const modal = page.getByRole("dialog", { name: translate("workItems.modal.title") });
   await modal.waitFor();
+  const propertyGrid = modal.getByTestId("create-property-grid");
+  const propertyLayout = await propertyGrid.evaluate((grid) => {
+    const buttons = [...grid.querySelectorAll<HTMLButtonElement>(":scope > * button")];
+    const rects = buttons.map((button) => ({ ...button.getBoundingClientRect().toJSON(), parent: Boolean(button.closest('[data-testid="create-parent-control"]')) }));
+    const glyphs = buttons.flatMap((button) => {
+      const walker = document.createTreeWalker(button, NodeFilter.SHOW_TEXT);
+      const ranges: Array<{ left: number; right: number; top: number; bottom: number; width: number; height: number; text: string }> = [];
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (!node.textContent?.trim() || node.parentElement?.closest('[aria-hidden="true"]')) continue;
+        const range = document.createRange(); range.selectNodeContents(node);
+        ranges.push(...[...range.getClientRects()].map((rect) => ({ ...rect.toJSON(), text: node.textContent?.trim() ?? "" })));
+      }
+      const bounds = button.getBoundingClientRect();
+      return ranges.map((rect) => ({ inside: rect.left >= bounds.left + 4 && rect.right <= bounds.right - 4 && rect.top >= bounds.top && rect.bottom <= bounds.bottom, width: rect.width, height: rect.height, text: rect.text, left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, buttonLeft: bounds.left, buttonRight: bounds.right }));
+    });
+    return { rects, glyphs };
+  });
+  check(propertyLayout.rects.length >= 6, "create property grid lost one or more work-item property controls");
+  check(propertyLayout.rects.every((rect, index, all) => Math.abs(rect.height - all[0]!.height) < 1), "create property controls do not have equal heights");
+  const standardWidths = propertyLayout.rects.filter((rect) => !rect.parent).map((rect) => rect.width);
+  check(standardWidths.every((width) => Math.abs(width - standardWidths[0]!) < 1), "create property controls do not have equal column widths");
+  check(propertyLayout.rects.filter((rect) => rect.parent).every((rect) => rect.width >= standardWidths[0]!), "the parent control does not have enough width for its visible label");
+  check(propertyLayout.rects.every((rect, _, all) => all.filter((other) => Math.abs(other.y - rect.y) < 1).every((other) => Math.abs((rect.y + rect.height / 2) - (other.y + other.height / 2)) < 1)), "create property controls are not center-aligned within each row");
+  check(propertyLayout.rects.every((rect, index, all) => all.every((other, otherIndex) => index === otherIndex || rect.right <= other.x + 1 || other.right <= rect.x + 1 || rect.bottom <= other.y + 1 || other.bottom <= rect.y + 1)), "create property controls overlap sibling boxes");
+  check(propertyLayout.glyphs.every((glyph) => glyph.inside && glyph.width > 0 && glyph.height > 0), `create property label glyphs are clipped by their controls: ${JSON.stringify(propertyLayout.glyphs.filter((glyph) => !glyph.inside))}`);
+  const primaryColor = await modal.getByRole("button", { name: translate("workItems.modal.submit") }).evaluate((element) => getComputedStyle(element).backgroundColor);
+  const cancelColor = await modal.getByRole("button", { name: translate("workItems.modal.cancel"), exact: true }).last().evaluate((element) => getComputedStyle(element).backgroundColor);
+  check(primaryColor !== cancelColor, "Create work item should be visually primary to Cancel");
   const titleField = modal.getByRole("textbox", { name: translate("workItems.titleField") });
   check(await titleField.evaluate((element) => element === document.activeElement), "create dialog did not focus the first field");
   await page.keyboard.press("Shift+Tab");
@@ -439,8 +485,8 @@ try {
   await modalPick(translate("workItems.cycle"), "Sprint 1");
   await modalPick(translate("workItems.modules"), "Auth", "menuitemcheckbox");
   await modalPick(translate("workItems.modal.parent"), "MOB-2 Bravo");
-  await modal.getByLabel(translate("workItems.startDate")).fill(day(2));
-  await modal.getByLabel(translate("workItems.dueDate")).fill(day(5));
+  await setDate(modal, translate("workItems.startDate"), day(2));
+  await setDate(modal, translate("workItems.dueDate"), day(5));
   await page.screenshot({ path: `${shots}/create-modal-1440-light.png` });
   await page.screenshot({ path: `${shadcnShots}/dialog-1440-light.png` });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
@@ -552,6 +598,8 @@ try {
   await peek.getByRole("button", { name: translate("workItems.delete"), exact: true }).click();
   await peek.waitFor({ state: "detached" });
   await page.goto(`${base}/issues`);
+  const itemsAfterDelete = await call<Item[]>("list_work_items", { projectId });
+  check(itemsAfterDelete.some((item) => item.displayId === "MOB-1"), `MOB-1 disappeared after deleting the modal item: ${JSON.stringify(itemsAfterDelete.map((item) => item.displayId))}`);
   await page.getByTestId("row-MOB-1").getByRole("link").waitFor();
   check(await page.getByRole("link", { name: "From the modal" }).count() === 0, "accepting the delete confirmation kept the work item");
   void t;

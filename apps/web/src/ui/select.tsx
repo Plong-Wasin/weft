@@ -1,10 +1,13 @@
 import { Select as SelectPrimitive } from "@base-ui/react/select";
-import type React from "react";
+import React from "react";
 import { Check, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+const SelectRootContext = React.createContext<React.RefObject<HTMLElement | null> | null>(null);
+
 function Select(props: SelectPrimitive.Root.Props<string, false>) {
-  return <SelectPrimitive.Root data-slot="select" {...props} />;
+  const root = React.useRef<HTMLElement>(null);
+  return <SelectRootContext.Provider value={root}><div ref={root as React.RefObject<HTMLDivElement>} className="contents" data-slot="select-root"><SelectPrimitive.Root data-slot="select" {...props} /></div></SelectRootContext.Provider>;
 }
 
 function SelectTrigger({ className, children, ...props }: SelectPrimitive.Trigger.Props) {
@@ -18,7 +21,9 @@ function SelectValue(props: SelectPrimitive.Value.Props) {
 }
 
 function SelectContent({ className, children, ...props }: SelectPrimitive.Popup.Props) {
-  return <SelectPrimitive.Portal>
+  const root = React.useContext(SelectRootContext);
+  const container = root?.current?.closest<HTMLElement>('dialog[open], [data-slot="dialog-content"], [data-create-modal]') ?? undefined;
+  return <SelectPrimitive.Portal container={container}>
     <SelectPrimitive.Positioner sideOffset={4} alignItemWithTrigger={false} className="z-50 outline-none">
       <SelectPrimitive.Popup data-slot="select-content" className={cn("relative z-50 max-h-[min(18rem,var(--available-height))] min-w-32 origin-(--transform-origin) overflow-x-hidden overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:hidden data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95", className)} {...props}>
         <SelectPrimitive.ScrollUpArrow className="flex h-6 items-center justify-center"><ChevronUp aria-hidden className="size-4" /></SelectPrimitive.ScrollUpArrow>

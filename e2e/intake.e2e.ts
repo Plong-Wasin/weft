@@ -37,6 +37,33 @@ try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
   const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
   const page = await browser.newPage();
+  const dateTrigger = (scope: Locator) => scope.getByRole("button", { name: new RegExp(`^${translate("workItems.dueDate")}:`) });
+  const setDate = async (scope: Locator, value: string) => {
+    const trigger = dateTrigger(scope);
+    await trigger.click();
+    const panel = page.locator('[data-popover-panel][role="dialog"]').filter({ has: page.locator("[data-date-picker]") }).last();
+    await panel.waitFor();
+    await panel.getByRole("spinbutton", { name: "Year" }).fill(value.slice(0, 4));
+    for (let turn = 0; turn < 120; turn++) {
+      const month = await panel.locator("[data-month]").getAttribute("data-month");
+      if (month === value.slice(0, 7)) break;
+      await panel.getByRole("button", { name: month! < value.slice(0, 7) ? translate("datePicker.nextMonth") : translate("datePicker.previousMonth") }).click();
+    }
+    await panel.locator(`[data-date="${value}"]`).click();
+    for (let attempt = 0; attempt < 50; attempt++) {
+      if (await trigger.locator("[data-date-value]").getAttribute("data-date-value") === value) return;
+      await Bun.sleep(100);
+    }
+    check(false, `Due date did not retain ${value}`);
+  };
+  const expectDate = async (scope: Locator, expected: string, label: string) => {
+    const locator = dateTrigger(scope).locator("[data-date-value]");
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      if (await locator.getAttribute("data-date-value") === expected) return;
+      await Bun.sleep(100);
+    }
+    throw new Error(`Expected ${label} value ${expected}; got ${await locator.getAttribute("data-date-value")}`);
+  };
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   await page.goto(web);
@@ -84,7 +111,7 @@ try {
       await page.getByRole("searchbox", { name: translate("picker.search"), exact: true }).fill("E2E label");
       await page.getByRole("menuitemcheckbox", { name: "E2E label", exact: true }).click();
       await dialog.getByRole("button", { name: new RegExp(`^${translate("workItems.labels")}: .*E2E label`) }).waitFor();
-      await dialog.getByLabel(translate("workItems.dueDate")).fill("2030-05-06");
+      await setDate(dialog, "2030-05-06");
     }
     if (attach) {
       await dialog.getByTestId("intake-attach-input").setInputFiles(attach);
@@ -238,7 +265,7 @@ try {
   await detail.getByRole("button", { name: translate("comments.add"), exact: true }).click();
   await detail.getByText("Keep the draft", { exact: true }).waitFor();
   await detail.getByRole("button", { name: new RegExp(`^${translate("workItems.labels")}: .*E2E label`) }).waitFor();
-  await detail.getByLabel(translate("workItems.dueDate")).fill("2030-05-07");
+  await setDate(detail, "2030-05-07");
   await page.reload();
   await page.getByTestId("intake-MOB-1").click();
   await detail.locator("header").getByText("MOB-1", { exact: true }).waitFor();
@@ -264,22 +291,22 @@ try {
   check(afterEditorTitle === "Dark theme please", `switching items discarded the title draft: ${afterEditorTitle}`);
   await page.route("**/actions/update_intake_item", async (route) => { await Bun.sleep(500); await route.abort(); });
   await detail.getByRole("button", { name: translate("intake.save"), exact: true }).click();
-  await detail.getByLabel(translate("workItems.dueDate")).fill("2030-05-09");
+  await setDate(detail, "2030-05-09");
   await detail.getByRole("alert").waitFor();
-  await expectValue(detail.getByLabel(translate("workItems.dueDate")), "2030-05-09", "edit during failed save");
+  await expectDate(detail, "2030-05-09", "edit during failed save");
   const retainedTitle = await detail.getByLabel(translate("intake.titleField")).inputValue();
   check(retainedTitle === "Dark theme please", `failed save discarded title draft: ${retainedTitle}`);
   await detail.getByTestId("description-editor").locator('[contenteditable="true"]').getByText("Updated request").waitFor();
   await page.unroute("**/actions/update_intake_item");
   await page.route("**/actions/update_intake_item", async (route) => { const response = await route.fetch(); await Bun.sleep(500); await route.fulfill({ response }); }, { times: 1 });
   await detail.getByRole("button", { name: translate("intake.save"), exact: true }).click();
-  await detail.getByLabel(translate("workItems.dueDate")).fill("2030-05-08");
+  await setDate(detail, "2030-05-08");
   await detail.getByRole("button", { name: translate("intake.save"), exact: true }).waitFor({ state: "visible" });
-  await expectValue(detail.getByLabel(translate("workItems.dueDate")), "2030-05-08", "edit during save");
+  await expectDate(detail, "2030-05-08", "edit during save");
   await detail.getByRole("button", { name: translate("intake.save"), exact: true }).click();
   await detail.getByLabel(translate("intake.titleField")).waitFor();
   await expectValue(detail.getByLabel(translate("intake.titleField")), "Dark theme please", "saved title");
-  await expectValue(detail.getByLabel(translate("workItems.dueDate")), "2030-05-08", "saved due date");
+  await expectDate(detail, "2030-05-08", "saved due date");
   await page.reload();
   await page.getByRole("link", { name: translate("intake.title") }).click();
   const reopened = page.getByRole("region", { name: translate("intake.detail") });
@@ -287,7 +314,7 @@ try {
   await reopened.locator("header").getByText("MOB-1", { exact: true }).waitFor();
   await expectValue(reopened.getByLabel(translate("intake.titleField")), "Dark theme please", "reopened title");
   check((await reopened.getByRole("combobox", { name: translate("intake.priority") }).innerText()).trim() === translate("workItems.priority.high"), "reopened priority was not High");
-  await expectValue(reopened.getByLabel(translate("workItems.dueDate")), "2030-05-08", "reopened due date");
+  await expectDate(reopened, "2030-05-08", "reopened due date");
   await assigneePicker(reopened).waitFor();
   await assigneePicker(reopened).click();
   const selectedAssignee = page.getByRole("menuitemcheckbox", { name: "Intake Tester", exact: true });
@@ -331,14 +358,15 @@ try {
   await page.getByTestId("intake-MOB-1").click();
   await detail.getByRole("button", { name: translate("intake.accept"), exact: true }).click();
   const acceptDialog = page.getByRole("dialog", { name: translate("intake.acceptIntoState") });
-  const targetState = acceptDialog.getByLabel(translate("workItems.state"));
-  await page.waitForFunction(() => {
-    const select = document.querySelector<HTMLSelectElement>('dialog select[aria-label="State"]');
-    return select?.options.length && [...select.options].some((option) => option.textContent === "Backlog") && [...select.options].some((option) => option.textContent === "Done") && [...select.options].some((option) => option.textContent === "Cancelled");
-  });
-  const backlogId = await targetState.locator("option", { hasText: "Backlog" }).getAttribute("value");
-  check(await targetState.inputValue() === backlogId, "accept did not default to the first Backlog State");
-  await targetState.selectOption({ label: "Done" });
+  const targetState = acceptDialog.getByRole("combobox", { name: translate("workItems.state") });
+  await targetState.click();
+  const backlogOption = page.getByRole("option", { name: "Backlog", exact: true });
+  await backlogOption.waitFor();
+  await page.getByRole("option", { name: "Done", exact: true }).waitFor();
+  await page.getByRole("option", { name: "Cancelled", exact: true }).waitFor();
+  const backlogId = await backlogOption.getAttribute("data-value");
+  check(!!backlogId && await targetState.getAttribute("data-value") === backlogId, "accept did not default to the first Backlog State");
+  await page.getByRole("option", { name: "Done", exact: true }).click();
   await acceptDialog.getByRole("button", { name: translate("intake.accept"), exact: true }).click();
   await acceptDialog.waitFor({ state: "detached" });
   await page.getByTestId("intake-MOB-1").waitFor({ state: "detached" });

@@ -98,6 +98,7 @@ test("calendar placement fills a Monday-first month grid and keeps undated work 
     { id: "first", dueDate: "2026-11-01" },
     { id: "inside", dueDate: "2026-11-18" },
     { id: "outside", dueDate: "2026-12-01" },
+    { id: "start-only", startDate: "2026-11-20", dueDate: null },
     { id: "undated", dueDate: null },
   ];
   const placement = calendarPlacement(items, new Date(2026, 10, 1));
@@ -105,6 +106,7 @@ test("calendar placement fills a Monday-first month grid and keeps undated work 
   expect(placement.days).toHaveLength(42);
   expect(placement.days.find((day) => day.date === "2026-11-01")?.items.map((item) => item.id)).toEqual(["first"]);
   expect(placement.days.find((day) => day.date === "2026-11-18")?.items.map((item) => item.id)).toEqual(["inside"]);
+  expect(placement.days.find((day) => day.date === "2026-11-20")?.items.map((item) => item.id)).toEqual(["start-only"]);
   expect(placement.undated.map((item) => item.id)).toEqual(["undated"]);
 });
 

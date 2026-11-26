@@ -88,6 +88,8 @@ Shared primitives live in `apps/web/src/ui/` and use Base UI 1.9.0 for accessibl
 - Wiki and pages: a left tree (Inbox, All pages, Collections) and an editor column; page actions sit in the top right of the page (favourite, Ask AI, more menu).
 - AI: an assistant page with suggested prompts, an input with a mode selector (Build) and a send button; an AI disclaimer line sits below the input.
 - Phone: the same content stacks in one column; filters wrap into rows; wide tables keep their columns and do not scroll the page.
+- Calendar: month cells show only the day number; add controls stay visually quiet until hover or keyboard focus and remain visible on touch. Date ranges render as shared pills across each week, with equal-width day columns and stronger muted treatment outside the month; phones use an agenda of dated items.
+- Gantt: work item labels use the standard 13px table scale, date ticks use 12px tabular figures, and bars use restrained state tints. The dashed one-pixel today marker sits behind row content, weekend columns use a muted surface, and issue keys stay outside the bars.
 - Motion: short transitions on popups and drawers. The visual capture emulates reduced motion and turns off animation and transitions before each shot.
 
 ## Known gaps against this system

@@ -87,17 +87,17 @@ export function ganttPlacement<T extends { startDate?: string | null; dueDate?: 
   return { start: format(start), days, today: ordinal(format(dateAt(today))) - first, bars, undated: items.filter((item) => !item.startDate && !item.dueDate) };
 }
 
-/** Places dated work items in a six-week, Monday-first month grid; undated items stay in the side list. */
-export function calendarPlacement<T extends { dueDate?: string | null }>(items: T[], month: Date): CalendarPlacement<T> {
+/** Places work items by due date, or start date when no due date exists, in a six-week Monday-first grid. */
+export function calendarPlacement<T extends { startDate?: string | null; dueDate?: string | null }>(items: T[], month: Date): CalendarPlacement<T> {
   const first = new Date(month.getFullYear(), month.getMonth(), 1);
   const offset = (first.getDay() + 6) % 7;
   const start = new Date(first.getFullYear(), first.getMonth(), 1 - offset);
   const days = Array.from({ length: 42 }, (_, index) => {
     const date = new Date(start.getFullYear(), start.getMonth(), start.getDate() + index);
     const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-    return { date: key, items: items.filter((item) => item.dueDate?.slice(0, 10) === key) };
+    return { date: key, items: items.filter((item) => (item.dueDate ?? item.startDate)?.slice(0, 10) === key) };
   });
-  return { days, undated: items.filter((item) => !item.dueDate) };
+  return { days, undated: items.filter((item) => !item.dueDate && !item.startDate) };
 }
 
 const dueDateGroupKeys = ["overdue", "today", "thisWeek", "nextWeek", "later", "noDueDate"] as const;

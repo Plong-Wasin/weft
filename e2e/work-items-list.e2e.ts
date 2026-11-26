@@ -369,25 +369,36 @@ try {
       check(await page.getByTestId("list-property-wrap").count() === 0, `${width}px keeps the property block on the title row (ListNoPropertyWrapAt${width})`);
     }
     if (width === 390) {
+      const seededRow = page.getByTestId("row-MOB-5");
+      await seededRow.getByRole("button", { name: `${translate("workItems.modules")}: Auth`, exact: true }).waitFor();
+      await seededRow.getByRole("button", { name: `${translate("workItems.cycle")}: Sprint 1`, exact: true }).waitFor();
       check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "390px list has no horizontal page scroll (ListNoHorizontalScroll390)");
       const phoneHeights = await page.locator('[data-testid^="row-"]').evaluateAll((rows) => rows.map((item) => item.getBoundingClientRect().height));
-      // Phone rows (ListPhoneRowsContained): rows with the same data share one height, a row with one chip line stays under the old
-      // 100px budget (each further chip line adds one 44px tap pitch), and no control, chip or glyph leaves its row or overlaps the next row.
-      const assertPhoneRows = async (context: string) => {
+      // These seeded rows need two metadata lines at 390px. They measure 121px, with 1px allowed for rounding.
+      // Every other row keeps the single-line budget, even if its metadata wraps by mistake.
+      const twoLineRows = new Set([
+        "row-MOB-1", "row-MOB-4", "row-MOB-5", "row-MOB-6", "row-MOB-8", "row-MOB-9",
+        "row-MOB-10", "row-MOB-11", "row-MOB-12", "row-MOB-13", "row-MOB-14", "row-MOB-16",
+        "row-MOB-17", "row-MOB-20", "row-MOB-24", "row-MOB-25", "row-MOB-28",
+      ]);
+      const assertPhoneRows = async () => {
         const geometry = await page.locator('[data-testid^="row-"]').evaluateAll(measureRows, emptyValues);
-        const overBudget = geometry.rows.filter((row) => row.height >= 100 + 44 * Math.max(0, row.chipLines - 1));
+        const overBudget = geometry.rows.filter((row) => twoLineRows.has(row.id ?? "")
+          ? row.chipLines > 2 || row.height > 122
+          : row.chipLines > 1 || row.height >= 100);
         const escaped = geometry.rows.filter((row) => row.outside.length || row.glyphOverflow.length);
         // A row with no chips holds a title line and an ID line only: no chip line is reserved.
         const chipless = geometry.rows.filter((row) => row.phoneChips === 0);
         const reserved = chipless.filter((row) => row.height > 90);
-        return { geometry, overBudget, escaped, chipless, reserved, ok: phoneHeights.length > 0 && overBudget.length === 0 && escaped.length === 0 && geometry.siblingOverlaps.length === 0 && geometry.unequalHeights.length === 0, context };
+        return { geometry, overBudget, escaped, chipless, reserved, ok: phoneHeights.length > 0 && overBudget.length === 0 && escaped.length === 0 && geometry.siblingOverlaps.length === 0 && geometry.unequalHeights.length === 0 };
       };
-      const phoneRows = await assertPhoneRows("390px");
+      const phoneRows = await assertPhoneRows();
+      check(phoneRows.geometry.rows.filter((row) => twoLineRows.has(row.id ?? "")).length === twoLineRows.size, "390px list renders every seeded dense row for the height check");
       check(phoneRows.ok, `390px list rows are contained, compact and equal for equal data (ListPhoneRowsContained): ${JSON.stringify({ heights: phoneHeights, overBudget: phoneRows.overBudget, escaped: phoneRows.escaped, siblingOverlaps: phoneRows.geometry.siblingOverlaps, unequalHeights: phoneRows.geometry.unequalHeights })}`);
       check(phoneRows.chipless.length > 0 && phoneRows.reserved.length === 0, `390px rows without chips reserve no chip line (ListPhoneChiplessRowCompact): ${JSON.stringify(phoneRows.chipless.map((row) => ({ id: row.id, height: row.height })))}`);
       // Self-test: a chip forced wider than its row must make the same measure fail, so the assertion cannot pass vacuously.
       await page.addStyleTag({ content: '[data-testid="row-MOB-1"] [data-phone-property], [data-testid="row-MOB-1"] [data-phone-property] button { max-width: none !important; width: 640px !important; flex: none !important; }' }).then((tag) => tag.evaluate((element) => element.setAttribute("data-e2e-overflow-probe", "")));
-      const forcedOverflow = await assertPhoneRows("390px with a forced 640px chip");
+      const forcedOverflow = await assertPhoneRows();
       await page.evaluate(() => document.querySelector("[data-e2e-overflow-probe]")?.remove());
       check(!forcedOverflow.ok && forcedOverflow.escaped.some((row) => row.id === "row-MOB-1"), `ListPhoneRowsContained detects a chip that overflows its row: ${JSON.stringify(forcedOverflow.escaped.map((row) => ({ id: row.id, outside: row.outside })))}`);
       const titleWidth = await firstRow.getByRole("link", { name: "Alpha" }).evaluate((element) => element.getBoundingClientRect().width);
@@ -1057,6 +1068,16 @@ try {
         }),
       }));
       check(dimensions.documentWidth <= width && dimensions.clippedControls.length === 0, `${locale} ${width}px toolbar fits: ${JSON.stringify(dimensions)}`);
+      if (width === 320) {
+        const list = edgeTapPage.getByTestId("work-items-list-container");
+        const populatedRow = list.getByTestId("row-MOB-1");
+        await populatedRow.getByRole("button", { name: `${translate("workItems.cycle", locale)}: Sprint 17`, exact: true }).waitFor();
+        await populatedRow.getByRole("button", { name: `${translate("workItems.modules", locale)}: Auth`, exact: true }).waitFor();
+        const widths = await Promise.all([edgeTapPage.locator("#main-content"), list].map((container) =>
+          container.evaluate(({ id, clientWidth, scrollWidth }) => ({ container: id || "work items list", clientWidth, scrollWidth }))));
+        check(widths.every(({ clientWidth, scrollWidth }) => clientWidth > 0 && scrollWidth <= clientWidth + 1),
+          `${locale} 320px main and list content fit inside their scroll containers: ${JSON.stringify(widths)}`);
+      }
       for (const layout of ["board", "spreadsheet", "calendar", "gantt", "list"] as const) {
         const control = switcher.getByRole("button", { name: translate(`layout.${layout}`, locale), exact: true });
         await control.scrollIntoViewIfNeeded();

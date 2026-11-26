@@ -509,11 +509,16 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const gridColumns = columnTracks.join(" ");
   const oneLine = listWidth >= widthFor(shownProperties);
   const columnStyle = { "--cols": gridColumns } as React.CSSProperties;
+  const emptyPropertyClass = "[@media(hover:none)]:invisible [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-hover/row:pointer-events-auto [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:pointer-events-auto";
   const propertyCell = (item: Item, property: (typeof allListProperties)[number], mobile = false) => {
     const empty = isEmptyProperty(item, property);
-    return <span key={property} data-list-property={property} data-empty-property={empty ? "true" : undefined} className={`flex min-w-0 items-center justify-end whitespace-nowrap sm:order-6 ${mobile ? "rounded-md bg-muted text-11 text-muted-foreground [&_button]:px-1 [&_button]:py-0 [&_button]:text-11" : ""} ${empty ? "[@media(hover:none)]:invisible [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-hover/row:pointer-events-auto [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:pointer-events-auto" : ""} [&>*]:max-w-full [&_*]:min-w-0 [&_svg]:shrink-0`}>
-    {cellOf(item, property, false, true)}
-  </span>;
+    return <span key={property} data-list-property={property} data-empty-property={empty ? "true" : undefined} className={cn(
+      "flex min-w-0 items-center justify-end whitespace-nowrap sm:order-6 [&>*]:max-w-full [&_*]:min-w-0 [&_svg]:shrink-0",
+      mobile && "rounded-md bg-muted text-[length:var(--text-11)] text-muted-foreground [&_button]:px-1 [&_button]:py-0 [&_button]:text-11",
+      empty && emptyPropertyClass,
+    )}>
+      {cellOf(item, property, false, true)}
+    </span>;
   };
   const rowOf = (item: Item) => {
     const checkbox = pickBox(item, true);
@@ -528,11 +533,14 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
         phoneProperties.length === 0 && "pointer-coarse:max-sm:gap-y-1",
       )}>
         <div className="flex min-h-10 min-w-0 items-center gap-2 sm:contents [@media(pointer:coarse)]:max-sm:gap-3.5">
-          <span className="flex size-4 shrink-0 items-center justify-center sm:order-1 sm:justify-self-center">{checkbox ? React.cloneElement(checkbox, { className: `${checkbox.props.className ?? ""} rounded-sm` }) : <span aria-hidden />}</span>
+          <span className="flex size-4 shrink-0 items-center justify-center sm:order-1 sm:justify-self-center">{checkbox ? React.cloneElement(checkbox, { className: cn(checkbox.props.className, "rounded-sm") }) : <span aria-hidden />}</span>
           <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} title={item.title} className="min-w-0 flex-1 truncate text-14 font-medium text-foreground sm:order-5">{item.title}</Link>
         </div>
-        <div data-testid="work-item-row-metadata" className={`work-item-row-metadata flex min-h-10 min-w-0 flex-wrap items-center justify-end gap-1 [@media(pointer:coarse)]:gap-2 sm:contents max-sm:flex-wrap max-sm:gap-1 max-sm:justify-start max-sm:overflow-visible [@media(hover:none)]:max-sm:gap-y-4 ${phoneProperties.length > 0 ? "max-sm:min-h-13 [@media(hover:none)]:max-sm:py-2.5" : ""}`}>
-          {leadingProperties.includes("priority") && <span data-list-property="priority" data-empty-property={priorityEmpty ? "true" : undefined} className={`flex min-w-7 shrink-0 items-center justify-center sm:order-2 ${priorityEmpty ? "[@media(hover:none)]:invisible [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/row:pointer-events-auto [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:pointer-events-auto [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100" : ""}`}>{cellOf(item, "priority", false, true, true)}</span>}
+        <div data-testid="work-item-row-metadata" className={cn(
+          "work-item-row-metadata flex min-h-10 min-w-0 flex-wrap items-center justify-end gap-1 [@media(pointer:coarse)]:gap-2 sm:contents max-sm:flex-wrap max-sm:gap-1 max-sm:justify-start max-sm:overflow-visible [@media(hover:none)]:max-sm:gap-y-4",
+          phoneProperties.length > 0 && "max-sm:min-h-13 [@media(hover:none)]:max-sm:py-2.5",
+        )}>
+          {leadingProperties.includes("priority") && <span data-list-property="priority" data-empty-property={priorityEmpty ? "true" : undefined} className={cn("flex min-w-7 shrink-0 items-center justify-center sm:order-2", priorityEmpty && emptyPropertyClass)}>{cellOf(item, "priority", false, true, true)}</span>}
           {shows("id") ? <span title={item.displayId} className="min-w-0 shrink-0 truncate whitespace-nowrap text-11 tabular-nums text-muted-foreground sm:order-3 sm:text-12">{item.displayId}</span> : <span aria-hidden className="sm:order-3" />}
           {leadingProperties.includes("state") && <span className="flex min-w-7 shrink-0 items-center justify-center sm:order-4">{cellOf(item, "state", false, true, true)}</span>}
           <div className="hidden sm:contents">
@@ -586,7 +594,11 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     });
     anchor.current = id;
   };
-  const pickBox = (item: Item, revealOnHover = false) => selectable && <Checkbox data-no-drag hitArea={revealOnHover ? "overlay" : "box"} className={`size-4 shrink-0 ${revealOnHover ? `relative z-10 ${selected.includes(item.id) ? "" : "[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100"}` : ""}`} aria-label={t("bulk.selectItem").replace("{id}", item.displayId)} checked={selected.includes(item.id)}
+  const pickBox = (item: Item, revealOnHover = false) => selectable && <Checkbox data-no-drag hitArea={revealOnHover ? "overlay" : "box"} className={cn(
+    "size-4 shrink-0",
+    revealOnHover && "relative z-10",
+    revealOnHover && !selected.includes(item.id) && "[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100",
+  )} aria-label={t("bulk.selectItem").replace("{id}", item.displayId)} checked={selected.includes(item.id)}
     onChange={() => undefined} onClick={(event) => pick(item.id, event.shiftKey)} />;
   // Collapsing a group hides its work items, so they leave the selection too: the bar never acts on what the user cannot see.
   const visibleKey = orderedIds.join(",");
@@ -840,10 +852,10 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
         const name = params.group === "none" ? "" : groupLabel(group.key);
         return <section key={group.key} aria-label={params.group === "none" ? undefined : name}>
           {params.group !== "none" && <div className="mx-1 my-1 flex items-center gap-2 border-b border-border bg-muted px-3 py-1.5">
-            <Button type="button" aria-expanded={open} aria-label={`${t("layout.toggleGroup")}: ${name}`} className="flex flex-1 items-center justify-start gap-2 bg-transparent p-0 text-left text-14 font-medium text-foreground hover:bg-transparent"
+            <Button type="button" aria-expanded={open} aria-label={`${t("layout.toggleGroup")}: ${name}`} className="flex flex-1 items-center justify-start gap-2 bg-transparent p-0 text-left text-14 font-medium text-foreground hover:bg-transparent max-[360px]:h-auto max-[360px]:min-h-9 max-[360px]:min-w-0 max-[360px]:whitespace-normal max-[360px]:[&_svg]:shrink-0"
               onClick={() => empty ? (open ? (setExpandedEmpty(expandedEmpty.filter((key) => key !== group.key)), quick === group.key && setQuick(null)) : setExpandedEmpty([...expandedEmpty, group.key])) : setCollapsed(open ? [...collapsed, group.key] : collapsed.filter((key) => key !== group.key))}>
               {open ? <ChevronDown aria-hidden size={14} className="text-muted-foreground" /> : <ChevronRight aria-hidden size={14} className="text-muted-foreground" />}
-              {groupIcon(group.key)}<span>{name}</span><span className="text-13 font-normal text-muted-foreground">{formatNumber(group.items.length)}</span>
+              {groupIcon(group.key)}<span className="max-[360px]:[overflow-wrap:anywhere]">{name}</span><span className="text-13 font-normal text-muted-foreground max-[360px]:shrink-0">{formatNumber(group.items.length)}</span>
             </Button>
             {canCreate && canWrite && <Button type="button" aria-label={t("layout.addToGroup").replace("{group}", name)} title={t("layout.addToGroup").replace("{group}", name)} className="inline-flex items-center gap-1 rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
               onClick={() => { setCollapsed(collapsed.filter((key) => key !== group.key)); setExpandedEmpty(expandedEmpty.includes(group.key) ? expandedEmpty : [...expandedEmpty, group.key]); setQuick(group.key); setQuickTitle(""); }}><Plus aria-hidden size={14} /><span className="hidden text-11 max-sm:inline">{t("layout.addShort")}</span></Button>}

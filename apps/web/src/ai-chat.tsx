@@ -36,17 +36,17 @@ function proposalId(part: { output?: unknown }) {
   try { const value = JSON.parse(String(part.output)) as { confirmationId?: string }; return value.confirmationId ?? null; } catch { return null; }
 }
 
-const iconButton = "inline-flex size-7 items-center justify-center rounded-md border-0 bg-transparent p-0 text-tertiary hover:bg-layer-transparent-hover hover:text-primary";
+const iconButton = "inline-flex size-7 items-center justify-center rounded-md border-0 bg-transparent p-0 text-muted-foreground hover:bg-accent hover:text-foreground";
 
 type Decision = "confirm" | "reject";
 
 const badgeTone: Record<Card["status"], string> = {
-  pending: "bg-layer-1 text-secondary",
-  confirmed: "bg-success-subtle text-primary",
-  rejected: "bg-layer-1 text-secondary",
-  expired: "bg-layer-1 text-secondary",
-  superseded: "bg-layer-1 text-secondary",
-  failed: "bg-danger-subtle text-primary",
+  pending: "bg-muted text-muted-foreground",
+  confirmed: "bg-muted text-foreground",
+  rejected: "bg-muted text-muted-foreground",
+  expired: "bg-muted text-muted-foreground",
+  superseded: "bg-muted text-muted-foreground",
+  failed: "bg-destructive/10 text-foreground",
 };
 
 const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
@@ -64,30 +64,30 @@ function ResultCard({ card, diff, project, selectable, selected, onSelect, onDec
     <div className="flex items-start gap-3">
       {pending && selectable && <Checkbox className="mt-1" checked={selected} onChange={(event) => onSelect?.(event.target.checked)} aria-label={`${translate("ai.selectCard")}: ${title}`} />}
       <div className="min-w-0 flex-1">
-        <p className="m-0 text-13 font-medium text-secondary">{heading}</p>
-        {summary.title && <p className="m-0 mt-0.5 break-words text-16 text-primary">{summary.title}</p>}
+        <p className="m-0 text-13 font-medium text-muted-foreground">{heading}</p>
+        {summary.title && <p className="m-0 mt-0.5 break-words text-16 text-foreground">{summary.title}</p>}
         {summary.fields.length > 0 && <dl className="m-0 mt-2 grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1 text-13">
           {summary.fields.map((field) => <React.Fragment key={field.key}>
-            <dt className="text-secondary">{translateDynamic(`ai.proposal.field.${field.key}`) ?? capitalize(humanize(field.key))}</dt>
-            <dd className="m-0 break-words text-primary">{field.value}</dd>
+            <dt className="text-muted-foreground">{translateDynamic(`ai.proposal.field.${field.key}`) ?? capitalize(humanize(field.key))}</dt>
+            <dd className="m-0 break-words text-foreground">{field.value}</dd>
           </React.Fragment>)}
         </dl>}
-        {summary.omitted > 0 && <p className="m-0 mt-1 text-12 text-tertiary">{translate("ai.proposal.omitted").replace("{count}", formatNumber(summary.omitted))}</p>}
+        {summary.omitted > 0 && <p className="m-0 mt-1 text-12 text-muted-foreground">{translate("ai.proposal.omitted").replace("{count}", formatNumber(summary.omitted))}</p>}
       </div>
       {card.status !== "pending" && <span aria-hidden className={`shrink-0 rounded-full px-2 py-0.5 text-12 font-medium ${badgeTone[card.status]}`}>{translate(`ai.proposal.status.${card.status}`)}</span>}
       {pending && onDecide && <span className="flex shrink-0 gap-2">
-        <Button type="button" disabled={busy} aria-label={`${translate("ai.confirm.confirm")}: ${title}`} onClick={() => onDecide("confirm")} className="rounded-md bg-accent-primary px-3 py-1 text-13 font-medium text-white hover:bg-accent-primary-hover disabled:opacity-60">{translate("ai.confirm.confirm")}</Button>
-        <Button type="button" disabled={busy} aria-label={`${translate("ai.confirm.reject")}: ${title}`} onClick={() => onDecide("reject")} className="secondary rounded-md border border-strong bg-transparent px-3 py-1 text-13 font-medium text-primary hover:bg-layer-transparent-hover disabled:opacity-60">{translate("ai.confirm.reject")}</Button>
+        <Button type="button" disabled={busy} aria-label={`${translate("ai.confirm.confirm")}: ${title}`} onClick={() => onDecide("confirm")} className="rounded-md bg-[var(--primary)] px-3 py-1 text-13 font-medium text-white hover:bg-[var(--primary)] disabled:opacity-60">{translate("ai.confirm.confirm")}</Button>
+        <Button type="button" disabled={busy} aria-label={`${translate("ai.confirm.reject")}: ${title}`} onClick={() => onDecide("reject")} className="secondary rounded-md border border-border bg-transparent px-3 py-1 text-13 font-medium text-foreground hover:bg-accent disabled:opacity-60">{translate("ai.confirm.reject")}</Button>
       </span>}
     </div>
-    {diff && diff.length > 0 && <div role="alert" className="mt-2 text-13 text-danger-primary">
+    {diff && diff.length > 0 && <div role="alert" className="mt-2 text-13 text-destructive">
       <p>{translate("ai.confirm.changed")}</p>
       <ul>{diff.map((entry) => <li key={entry.field}>{entry.field}: {JSON.stringify(entry.before)} → {JSON.stringify(entry.after)}</li>)}</ul>
     </div>}
-    {card.status !== "pending" && <p role="status" className="mt-2 text-13 text-secondary">{translate(`ai.confirm.${card.status}`)}{card.error ? `: ${card.error}` : ""}</p>}
-    {input.content !== undefined && input.content !== null && typeof input.content === "object" && <details className="mt-1 text-13"><summary className="cursor-pointer text-secondary">{translate("ai.preview")}</summary>
-      <div className="mt-2 max-h-80 overflow-auto rounded-md border border-subtle p-3"><DocPreview doc={input.content} /></div></details>}
-    <details open={pending && (summary.omitted > 0 || (summary.title === null && summary.fields.length === 0))} className="mt-1 text-12 text-secondary"><summary className="cursor-pointer">{translate("ai.details")}</summary>
+    {card.status !== "pending" && <p role="status" className="mt-2 text-13 text-muted-foreground">{translate(`ai.confirm.${card.status}`)}{card.error ? `: ${card.error}` : ""}</p>}
+    {input.content !== undefined && input.content !== null && typeof input.content === "object" && <details className="mt-1 text-13"><summary className="cursor-pointer text-muted-foreground">{translate("ai.preview")}</summary>
+      <div className="mt-2 max-h-80 overflow-auto rounded-md border border-border p-3"><DocPreview doc={input.content} /></div></details>}
+    <details open={pending && (summary.omitted > 0 || (summary.title === null && summary.fields.length === 0))} className="mt-1 text-12 text-muted-foreground"><summary className="cursor-pointer">{translate("ai.details")}</summary>
       <pre className="mt-1 whitespace-pre-wrap"><code className="text-12">{card.action}</code>{"\n"}{JSON.stringify(card.input, null, 2)}</pre></details>
   </div>;
 }
@@ -114,7 +114,7 @@ export function ProposalSet({ ids, refreshKey, onResolved, workspaceId }: { ids:
   // A new user message supersedes older pending cards on the server, so reload whenever the conversation grows.
   React.useEffect(() => { void reload(); }, [reload, refreshKey]);
   const loaded = ids.map((id) => cards[id]).filter((card): card is Card => card !== undefined);
-  if (loaded.length < ids.length) return <small role="status" className="text-tertiary">{translate("ai.loading")}</small>;
+  if (loaded.length < ids.length) return <small role="status" className="text-muted-foreground">{translate("ai.loading")}</small>;
   const pending = loaded.filter((card) => card.status === "pending");
   const chosen = chosenCards(pending, unselected);
   async function decide(targets: Card[], decision: Decision) {
@@ -137,13 +137,13 @@ export function ProposalSet({ ids, refreshKey, onResolved, workspaceId }: { ids:
     {loaded.map((card) => <ResultCard key={card.id} card={card} diff={diffs[card.id]} project={projects.find((item) => item.id === card.input.projectId)?.key} selectable={several} selected={!unselected[card.id]} busy={busy}
       onSelect={(value) => setUnselected((previous) => { const next = { ...previous }; if (value) delete next[card.id]; else next[card.id] = true; return next; })}
       onDecide={several ? (decision) => void decide([card], decision) : undefined} />)}
-    {pending.length > 0 && <div className="rounded-xl bg-layer-1 px-4 py-4">
-      <p className="text-14 font-semibold text-primary">{translate("ai.awaiting")}</p>
-      <p className="mb-2 text-14 text-secondary">{translate("ai.confirmPrompt")}</p>
+    {pending.length > 0 && <div className="rounded-xl bg-muted px-4 py-4">
+      <p className="text-14 font-semibold text-foreground">{translate("ai.awaiting")}</p>
+      <p className="mb-2 text-14 text-muted-foreground">{translate("ai.confirmPrompt")}</p>
       <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" disabled={busy || chosen.length === 0} onClick={() => void decide(chosen, "confirm")} className="rounded-md bg-accent-primary px-3 py-1 text-14 font-medium text-white hover:bg-accent-primary-hover disabled:opacity-60">{translate(acknowledged ? "ai.confirm.anyway" : several ? "ai.confirmSelected" : "ai.confirmAll")}{several && !acknowledged ? ` (${chosen.length}/${pending.length})` : ""}</Button>
-        <Button type="button" disabled={busy || chosen.length === 0} onClick={() => void decide(chosen, "reject")} className="secondary rounded-md border border-strong bg-transparent px-3 py-1 text-14 font-medium text-primary hover:bg-layer-transparent-hover disabled:opacity-60">{translate(several ? "ai.rejectSelected" : "ai.rejectAll")}</Button>
-        <small className="text-tertiary">{translate("ai.confirm.expires")} {formatDate(soonest!)}</small>
+        <Button type="button" disabled={busy || chosen.length === 0} onClick={() => void decide(chosen, "confirm")} className="rounded-md bg-[var(--primary)] px-3 py-1 text-14 font-medium text-white hover:bg-[var(--primary)] disabled:opacity-60">{translate(acknowledged ? "ai.confirm.anyway" : several ? "ai.confirmSelected" : "ai.confirmAll")}{several && !acknowledged ? ` (${chosen.length}/${pending.length})` : ""}</Button>
+        <Button type="button" disabled={busy || chosen.length === 0} onClick={() => void decide(chosen, "reject")} className="secondary rounded-md border border-border bg-transparent px-3 py-1 text-14 font-medium text-foreground hover:bg-accent disabled:opacity-60">{translate(several ? "ai.rejectSelected" : "ai.rejectAll")}</Button>
+        <small className="text-muted-foreground">{translate("ai.confirm.expires")} {formatDate(soonest!)}</small>
       </div>
     </div>}
   </div>;
@@ -171,18 +171,18 @@ function AnswerActions({ text, workspace, onRegenerate }: { text: string; worksp
   }
   return <div className="flex items-center gap-0.5">
     <Button type="button" className={iconButton} aria-label={translate("ai.copy")} title={translate("ai.copy")} onClick={() => { void navigator.clipboard?.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }); }}>{copied ? <Check aria-hidden size={14} /> : <Copy aria-hidden size={14} />}</Button>
-    <Button type="button" className={iconButton} aria-pressed={rating === "up"} aria-label={translate("ai.thumbUp")} title={translate("ai.thumbUp")} onClick={() => setRating(rating === "up" ? null : "up")}><ThumbsUp aria-hidden size={14} className={rating === "up" ? "text-accent-primary" : ""} /></Button>
-    <Button type="button" className={iconButton} aria-pressed={rating === "down"} aria-label={translate("ai.thumbDown")} title={translate("ai.thumbDown")} onClick={() => setRating(rating === "down" ? null : "down")}><ThumbsDown aria-hidden size={14} className={rating === "down" ? "text-accent-primary" : ""} /></Button>
+    <Button type="button" className={iconButton} aria-pressed={rating === "up"} aria-label={translate("ai.thumbUp")} title={translate("ai.thumbUp")} onClick={() => setRating(rating === "up" ? null : "up")}><ThumbsUp aria-hidden size={14} className={rating === "up" ? "text-foreground" : ""} /></Button>
+    <Button type="button" className={iconButton} aria-pressed={rating === "down"} aria-label={translate("ai.thumbDown")} title={translate("ai.thumbDown")} onClick={() => setRating(rating === "down" ? null : "down")}><ThumbsDown aria-hidden size={14} className={rating === "down" ? "text-foreground" : ""} /></Button>
     {onRegenerate && <Button type="button" className={iconButton} aria-label={translate("ai.regenerate")} title={translate("ai.regenerate")} onClick={onRegenerate}><RefreshCw aria-hidden size={14} /></Button>}
     <Button type="button" disabled={converted === "busy"} className={iconButton} aria-label={translate("ai.convert")} title={translate("ai.convert")} onClick={() => void convert()}><FilePlus aria-hidden size={14} /></Button>
-    {converted === "failed" && <span role="alert" className="ml-2 text-12 text-danger-primary">{translate("ai.convertFailed")}</span>}
+    {converted === "failed" && <span role="alert" className="ml-2 text-12 text-destructive">{translate("ai.convertFailed")}</span>}
   </div>;
 }
 
 export type SidecarContext = { type: "work_item" | "wiki_page"; id: string; title: string };
 
 function Thoughts({ steps }: { steps: string[] }) {
-  return <details className="group text-14 text-tertiary">
+  return <details className="group text-14 text-muted-foreground">
     <summary className="flex cursor-pointer list-none items-center gap-1"><span>{translate("ai.thoughts")}</span><ChevronRight aria-hidden size={12} className="transition-transform group-open:rotate-90" /></summary>
     <ul className="mt-1 grid gap-0.5 pl-1">{steps.map((step, index) => <li key={index} role="status">{translate("ai.thoughtsLookedUp")} {step}</li>)}</ul>
   </details>;
@@ -255,10 +255,10 @@ export function sourcesOf(message: UIMessage): { url: string; title: string }[] 
 }
 
 function Sources({ sources }: { sources: { url: string; title: string }[] }) {
-  return <div className="grid gap-1 text-13 text-secondary">
+  return <div className="grid gap-1 text-13 text-muted-foreground">
     <p className="m-0 font-medium">{translate("ai.sources")}</p>
     <ul className="m-0 grid list-none gap-0.5 p-0">
-      {sources.map((source) => <li key={source.url} className="truncate"><a href={source.url} target="_blank" rel="noreferrer noopener" className="text-accent-primary hover:underline">{source.title}</a></li>)}
+      {sources.map((source) => <li key={source.url} className="truncate"><a href={source.url} target="_blank" rel="noreferrer noopener" className="text-foreground hover:underline">{source.title}</a></li>)}
     </ul>
   </div>;
 }
@@ -326,14 +326,14 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
     <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
       <ol aria-live="polite" className="mx-auto flex max-w-3xl list-none flex-col gap-6 p-0">
         {messages.length === 0 && <li className="grid gap-2 py-6">
-          <p className="m-0 text-14 font-medium text-secondary">{translate("ai.suggest.heading")}</p>
+          <p className="m-0 text-14 font-medium text-muted-foreground">{translate("ai.suggest.heading")}</p>
           <ul className="m-0 grid list-none gap-2 p-0 sm:grid-cols-2">
-            {([1, 2, 3, 4] as const).map((n) => <li key={n}><Button type="button" onClick={() => { setInput(translate(`ai.suggest.${n}`)); composerRef.current?.focus(); }} className="w-full rounded-lg border border-subtle bg-surface-1 px-3 py-2 text-left text-14 text-primary hover:bg-layer-transparent-hover">{translate(`ai.suggest.${n}`)}</Button></li>)}
+            {([1, 2, 3, 4] as const).map((n) => <li key={n}><Button type="button" onClick={() => { setInput(translate(`ai.suggest.${n}`)); composerRef.current?.focus(); }} className="w-full rounded-lg border border-border bg-card px-3 py-2 text-left text-14 text-foreground hover:bg-accent">{translate(`ai.suggest.${n}`)}</Button></li>)}
           </ul>
         </li>}
         {messages.map((message, index) => {
           if (message.role === "user") return <li key={message.id} data-role="user" className="flex justify-end">
-            <div className="max-w-[85%] rounded-2xl bg-layer-2 px-4 py-3 text-16 text-primary"><p className="whitespace-pre-wrap">{textOf(message)}</p>{message.parts.filter((part) => part.type === "data-skill").map((part, i) => { const data = (part as { data?: { name?: string } }).data; return <span key={i} className="mt-2 inline-flex rounded-md border border-subtle px-2 py-0.5 text-12">/{data?.name}</span>; })}</div>
+            <div className="max-w-[85%] rounded-2xl bg-card px-4 py-3 text-16 text-foreground"><p className="whitespace-pre-wrap">{textOf(message)}</p>{message.parts.filter((part) => part.type === "data-skill").map((part, i) => { const data = (part as { data?: { name?: string } }).data; return <span key={i} className="mt-2 inline-flex rounded-md border border-border px-2 py-0.5 text-12">/{data?.name}</span>; })}</div>
           </li>;
           const steps = message.parts.flatMap((part) => part.type.startsWith("tool-") && !proposalId(part as { output?: unknown }) ? [part.type.slice(5)] : []);
           const ids = message.parts.flatMap((part) => { const id = part.type.startsWith("tool-") ? proposalId(part as { output?: unknown }) : null; return id ? [id] : []; });
@@ -348,7 +348,7 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
           const last = index === messages.length - 1;
           return <li key={message.id} data-role="assistant" className="grid gap-3">
             {steps.length > 0 && <Thoughts steps={steps} />}
-            {applied.map((actionName, resultIndex) => <p key={`done-${resultIndex}`} role="status" className="m-0 rounded-md border border-success-subtle bg-success-subtle/30 px-3 py-2 text-13 text-primary">{translate("ai.autopilot.done")} · {actionName}</p>)}
+            {applied.map((actionName, resultIndex) => <p key={`done-${resultIndex}`} role="status" className="m-0 rounded-md border border-border bg-muted/30 px-3 py-2 text-13 text-foreground">{translate("ai.autopilot.done")} · {actionName}</p>)}
             {message.parts.map((part, partIndex) => part.type === "text" ? <Markdown key={partIndex} text={part.text} /> : null)}
             {sources.length > 0 && <Sources sources={sources} />}
             {ids.length > 0 && <ProposalSet ids={ids} refreshKey={messages.length} workspaceId={workspace.id} onResolved={last ? continueAfterConfirmations : undefined} />}
@@ -358,13 +358,13 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
         <div ref={endRef} />
       </ol>
     </div>
-    {error && <p role="alert" className="px-4 text-14 text-danger-primary">{translate(error.message.includes("rate_limited") ? "ai.rateLimited" : "ai.failed")}</p>}
+    {error && <p role="alert" className="px-4 text-14 text-destructive">{translate(error.message.includes("rate_limited") ? "ai.rateLimited" : "ai.failed")}</p>}
     <div className="mx-auto w-full max-w-3xl px-4 pb-2">
       <form ref={composerForm} onSubmit={(event) => { event.preventDefault(); const text = input.trim(); if (!text || busy) return; setInput(""); send(text); }} className="card-surface rounded-2xl p-3 shadow-sm sm:p-4">
-        <span title={translate("ai.contextHint")} className="mb-2 flex w-fit max-w-full items-center gap-1.5 truncate rounded-md border border-subtle px-2 py-1 text-14 text-primary"><span className="sr-only">{translate("ai.contextPill")}: </span>{pill}</span>
+        <span title={translate("ai.contextHint")} className="mb-2 flex w-fit max-w-full items-center gap-1.5 truncate rounded-md border border-border px-2 py-1 text-14 text-foreground"><span className="sr-only">{translate("ai.contextPill")}: </span>{pill}</span>
         <label className="sr-only" htmlFor={`composer-${chatId}`}>{translate("ai.message")}</label>
-        {selectedSkill && <Button type="button" onClick={() => setSelectedSkill(null)} className="mb-2 inline-flex rounded-md border border-subtle px-2 py-1 text-13 text-primary">/{selectedSkill.name} · {translate(selectedSkill.scope === "personal" ? "skills.personal" : "skills.workspace")} ×</Button>}
-        {skillPickerOpen && <div role="listbox" aria-label={translate("skills.picker")} className="mb-2 max-h-44 overflow-auto rounded-md border border-subtle bg-surface-1">{matchingSkills.map((skill) => <Button key={skill.id} type="button" role="option" onClick={() => pickSkill(skill)} className="flex w-full items-center justify-between px-3 py-2 text-left text-14 hover:bg-layer-1"><span>/{skill.name}</span><span className="text-12 text-tertiary">{translate(skill.scope === "personal" ? "skills.personal" : "skills.workspace")}</span></Button>)}{matchingSkills.length === 0 && <p className="px-3 py-2 text-13 text-tertiary">{translate("skills.empty")}</p>}</div>}
+        {selectedSkill && <Button type="button" onClick={() => setSelectedSkill(null)} className="mb-2 inline-flex rounded-md border border-border px-2 py-1 text-13 text-foreground">/{selectedSkill.name} · {translate(selectedSkill.scope === "personal" ? "skills.personal" : "skills.workspace")} ×</Button>}
+        {skillPickerOpen && <div role="listbox" aria-label={translate("skills.picker")} className="mb-2 max-h-44 overflow-auto rounded-md border border-border bg-card">{matchingSkills.map((skill) => <Button key={skill.id} type="button" role="option" onClick={() => pickSkill(skill)} className="flex w-full items-center justify-between px-3 py-2 text-left text-14 hover:bg-muted"><span>/{skill.name}</span><span className="text-12 text-muted-foreground">{translate(skill.scope === "personal" ? "skills.personal" : "skills.workspace")}</span></Button>)}{matchingSkills.length === 0 && <p className="px-3 py-2 text-13 text-muted-foreground">{translate("skills.empty")}</p>}</div>}
         <Textarea ref={composerRef} id={`composer-${chatId}`} value={input} placeholder={translate("ai.placeholder")} rows={2} onChange={(event) => setInput(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Escape" && skillPickerOpen) { event.preventDefault(); setDismissedSkillInput(input); return; }
@@ -375,20 +375,20 @@ export function Conversation({ workspace, chatId, initial, initialMode = "build"
               event.currentTarget.form?.requestSubmit();
             }
           }}
-          className="block w-full resize-none border-0 bg-transparent p-0 text-16 text-primary outline-none placeholder:text-placeholder" />
+          className="block w-full resize-none border-0 bg-transparent p-0 text-16 text-foreground outline-none placeholder:text-muted-foreground" />
         <div className="mt-2 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <select value={mode} onChange={(event) => setMode(event.target.value as ChatMode)} aria-label={translate("ai.mode")} title={translate("ai.mode.hint")} className="pl-2 pr-7 py-1 text-14 text-primary">
+            <select value={mode} onChange={(event) => setMode(event.target.value as ChatMode)} aria-label={translate("ai.mode")} title={translate("ai.mode.hint")} className="pl-2 pr-7 py-1 text-14 text-foreground">
               <option value="ask">{translate("ai.mode.ask")}</option>
               <option value="build">{translate("ai.mode.build")}</option>
               {canAutopilot && <option value="autopilot">{translate("ai.mode.autopilot")}</option>}
             </select>
-            {canSearchWeb && <Button type="button" aria-pressed={webSearch} aria-label={translate("ai.webSearch")} title={translate(webSearch ? "ai.webSearch.on" : "ai.webSearch.off")} onClick={() => setWebSearch(!webSearch)} className={`inline-flex size-8 items-center justify-center rounded-lg border p-0 ${webSearch ? "border-accent-primary bg-accent-primary/10 text-accent-primary" : "border-subtle bg-surface-1 text-secondary"}`}><Globe aria-hidden size={16} /></Button>}
+            {canSearchWeb && <Button type="button" aria-pressed={webSearch} aria-label={translate("ai.webSearch")} title={translate(webSearch ? "ai.webSearch.on" : "ai.webSearch.off")} onClick={() => setWebSearch(!webSearch)} className={`inline-flex size-8 items-center justify-center rounded-lg border p-0 ${webSearch ? "border-ring bg-[var(--primary)]/10 text-foreground" : "border-border bg-card text-muted-foreground"}`}><Globe aria-hidden size={16} /></Button>}
           </div>
-          <Button type="submit" aria-label={translate("ai.send")} title={translate("ai.send")} disabled={busy || input.trim() === ""} className="inline-flex size-8 items-center justify-center rounded-lg border-0 bg-accent-primary p-0 text-white hover:bg-accent-primary-hover disabled:opacity-50"><ArrowUp aria-hidden size={16} /></Button>
+          <Button type="submit" aria-label={translate("ai.send")} title={translate("ai.send")} disabled={busy || input.trim() === ""} className="inline-flex size-8 items-center justify-center rounded-lg border-0 bg-[var(--primary)] p-0 text-white hover:bg-[var(--primary)] disabled:opacity-50"><ArrowUp aria-hidden size={16} /></Button>
         </div>
       </form>
-      <p className="py-2 text-center text-12 text-tertiary">{translate("ai.disclaimer")}</p>
+      <p className="py-2 text-center text-12 text-muted-foreground">{translate("ai.disclaimer")}</p>
     </div>
   </section>;
 }
@@ -418,27 +418,27 @@ export function AiSidebar({ workspace, activeId }: { workspace: Workspace; activ
   }
   return <div className="flex min-h-0 flex-col gap-2">
     <div className="flex items-center gap-2">
-      <Link to={paths.ai(workspace.slug)} className="flex flex-1 items-center gap-2 rounded-md border border-subtle bg-surface-1 px-3 py-1.5 text-14 text-primary hover:bg-layer-transparent-hover"><Pencil aria-hidden size={14} />{translate("ai.new")}</Link>
-      <Button type="button" aria-label={translate("ai.search")} title={translate("ai.search")} aria-pressed={searching} onClick={() => { setSearching(!searching); setQuery(""); }} className="inline-flex size-8 items-center justify-center rounded-md border border-subtle bg-surface-1 p-0 text-secondary hover:bg-layer-transparent-hover"><SearchIcon /></Button>
+      <Link to={paths.ai(workspace.slug)} className="flex flex-1 items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-14 text-foreground hover:bg-accent"><Pencil aria-hidden size={14} />{translate("ai.new")}</Link>
+      <Button type="button" aria-label={translate("ai.search")} title={translate("ai.search")} aria-pressed={searching} onClick={() => { setSearching(!searching); setQuery(""); }} className="inline-flex size-8 items-center justify-center rounded-md border border-border bg-card p-0 text-muted-foreground hover:bg-accent"><SearchIcon /></Button>
     </div>
-    {searching && <Input type="search" autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder={translate("ai.searchPlaceholder")} aria-label={translate("ai.search")} className="rounded-md border border-subtle bg-surface-1 px-2.5 py-1.5 text-14 text-primary" />}
+    {searching && <Input type="search" autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder={translate("ai.searchPlaceholder")} aria-label={translate("ai.search")} className="rounded-md border border-border bg-card px-2.5 py-1.5 text-14 text-foreground" />}
     <nav aria-label={translate("ai.recents")} className="min-h-0 overflow-y-auto overflow-x-hidden">
-      <p className="px-2.5 pb-1 pt-3 text-12 font-medium text-tertiary">{translate("ai.recentsHeading")}</p>
-      {recents.length === 0 ? <p className="px-2.5 text-14 text-tertiary">{translate("ai.noRecents")}</p>
-        : shown.length === 0 ? <p className="px-2.5 text-14 text-tertiary">{translate("ai.noMatches")}</p>
-        : <ul className="m-0 grid list-none grid-cols-[minmax(0,1fr)] gap-0.5 p-0">{shown.map((chat) => <li key={chat.id} className={`group min-w-0 rounded-md ${chat.id === activeId ? "bg-layer-1-selected" : "hover:bg-layer-transparent-hover"}`}>
+      <p className="px-2.5 pb-1 pt-3 text-12 font-medium text-muted-foreground">{translate("ai.recentsHeading")}</p>
+      {recents.length === 0 ? <p className="px-2.5 text-14 text-muted-foreground">{translate("ai.noRecents")}</p>
+        : shown.length === 0 ? <p className="px-2.5 text-14 text-muted-foreground">{translate("ai.noMatches")}</p>
+        : <ul className="m-0 grid list-none grid-cols-[minmax(0,1fr)] gap-0.5 p-0">{shown.map((chat) => <li key={chat.id} className={`group min-w-0 rounded-md ${chat.id === activeId ? "bg-accent" : "hover:bg-accent"}`}>
           {renaming?.id === chat.id
             ? <form className="flex w-full min-w-0 items-center gap-1 p-1" onSubmit={(event) => { event.preventDefault(); void saveRename(); }}>
-              <Input autoFocus value={renaming.title} onChange={(event) => setRenaming({ id: chat.id, title: event.target.value })} aria-label={translate("ai.rename")} className="min-w-0 flex-1 basis-0 rounded border border-subtle bg-surface-1 px-1.5 py-0.5 text-14" />
-              <Button type="submit" className="shrink-0 rounded !bg-transparent !px-1 !py-0.5 text-13 !text-accent-primary hover:!bg-layer-transparent-hover">{translate("ai.renameSave")}</Button>
-              <Button type="button" onClick={() => setRenaming(null)} className="shrink-0 rounded !border-0 !bg-transparent !px-1 !py-0.5 text-13 !text-accent-primary hover:!bg-layer-transparent-hover">{translate("ai.cancel")}</Button>
+              <Input autoFocus value={renaming.title} onChange={(event) => setRenaming({ id: chat.id, title: event.target.value })} aria-label={translate("ai.rename")} className="min-w-0 flex-1 basis-0 rounded border border-border bg-card px-1.5 py-0.5 text-14" />
+              <Button type="submit" className="shrink-0 rounded !bg-transparent !px-1 !py-0.5 text-13 !text-foreground hover:!bg-accent">{translate("ai.renameSave")}</Button>
+              <Button type="button" onClick={() => setRenaming(null)} className="shrink-0 rounded !border-0 !bg-transparent !px-1 !py-0.5 text-13 !text-foreground hover:!bg-accent">{translate("ai.cancel")}</Button>
             </form>
             : deleting === chat.id
               ? <div className="flex items-center gap-1 px-2 py-1.5 text-13"><span className="flex-1 truncate">{translate("ai.deleteConfirm")}</span>
-                <Button type="button" onClick={() => void remove(chat.id)} className="rounded bg-danger-primary px-1.5 py-0.5 text-13 text-white">{translate("ai.deleteYes")}</Button>
+                <Button type="button" onClick={() => void remove(chat.id)} className="rounded bg-destructive px-1.5 py-0.5 text-13 text-white">{translate("ai.deleteYes")}</Button>
                 <Button type="button" onClick={() => setDeleting(null)} className="secondary rounded px-1.5 py-0.5 text-13">{translate("ai.cancel")}</Button></div>
               : <div className="flex items-center">
-                <Link to={paths.aiChat(workspace.slug, chat.id)} title={chat.title} aria-current={chat.id === activeId ? "page" : undefined} className="min-w-0 flex-1 truncate px-2.5 py-1.5 text-14 text-primary">{chat.title}</Link>
+                <Link to={paths.aiChat(workspace.slug, chat.id)} title={chat.title} aria-current={chat.id === activeId ? "page" : undefined} className="min-w-0 flex-1 truncate px-2.5 py-1.5 text-14 text-foreground">{chat.title}</Link>
                 <span className="flex pr-1 opacity-0 focus-within:opacity-100 group-hover:opacity-100 max-md:opacity-100">
                   <Button type="button" className={iconButton} aria-label={`${translate("ai.rename")}: ${chat.title}`} onClick={() => setRenaming({ id: chat.id, title: chat.title })}><Pencil aria-hidden size={13} /></Button>
                   <Button type="button" className={iconButton} aria-label={`${translate("ai.delete")}: ${chat.title}`} onClick={() => setDeleting(chat.id)}><Trash2 aria-hidden size={13} /></Button>
@@ -466,9 +466,9 @@ export function AiChatPage({ workspace, chatId }: { workspace: Workspace; chatId
   }, [chatId]);
   const activeId = chatId || draftId;
   return <section className="-m-[var(--padding-page-x)] flex h-[calc(100%+2*var(--padding-page-x))] flex-col">
-    <header className="border-b border-subtle px-4 py-3"><h1 className="m-0 text-16 font-medium text-primary">{translate("ai.heading")}</h1></header>
-    {initial === null ? <p role="status" className="p-4 text-secondary">{translate("ai.loading")}</p>
-      : !found ? <p role="alert" className="p-4 text-secondary">{translate("ai.noMatches")}</p>
+    <header className="border-b border-border px-4 py-3"><h1 className="m-0 text-16 font-medium text-foreground">{translate("ai.heading")}</h1></header>
+    {initial === null ? <p role="status" className="p-4 text-muted-foreground">{translate("ai.loading")}</p>
+      : !found ? <p role="alert" className="p-4 text-muted-foreground">{translate("ai.noMatches")}</p>
       : <Conversation key={activeId} workspace={workspace} chatId={activeId} initial={initial} initialMode={initialMode} onSent={() => undefined} />}
   </section>;
 }

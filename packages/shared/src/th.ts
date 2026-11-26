@@ -1234,6 +1234,8 @@ export const th: Record<keyof typeof en, string> = {
   "inbox.navLabel": "กล่องขาเข้า",
   "inbox.unread": "ยังไม่ได้อ่าน {count}",
   "inbox.empty": "ยังไม่มีการแจ้งเตือน",
+  "inbox.selectNotification": "เลือกการแจ้งเตือนเพื่ออ่านที่นี่",
+  "inbox.open": "เปิด",
   "inbox.mention": "{actor} แท็กคุณใน",
   "inbox.reply": "{actor} ตอบกลับความคิดเห็นของคุณใน",
   "inbox.assignment": "{actor} มอบหมายให้คุณใน",

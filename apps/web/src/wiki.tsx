@@ -19,7 +19,7 @@ import { BlockKeyboardShortcuts, CodeBlockCopy, EditorPlaceholder, EmojiSuggesti
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { Check, MoreHorizontal, FileText, Heart, Globe, ChevronRight, Plus, Lock, PanelRight, X, Download, Upload, FileDown, Maximize2, Code, Clock, FilePlus, Archive, Trash2, Pencil, EyeOff } from "lucide-react";
 import { paths } from "./routes";
-import { useInboxNotificationOpen } from "./inbox";
+import { useInboxNotificationOpen } from "./notification-open";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { pageMarkdown, readableReferenceLabels, splitPageMarkdown, toMarkdown } from "./wiki-export";
 import { MenuItem, Popover } from "./shell/popover";

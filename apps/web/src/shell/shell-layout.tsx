@@ -15,7 +15,7 @@ import { Sheet, SheetContent, SheetTitle } from "../ui/sheet";
 export function Shell({ current, workspace, signOut, refresh }: { current: Current; workspace: Workspace; signOut: () => Promise<void>; refresh: () => Promise<void> }) {
   const [drawer, setDrawer] = React.useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(() => {
-    try { return localStorage.getItem("weft:desktop-sidebar-collapsed") === "true"; } catch { return false; }
+    try { return window.matchMedia("(max-width: 1099px)").matches || localStorage.getItem("weft:desktop-sidebar-collapsed") === "true"; } catch { return false; }
   });
   const [sidebarPeek, setSidebarPeek] = React.useState(false);
   const { pathname } = useLocation();
@@ -23,6 +23,12 @@ export function Shell({ current, workspace, signOut, refresh }: { current: Curre
   React.useEffect(() => {
     try { localStorage.setItem("weft:desktop-sidebar-collapsed", String(sidebarCollapsed)); } catch { /* Storage may be unavailable. */ }
   }, [sidebarCollapsed]);
+  React.useEffect(() => {
+    const compact = window.matchMedia("(max-width: 1099px)");
+    const collapseForWidth = () => { if (compact.matches) setSidebarCollapsed(true); };
+    compact.addEventListener("change", collapseForWidth);
+    return () => compact.removeEventListener("change", collapseForWidth);
+  }, []);
   React.useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || event.key !== "\\" || event.altKey) return;
@@ -54,7 +60,7 @@ export function Shell({ current, workspace, signOut, refresh }: { current: Curre
           <Sidebar workspace={workspace} />
         </SheetContent>
       </Sheet>
-      <main id="main-content" tabIndex={-1} className="min-w-0 flex-1 focus:outline-none overflow-y-auto p-[var(--padding-page-x)]"><Outlet /></main>
+      <main id="main-content" tabIndex={-1} className="min-w-0 flex-1 focus:outline-none overflow-y-auto p-[var(--padding-page-x)]"><div className="mx-auto w-full min-w-0 max-w-[1440px]"><Outlet /></div></main>
       <SidecarDock />
     </div>
   </div></SidecarProvider>;

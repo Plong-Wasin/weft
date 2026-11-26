@@ -1,4 +1,5 @@
 import { Button } from "@/ui/button";
+import { PageHeader } from "./shell/page-header";
 import React from "react";
 import { Link, useNavigate } from "react-router";
 import { ArchiveRestore, CalendarDays, CalendarSync, EllipsisVertical, Plus, X } from "lucide-react";
@@ -178,11 +179,10 @@ export function CyclesPage({ workspaceId, workspaceSlug, projectKey, projectId, 
   const shown = (cycles ?? []).filter((cycle) => cycle.status === tab);
   const counts = (status: Status) => (cycles ?? []).filter((cycle) => cycle.status === status).length;
   return <section className="grid gap-4">
-    <header className="flex flex-wrap items-center gap-3">
-      <h2 className="m-0 flex flex-1 items-center gap-2 text-base font-semibold"><CalendarSync aria-hidden size={16} />{t("cycles.title")}</h2>
+    <PageHeader level={2} title={<><CalendarSync aria-hidden size={20} />{t("cycles.title")}</>} actions={<>
       <label className="flex items-center gap-2 text-sm text-muted-foreground"><Checkbox checked={archived} onChange={(event) => setArchived(event.target.checked)} /> {t("cycles.showArchived")}</label>
       {canWrite && <Button type="button" className={primaryButton} onClick={() => setEditing("new")}><Plus aria-hidden size={14} />{t("cycles.new")}</Button>}
-    </header>
+    </>} />
     <Tabs value={tab} onValueChange={(value) => setTab(value as Status)}>
       <TabsList aria-label={t("cycles.title")} className="flex h-auto w-fit max-w-full flex-wrap gap-1 rounded-lg bg-muted p-1">
         {tabs.map((status) => <TabsTrigger key={status} value={status} className={`rounded-md border-0 px-3 py-2 text-sm font-medium ${tab === status ? "bg-card text-foreground shadow-sm" : "bg-transparent text-muted-foreground hover:bg-accent"}`}>{t(`cycles.status.${status}`)} <span className="text-xs text-muted-foreground">{count(counts(status))}</span></TabsTrigger>)}

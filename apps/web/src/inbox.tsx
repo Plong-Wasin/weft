@@ -9,6 +9,7 @@ import { paths } from "./routes";
 import { inboxNotificationIdFromSearch, notificationTarget, notificationTargetWithInboxId, withoutInboxNotificationId } from "./notification-target";
 import { autoRuleReasonText } from "./auto-rule-reason";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { PageHeader } from "./shell/page-header";
 
 
 type Workspace = { id: string; slug: string; name: string };
@@ -87,8 +88,8 @@ export function InboxPanel({ workspace }: { workspace: Workspace }) {
   const markUnread = useMutation({ mutationFn: (notificationId: string) => call("mark_notification_unread", { notificationId }), ...changed });
   const markAll = useMutation({ mutationFn: () => call("mark_all_notifications_read", { workspaceId: workspace.id }), ...changed });
   const shown = (data?.notifications ?? []).filter((item) => !unreadOnly || item.readAt === null);
-  return <section aria-labelledby="inbox-title" className="mx-auto w-full max-w-5xl">
-    <h1 id="inbox-title" className="mb-5 text-[24px] font-semibold text-foreground">{translate("inbox.title")}{data ? ` — ${translate("inbox.unread").replace("{count}", formatNumber(data.unreadCount))}` : ""}</h1>
+  return <section aria-labelledby="inbox-title" className="w-full max-w-5xl">
+    <PageHeader title={<span id="inbox-title">{translate("inbox.title")}</span>} actions={data ? <span className="text-sm text-muted-foreground">{translate("inbox.unread").replace("{count}", formatNumber(data.unreadCount))}</span> : undefined} className="mb-5" />
     {isError && <p role="alert">{translate("inbox.failed")}</p>}
     <div className="mb-4 flex flex-wrap items-center gap-2">
       <div role="group" aria-label={translate("inbox.title")} className="inline-flex rounded-lg border border-border bg-muted p-1">

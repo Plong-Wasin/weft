@@ -4,6 +4,7 @@ import { NavLink } from "react-router";
 import { ChartColumn, Check, ChevronDown } from "lucide-react";
 import { formatNumber, getLocale, translate, type MessageKey } from "@weft/shared";
 import { Popover } from "./shell/popover";
+import { PageHeader } from "./shell/page-header";
 import { paths } from "./routes";
 import type { Project } from "./types";
 
@@ -133,8 +134,8 @@ export function AnalyticsOverviewPage({ workspaceId, workspaceSlug, run }: { wor
     });
     return () => { current = false; };
   }, [run, workspaceId]);
-  return <section className="grid min-w-0 gap-4 p-4">
-    <h1 className="m-0 flex items-center gap-2 text-lg font-semibold"><ChartColumn aria-hidden size={18} />{t("analytics.title")}</h1>
+  return <section className="grid min-w-0 gap-4">
+    <PageHeader title={<><ChartColumn aria-hidden size={20} />{t("analytics.title")}</>} />
     <Tabs workspaceSlug={workspaceSlug} active="overview" />
     {state === "forbidden" && <p role="alert" className="m-0 text-muted-foreground">{t("analytics.forbidden")}</p>}
     {state === "failed" && <p role="alert" className="m-0 text-destructive">{t("analytics.failed")}</p>}
@@ -193,8 +194,8 @@ export function AnalyticsPage({ workspaceId, workspaceSlug, action, run }: { wor
   }, [run, workspaceId, selected, x, groupBy]);
   const pickX = (axis: Axis) => { setX(axis); if (groupBy === axis) setGroupBy(""); };
   const empty = typeof state === "object" && state !== null && state.summary.total === 0 && selected.length === 0;
-  return <section className="grid min-w-0 gap-4 p-4">
-    <h1 className="m-0 flex items-center gap-2 text-lg font-semibold"><ChartColumn aria-hidden size={18} />{t("analytics.title")}</h1>
+  return <section className="grid min-w-0 gap-4">
+    <PageHeader title={<><ChartColumn aria-hidden size={20} />{t("analytics.title")}</>} />
     <Tabs workspaceSlug={workspaceSlug} active="workItems" />
     {state === "forbidden" && <p role="alert" className="m-0 text-muted-foreground">{t("analytics.forbidden")}</p>}
     {state === "failed" && <p role="alert" className="m-0 text-destructive">{t("analytics.failed")}</p>}

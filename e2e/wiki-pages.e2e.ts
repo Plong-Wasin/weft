@@ -1,11 +1,12 @@
 // Browser end-to-end flow: live Wiki updates, Wiki and Pages list controls, and the page editor.
 // Run with `bun e2e/wiki-pages.e2e.ts` (set DATABASE_URL to an isolated test database). Screenshots go to .local/visual/review/15-wiki-and-pages.
-import { chromium } from "playwright";
+import { chromium, type Locator } from "playwright";
 import { eq, like } from "drizzle-orm";
 import { createDatabase, users, workspaceMembers, workspaces } from "../packages/db/src";
 import { createWikiActions } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { chooseDate, expectDate as expectTriggerDate } from "../tools/choose-date";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31157);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52157);
@@ -52,6 +53,9 @@ try {
     await page.getByRole("combobox", { name: label, exact: true }).click();
     await page.getByRole("option", { name: option, exact: true }).click();
   };
+  const dateTrigger = (scope: Locator, label: string) => scope.getByRole("button", { name: new RegExp(`^${label}:`) });
+  const setDate = async (scope: Locator, label: string, value: string) => await chooseDate(dateTrigger(scope, label), value);
+  const expectDate = async (scope: Locator, label: string, value: string) => await expectTriggerDate(dateTrigger(scope, label), value, label);
   const call = async <T>(name: string, body: unknown) => await (await page.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
   async function waitForStoredText(pageId: string, text: string) {
     for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -101,14 +105,15 @@ try {
   check(handbookTextFits, "Workspace Wiki page text must be visible and unclipped in the workspace All pages list");
   const filterControls = await Promise.all([
     page.locator(`[aria-label="${translate("pages.filter.owner")}"]`).boundingBox(),
-    page.locator(`[aria-label="${translate("pages.filter.createdAfter")}"]`).boundingBox(),
-    page.locator(`[aria-label="${translate("pages.filter.updatedAfter")}"]`).boundingBox(),
+    page.getByRole("button", { name: new RegExp(`^${translate("pages.filter.createdAfter")}:`) }).boundingBox(),
+    page.getByRole("button", { name: new RegExp(`^${translate("pages.filter.updatedAfter")}:`) }).boundingBox(),
     page.locator(`[aria-label="${translate("pages.order")}"]`).boundingBox(),
   ]);
   check(filterControls.every(Boolean), "Wiki filters must all render controls");
   check(filterControls.every((box) => Math.abs(box!.height - filterControls[0]!.height) <= 1 && Math.abs(box!.y + box!.height - (filterControls[0]!.y + filterControls[0]!.height)) <= 1), `Wiki filters must have equal heights and aligned baselines: ${JSON.stringify(filterControls)}`);
   for (const theme of ["light", "dark"] as const) {
     await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+    await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition).map((animation) => animation.finished))); // colour transitions must settle before the shot
     await page.screenshot({ path: `${shots}/wiki-list-after-${theme}-1440.png`, fullPage: true });
   }
   await page.goto(`${web}/${slug}/wiki/${handbook.id}`);
@@ -117,6 +122,7 @@ try {
   check(emptyEditorBox !== null && emptyEditorBox.height <= 112, `the empty Wiki editor must reserve a compact writing area before Attachments, found ${emptyEditorBox?.height}px`);
   for (const theme of ["light", "dark"] as const) {
     await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+    await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition).map((animation) => animation.finished))); // colour transitions must settle before the shot
     await page.screenshot({ path: `${shots}/wiki-page-after-${theme}-1440.png`, fullPage: true });
   }
   const attachmentsDisclosure = page.getByTestId("wiki-attachments-disclosure");
@@ -292,10 +298,10 @@ try {
   await page.getByRole("main").getByRole("link", { name: "Handbook", exact: true }).waitFor({ state: "detached" });
   check(await page.getByRole("main").getByRole("link", { name: "Handbook", exact: true }).count() === 0, "Owner filter must hide pages owned by other people");
   await chooseWikiSelect(translate("pages.filter.owner"), translate("pages.filter.anyOwner"));
-  await page.getByLabel(translate("pages.filter.createdAfter")).fill("2999-01-01");
+  await setDate(page, translate("pages.filter.createdAfter"), "2999-01-01");
   await page.getByRole("main").getByRole("link", { name: "Handbook", exact: true }).waitFor({ state: "detached" });
   await page.getByText(translate("wiki.empty")).waitFor();
-  await page.getByLabel(translate("pages.filter.createdAfter")).fill("");
+  await setDate(page, translate("pages.filter.createdAfter"), "");
   await page.getByRole("main").getByRole("link", { name: "Handbook", exact: true }).waitFor();
   await secondaryContext.close();
   console.log("wiki-pages ok: collaborator list updates without reload");
@@ -319,9 +325,9 @@ try {
   await page.getByRole("main").getByRole("link", { name: "A Project handbook" }).waitFor();
   await chooseWikiSelect(translate("pages.filter.owner"), "Wiki Tester");
   await page.waitForFunction(() => Boolean(new URLSearchParams(location.search).get("owner")));
-  await page.getByLabel(translate("pages.filter.createdAfter")).fill("2020-01-01");
+  await setDate(page, translate("pages.filter.createdAfter"), "2020-01-01");
   await page.waitForFunction(() => new URLSearchParams(location.search).get("createdAfter") === "2020-01-01");
-  await page.getByLabel(translate("pages.filter.updatedAfter")).fill("2020-01-01");
+  await setDate(page, translate("pages.filter.updatedAfter"), "2020-01-01");
   await page.waitForFunction(() => new URLSearchParams(location.search).get("updatedAfter") === "2020-01-01");
   await chooseWikiSelect(translate("pages.order"), translate("pages.order.updated"));
   await page.waitForFunction(() => new URLSearchParams(location.search).get("order") === "updated");
@@ -329,8 +335,8 @@ try {
   await page.reload();
   await page.getByRole("main").getByRole("link", { name: "A Project handbook" }).waitFor();
   check((await page.getByRole("combobox", { name: translate("pages.filter.owner"), exact: true }).innerText()).trim() === "Wiki Tester", "Pages owner filter must survive reload");
-  check(await page.getByLabel(translate("pages.filter.createdAfter")).inputValue() === "2020-01-01", "Pages created date filter must survive reload");
-  check(await page.getByLabel(translate("pages.filter.updatedAfter")).inputValue() === "2020-01-01", "Pages updated date filter must survive reload");
+  await expectDate(page, translate("pages.filter.createdAfter"), "2020-01-01");
+  await expectDate(page, translate("pages.filter.updatedAfter"), "2020-01-01");
   check((await page.getByRole("combobox", { name: translate("pages.order"), exact: true }).innerText()).trim() === translate("pages.order.updated"), "Pages order must survive reload");
   const projectPageList = page.getByRole("region", { name: translate("projectNav.pages") });
   const listedPages = () => projectPageList.locator("ul.grid > li a").allTextContents();
@@ -345,10 +351,10 @@ try {
   await page.waitForFunction(() => document.querySelector('[aria-label="Pages"] ul.grid > li a')?.textContent === "A Project handbook");
   const nameOrderedPages = await listedPages();
   check(nameOrderedPages[0] === "A Project handbook", `Name order must sort Pages alphabetically: ${JSON.stringify(nameOrderedPages)}`);
-  await page.getByLabel(translate("pages.filter.createdAfter")).fill("2999-01-01");
+  await setDate(page, translate("pages.filter.createdAfter"), "2999-01-01");
   await page.getByRole("main").getByRole("link", { name: "A Project handbook" }).waitFor({ state: "detached" });
   check(await page.getByRole("main").getByRole("link", { name: "A Project handbook" }).count() === 0, "Created date filter must hide older Pages");
-  await page.getByLabel(translate("pages.filter.createdAfter")).fill("2020-01-01");
+  await setDate(page, translate("pages.filter.createdAfter"), "2020-01-01");
   await page.getByRole("main").getByRole("link", { name: "A Project handbook" }).waitFor();
   await page.goto(`${web}/${slug}/projects/MOB/pages`);
   await page.getByRole("main").getByRole("link", { name: "A Project handbook" }).waitFor();
@@ -431,6 +437,7 @@ try {
   for (const [theme, width, height] of [["light", 1440, 900], ["dark", 1440, 900], ["light", 768, 900], ["dark", 768, 900], ["light", 390, 844], ["dark", 390, 844]] as const) {
     await page.setViewportSize({ width, height });
     await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+    await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition).map((animation) => animation.finished))); // colour transitions must settle before the shot
     await page.screenshot({ path: `${shots}/ticket13-project-page-${theme}-${width}.png`, fullPage: true });
   }
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -649,6 +656,7 @@ try {
   for (const [theme, width, height] of [["light", 1440, 900], ["dark", 1440, 900], ["light", 768, 900], ["dark", 768, 900], ["light", 390, 844], ["dark", 390, 844]] as const) {
     await page.setViewportSize({ width, height });
     await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+    await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition).map((animation) => animation.finished))); // colour transitions must settle before the shot
     await page.screenshot({ path: `${shots}/ticket13-wiki-list-${theme}-${width}.png`, fullPage: true });
   }
 

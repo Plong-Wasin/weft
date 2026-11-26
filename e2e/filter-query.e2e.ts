@@ -5,6 +5,7 @@ import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { chooseDate } from "../tools/choose-date";
 // AI is on only with a provider key: a placeholder keeps the AI surfaces shown here, and no model is called.
 Bun.env.OPENAI_API_KEY ??= "sk-e2e-placeholder-no-call";
 
@@ -118,7 +119,7 @@ try {
   await waitTitles("Alpha,Bravo,Charlie");
   await page.getByRole("button", { name: translate("layout.filters") }).click();
   await dialog.getByRole("button", { name: translate("layout.filter.dueDate") }).click();
-  await dialog.getByRole("group", { name: translate("layout.filter.dueDate") }).getByLabel(translate("layout.filter.from")).fill(day(10));
+  await chooseDate(dialog.getByRole("group", { name: translate("layout.filter.dueDate") }).getByRole("button", { name: new RegExp(`^${translate("layout.filter.from")}:`) }), day(10));
   await waitTitles("Charlie");
   await dialog.getByRole("button", { name: translate("layout.filter.createdBy") }).click();
   await dialog.getByRole("group", { name: translate("layout.filter.createdBy") }).getByRole("checkbox", { name: "Filters Tester" }).click();

@@ -17,6 +17,7 @@ import { DetailsPanelToggle, useDetailsPanel } from "./details-panel";
 
 import { Checkbox } from "@/ui/checkbox";
 import { Input } from "@/ui/input";
+import { DatePicker } from "@/ui/date-picker";
 import { Select, SelectContent, SelectItem, SelectItemText, SelectTrigger, SelectValue } from "@/ui/select";
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
@@ -123,9 +124,9 @@ function ModuleFormModal({ action, projectId, workspaceId, module, onClose, onSa
           options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} /> }))}
           onToggle={(id, on) => setMemberIds(on ? [...memberIds, id] : memberIds.filter((other) => other !== id))} />
       </div>
-      <div className="flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-2 text-sm text-muted-foreground">{t("modules.start")}<Input type="date" value={startDate} max={endDate || undefined} className="w-auto" onChange={(event) => setStartDate(event.target.value)} /></label>
-        <label className="flex items-center gap-2 text-sm text-muted-foreground">{t("modules.end")}<Input type="date" value={endDate} min={startDate || undefined} className="w-auto" onChange={(event) => setEndDate(event.target.value)} /></label>
+      <div data-testid="module-date-fields" className="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
+        <label className="grid min-w-40 gap-1 text-sm text-muted-foreground">{t("modules.start")}<DatePicker label={t("modules.start")} value={startDate} max={endDate || undefined} onChange={setStartDate} /></label>
+        <label className="grid min-w-40 gap-1 text-sm text-muted-foreground">{t("modules.end")}<DatePicker label={t("modules.end")} value={endDate} min={startDate || undefined} field="due" onChange={setEndDate} /></label>
       </div>
       {note && <p role="alert" className="m-0 text-destructive">{note}</p>}
       <div className="flex justify-end gap-2 border-t border-border pt-4">
@@ -198,12 +199,12 @@ export function ModulesPage({ workspaceId, workspaceSlug, projectKey, projectId,
         {canWrite && !archived && <Button type="button" className={primaryButton} onClick={() => setForm({})}><Plus aria-hidden size={14} />{t("modules.addNew")}</Button>}
     </>} className="border-b border-border pb-3" />
     <div data-testid="module-filters" className="grid grid-cols-1 items-end gap-3 rounded-xl border border-border bg-card p-3 sm:grid-cols-2 xl:grid-cols-6">
-      <label className="grid min-w-0 gap-1 text-sm font-medium">{t("modules.searchModules")}<Input type="search" aria-label={t("modules.searchModules")} value={search} onChange={(event) => setSearch(event.target.value)} /></label>
-      <label className="grid min-w-0 gap-1 text-sm font-medium">{t("modules.statusFilter")}<Select value={statusFilter || "any"} items={[{ value: "any", label: t("modules.anyStatus") }, ...statuses.map((value) => ({ value, label: t(`modules.status.${value}`) }))]} onValueChange={(value) => setStatusFilter(!value || value === "any" ? "" : value)}><SelectTrigger aria-label={t("modules.statusFilter")}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="any"><SelectItemText>{t("modules.anyStatus")}</SelectItemText></SelectItem>{statuses.map((value) => <SelectItem key={value} value={value}><SelectItemText>{t(`modules.status.${value}`)}</SelectItemText></SelectItem>)}</SelectContent></Select></label>
-      <label className="grid min-w-0 gap-1 text-sm font-medium">{t("modules.leadFilter")}<Select value={leadFilter || "any"} items={[{ value: "any", label: t("modules.anyLead") }, ...people.filter((person) => !person.isAgent).map((person) => ({ value: person.userId, label: person.name }))]} onValueChange={(value) => setLeadFilter(!value || value === "any" ? "" : value)}><SelectTrigger aria-label={t("modules.leadFilter")}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="any"><SelectItemText>{t("modules.anyLead")}</SelectItemText></SelectItem>{people.filter((person) => !person.isAgent).map((person) => <SelectItem key={person.userId} value={person.userId}><SelectItemText>{person.name}</SelectItemText></SelectItem>)}</SelectContent></Select></label>
-      <label className="grid min-w-0 gap-1 text-sm font-medium">{t("modules.memberFilter")}<Select value={memberFilter || "any"} items={[{ value: "any", label: t("modules.anyMember") }, ...people.map((person) => ({ value: person.userId, label: person.name }))]} onValueChange={(value) => setMemberFilter(!value || value === "any" ? "" : value)}><SelectTrigger aria-label={t("modules.memberFilter")}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="any"><SelectItemText>{t("modules.anyMember")}</SelectItemText></SelectItem>{people.map((person) => <SelectItem key={person.userId} value={person.userId}><SelectItemText>{person.name}</SelectItemText></SelectItem>)}</SelectContent></Select></label>
-      <label className="grid min-w-0 gap-1 text-sm font-medium">{t("modules.dateFrom")}<Input aria-label={t("modules.dateFrom")} type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /></label>
-      <label className="grid min-w-0 gap-1 text-sm font-medium">{t("modules.dateTo")}<Input aria-label={t("modules.dateTo")} type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /></label>
+      <label className="grid min-w-0 gap-1 text-sm font-medium">{t("modules.searchModules")}<Input type="search" className="h-11" aria-label={t("modules.searchModules")} value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+      <label className="grid min-w-0 gap-1 text-sm font-medium">{t("modules.statusFilter")}<Select value={statusFilter || "any"} items={[{ value: "any", label: t("modules.anyStatus") }, ...statuses.map((value) => ({ value, label: t(`modules.status.${value}`) }))]} onValueChange={(value) => setStatusFilter(!value || value === "any" ? "" : value)}><SelectTrigger className="h-11" aria-label={t("modules.statusFilter")}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="any"><SelectItemText>{t("modules.anyStatus")}</SelectItemText></SelectItem>{statuses.map((value) => <SelectItem key={value} value={value}><SelectItemText>{t(`modules.status.${value}`)}</SelectItemText></SelectItem>)}</SelectContent></Select></label>
+      <label className="grid min-w-0 gap-1 text-sm font-medium">{t("modules.leadFilter")}<Select value={leadFilter || "any"} items={[{ value: "any", label: t("modules.anyLead") }, ...people.filter((person) => !person.isAgent).map((person) => ({ value: person.userId, label: person.name }))]} onValueChange={(value) => setLeadFilter(!value || value === "any" ? "" : value)}><SelectTrigger className="h-11" aria-label={t("modules.leadFilter")}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="any"><SelectItemText>{t("modules.anyLead")}</SelectItemText></SelectItem>{people.filter((person) => !person.isAgent).map((person) => <SelectItem key={person.userId} value={person.userId}><SelectItemText>{person.name}</SelectItemText></SelectItem>)}</SelectContent></Select></label>
+      <label className="grid min-w-0 gap-1 text-sm font-medium">{t("modules.memberFilter")}<Select value={memberFilter || "any"} items={[{ value: "any", label: t("modules.anyMember") }, ...people.map((person) => ({ value: person.userId, label: person.name }))]} onValueChange={(value) => setMemberFilter(!value || value === "any" ? "" : value)}><SelectTrigger className="h-11" aria-label={t("modules.memberFilter")}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="any"><SelectItemText>{t("modules.anyMember")}</SelectItemText></SelectItem>{people.map((person) => <SelectItem key={person.userId} value={person.userId}><SelectItemText>{person.name}</SelectItemText></SelectItem>)}</SelectContent></Select></label>
+      <label className="grid min-w-0 gap-1 text-sm font-medium">{t("modules.dateFrom")}<DatePicker label={t("modules.dateFrom")} value={dateFrom} className="h-11" onChange={setDateFrom} /></label>
+      <label className="grid min-w-0 gap-1 text-sm font-medium">{t("modules.dateTo")}<DatePicker label={t("modules.dateTo")} value={dateTo} field="due" className="h-11" onChange={setDateTo} /></label>
       {(search || statusFilter || leadFilter || memberFilter || dateFrom || dateTo) && <Button type="button" className={primaryButton} onClick={() => { setSearch(""); setStatusFilter(""); setLeadFilter(""); setMemberFilter(""); setDateFrom(""); setDateTo(""); }}>{t("modules.clearFilters")}</Button>}
     </div>
     {note && <p role="alert" className="m-0 px-4 py-2 text-destructive">{note}</p>}
@@ -343,9 +344,10 @@ export function ModuleDetailPage({ workspaceId, workspaceSlug, projectKey, proje
           <InsightList title={t("modules.blocked")} items={insights.blocked} workspaceSlug={workspaceSlug} />
           <InsightList title={t("modules.overdue")} items={insights.overdue} workspaceSlug={workspaceSlug} />
           <label className="grid gap-1 text-xs text-muted-foreground">{t("modules.breakdown")}
-            <select aria-label={t("modules.breakdown")} value={breakdown} onChange={(event) => setBreakdown(event.target.value)}>
-              {["state", "assignee", "label", "priority"].map((dimension) => <option key={dimension} value={dimension}>{t(`modules.breakdown.${dimension}` as MessageKey)}</option>)}
-            </select>
+            <Select value={breakdown} items={["state", "assignee", "label", "priority"].map((dimension) => ({ value: dimension, label: t(`modules.breakdown.${dimension}` as MessageKey) }))} onValueChange={(value) => { if (value) setBreakdown(value); }}>
+              <SelectTrigger aria-label={t("modules.breakdown")}><SelectValue /></SelectTrigger>
+              <SelectContent>{["state", "assignee", "label", "priority"].map((dimension) => <SelectItem key={dimension} value={dimension}><SelectItemText>{t(`modules.breakdown.${dimension}` as MessageKey)}</SelectItemText></SelectItem>)}</SelectContent>
+            </Select>
           </label>
           <ul className="m-0 grid list-none gap-1 p-0">{(insights.breakdowns[breakdown] ?? []).map((group) => <li key={group.key} className="rounded border border-border p-2"><span className="flex justify-between text-xs"><span>{group.label}</span><span>{group.items.length}</span></span><ItemLinks items={group.items} workspaceSlug={workspaceSlug} /></li>)}</ul>
         </section>}
@@ -355,8 +357,8 @@ export function ModuleDetailPage({ workspaceId, workspaceSlug, projectKey, proje
             options={statuses.map((value) => ({ id: value, name: t(`modules.status.${value}`) }))} onSelect={(value) => void patch({ status: value as Status })} />
         </PropertyRow>
         <PropertyRow icon={<CalendarRange aria-hidden size={15} />} label={t("modules.dateRange")}>
-          <Input type="date" aria-label={t("modules.start")} disabled={!editable} value={module.startDate ?? ""} max={module.endDate ?? undefined} className="w-auto text-sm" onChange={(event) => void patch({ startDate: event.target.value || null })} />
-          <Input type="date" aria-label={t("modules.end")} disabled={!editable} value={module.endDate ?? ""} min={module.startDate ?? undefined} className="w-auto text-sm" onChange={(event) => void patch({ endDate: event.target.value || null })} />
+          <DatePicker label={t("modules.start")} disabled={!editable} value={module.startDate ?? ""} max={module.endDate ?? undefined} onChange={(value) => void patch({ startDate: value || null })} />
+          <DatePicker label={t("modules.end")} disabled={!editable} value={module.endDate ?? ""} min={module.startDate ?? undefined} field="due" onChange={(value) => void patch({ endDate: value || null })} />
         </PropertyRow>
         <PropertyRow icon={<CircleUserRound aria-hidden size={15} />} label={t("modules.lead")}>
           <SingleSelect label={t("modules.lead")} summary={module.leadId ? nameOf(module.leadId) : t("modules.noLead")} value={module.leadId ?? ""} readOnly={!editable}

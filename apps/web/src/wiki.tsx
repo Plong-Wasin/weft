@@ -40,6 +40,7 @@ import { NotFound } from "./not-found";
 
 import { Checkbox } from "@/ui/checkbox";
 import { Input } from "@/ui/input";
+import { DatePicker } from "@/ui/date-picker";
 import { Textarea } from "@/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/ui/tabs";
 const heartbeatMs = 20_000;
@@ -616,8 +617,8 @@ function ListControls({ pages, filters, update, shared = false }: { pages: Summa
           <SelectContent><SelectItem value="any"><SelectItemText>{translate("pages.filter.anyOwner")}</SelectItemText></SelectItem>{owners.map(([id, name]) => <SelectItem key={id} value={id}><SelectItemText>{name}</SelectItemText></SelectItem>)}</SelectContent>
         </Select>
       </label>
-      <label className="grid min-w-40 gap-1 text-muted-foreground">{translate("pages.filter.createdAfter")}<Input aria-label={translate("pages.filter.createdAfter")} type="date" value={filters.createdAfter} onChange={(event) => update("createdAfter", event.target.value)} /></label>
-      <label className="grid min-w-40 gap-1 text-muted-foreground">{translate("pages.filter.updatedAfter")}<Input aria-label={translate("pages.filter.updatedAfter")} type="date" value={filters.updatedAfter} onChange={(event) => update("updatedAfter", event.target.value)} /></label>
+      <label className="grid min-w-40 gap-1 text-muted-foreground">{translate("pages.filter.createdAfter")}<DatePicker label={translate("pages.filter.createdAfter")} value={filters.createdAfter} onChange={(value) => update("createdAfter", value)} /></label>
+      <label className="grid min-w-40 gap-1 text-muted-foreground">{translate("pages.filter.updatedAfter")}<DatePicker label={translate("pages.filter.updatedAfter")} value={filters.updatedAfter} field="due" onChange={(value) => update("updatedAfter", value)} /></label>
       <label className="grid min-w-40 gap-1 text-muted-foreground">{translate("pages.order")}
         <Select value={filters.order} items={[{ value: "name", label: translate("pages.order.name") }, { value: "created", label: translate("pages.order.created") }, { value: "updated", label: translate("pages.order.updated") }]} onValueChange={(value) => update("order", value ?? "name")}>
           <SelectTrigger aria-label={translate("pages.order")} className="pointer-coarse:min-h-11"><SelectValue /></SelectTrigger>

@@ -303,7 +303,7 @@ try {
     await page.getByRole("alert").getByText(translate("wiki.downloadFailed", locale).replace("{filename}", "Feature notes.md"), { exact: true }).waitFor();
     for (const width of [1280, 390] as const) { await page.setViewportSize({ width, height: width === 390 ? 844 : 900 }); await assertDownloadToastClear(width); }
     await page.getByRole("button", { name: translate("wiki.retryDownload", locale) }).waitFor();
-    check((await page.getByRole("alert").getAttribute("class"))?.includes("text-danger-text"), "download failures should use error styling");
+    check((await page.getByRole("alert").getAttribute("class"))?.includes("text-destructive"), "download failures should use error styling");
     const retryResponse = page.waitForResponse((response) => response.url().endsWith("/actions/get_wiki_page") && response.status() === 500);
     await page.getByRole("button", { name: translate("wiki.retryDownload", locale) }).click();
     await retryResponse;

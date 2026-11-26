@@ -47,7 +47,7 @@ export function SortableList({ ids, onReorder, disabled = false, label, renderRo
     return rows.length > 0 && y < rows[0]!.getBoundingClientRect().top ? 0 : rows.length - 1;
   };
   const grip = (id: string) => <Button type="button" data-grip={id} disabled={disabled} aria-label={`${translate("sortable.reorder")}: ${label(id)}`} title={translate("sortable.hint")}
-    className={`grid size-7 shrink-0 touch-none place-items-center rounded-md !bg-transparent !p-0 text-tertiary hover:!bg-layer-transparent-hover hover:text-primary ${drag?.id === id ? "cursor-grabbing" : "cursor-grab"}`}
+    className={`grid size-7 shrink-0 touch-none place-items-center rounded-md !bg-transparent !p-0 text-muted-foreground hover:!bg-accent hover:text-foreground ${drag?.id === id ? "cursor-grabbing" : "cursor-grab"}`}
     onPointerDown={(event) => {
       if (disabled || (event.pointerType === "mouse" && event.button !== 0)) return;
       event.preventDefault();
@@ -67,7 +67,7 @@ export function SortableList({ ids, onReorder, disabled = false, label, renderRo
   const from = drag ? ids.indexOf(drag.id) : -1;
   return <>
   <span role="status" aria-live="polite" className="sr-only">{announce}</span>
-  <ul ref={list} className="m-0 list-none divide-y divide-[var(--border)] overflow-hidden rounded-lg border border-subtle bg-surface-1 p-0">
+  <ul ref={list} className="m-0 list-none divide-y divide-[var(--border)] overflow-hidden rounded-lg border border-border bg-card p-0">
     {ids.map((id, index) => {
       const target = drag && drag.over === index && drag.over !== from ? (index > from ? "after" : "before") : null;
       return <li key={id} className={`flex flex-wrap items-center gap-3 px-3 py-3 text-14 ${drag?.id === id ? "opacity-50" : ""} ${target === "before" ? "shadow-[inset_0_2px_0_var(--primary)]" : target === "after" ? "shadow-[inset_0_-2px_0_var(--primary)]" : ""}`}>{renderRow(id, grip(id))}</li>;

@@ -51,8 +51,8 @@ export function WorkspaceGeneral() {
   return <section>
     <SettingsHeader title={translate("settings.workspaceTitle")} description={translate("settings.workspaceGeneralDesc")} />
     <SettingsBlock>
-      <label className="max-w-md">{translate("settings.workspaceName")}<Input readOnly value={workspace.name} className="bg-layer-1" /></label>
-      <label className="max-w-md">{translate("settings.workspaceUrl")}<Input readOnly value={workspace.slug} className="bg-layer-1" /></label>
+      <label className="max-w-md">{translate("settings.workspaceName")}<Input readOnly value={workspace.name} className="bg-muted" /></label>
+      <label className="max-w-md">{translate("settings.workspaceUrl")}<Input readOnly value={workspace.slug} className="bg-muted" /></label>
     </SettingsBlock>
     <SettingsBlock title={translate("settings.autopilot")}>
       <label className="flex items-center gap-2"><Checkbox checked={autopilot?.allowAutopilot ?? false} disabled={!isAdmin || !autopilot} onChange={async (event) => {
@@ -61,7 +61,7 @@ export function WorkspaceGeneral() {
       }} />{translate("settings.allowAutopilot")}</label>
     </SettingsBlock>
     <SettingsBlock title={translate("settings.runtimeRunLimits")}>
-      <p className="text-13 text-secondary">{translate("settings.runtimeRunLimitsDesc")}</p>
+      <p className="text-13 text-muted-foreground">{translate("settings.runtimeRunLimitsDesc")}</p>
       <label className="max-w-xs">{translate("settings.runsPerPersonPerHour")}<Input type="number" min={1} max={10000} disabled={!isAdmin} value={(runLimitDraft ?? runLimits)?.runsPerPersonPerHour ?? 30} onChange={(event) => setRunLimitDraft({ ...(runLimitDraft ?? runLimits ?? { runsPerPersonPerHour: 30, runsPerAgentPerHour: 30 }), runsPerPersonPerHour: Number(event.target.value) })} /></label>
       <label className="max-w-xs">{translate("settings.runsPerAgentPerHour")}<Input type="number" min={1} max={10000} disabled={!isAdmin} value={(runLimitDraft ?? runLimits)?.runsPerAgentPerHour ?? 30} onChange={(event) => setRunLimitDraft({ ...(runLimitDraft ?? runLimits ?? { runsPerPersonPerHour: 30, runsPerAgentPerHour: 30 }), runsPerAgentPerHour: Number(event.target.value) })} /></label>
       {isAdmin && <Button type="button" className="secondary w-fit" disabled={!runLimitDraft || runLimitDraft.runsPerPersonPerHour < 1 || runLimitDraft.runsPerAgentPerHour < 1} onClick={async () => {
@@ -83,12 +83,12 @@ export function WorkspaceMembers() {
   const guard = async (result: unknown) => { setNote(result === null ? translate("members.failed") : null); await load(); };
   return <section>
     <SettingsHeader title={translate("members.title")} description={translate("settings.membersDesc")} />
-    {adminLoading ? <p role="status" className="text-secondary">{translate("account.loading")}</p> : <RowList>{members.map((member) => <Row key={member.userId}>
-      <Avatar name={member.name} id={member.userId} agent={member.isAgent} size="md" /><span className="grid min-w-[min(100%,14rem)] flex-1 gap-0.5"><span className="flex flex-wrap items-center gap-1.5 break-words font-medium">{member.name}{member.isAgent && <AgentLabel />}</span><span className="break-all text-13 text-secondary">{member.email}</span></span>
+    {adminLoading ? <p role="status" className="text-muted-foreground">{translate("account.loading")}</p> : <RowList>{members.map((member) => <Row key={member.userId}>
+      <Avatar name={member.name} id={member.userId} agent={member.isAgent} size="md" /><span className="grid min-w-[min(100%,14rem)] flex-1 gap-0.5"><span className="flex flex-wrap items-center gap-1.5 break-words font-medium">{member.name}{member.isAgent && <AgentLabel />}</span><span className="break-all text-13 text-muted-foreground">{member.email}</span></span>
       {isAdmin && !member.isAgent ? <select aria-label={`${translate("settings.roleOf")} ${member.name}`} value={member.role} onChange={async (event) => guard(await action("change_member_role", { workspaceId: workspace.id, userId: member.userId, role: event.target.value }))}>
         {roles.map((role) => <option key={role} value={role}>{translate(`members.role.${role}`)}</option>)}
-      </select> : <span className="text-secondary">{translate(`members.role.${member.role}`)}</span>}
-      {isAdmin && !member.isAgent && <Button type="button" className="secondary hover:!text-danger-text" aria-label={fillMessage(translate("members.removeNamed"), { name: member.name })} onClick={async () => { if (!window.confirm(translate("members.removeConfirm"))) return; await guard(await action("remove_member", { workspaceId: workspace.id, userId: member.userId })); }}>{translate("members.remove")}</Button>}
+      </select> : <span className="text-muted-foreground">{translate(`members.role.${member.role}`)}</span>}
+      {isAdmin && !member.isAgent && <Button type="button" className="secondary hover:!text-destructive" aria-label={fillMessage(translate("members.removeNamed"), { name: member.name })} onClick={async () => { if (!window.confirm(translate("members.removeConfirm"))) return; await guard(await action("remove_member", { workspaceId: workspace.id, userId: member.userId })); }}>{translate("members.remove")}</Button>}
     </Row>)}</RowList>}
     <Note note={note} error />
     {isAdmin && <div className="mt-8"><MemberSecurityList workspaceId={workspace.id} selfId={selfId} onChanged={load} /></div>}
@@ -98,7 +98,7 @@ export function WorkspaceMembers() {
 /** The audit log is for Admins; others see why it is closed. */
 export function WorkspaceAudit() {
   const { workspace, members, isAdmin, adminLoading } = useWorkspaceMembers();
-  if (!isAdmin) return <section><SettingsHeader title={translate("account.auditTitle")} description={translate("account.auditDesc")} /><p role="status" className="text-secondary">{translate(adminLoading ? "account.loading" : "account.auditAdminOnly")}</p></section>;
+  if (!isAdmin) return <section><SettingsHeader title={translate("account.auditTitle")} description={translate("account.auditDesc")} /><p role="status" className="text-muted-foreground">{translate(adminLoading ? "account.loading" : "account.auditAdminOnly")}</p></section>;
   return <AuditLogPage workspaceId={workspace.id} members={members.filter((member) => !member.isAgent)} />;
 }
 
@@ -127,7 +127,7 @@ export function WorkspaceInvites() {
     if (group.length < 2) continue;
     group.forEach((invite, index) => inviteInstances.set(invite.id, fillMessage(translate("settings.inviteInstance"), { number: formatNumber(index + 1), total: formatNumber(group.length) })));
   }
-  if (!isAdmin) return <section><SettingsHeader title={translate("settings.invites")} description={translate("settings.invitesDesc")} /><p role="status" className="text-secondary">{translate(adminLoading ? "account.loading" : "settings.adminOnly")}</p></section>;
+  if (!isAdmin) return <section><SettingsHeader title={translate("settings.invites")} description={translate("settings.invitesDesc")} /><p role="status" className="text-muted-foreground">{translate(adminLoading ? "account.loading" : "settings.adminOnly")}</p></section>;
   return <section>
     <SettingsHeader title={translate("settings.invites")} description={translate("settings.invitesDesc")} />
     <SettingsBlock title={translate("invite.create")}>
@@ -145,10 +145,10 @@ export function WorkspaceInvites() {
         <Button type="button" className="secondary" onClick={async () => { if (await copyText(link, translate("invite.copied"), translate("comments.copyFailed"))) say(translate("invite.copied")); }}>{translate("invite.copy")}</Button></div>}
     </SettingsBlock>
     <SettingsBlock title={translate("settings.openInvites")}>
-      {invites.length === 0 ? <p className="text-secondary">{translate("settings.invitesNone")}</p> : <RowList>{invites.map((invite) => <Row key={invite.id}>
-        <span className="grid min-w-0 flex-1"><span className="flex flex-wrap items-center gap-2 font-medium">{translate(`members.role.${invite.role}`)}{inviteInstances.has(invite.id) && <span className="text-12 font-normal text-secondary">{inviteInstances.get(invite.id)}</span>}</span>
-          <span className="text-13 text-secondary">{translate("settings.invitedBy")} {members.find((member) => member.userId === invite.createdBy)?.name ?? "—"} · {translate("settings.expires")} {formatDate(invite.expiresAt)}</span></span>
-        <Button type="button" className="secondary hover:!text-danger-text" onClick={async () => {
+      {invites.length === 0 ? <p className="text-muted-foreground">{translate("settings.invitesNone")}</p> : <RowList>{invites.map((invite) => <Row key={invite.id}>
+        <span className="grid min-w-0 flex-1"><span className="flex flex-wrap items-center gap-2 font-medium">{translate(`members.role.${invite.role}`)}{inviteInstances.has(invite.id) && <span className="text-12 font-normal text-muted-foreground">{inviteInstances.get(invite.id)}</span>}</span>
+          <span className="text-13 text-muted-foreground">{translate("settings.invitedBy")} {members.find((member) => member.userId === invite.createdBy)?.name ?? "—"} · {translate("settings.expires")} {formatDate(invite.expiresAt)}</span></span>
+        <Button type="button" className="secondary hover:!text-destructive" onClick={async () => {
           const result = await action("revoke_invite", { workspaceId: workspace.id, inviteId: invite.id });
           // Refresh first so the "revoked" note never shows while the revoked invite is still listed.
           await load();
@@ -170,15 +170,15 @@ export function WorkspaceAi() {
   if (aiState === "unknown") return null;
   return <section>
     <SettingsHeader title={translate("aiStatus.title")} description={translate("aiStatus.desc")} />
-    {aiState === "off" ? <p role="status" data-testid="ai-off-reason" className="text-secondary">{translate(offReason === "switched_off" ? "aiStatus.off.switched_off" : "aiStatus.off.no_provider_key")}</p> : isPending ? null : !data ? <p role="alert" className="text-danger-primary">{translate("aiStatus.unknown")}</p> : <>
+    {aiState === "off" ? <p role="status" data-testid="ai-off-reason" className="text-muted-foreground">{translate(offReason === "switched_off" ? "aiStatus.off.switched_off" : "aiStatus.off.no_provider_key")}</p> : isPending ? null : !data ? <p role="alert" className="text-destructive">{translate("aiStatus.unknown")}</p> : <>
       <SettingsBlock>
         <RowList>
-          <Row><span className="flex-1 text-secondary">{translate("aiStatus.provider")}</span><span data-testid="ai-provider" className="font-medium">{data.provider}</span></Row>
-          <Row><span className="flex-1 text-secondary">{translate("aiStatus.model")}</span><span data-testid="ai-model" className="font-medium">{data.model}</span></Row>
-          <Row><span className="flex-1 text-secondary">{translate("aiStatus.key")}</span><span data-testid="ai-key" className="font-medium">{translate(`aiStatus.key.${data.key}`)}</span></Row>
+          <Row><span className="flex-1 text-muted-foreground">{translate("aiStatus.provider")}</span><span data-testid="ai-provider" className="font-medium">{data.provider}</span></Row>
+          <Row><span className="flex-1 text-muted-foreground">{translate("aiStatus.model")}</span><span data-testid="ai-model" className="font-medium">{data.model}</span></Row>
+          <Row><span className="flex-1 text-muted-foreground">{translate("aiStatus.key")}</span><span data-testid="ai-key" className="font-medium">{translate(`aiStatus.key.${data.key}`)}</span></Row>
         </RowList>
       </SettingsBlock>
-      <p role="status" className={data.configured ? "text-secondary" : "text-danger-primary"}>{translate(data.configured ? "aiStatus.configured" : "aiStatus.missing")}</p>
+      <p role="status" className={data.configured ? "text-muted-foreground" : "text-destructive"}>{translate(data.configured ? "aiStatus.configured" : "aiStatus.missing")}</p>
     </>}
   </section>;
 }

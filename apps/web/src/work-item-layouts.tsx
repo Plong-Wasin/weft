@@ -34,6 +34,21 @@ const toolbarSecondarySm = cn(buttonVariants({ variant: "secondary", size: "sm" 
 const checkRow = "flex items-center gap-2 text-13";
 
 /** Work items of one project in a layout (list or board) with display options and filters; every setting lives in the URL query string. */
+/** True on a device without hover (a touch screen, including a phone browser's desktop-site mode), kept in sync with the media query. */
+function useHoverNone() {
+  const query = "(hover: none)";
+  const [matches, setMatches] = React.useState(() => typeof window !== "undefined" && window.matchMedia?.(query).matches === true);
+  React.useEffect(() => {
+    const media = window.matchMedia?.(query);
+    if (!media) return;
+    const update = () => setMatches(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+  return matches;
+}
+
 export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp, refreshKey, cycleId, moduleId, cyclesEnabled, modulesEnabled, typesEnabled = false, canWrite = true, canCreate = false, onAddItem, rowAction, toolbarExtra }: { projectId: string; workspaceSlug: string; action: Call; run?: Run; refreshKey: number; cycleId?: string; moduleId?: string; cyclesEnabled?: boolean; typesEnabled?: boolean; modulesEnabled?: boolean; canWrite?: boolean; canCreate?: boolean; /** Opens the Create work item dialog. Passed by the project Work items page only: it turns on the empty-project state, whose button needs it. */ onAddItem?: () => void; rowAction?: (item: Item) => React.ReactNode; /** Extra toolbar controls after Display (Save as view, Update view); gets the settings now applied. */ toolbarExtra?: (params: LayoutParams) => React.ReactNode }) {
   // Every page passes an error-aware `run` so a filter query error shows; the fallback over `action` drops the server message and is only for callers that have no runner.
   const run: Run = React.useMemo(() => runProp ?? (async <T,>(name: string, body: unknown) => { const data = await action<T>(name, body); return data === null ? { error: "" } : { data }; }), [runProp, action]);
@@ -49,6 +64,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   /** Previews of released bars whose save is still running, so a bar never snaps back before the server answers. */
   const [ganttSaving, setGanttSaving] = React.useState<Record<string, GanttPreview>>({});
   const [items, setItems] = React.useState<Item[]>([]);
+  const hoverNone = useHoverNone();
   /** Board cards whose overflow properties a pointer user opened with the "+N" button. */
   const [expandedCards, setExpandedCards] = React.useState<string[]>([]);
   // Set once the first list has arrived, so an empty project is not announced while the list is still loading or after it failed to load.
@@ -468,10 +484,13 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const allListProperties = (["estimate", "labels", "cycle", "modules", "dates", "assignee"] as const).filter((property) => listShows(property));
   const leadingProperties = (["priority", "state"] as const).filter((property) => listShows(property));
   const gapPx = 8;
-  const tracksFor = (properties: readonly (typeof allListProperties)[number][]) => ["1rem", ...(leadingProperties.includes("priority") ? ["1.75rem"] : []), "5rem", ...(leadingProperties.includes("state") ? ["1.75rem"] : []), "minmax(7rem,1fr)", ...properties.map((property) => `${slotRem[property]}rem`), ...(rowAction ? ["7rem"] : [])];
+  // On touch the checkbox, Priority and State tracks are 44px wide, so their 44px tap areas sit side by side instead of overlapping.
+  const boxTrackPx = hoverNone ? 44 : 16;
+  const iconTrackPx = hoverNone ? 44 : 28;
+  const tracksFor = (properties: readonly (typeof allListProperties)[number][]) => [`${boxTrackPx / 16}rem`, ...(leadingProperties.includes("priority") ? [`${iconTrackPx / 16}rem`] : []), "5rem", ...(leadingProperties.includes("state") ? [`${iconTrackPx / 16}rem`] : []), "minmax(7rem,1fr)", ...properties.map((property) => `${slotRem[property]}rem`), ...(rowAction ? ["7rem"] : [])];
   const widthFor = (properties: readonly (typeof allListProperties)[number][]) => {
     const tracks = tracksFor(properties);
-    return 40 + 16 + 80 + 112 + leadingProperties.length * 28 + properties.reduce((sum, property) => sum + slotRem[property] * 16, 0)
+    return 40 + boxTrackPx + 80 + 112 + leadingProperties.length * iconTrackPx + properties.reduce((sum, property) => sum + slotRem[property] * 16, 0)
       + (rowAction ? 112 : 0) + Math.max(0, tracks.length - 1) * gapPx;
   };
   const responsiveProperties = [...allListProperties];
@@ -502,13 +521,13 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     const phoneProperties = allListProperties.filter((property) => !isEmptyProperty(item, property));
     const priorityEmpty = isEmptyProperty(item, "priority");
     return <li key={item.id} data-testid={`row-${item.displayId}`} data-list-row className="work-item-list-row group/row border-b border-border px-1 py-0.5 max-sm:py-0">
-      <div style={columnStyle} className={`mx-1 grid min-w-0 grid-cols-1 gap-y-0 rounded-lg px-3 py-1 max-sm:py-0.5 ${selected.includes(item.id) ? "bg-background" : "bg-transparent hover:bg-accent"} sm:grid-cols-[var(--cols)] sm:items-center sm:gap-x-2 sm:gap-y-0 sm:py-0`}>
+      <div style={columnStyle} className={`mx-1 grid min-w-0 grid-cols-1 gap-y-0 rounded-lg px-3 py-1 max-sm:py-0.5 ${selected.includes(item.id) ? "bg-background" : "bg-transparent hover:bg-accent"} sm:grid-cols-[var(--cols)] sm:items-center sm:gap-x-2 sm:gap-y-0 sm:py-0 [@media(hover:none)]:sm:min-h-10`}>
         <div className="flex min-h-10 min-w-0 items-center gap-2 sm:contents">
-          <span className="flex size-4 shrink-0 items-center justify-center sm:order-1">{checkbox ? React.cloneElement(checkbox, { className: `${checkbox.props.className ?? ""} rounded-sm` }) : <span aria-hidden />}</span>
+          <span className="flex size-4 shrink-0 items-center justify-center sm:order-1 sm:justify-self-center">{checkbox ? React.cloneElement(checkbox, { className: `${checkbox.props.className ?? ""} rounded-sm` }) : <span aria-hidden />}</span>
           <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} title={item.title} className="min-w-0 flex-1 truncate text-14 font-medium text-foreground sm:order-5">{item.title}</Link>
         </div>
-        <div data-testid="work-item-row-metadata" className="work-item-row-metadata flex min-h-10 min-w-0 flex-wrap items-center justify-end gap-1 [@media(pointer:coarse)]:gap-2 sm:contents max-sm:min-h-13 max-sm:flex-wrap max-sm:gap-1 max-sm:justify-start max-sm:overflow-visible">
-          {leadingProperties.includes("priority") && <span className={`flex min-w-7 shrink-0 items-center justify-center sm:order-2 ${priorityEmpty ? "[@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/row:pointer-events-auto [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:pointer-events-auto [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100" : ""}`}>{cellOf(item, "priority", false, true, true)}</span>}
+        <div data-testid="work-item-row-metadata" className="work-item-row-metadata flex min-h-10 min-w-0 flex-wrap items-center justify-end gap-1 [@media(pointer:coarse)]:gap-2 sm:contents max-sm:min-h-13 max-sm:flex-wrap max-sm:gap-1 max-sm:justify-start max-sm:overflow-visible [@media(hover:none)]:max-sm:gap-y-4 [@media(hover:none)]:max-sm:py-2.5">
+          {leadingProperties.includes("priority") && <span data-list-property="priority" data-empty-property={priorityEmpty ? "true" : undefined} className={`flex min-w-7 shrink-0 items-center justify-center sm:order-2 ${priorityEmpty ? "[@media(hover:none)]:invisible [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/row:pointer-events-auto [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:pointer-events-auto [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100" : ""}`}>{cellOf(item, "priority", false, true, true)}</span>}
           {shows("id") ? <span title={item.displayId} className="min-w-0 shrink-0 truncate whitespace-nowrap text-11 tabular-nums text-muted-foreground sm:order-3 sm:text-12">{item.displayId}</span> : <span aria-hidden className="sm:order-3" />}
           {leadingProperties.includes("state") && <span className="flex min-w-7 shrink-0 items-center justify-center sm:order-4">{cellOf(item, "state", false, true, true)}</span>}
           <div className="hidden sm:contents">

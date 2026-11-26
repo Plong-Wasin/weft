@@ -367,18 +367,20 @@ dialog::backdrop { overflow: hidden; overscroll-behavior: contain; }
 }
 @layer utilities {
   @media (max-width: 639px) {
-    .work-item-row-metadata [data-phone-property] button { box-sizing: border-box; max-width: 8rem !important; min-width: 0 !important; min-height: 1.5rem !important; padding: 0 !important; overflow: hidden; }
+    /* The chip button stays unclipped so its 44px ::before tap area is hit-testable; its label truncates instead. */
+    .work-item-row-metadata [data-phone-property] button { box-sizing: border-box; max-width: 8rem !important; min-width: 0 !important; min-height: 1.5rem !important; padding: 0 !important; }
+    .work-item-row-metadata [data-phone-property] button > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   }
   @media (pointer: coarse) {
     .work-items-toolbar button,
     .work-items-toolbar a { position: relative; min-height: 2rem !important; }
+    /* Transparent square tap areas: the whole 44x44 box answers a tap, corners included. */
     .work-items-toolbar button::before,
     .work-items-toolbar a::before {
       position: absolute;
       inset: 50% auto auto 50%;
       width: 2.75rem;
       height: 2.75rem;
-      border-radius: 9999px;
       content: "";
       pointer-events: auto;
       transform: translate(-50%, -50%);
@@ -390,7 +392,6 @@ dialog::backdrop { overflow: hidden; overscroll-behavior: contain; }
       inset: 50% auto auto 50%;
       width: 2.75rem;
       height: 2.75rem;
-      border-radius: 9999px;
       content: "";
       transform: translate(-50%, -50%);
     }

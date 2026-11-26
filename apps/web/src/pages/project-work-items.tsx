@@ -25,7 +25,7 @@ export function ProjectWorkItems() {
       toolbarExtra={(params) => <div className="flex items-center gap-2">
         {canWrite && !project.archived && <>
           <Button type="button" variant="primary" size="sm" className="gap-1.5" onClick={() => setCreating(true)}><Plus aria-hidden size={14} /><span>{translate("workItems.addNew")}</span></Button>
-          <SaveAsViewButton params={params} project={project} workspaceSlug={workspace.slug} hideOnPhone />
+          <SaveAsViewButton params={params} project={project} workspaceSlug={workspace.slug} />
         </>}
         <Link to={paths.projectSettings(workspace.slug, project.key)} className={`${toolbarSecondarySm} no-underline`}>{translate("projects.settings")}</Link>
       </div>} />

@@ -174,12 +174,12 @@ export function ViewsPage({ workspaceSlug, project, selfId }: Scope) {
 }
 
 /** "Save as view" next to the filter and display controls: saves what is applied now as a new View and opens it. */
-export function SaveAsViewButton({ params, project, workspaceSlug, hideOnPhone = false }: { params: LayoutParams; project: Project; workspaceSlug: string; hideOnPhone?: boolean }) {
+export function SaveAsViewButton({ params, project, workspaceSlug }: { params: LayoutParams; project: Project; workspaceSlug: string }) {
   const [open, setOpen] = React.useState(false);
   const navigate = useNavigate();
   return <>
     {/* On phone the label drops out of the toolbar (the icon and title remain), so the toolbar fits in two rows. */}
-    <Button type="button" variant="ghost" className={`${hideOnPhone ? "max-sm:hidden [@media(max-height:480px)]:hidden" : "max-sm:min-h-9"}`} aria-label={t("views.saveAs")} title={t("views.saveAs")} onClick={(event) => { event.currentTarget.focus(); setOpen(true); }}><BookmarkPlus aria-hidden size={14} /><span className={hideOnPhone ? "" : "max-sm:sr-only"}>{t("views.saveAs")}</span></Button>
+    <Button type="button" variant="ghost" className="max-sm:min-h-9" aria-label={t("views.saveAs")} title={t("views.saveAs")} onClick={(event) => { event.currentTarget.focus(); setOpen(true); }}><BookmarkPlus aria-hidden size={14} /><span className="max-sm:sr-only">{t("views.saveAs")}</span></Button>
     {open && <ViewFormModal mode="save" target={{ projectId: project.id }} settings={paramsToSettings(params)} onClose={() => setOpen(false)} onSaved={(view) => { setOpen(false); navigate(paths.view(workspaceSlug, project.key, view.id)); }} />}
   </>;
 }

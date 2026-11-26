@@ -120,7 +120,14 @@ try {
         check("work-items-list-content-fits", listMetrics.listRight !== null && listMetrics.listRight <= listMetrics.viewportWidth && listMetrics.listScrollWidth !== null && listMetrics.listClientWidth !== null && listMetrics.listScrollWidth <= listMetrics.listClientWidth + 1 && listMetrics.rowsOverflow.every((overflow) => !overflow) && listMetrics.metadataOverflow.every((overflow) => !overflow), `Work item rows and property chips at ${viewport.suffix}: ${JSON.stringify(listMetrics)}`);
       }
       if (route.name === "work-items-list" && viewport.suffix === "844x390") {
-        check("work-items-list-no-orphan-save-view", !(await target.getByRole("button", { name: translate("views.saveAs") }).isVisible()), "landscape phone hides the icon-only Save view control");
+        // Save as view stays on landscape phones; it must share a toolbar row with another control rather than wrap alone.
+        const saveViewTop = await target.getByRole("button", { name: translate("views.saveAs") }).evaluate((element) => {
+          const box = element.getBoundingClientRect();
+          const toolbar = element.closest('[data-testid="work-items-toolbar"]');
+          const others = [...(toolbar?.querySelectorAll<HTMLElement>("button, a[href]") ?? [])].filter((other) => other !== element && !other.contains(element) && !element.contains(other) && other.getClientRects().length > 0);
+          return { visible: box.width > 0 && getComputedStyle(element).visibility !== "hidden", sharesRow: others.some((other) => { const r = other.getBoundingClientRect(); return Math.abs(r.top + r.height / 2 - (box.top + box.height / 2)) <= 2; }) };
+        });
+        check("work-items-list-save-view-kept", saveViewTop.visible && saveViewTop.sharesRow, `landscape phone keeps Save as view in a shared toolbar row: ${JSON.stringify(saveViewTop)}`);
       }
       check("no-sibling-control-overlap", !measurements.siblingControlOverlap, `${route.name} at ${viewport.suffix} has overlapping sibling controls`);
       if (route.auth && measurements.primary) {

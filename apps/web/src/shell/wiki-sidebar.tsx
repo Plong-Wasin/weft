@@ -1,8 +1,8 @@
 import { Button } from "@/ui/button";
 import React from "react";
-import { NavLink, useLocation, useNavigate } from "react-router";
+import { NavLink, useLocation } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, ChevronRight, FileText, Folder, GripVertical, Lock, Plus, Users } from "lucide-react";
+import { Archive, ChevronRight, FileText, Folder, GripVertical, Lock, Users } from "lucide-react";
 import { translate } from "@weft/shared";
 import { action, actionResult } from "../api";
 import { wikiDropDecision, wikiDropPosition, type WikiDropPosition } from "../wiki-drop-target";
@@ -60,10 +60,9 @@ function Group({ label, icon, count, defaultOpen, holdsActive = false, dropHint,
   </section>;
 }
 
-/** The Wiki sidebar: new page, the pages of every Collection as a tree, then Shared, Private and Archives. */
+/** The Wiki sidebar: Collection pages as a tree, then Shared, Private and Archives. */
 export function WikiSidebar({ workspace, selfId }: { workspace: Workspace; selfId: string }) {
   const { pathname } = useLocation();
-  const navigate = useNavigate();
   const client = useQueryClient();
   const activeId = pathname.split("/")[3] ?? "";
   const { data: pages = [] } = useQuery({ queryKey: ["wiki-pages", workspace.id, "sidebar"], queryFn: async () => await action<PageRow[]>("list_wiki_pages", { workspaceId: workspace.id, archived: false }) ?? [] });
@@ -91,10 +90,6 @@ export function WikiSidebar({ workspace, selfId }: { workspace: Workspace; selfI
   const isMine = new Set(mine.map((page) => page.id));
   const knownIds = new Set(workspacePages.map((page) => page.id));
   const orphanIds = new Set(workspacePages.filter((page) => page.parentId !== null && !knownIds.has(page.parentId)).map((page) => page.id));
-  const create = async () => {
-    const created = await action<{ id: string }>("create_wiki_page", { workspaceId: workspace.id, title: translate("wiki.untitled") });
-    if (created) { await client.invalidateQueries({ queryKey: ["wiki-pages", workspace.id] }); navigate(paths.wikiPage(workspace.slug, created.id)); }
-  };
   const tree = (list: PageRow[]) => <PageTree workspace={workspace} pages={list} parentId={null} activeId={activeId} open={open} toggle={toggle} depth={0} dragging={dragging} over={over} dragStart={startDrag} overKind={overKind} moveBeside={moveBeside} />;
   const defaultCollectionId = collections.find((item) => item.isDefault)?.id ?? "";
   const pageCollection = (page: PageRow) => page.collectionId ?? defaultCollectionId;
@@ -167,7 +162,6 @@ export function WikiSidebar({ workspace, selfId }: { workspace: Workspace; selfI
     return () => { window.removeEventListener("keydown", onEscape); window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", end); window.removeEventListener("pointercancel", end); };
   }, [dragging, over, pages]);
   return <>
-    <Button type="button" onClick={() => void create()} className={`${row(false)} mb-1 w-full`}><Plus aria-hidden size={13} />{translate("wiki.new")}</Button>
     <NavLink end to={paths.wiki(workspace.slug)} className={({ isActive }) => row(isActive)}>{translate("sidebar.allPages")}</NavLink>
     <p className="px-3 pb-1 pt-4 text-[12px] font-medium text-muted-foreground">{translate("wikiSidebar.collections")}</p>
     <p role="status" className="sr-only">{announcement}</p>

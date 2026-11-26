@@ -237,7 +237,7 @@
 .emoji-picker button:hover { background: var(--muted); }
 .code-block-copy { float: right; position: relative; z-index: 2; min-height: 2rem; border: 1px solid var(--border); border-radius: .25rem; padding: .1rem .35rem; background: var(--card); color: var(--muted-foreground); font-family: var(--font-code); font-size: .7rem; line-height: 1.5; cursor: pointer; }
 .code-language-control { display: inline-flex; align-items: center; gap: .35rem; margin: 0 .4rem .35rem 0; color: var(--muted-foreground); font-size: .75rem; }
-.code-language-control select { border-radius: .3rem; padding-block: .2rem; padding-inline: .35rem 1.5rem; color: var(--muted-foreground); }
+.code-language-control select { min-height: 0; border-radius: .3rem; padding-block: .2rem; padding-inline: .35rem 1.5rem; color: var(--muted-foreground); }
 .diff-caption { margin: 0 0 .35rem; color: var(--muted-foreground); font-size: .8rem; font-weight: 600; }
 .diff-legend { margin: 0 0 .35rem; color: var(--muted-foreground); font-size: .75rem; }
 .activity-group-summary { display: block; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }

@@ -121,6 +121,8 @@ try {
     const body = await background(page, "body");
     const card = await background(page, "[data-slot=card]");
     const border = await page.locator("[data-slot=card]").first().evaluate((element) => getComputedStyle(element).borderTopColor);
+    const rail = (await page.locator(`nav[aria-label="${translate("shell.rail")}"]`).boundingBox())!;
+    check(rail.y + rail.height >= sizes["1440"].height - 1, `the rail surface runs to the bottom, ends at ${rail.y + rail.height}`);
     check(new Set([body, card, border]).size === 3, `dark page, card and border differ: ${body} ${card} ${border}`);
     for (const selector of ["header.h-header", `nav[aria-label="${translate("shell.rail")}"]`, `nav[aria-label="${translate("shell.sidebar")}"]`]) {
       const fill = await background(page, selector);
@@ -128,6 +130,39 @@ try {
     }
     await page.screenshot({ path: `${shots}/settings-1440-dark.png` });
     await context.close();
+  }
+
+  // Board "+N": a toggle that keeps focus and says whether the card is open. Touch lists: long titles get two lines.
+  {
+    const labels = await client.action<{ id: string }>("create_label", { projectId: project!.id, name: "Overflow", color: "#ef4444" });
+    const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+    const me = (await (await fetch(`${api}/api/me`, { headers: { cookie: client.cookies().map((c) => `${c.name}=${c.value}`).join("; ") } })).json() as { user: { id: string } }).user.id;
+    const full = await client.action<{ id: string }>("create_work_item", { projectId: project!.id, title: "A deliberately long work item title that cannot possibly fit on one phone line at all", priority: "high", assigneeIds: [me], labelIds: [labels.id], startDate: day(1), dueDate: day(5) });
+    await client.action("add_cycle_items", { cycleId: seed.cycleId, workItemIds: [full.id], moveFromCurrentCycle: true });
+    await client.action("add_module_items", { moduleId: seed.moduleId, workItemIds: [full.id] });
+    const board = await open(browser, "1440", "light", "en", client);
+    await board.page.goto(`${web}/${slug}/projects/${seed.key}/issues?layout=board`);
+    const more = board.page.getByRole("button", { name: new RegExp(`^${translate("workItems.more")}: `) }).first();
+    await more.focus();
+    check(await more.getAttribute("aria-expanded") === "false", "+N starts collapsed");
+    for (const expanded of ["true", "false"]) {
+      await board.page.keyboard.press("Enter");
+      check(await more.getAttribute("aria-expanded") === expanded, `+N reports aria-expanded=${expanded}`);
+      check(await more.evaluate((element) => element === document.activeElement), "+N keeps focus when it toggles");
+    }
+    await board.page.screenshot({ path: `${shots}/board-overflow.png` });
+    await board.context.close();
+    for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }]) {
+      const list = await open(browser, "390", "light", "en", client);
+      await list.page.setViewportSize(viewport);
+      await list.page.goto(`${web}/${slug}/projects/${seed.key}/issues?layout=list`);
+      const title = list.page.getByRole("link", { name: /^A deliberately long work item title/ });
+      await title.waitFor();
+      const lines = await title.evaluate((element) => Math.round(element.getBoundingClientRect().height / parseFloat(getComputedStyle(element).lineHeight)));
+      check(lines === 2, `long title shows two lines at ${viewport.width}, got ${lines}`);
+      await list.page.screenshot({ path: `${shots}/long-title-${viewport.width}.png` });
+      await list.context.close();
+    }
   }
 
   // Thai: the bundled face loads from this origin, and no tone mark or lower vowel is shaved off.

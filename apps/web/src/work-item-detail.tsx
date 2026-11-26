@@ -446,7 +446,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   const mainTail = <>
     <div className={`${sectionClass} mt-2 border-t border-border pt-6`}><TimelinePanel workspaceId={workspace.id} workItemId={item.id} projectId={item.projectId} selfId={selfId} canComment={canWrite} linkBase={itemPath} refreshKey={timelineKey} action={action} actionResult={actionResult} onChange={() => void load()} /></div>
     <details data-work-item-links className="grid gap-3 border-t border-border pt-4">
-      <summary className="cursor-pointer text-15 font-semibold text-foreground">{t("outlinks.title")}</summary>
+      <summary className="cursor-pointer text-14 font-semibold text-foreground">{t("outlinks.title")}</summary>
       <OutlinksPanel kind="work-item" id={item.id} run={action} compact refreshKey={descriptionOutlinksKey} updating={descriptionSaveState === "saving" || descriptionSaveState === "updating"} onRefreshComplete={onDescriptionOutlinksRefreshComplete} />
     </details>
     {section("links", t("webLinks.title"), sectionCounts.links, <WebLinksPanel personName={personName} workItemId={item.id} canWrite={canWrite} action={action} onChange={() => void load()} showForm={activeForm === "links"} onClose={() => setActiveForm(null)} onCount={countCallbacks.links} />)}

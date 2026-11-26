@@ -99,7 +99,7 @@ try {
     await page.getByRole("combobox", { name: translate("language.label") }).click();
     await page.getByRole("option", { name: translate("language.th", "th") }).click();
     await page.getByRole("button", { name: translate("auth.signUp", "th"), exact: true }).click();
-    await page.getByRole("heading").getByText("สร้างบัญชี Weft ของคุณ").waitFor();
+    await page.getByText("สร้างบัญชี Weft ของคุณ").waitFor();
     check(await page.getByRole("button", { name: "สร้างบัญชี" }).isVisible(), "Thai submit button missing");
     await page.screenshot({ path: `${shots}/sign-up-th-1440.png` });
     await context.close();

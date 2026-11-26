@@ -2,11 +2,22 @@
 @import "@fontsource-variable/inter";
 @import "./tokens.css";
 
+/* Thai: Inter has no Thai glyphs, so Thai runs fall through to this bundled face. 108% brings the 12px steps up to a 13px Thai glyph without moving any layout metric. */
+@font-face {
+  font-family: "Weft Thai";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  size-adjust: 108%;
+  src: url("../node_modules/@fontsource-variable/noto-sans-thai/files/noto-sans-thai-thai-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0E01-0E5B, U+200C-200D, U+25CC;
+}
+
 @custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
 
 /* Tailwind consumes the shadcn roles in tokens.css (defined once, light and dark). Radius utilities keep Tailwind's own scale. */
 @theme {
-  --font-body: "Inter Variable", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-body: "Inter Variable", "Weft Thai", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
   --font-code: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --font-weight-regular: 400;
   --font-weight-heavy: 800;
@@ -50,6 +61,7 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
 }
 
 @layer base {
@@ -74,6 +86,8 @@
 
 /* Component classes; class selectors only. */
 @layer components {
+  /* Thai tone marks rise above the line box that truncation clips. Extend the clip box upwards without moving anything; any padding or margin utility still wins. */
+  :where(.truncate, .line-clamp-1, .line-clamp-2) { padding-top: 2px; margin-top: -2px; }
   /* Preflight (base layer) strips native form controls. Restore the shadcn control look in the components layer at zero specificity (:where): it wins over preflight by layer order, and any Tailwind utility on the element still overrides it. */
   /* Native selects keep their element but look like controls: our chevron (preflight removes the browser one), a quiet border (the shared look, see DESIGN.md), and clear hover, focus and disabled states. */
   :where(select) {

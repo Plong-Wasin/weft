@@ -2,7 +2,7 @@ import { Button, buttonVariants } from "@/ui/button";
 import { accessReasonText } from "./access-reason";
 import React from "react";
 import { Link } from "react-router";
-import { ArrowLeft, ArrowRight, BarChart3, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Columns3, List, Package, Plus, RefreshCw, SlidersHorizontal, Table2, Tag, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, BarChart3, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Columns3, List, Package, Plus, RefreshCw, SlidersHorizontal, Table2, Tag, Users, ChevronsLeft } from "lucide-react";
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
 import { calendarPlacement, completeGroups, displayProperties, effectiveSubGroup, ganttPlacement, groupItems, groupings, moveProperty, parseLayoutParams, serializeLayoutParams, priorityOrder, sortFields, type DisplayProperty, type GanttZoom, type LayoutParams } from "./work-item-layout";
 import { paths } from "./routes";
@@ -537,7 +537,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       )}>
         <div className="flex min-h-10 min-w-0 items-center gap-2 sm:contents [@media(pointer:coarse)]:max-sm:gap-3.5">
           <span className="flex size-4 shrink-0 items-center justify-center sm:order-1 sm:justify-self-center">{checkbox ? React.cloneElement(checkbox, { className: cn(checkbox.props.className, "rounded-sm") }) : <span aria-hidden />}</span>
-          <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} title={item.title} className="min-w-0 flex-1 truncate text-14 font-medium text-foreground sm:order-5">{item.title}</Link>
+          <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} title={item.title} className="min-w-0 flex-1 truncate text-14 font-medium text-foreground sm:order-5 sm:[@media(hover:none)]:line-clamp-2 sm:[@media(hover:none)]:whitespace-normal sm:[@media(hover:none)]:[overflow-wrap:anywhere]">{item.title}</Link>
         </div>
         <div data-testid="work-item-row-metadata" className={cn(
           "work-item-row-metadata flex min-h-10 min-w-0 flex-wrap items-center justify-end gap-1 [@media(pointer:coarse)]:gap-2 sm:contents max-sm:flex-wrap max-sm:gap-1 max-sm:justify-start max-sm:overflow-visible [@media(hover:none)]:max-sm:gap-y-4",
@@ -819,8 +819,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
           {hiddenCardProperties.length > 0 && <span data-testid="card-overflow-properties" onFocus={(event) => event.target.scrollIntoView({ block: "nearest", inline: "nearest" })} className={`flex shrink-0 items-center gap-1.5 [@media(pointer:coarse)]:gap-2 ${expandedCards.includes(item.id) ? "" : "max-w-0 overflow-hidden focus-within:max-w-none focus-within:overflow-visible"}`}>
             {hiddenCardProperties.map((property) => <React.Fragment key={property}>{cellOf(item, property, true)}</React.Fragment>)}
           </span>}
-          {hiddenCardProperties.length > 0 && !expandedCards.includes(item.id) && <Button variant="ghost" type="button" data-no-drag aria-expanded={false} aria-label={`${t("workItems.more")}: ${hiddenCardProperties.map((property) => t(`layout.property.${property}`)).join(", ")}`} title={hiddenCardProperties.map((property) => t(`layout.property.${property}`)).join(", ")}
-            className="shrink-0 rounded-md bg-transparent px-1.5 py-0.5 text-12 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => setExpandedCards((list) => [...list, item.id])}>+{hiddenCardProperties.length}</Button>}
+          {hiddenCardProperties.length > 0 && <Button variant="ghost" type="button" data-no-drag aria-expanded={expandedCards.includes(item.id)} aria-label={`${t("workItems.more")}: ${hiddenCardProperties.map((property) => t(`layout.property.${property}`)).join(", ")}`} title={hiddenCardProperties.map((property) => t(`layout.property.${property}`)).join(", ")}
+            className="shrink-0 rounded-md bg-transparent px-1.5 py-0.5 text-12 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => setExpandedCards((list) => list.includes(item.id) ? list.filter((id) => id !== item.id) : [...list, item.id])}>{expandedCards.includes(item.id) ? <ChevronsLeft aria-hidden size={14} /> : `+${hiddenCardProperties.length}`}</Button>}
           {cardProperties.filter((property) => isEmptyProperty(item, property)).map((property) => <span key={property} className={active ? "" : "opacity-0"}>{cellOf(item, property, true)}</span>)}
         </div>}
       </div>;

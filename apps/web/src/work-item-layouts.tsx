@@ -30,7 +30,7 @@ type Item = { id: string; displayId: string; title: string; stateId: string; pri
 type Named = { id: string; name: string; status?: string };
 const t = (key: string) => translate(key as MessageKey);
 const ghost = "flex items-center gap-1.5 rounded-lg border border-transparent bg-muted px-2.5 py-1 text-13 font-medium text-muted-foreground hover:bg-accent hover:text-foreground";
-const toolbarSecondarySm = cn(buttonVariants({ variant: "secondary", size: "sm" }), "bg-transparent");
+const toolbarSecondarySm = cn(buttonVariants({ variant: "secondary", size: "sm" }), "bg-transparent text-foreground");
 const checkRow = "flex items-center gap-2 text-13";
 
 /** Work items of one project in a layout (list or board) with display options and filters; every setting lives in the URL query string. */
@@ -488,9 +488,12 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const gridColumns = columnTracks.join(" ");
   const oneLine = listWidth >= widthFor(shownProperties);
   const columnStyle = { "--cols": gridColumns } as React.CSSProperties;
-  const propertyCell = (item: Item, property: (typeof allListProperties)[number], mobile = false) => <span key={property} className={`flex min-w-0 items-center justify-end whitespace-nowrap sm:order-6 ${mobile ? "rounded-md bg-muted text-11 text-muted-foreground [&_button]:px-1 [&_button]:py-0 [&_button]:text-11" : ""} ${isEmptyProperty(item, property) ? "[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-hover/row:pointer-events-auto [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:pointer-events-auto" : ""} [&>*]:max-w-full [&_*]:min-w-0 [&_svg]:shrink-0`}>
+  const propertyCell = (item: Item, property: (typeof allListProperties)[number], mobile = false) => {
+    const empty = isEmptyProperty(item, property);
+    return <span key={property} data-list-property={property} data-empty-property={empty ? "true" : undefined} className={`flex min-w-0 items-center justify-end whitespace-nowrap sm:order-6 ${mobile ? "rounded-md bg-muted text-11 text-muted-foreground [&_button]:px-1 [&_button]:py-0 [&_button]:text-11" : ""} ${empty ? "[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-hover/row:pointer-events-auto [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:pointer-events-auto" : ""} [&>*]:max-w-full [&_*]:min-w-0 [&_svg]:shrink-0`}>
     {cellOf(item, property, false, true)}
   </span>;
+  };
   const rowOf = (item: Item) => {
     const checkbox = pickBox(item, true);
     const rowActionCell = rowAction?.(item);

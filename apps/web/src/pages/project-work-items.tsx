@@ -12,7 +12,7 @@ import { SaveAsViewButton } from "../views";
 import { paths } from "../routes";
 import { cn } from "../lib/utils";
 
-const toolbarSecondarySm = cn(buttonVariants({ variant: "secondary", size: "sm" }), "bg-transparent");
+const toolbarSecondarySm = cn(buttonVariants({ variant: "secondary", size: "sm" }), "bg-transparent text-foreground");
 
 export function ProjectWorkItems() {
   const { workspace } = useWorkspace();

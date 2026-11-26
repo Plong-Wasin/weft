@@ -556,21 +556,22 @@ try {
     if (layout === "board") {
       await page.setViewportSize({ width: 1440, height: 900 });
       await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
-      const authChip = page.getByTestId("card-MOB-1").getByRole("button", { name: `${translate("workItems.modules")}: Auth` });
-      await authChip.waitFor();
+      // The board now shows three populated properties and summarizes the rest; use the visible State chip for focus coverage.
+      const boardStateChip = page.getByTestId("card-MOB-1").getByRole("button", { name: `${translate("workItems.state")}: In Progress` });
+      await boardStateChip.waitFor();
       await page.evaluate(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
-      const defaultOutline = await authChip.evaluate((element) => ({ width: getComputedStyle(element).outlineWidth, style: getComputedStyle(element).outlineStyle, visible: element.matches(":focus-visible") }));
-      check(!defaultOutline.visible && (defaultOutline.style === "none" || defaultOutline.width === "0px"), `Auth chip has no default blue focus box: ${JSON.stringify(defaultOutline)}`);
+      const defaultOutline = await boardStateChip.evaluate((element) => ({ width: getComputedStyle(element).outlineWidth, style: getComputedStyle(element).outlineStyle, visible: element.matches(":focus-visible") }));
+      check(!defaultOutline.visible && (defaultOutline.style === "none" || defaultOutline.width === "0px"), `Board State chip has no default blue focus box: ${JSON.stringify(defaultOutline)}`);
       let keyboardFocused = false;
       for (let attempt = 0; attempt < 100 && !keyboardFocused; attempt += 1) {
         await page.keyboard.press("Tab");
-        keyboardFocused = await authChip.evaluate((element) => document.activeElement === element);
+        keyboardFocused = await boardStateChip.evaluate((element) => document.activeElement === element);
       }
-      check(keyboardFocused, "Auth chip is reachable by keyboard (BoardAuthKeyboardReachable)");
-      const keyboardOutline = await authChip.evaluate((element) => ({ width: getComputedStyle(element).outlineWidth, style: getComputedStyle(element).outlineStyle, visible: element.matches(":focus-visible") }));
-      check(keyboardOutline.visible && keyboardOutline.width === "2px", `Auth blue box is the 2px keyboard focus ring: ${JSON.stringify(keyboardOutline)}`);
-      await page.screenshot({ path: `${evidenceShots}/board-auth-keyboard-focus-dark-1440.png`, fullPage: true });
-      await authChip.evaluate((element) => element.blur());
+      check(keyboardFocused, "Board State chip is reachable by keyboard (BoardStateKeyboardReachable)");
+      const keyboardOutline = await boardStateChip.evaluate((element) => ({ width: getComputedStyle(element).outlineWidth, style: getComputedStyle(element).outlineStyle, visible: element.matches(":focus-visible") }));
+      check(keyboardOutline.visible && keyboardOutline.width === "2px", `Board State chip focus ring is 2px: ${JSON.stringify(keyboardOutline)}`);
+      await page.screenshot({ path: `${evidenceShots}/board-state-keyboard-focus-dark-1440.png`, fullPage: true });
+      await boardStateChip.evaluate((element) => element.blur());
     }
     for (const [width, height] of [[1440, 900], [390, 844]] as const) {
       await page.setViewportSize({ width, height });

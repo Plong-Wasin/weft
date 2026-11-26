@@ -14,7 +14,7 @@ import { Checkbox } from "@/ui/checkbox";
 import { Input } from "@/ui/input";
 import { Textarea } from "@/ui/textarea";
 const t = (key: string) => translate(key as MessageKey);
-const secondarySm = `${buttonVariants({ variant: "secondary", size: "sm" })} bg-transparent`;
+const secondarySm = `${buttonVariants({ variant: "secondary", size: "sm" })} bg-transparent text-foreground`;
 const chipClass = "flex items-center gap-1.5 rounded-md border border-transparent bg-muted py-0.5 pl-2 pr-1 text-12 text-foreground";
 
 export type FilterSection = { key: NamedFilter; options: Option[] };
@@ -136,12 +136,12 @@ function FilterQueryGenerate({ scope, onQuery }: { scope: FilterQueryScope; onQu
       <span className="flex items-center gap-2">
         <Input type="text" value={request} maxLength={1000} placeholder={t("layout.filterQuery.generate.placeholder")} className="min-w-0 flex-1 text-13" onChange={(event) => setRequest(event.target.value)}
           onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); void run(); } }} />
-        <Button type="button" variant="secondary" size="sm" className="bg-transparent" disabled={busy || request.trim() === ""} onClick={() => void run()}><Sparkles aria-hidden size={14} /><span>{busy ? t("layout.filterQuery.generate.busy") : t("layout.filterQuery.generate.button")}</span></Button>
+        <Button type="button" variant="secondary" size="sm" className="bg-transparent text-foreground" disabled={busy || request.trim() === ""} onClick={() => void run()}><Sparkles aria-hidden size={14} /><span>{busy ? t("layout.filterQuery.generate.busy") : t("layout.filterQuery.generate.button")}</span></Button>
       </span></label>
     {failure && <p role="alert" data-testid="filter-query-generate-error" className="my-0 text-13 text-destructive">{failure}</p>}
   </div>;
 }
 
 export function FilterQueryToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
-  return <Button type="button" variant="secondary" size="sm" className="bg-transparent" aria-pressed={open} aria-label={t("layout.filterQuery.toggle")} title={t("layout.filterQuery.toggle")} onClick={onToggle}><Code2 aria-hidden size={14} /><span className="max-sm:sr-only">{t("layout.filterQuery.button")}</span></Button>;
+  return <Button type="button" variant="secondary" size="sm" className="bg-transparent text-foreground" aria-pressed={open} aria-label={t("layout.filterQuery.toggle")} title={t("layout.filterQuery.toggle")} onClick={onToggle}><Code2 aria-hidden size={14} /><span className="max-sm:sr-only">{t("layout.filterQuery.button")}</span></Button>;
 }

@@ -84,7 +84,7 @@ try {
           topControls: [...document.querySelectorAll<HTMLElement>("main button, main a[href], main input:not([type=hidden]), main select")].map((el) => {
             const rect = el.getBoundingClientRect();
             const style = getComputedStyle(el);
-            return { x: rect.x, y: rect.y, right: rect.right, bottom: rect.bottom, visible: style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) !== 0 };
+            return { tag: el.tagName, id: el.id, label: el.getAttribute("aria-label"), text: el.textContent?.trim(), className: el.className, x: rect.x, y: rect.y, right: rect.right, bottom: rect.bottom, visible: style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) !== 0 };
           }).filter((rect) => rect.visible && rect.y < 160 && rect.bottom > 0),
           siblingControlOverlap: [...document.querySelectorAll<HTMLElement>("main [role=group]")].some((group) => {
             const controls = [...group.querySelectorAll<HTMLElement>("button, a[href]")].filter((el) => el.parentElement === group && getComputedStyle(el).display !== "none" && getComputedStyle(el).visibility !== "hidden");

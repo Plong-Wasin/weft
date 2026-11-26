@@ -2,7 +2,7 @@ import { Button } from "@/ui/button";
 import { PageHeader } from "./shell/page-header";
 import React from "react";
 import { Link, useNavigate } from "react-router";
-import { ArchiveRestore, CalendarDays, CalendarSync, EllipsisVertical, Plus, X } from "lucide-react";
+import { ArchiveRestore, CalendarDays, CalendarSync, EllipsisVertical, MoreHorizontal, Plus, X } from "lucide-react";
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
 import { EmptyState } from "./empty-state";
 import { WorkItemLayouts } from "./work-item-layouts";
@@ -17,6 +17,7 @@ import { DetailsPanelToggle, useDetailsPanel } from "./details-panel";
 import { Checkbox } from "@/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/ui/tabs";
 import { Input } from "@/ui/input";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/ui/dropdown-menu";
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
 type Status = "upcoming" | "active" | "completed";
@@ -30,7 +31,6 @@ const tabs: Status[] = ["upcoming", "active", "completed"];
 /** Which tab opens first when the user has not picked one: the first with Cycles in it. */
 const tabPriority: Status[] = ["active", "upcoming", "completed"];
 const primaryButton = "flex items-center gap-1.5";
-const groupColor: Record<StateGroup, string> = { backlog: "bg-accent", unstarted: "bg-[var(--primary)]", started: "bg-amber-500 dark:bg-amber-400", completed: "bg-emerald-600 dark:bg-emerald-500", cancelled: "bg-destructive" };
 
 const count = (n: number) => formatNumber(n);
 const range = (cycle: Cycle) => `${formatDay(cycle.startDate)} – ${formatDay(cycle.endDate)}`;
@@ -120,7 +120,7 @@ function Ring({ cycle }: { cycle: Cycle }) {
     style={{ background: `conic-gradient(var(--chart-2) ${value * 3.6}deg, var(--accent) 0)` }}><span className="grid size-8 place-items-center rounded-full bg-card">{value}%</span></span>;
 }
 
-const bar = (cycle: Cycle) => <progress className="h-1.5 w-28" value={cycle.progress.completed} max={Math.max(cycle.progress.total, 1)} aria-label={t("cycles.progress")} data-testid="cycle-progress"
+const bar = (cycle: Cycle) => <progress className="h-1.5 w-full" value={cycle.progress.completed} max={Math.max(cycle.progress.total, 1)} aria-label={t("cycles.progress")} data-testid="cycle-progress"
   title={t("cycles.progressOf").replace("{done}", count(cycle.progress.completed)).replace("{total}", count(cycle.progress.total))} />;
 
 const statusPill = (status: Status) => <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${status === "active" ? "bg-amber-500/10 text-foreground" : status === "completed" ? "bg-emerald-500/10 text-foreground" : "bg-muted text-muted-foreground"}`}>{t(`cycles.status.${status}`)}</span>;
@@ -154,12 +154,12 @@ function useCycleCommands(action: Call, reload: () => void, setNote: (note: stri
 }
 
 function CycleRow({ cycle, href, children }: { cycle: Cycle; href: string; children?: React.ReactNode }) {
-  return <li className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl px-4 py-3 transition-colors hover:bg-accent" data-testid="cycle-row">
+  return <li className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 rounded-lg px-3 py-3 transition-colors hover:bg-accent sm:grid-cols-[auto_minmax(0,1fr)_auto_auto] xl:grid-cols-[auto_minmax(10rem,1fr)_auto_minmax(12rem,auto)_auto_minmax(7rem,auto)_auto]" data-testid="cycle-row">
     <Ring cycle={cycle} />
     <Link to={href} title={cycle.name} className="min-w-32 flex-1 truncate text-sm font-medium text-foreground">{cycle.name}</Link>
     {statusPill(cycle.status)}
-    <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><CalendarDays aria-hidden size={14} />{range(cycle)}</span>
-    <span className="text-xs text-muted-foreground">{t("cycles.itemCount").replace("{count}", count(cycle.itemCount))}</span>
+    <span className="flex items-center gap-1.5 text-xs tabular-nums text-muted-foreground"><CalendarDays aria-hidden size={14} />{range(cycle)}</span>
+    <span className="text-xs tabular-nums text-muted-foreground">{t("cycles.itemCount").replace("{count}", count(cycle.itemCount))}</span>
     {bar(cycle)}
     {children}
   </li>;
@@ -185,7 +185,7 @@ export function CyclesPage({ workspaceId, workspaceSlug, projectKey, projectId, 
     </>} />
     <Tabs value={tab} onValueChange={(value) => setTab(value as Status)}>
       <TabsList aria-label={t("cycles.title")} className="flex h-auto w-fit max-w-full flex-wrap gap-1 rounded-lg bg-muted p-1">
-        {tabs.map((status) => <TabsTrigger key={status} value={status} className={`rounded-md border-0 px-3 py-2 text-sm font-medium ${tab === status ? "bg-card text-foreground shadow-sm" : "bg-transparent text-muted-foreground hover:bg-accent"}`}>{t(`cycles.status.${status}`)} <span className="text-xs text-muted-foreground">{count(counts(status))}</span></TabsTrigger>)}
+        {tabs.map((status) => <TabsTrigger key={status} value={status} className={`rounded-md border-0 px-3 py-2 text-sm font-medium ${tab === status ? "bg-card text-foreground shadow-sm" : "bg-transparent text-muted-foreground hover:bg-accent"}`}>{t(`cycles.status.${status}`)} <span className="text-sm tabular-nums text-muted-foreground">{count(counts(status))}</span></TabsTrigger>)}
       </TabsList>
       <TabsContent value={tab} className="grid gap-4">
     {cycles !== null && cycles.length === 0 && (archived
@@ -210,7 +210,6 @@ function Breakdown({ cycle, items, states }: { cycle: CycleDetail; items: Item[]
   const inCycle = items.filter((item) => cycle.workItemIds.includes(item.id));
   const per = stateGroups.map((group) => ({ group, n: inCycle.filter((item) => groupOf.get(item.stateId ?? "") === group).length }));
   return <div className="grid gap-2" data-testid="cycle-breakdown">
-    <div className="flex h-1.5 overflow-hidden rounded-full bg-muted">{per.filter((entry) => entry.n > 0).map((entry) => <span key={entry.group} className={groupColor[entry.group]} style={{ width: `${(entry.n / Math.max(inCycle.length, 1)) * 100}%` }} />)}</div>
     {per.map((entry) => <div key={entry.group} className="flex items-center gap-2 text-sm text-muted-foreground"><StateIcon group={entry.group} /><span className="flex-1">{t(`states.group.${entry.group}`)}</span><span>{count(entry.n)}</span></div>)}
   </div>;
 }
@@ -338,9 +337,9 @@ export function CycleDetailPage({ workspaceId, workspaceSlug, projectKey, projec
     await load();
   };
   return <section className="grid gap-4">
-    <header className="flex flex-wrap items-center gap-3 rounded-xl bg-muted p-3">
-      <Link to={paths.cycles(workspaceSlug, projectKey)} className="text-sm">{t("cycles.back")}</Link>
+    <header className="flex flex-wrap items-center gap-3 border-b border-border pb-3">
       <h2 title={cycle.name} className="m-0 min-w-32 flex-1 truncate text-xl font-semibold">{cycle.name}</h2>
+      {statusPill(cycle.status)}{cycle.archived && <span role="status" className="text-xs text-muted-foreground">{t("cycles.archived")}</span>}
       <DetailsPanelToggle open={detailsPanel.open} onToggle={detailsPanel.toggle} panelId="cycle-details-panel" />
       {canWrite && !ended && !cycle.archived && <Button type="button" className={primaryButton} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("cycles.addItems")}</Button>}
       <CycleMenu cycle={cycle} canWrite={canWrite} canAdmin={canAdmin} onEdit={() => setEditing(true)} onArchive={() => void (cycle.archived ? commands.restore(cycle) : commands.archive(cycle))} onDelete={() => void commands.destroy(cycle).then((gone) => { if (gone) navigate(paths.cycles(workspaceSlug, projectKey)); })} />
@@ -350,16 +349,20 @@ export function CycleDetailPage({ workspaceId, workspaceSlug, projectKey, projec
       <div className="min-w-0 flex-1">
         <h4 className="mb-2 mt-0 text-sm font-semibold">{t("cycles.workItems")}</h4>
         <WorkItemLayouts projectId={projectId} workspaceSlug={workspaceSlug} action={action} run={runQuery} refreshKey={refreshKey} cycleId={cycleId}
-          rowAction={canWrite && !cycle.archived ? (item) => <Button className="secondary whitespace-nowrap px-2 py-1 text-xs" onClick={() => void remove(item.id)}>{t("cycles.remove")}</Button> : undefined} />
+          rowAction={canWrite && !cycle.archived ? (item) => <DropdownMenu>
+            <DropdownMenuTrigger render={<Button type="button" variant="ghost" size="icon" aria-label={`${t("cycles.menu")}: ${item.displayId}`} title={t("cycles.menu")} className="size-8" />}><MoreHorizontal aria-hidden size={16} /></DropdownMenuTrigger>
+            <DropdownMenuContent align="end"><DropdownMenuItem onClick={() => void remove(item.id)}>{t("cycles.remove")}</DropdownMenuItem></DropdownMenuContent>
+          </DropdownMenu> : undefined} />
       </div>
-      <aside id="cycle-details-panel" aria-label={t("cycles.details")} className={`grid h-fit gap-4 rounded-xl bg-muted p-4 lg:w-80 lg:shrink-0 ${detailsPanel.open ? "" : "lg:hidden"}`}>
+      <aside id="cycle-details-panel" aria-label={t("cycles.details")} className={`grid h-fit gap-4 rounded-xl border border-border bg-card p-4 lg:w-[22rem] lg:shrink-0 ${detailsPanel.open ? "" : "lg:hidden"}`}>
         <section className="grid gap-2" aria-label={t("workItems.description")}><h3 className="m-0 text-sm font-semibold">{t("workItems.description")}</h3><EntityDescription key={cycle.id} action={action} workspaceId={workspaceId} owner={{ ownerType: "cycle", ownerId: cycle.id }} mentionPeople={mentionPeople} initial={cycle.description ?? null} editable={canWrite && !cycle.archived} /></section>
-        <div className="flex items-center gap-2">{statusPill(cycle.status)}{cycle.archived && <span role="status" className="text-xs text-muted-foreground">{t("cycles.archived")}</span>}</div>
-        <p className="m-0 flex items-center gap-1.5 text-sm text-muted-foreground"><CalendarDays aria-hidden size={14} />{range(cycle)}</p>
-        <p className="m-0 text-sm text-muted-foreground">{t("cycles.itemCount").replace("{count}", count(cycle.itemCount))}</p>
-        <div className="grid gap-2"><div className="flex items-center gap-2 text-sm font-medium">{t("cycles.progress")} <span className="text-muted-foreground">{t("cycles.progressOf").replace("{done}", count(cycle.progress.completed)).replace("{total}", count(cycle.progress.total))}</span></div>{bar(cycle)}</div>
+        <dl className="m-0 grid gap-2 border-y border-border py-3 text-sm">
+          <div className="flex items-center justify-between gap-3"><dt className="flex items-center gap-1.5 text-muted-foreground"><CalendarDays aria-hidden size={14} />{t("cycles.start")} – {t("cycles.end")}</dt><dd className="m-0 text-right tabular-nums">{range(cycle)}</dd></div>
+          <div className="flex items-center justify-between gap-3"><dt className="text-muted-foreground">{t("cycles.workItems")}</dt><dd className="m-0 tabular-nums">{count(cycle.itemCount)}</dd></div>
+        </dl>
+        <div className="grid gap-2"><div className="flex items-center justify-between gap-2 text-sm"><span className="font-medium">{t("cycles.progress")}</span><span className="text-muted-foreground tabular-nums">{t("cycles.progressOf").replace("{done}", count(cycle.progress.completed)).replace("{total}", count(cycle.progress.total))}</span></div>{bar(cycle)}</div>
         <Breakdown cycle={cycle} items={everyone} states={states} />
-        <BurndownChart action={action} name="get_cycle_burndown" body={{ cycleId }} projectId={projectId} refreshKey={refreshKey} />
+        <div className="rounded-lg border border-border bg-muted/40 p-3"><BurndownChart action={action} name="get_cycle_burndown" body={{ cycleId }} projectId={projectId} refreshKey={refreshKey} /></div>
         {ended && canWrite && !cycle.archived && <div data-testid="cycle-transfer" className="grid gap-2">
           <h4 className="m-0 text-sm font-semibold">{t("cycles.transferReview")}</h4>
           <select aria-label={t("cycles.transferTarget")} value={target} onChange={(event) => setTarget(event.target.value)}>

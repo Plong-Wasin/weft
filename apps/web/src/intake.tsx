@@ -18,6 +18,7 @@ import { paths } from "./routes";
 import { useInboxNotificationOpen } from "./inbox";
 
 import { Input } from "@/ui/input";
+import { Select, SelectContent, SelectItem, SelectItemText, SelectTrigger, SelectValue } from "@/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/ui/tabs";
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 const outcomes = ["pending", "snoozed", "accepted", "rejected", "duplicate"] as const;
@@ -157,11 +158,11 @@ function SubmitModal({ action, workspaceId, projectId, onClose, onSubmitted }: {
       <Input autoFocus required maxLength={500} aria-label={t("intake.titleField")} placeholder={t("intake.titleField")} value={title} className={`${field} text-16`} onChange={(event) => setTitle(event.target.value)} />
       <div aria-label={t("intake.descriptionField")}><DescriptionEditor workspaceId={workspaceId} workItemId={null} initial={description} editable={!submitting} imageUploads={false} onChange={setDescription} /></div>
       <label className="grid gap-1 text-13 text-muted-foreground">{t("intake.priority")}
-        <select value={priority} className="w-full text-14 text-foreground" onChange={(event) => setPriority(event.target.value)}>
+        <select value={priority} className={`${field} h-9`} onChange={(event) => setPriority(event.target.value)}>
           {["none", "urgent", "high", "medium", "low"].map((value) => <option key={value} value={value}>{t(`workItems.priority.${value}`)}</option>)}
         </select>
       </label>
-      <label className="grid gap-1 text-13 text-muted-foreground">{t("workItems.assignees")}<select multiple value={assigneeIds} className={`${field} min-h-20`} onChange={(event) => setAssigneeIds([...event.currentTarget.selectedOptions].map((option) => option.value))}>{people.map((person) => <option key={person.userId} value={person.userId} disabled={person.isAgent && person.hasAccess === false}>{person.name}{person.isAgent && person.hasAccess === false ? " (no access)" : ""}</option>)}</select></label>
+      <div className="grid gap-1 text-13 text-muted-foreground"><span>{t("workItems.assignees")}</span><MultiSelect label={t("workItems.assignees")} searchAlways selected={assigneeIds} summary={<span>{assigneeIds.length ? assigneeIds.map((id) => people.find((person) => person.userId === id)?.name ?? id).join(", ") : t("workItems.noAssignee")}</span>} options={people.map((person) => ({ id: person.userId, name: person.name, isAgent: person.isAgent, hasAccess: person.hasAccess }))} onToggle={(id, on) => setAssigneeIds(on ? [...assigneeIds, id] : assigneeIds.filter((value) => value !== id))} /></div>
       <div className="grid gap-1 text-13 text-muted-foreground"><span>{t("workItems.labels")}</span><MultiSelect label={t("workItems.labels")} searchAlways selected={labelIds} summary={<span>{labelIds.length ? labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ") : t("workItems.noLabels")}</span>} options={labels.map((label) => ({ id: label.id, name: label.name }))} onToggle={(id, on) => setLabelIds(on ? [...labelIds, id] : labelIds.filter((value) => value !== id))} /></div>
       <label className="grid gap-1 text-13 text-muted-foreground">{t("workItems.dueDate")}<Input type="date" value={dueDate} className={field} onChange={(event) => setDueDate(event.target.value)} /></label>
       <input ref={picker} hidden type="file" multiple data-testid="intake-attach-input" onChange={(event) => { const selected = Array.from(event.currentTarget.files ?? []); setFiles((current) => [...current, ...selected]); event.currentTarget.value = ""; }} />
@@ -212,7 +213,7 @@ function AcceptModal({ action, projectId, onClose, onAccept }: { action: Call; p
     <form className="my-0 grid gap-3" onSubmit={(event) => { event.preventDefault(); if (stateId) onAccept(stateId); }}>
       {failed && <p role="alert" className="m-0 text-13 text-destructive">{t("intake.loadFailed")}</p>}
       <label className="grid gap-1 text-13 text-muted-foreground">{t("workItems.state")}
-        <select autoFocus required aria-label={t("workItems.state")} value={stateId} className={field} onChange={(event) => setStateId(event.target.value)}>
+        <select autoFocus required aria-label={t("workItems.state")} value={stateId} className={`${field} h-9`} onChange={(event) => setStateId(event.target.value)}>
           {states.map((state) => <option key={state.id} value={state.id}>{state.name}</option>)}
         </select>
       </label>
@@ -252,15 +253,16 @@ function DuplicateModal({ action, workspaceId, item, onClose, onPick }: { action
 function ListRow({ item, selected, onSelect }: { item: IntakeItem; selected: boolean; onSelect: () => void }) {
   return <li>
     <Button type="button" data-testid={`intake-${item.displayId}`} aria-current={selected ? "true" : undefined} onClick={onSelect}
-      className={`grid w-full gap-2 rounded-lg border-0 bg-transparent px-4 py-3 text-left hover:bg-accent ${selected ? "bg-accent outline outline-1 -outline-offset-1 outline-ring" : ""}`}>
-      <span className="text-12 text-muted-foreground">{item.displayId}</span>
-      <span className="truncate text-14 font-medium text-foreground">{item.title}</span>
-      <span className="flex items-center gap-2 text-12 text-muted-foreground">
-        <span>{formatDate(item.createdAt)}</span>
-        <PriorityIcon priority={item.priority} />
-        <span className="flex-1" />
-        <StatusBadge item={item} />
-        <Avatar name={item.createdByName} id={item.createdBy} />
+      className={`h-auto min-h-28 w-full items-stretch rounded-lg border-0 bg-transparent px-4 py-3 text-left hover:bg-accent ${selected ? "bg-accent outline outline-1 -outline-offset-1 outline-ring" : ""}`}>
+      <span className="flex min-w-0 flex-1 flex-col items-stretch justify-center gap-1.5">
+        <span className="text-12 leading-4 text-muted-foreground">{item.displayId}</span>
+        <span title={item.title} className="line-clamp-2 min-w-0 text-left text-14 leading-5 font-medium text-foreground">{item.title}</span>
+        <span className="flex min-w-0 items-center gap-2 text-12 leading-4 text-muted-foreground">
+          <span className="min-w-0 flex-1 truncate">{formatDate(item.createdAt)}</span>
+          <PriorityIcon priority={item.priority} />
+          <StatusBadge item={item} />
+          <Avatar name={item.createdByName} id={item.createdBy} />
+        </span>
       </span>
     </Button>
   </li>;
@@ -357,7 +359,7 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
         <Button type="button" className={iconButton} aria-label={t("intake.previous")} disabled={index <= 0} onClick={() => onMove(-1)}><ChevronUp aria-hidden size={16} /></Button>
         <Button type="button" className={iconButton} aria-label={t("intake.next")} disabled={index >= count - 1} onClick={() => onMove(1)}><ChevronDown aria-hidden size={16} /></Button>
         {canDecide && undecided && <>
-          <Button type="button" className={quietButton} onClick={() => setDialog("accept")}>{t("intake.accept")}</Button>
+          <Button type="button" variant="primary" className="min-h-9 rounded-lg px-3 py-1.5 text-13" onClick={() => setDialog("accept")}>{t("intake.accept")}</Button>
           <Button type="button" className={quietButton} onClick={() => void run("reject_intake_item", {})}>{t("intake.reject")}</Button>
         </>}
         {canDecide && unsnoozed && <Button type="button" className={quietButton} onClick={() => void run("unsnooze_intake_item", {})}>{t("intake.unsnooze")}</Button>}
@@ -379,19 +381,26 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
       {editable ? <div className="grid gap-3">
         <label className="grid gap-1 text-13 text-muted-foreground">{t("intake.titleField")}<Input ref={titleInputRef} name="title" aria-label={t("intake.titleField")} required maxLength={500} value={title} className={`${field} text-18 font-semibold sm:text-24`} onInput={(event) => { titleValueRef.current = event.currentTarget.value; setTitle(event.currentTarget.value); sessionStorage.setItem(titleDraftKey(item.id), event.currentTarget.value); changeDraft({ title: event.currentTarget.value }); }} /></label>
         <div><p className="mb-1 text-13 text-muted-foreground">{t("intake.descriptionField")}</p><DescriptionEditor key={editorRevision} workspaceId={workspaceId} workItemId={item.workItemId} initial={description} editable onChange={(doc) => changeDraft({ description: doc })} /></div>
-        <label className="grid gap-1 text-13 text-muted-foreground">{t("intake.priority")}<select name="priority" aria-label={t("intake.priority")} value={priority} className={field} onChange={(event) => changeDraft({ priority: event.target.value })}>{["none", "urgent", "high", "medium", "low"].map((value) => <option key={value} value={value}>{t(`workItems.priority.${value}`)}</option>)}</select></label>
-        <label className="grid gap-1 text-13 text-muted-foreground">{t("workItems.assignees")}<select multiple aria-label={t("workItems.assignees")} value={assigneeIds} className={`${field} min-h-20`} onChange={(event) => changeDraft({ assigneeIds: [...event.currentTarget.selectedOptions].map((option) => option.value) })}>{people.map((person) => <option key={person.userId} value={person.userId} disabled={person.isAgent && person.hasAccess === false}>{person.name}{person.isAgent && person.hasAccess === false ? " (no access)" : ""}</option>)}</select></label>
+        <label className="grid gap-1 text-13 text-muted-foreground">{t("intake.priority")}
+          <Select value={priority} items={["none", "urgent", "high", "medium", "low"].map((value) => ({ value, label: t(`workItems.priority.${value}`) }))} onValueChange={(value) => { if (value) changeDraft({ priority: value }); }}>
+            <SelectTrigger aria-label={t("intake.priority")}><SelectValue /></SelectTrigger>
+            <SelectContent>{["none", "urgent", "high", "medium", "low"].map((value) => <SelectItem key={value} value={value}><SelectItemText>{t(`workItems.priority.${value}`)}</SelectItemText></SelectItem>)}</SelectContent>
+          </Select>
+        </label>
+        <div className="grid gap-1 text-13 text-muted-foreground"><span>{t("workItems.assignees")}</span><MultiSelect label={t("workItems.assignees")} searchAlways selected={assigneeIds} summary={<span>{assigneeIds.length ? assigneeIds.map((id) => people.find((person) => person.userId === id)?.name ?? id).join(", ") : t("workItems.noAssignee")}</span>} options={people.map((person) => ({ id: person.userId, name: person.name, isAgent: person.isAgent, hasAccess: person.hasAccess }))} onToggle={(id, on) => changeDraft({ assigneeIds: on ? [...assigneeIds, id] : assigneeIds.filter((value) => value !== id) })} /></div>
         <div className="grid gap-1 text-13 text-muted-foreground"><span>{t("workItems.labels")}</span><MultiSelect label={t("workItems.labels")} searchAlways selected={labelIds} summary={<span>{labelIds.length ? labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ") : t("workItems.noLabels")}</span>} options={labels.map((label) => ({ id: label.id, name: label.name }))} onToggle={(id, on) => changeDraft({ labelIds: on ? [...labelIds, id] : labelIds.filter((value) => value !== id) })} /></div>
         <label className="grid gap-1 text-13 text-muted-foreground">{t("workItems.dueDate")}<Input type="date" aria-label={t("workItems.dueDate")} value={dueDate} className={field} onChange={(event) => changeDraft({ dueDate: event.target.value || null })} /></label>
         <div className="flex gap-2"><Button type="button" className={primaryButton} disabled={saving || retryingImages || !title.trim()} onClick={() => void save()}>{saving ? t("intake.saving") : t("intake.save")}</Button></div>
       </div> : <><h2 className="m-0 text-24 font-semibold text-foreground">{item.title}</h2>
       {item.descriptionMarkdown ? <DescriptionEditor workspaceId={workspaceId} workItemId={item.workItemId} initial={markdownToDoc(item.descriptionMarkdown)} editable={false} onChange={() => undefined} /> : <p className="m-0 text-14 text-muted-foreground">{t("intake.noDescription")}</p>}</>}
       <dl className="m-0 grid max-w-md grid-cols-[8rem_1fr] items-center gap-x-3 gap-y-3 text-13">
-        <dt className="text-muted-foreground">{t("intake.priority")}</dt>
-        <dd className="m-0 flex items-center gap-1.5 text-foreground"><PriorityIcon priority={item.priority} />{t(`workItems.priority.${item.priority}`)}</dd>
-        <dt className="text-muted-foreground">{t("workItems.assignees")}</dt><dd className="m-0 text-foreground">{item.assigneeIds.map((id) => people.find((person) => person.userId === id)?.name ?? id).join(", ") || t("workItems.noAssignee")}</dd>
-        <dt className="text-muted-foreground">{t("workItems.labels")}</dt><dd className="m-0 text-foreground">{item.labelIds.map((id) => labels.find((label) => label.id === id)?.name ?? id).join(", ") || "—"}</dd>
-        <dt className="text-muted-foreground">{t("workItems.dueDate")}</dt><dd className="m-0 text-foreground">{item.dueDate ?? "—"}</dd>
+        {!editable && <>
+          <dt className="text-muted-foreground">{t("intake.priority")}</dt>
+          <dd className="m-0 flex items-center gap-1.5 text-foreground"><PriorityIcon priority={item.priority} />{t(`workItems.priority.${item.priority}`)}</dd>
+          <dt className="text-muted-foreground">{t("workItems.assignees")}</dt><dd className="m-0 text-foreground">{item.assigneeIds.map((id) => people.find((person) => person.userId === id)?.name ?? id).join(", ") || t("workItems.noAssignee")}</dd>
+          <dt className="text-muted-foreground">{t("workItems.labels")}</dt><dd className="m-0 text-foreground">{item.labelIds.map((id) => labels.find((label) => label.id === id)?.name ?? id).join(", ") || "—"}</dd>
+          <dt className="text-muted-foreground">{t("workItems.dueDate")}</dt><dd className="m-0 text-foreground">{item.dueDate ?? "—"}</dd>
+        </>}
         <dt className="text-muted-foreground">{t("intake.submittedBy")}</dt>
         <dd className="m-0 flex items-center gap-1.5 text-foreground"><Avatar name={item.createdByName} id={item.createdBy} />{item.createdByName}</dd>
         <dt className="text-muted-foreground">{t("intake.submittedOn")}</dt>

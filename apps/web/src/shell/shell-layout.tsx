@@ -62,7 +62,7 @@ export function Shell({ current, workspace, signOut, refresh }: { current: Curre
         </div>
       </div>
       <Sheet open={drawer} onOpenChange={setDrawer}>
-        <SheetContent side="left" closeLabel={translate("shell.closeMenu")} aria-label={translate("shell.sidebar")} className="px-2 py-4 md:hidden">
+        <SheetContent side="left" closeLabel={translate("shell.closeMenu")} aria-label={translate("shell.sidebar")} className="px-2 pb-4 pt-14 md:hidden">
           <SheetTitle className="sr-only">{translate("shell.sidebar")}</SheetTitle>
           <AppRail workspaceSlug={workspace.slug} horizontal />
           <Button type="button" onClick={() => { setDrawer(false); window.dispatchEvent(new Event(openPaletteEvent)); }} className="transition-colors hover:bg-accent mx-3 mt-2 flex min-h-11 items-center gap-2 rounded-lg bg-transparent px-3 text-left text-[14px] text-foreground"><Command aria-hidden size={16} />{translate("palette.menuLabel")}</Button>

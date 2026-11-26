@@ -132,6 +132,21 @@ try {
       const short = await drawer.locator("button, a[href]").evaluateAll((buttons) => buttons.map((button) => button.getBoundingClientRect()).filter((box) => box.width > 1 && (box.height < 43.5 || box.width < 43.5)).map((box) => `${box.width}x${box.height}`));
       check("drawer controls are at least 44px", short.length === 0, short);
     }
+    if (viewport.touch) {
+      const collisions = (selector: string) => page.evaluate((selector) => {
+        const boxes = [...document.querySelectorAll<HTMLElement>(selector)].map((element) => ({ name: element.getAttribute("aria-label") ?? element.textContent, box: element.getBoundingClientRect(), inner: Math.max(...[...element.querySelectorAll("svg, span:not(.sr-only)")].map((child) => child.getBoundingClientRect().right), element.getBoundingClientRect().right) })).filter(({ box }) => box.width > 1);
+        return boxes.flatMap((a, i) => boxes.slice(i + 1).filter((b) => a.box.left < b.box.right - 1 && b.box.left < a.inner - 1 && a.box.top < b.box.bottom - 1 && b.box.top < a.box.bottom - 1).map((b) => `${a.name} / ${b.name}`));
+      }, selector);
+      await page.keyboard.press("Escape");
+      await open(page, routes.projects!);
+      const bar = await collisions("header.h-header button, header.h-header a");
+      check("phone top bar controls do not collide", bar.length === 0, bar);
+      await page.getByRole("button", { name: translate("shell.openMenu") }).click();
+      await page.getByRole("dialog").waitFor();
+      await page.waitForTimeout(400);
+      const close = await collisions('[role="dialog"] > button, [role="dialog"] > nav a');
+      check("drawer close button does not cover the rail", close.length === 0, close);
+    }
     await context.close();
   }
   await browser.close();

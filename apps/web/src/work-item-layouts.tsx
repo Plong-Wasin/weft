@@ -66,6 +66,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const [note, setNote] = React.useState<string | null>(null);
   /** Ids picked for a Bulk edit, in the order they were picked; `anchor` is the last one clicked, where a shift-click range starts. */
   const [selected, setSelected] = React.useState<string[]>([]);
+  const [activeSheetRow, setActiveSheetRow] = React.useState<string | null>(null);
   const anchor = React.useRef<string | null>(null);
   /** Width of the list box, measured so each row knows whether its properties fit on the title's line. */
   const [listBox, setListBox] = React.useState<HTMLElement | null>(null);
@@ -452,9 +453,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     }
   };
   /** The properties a board card shows, in the same order as a list row. */
-  const propertiesOf = (item: Item, hideState = false, compact = false) => <>
-    {(["state", "priority", "estimate", "assignee", "labels", "dates", "cycle", "modules"] as const).filter((property) => listShows(property) && !(hideState && property === "state")).map((property) => <React.Fragment key={property}>{cellOf(item, property, compact)}</React.Fragment>)}
-  </>;
+  const propertiesOf = (item: Item, hideState = false) => (["state", "priority", "estimate", "assignee", "labels", "dates", "cycle", "modules"] as const)
+    .filter((property) => listShows(property) && !(hideState && property === "state"));
   /** An empty value stays a reachable control showing a muted dash. The icon is dropped for an empty cell only in the one-line table; phones and the narrow fallback keep icon and dash so each cell stays identifiable without the header. */
   const isEmptyProperty = (item: Item, property: DisplayProperty) => property === "priority" ? item.priority === "none" : property === "estimate" ? !item.estimatePointId
     : property === "assignee" ? item.assigneeIds.length === 0 : property === "labels" ? item.labelIds.length === 0 : property === "dates" ? !item.startDate && !item.dueDate
@@ -560,9 +560,9 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   React.useEffect(() => setSelected((ids) => ids.every((id) => orderedIds.includes(id)) ? ids : ids.filter((id) => orderedIds.includes(id))), [visibleKey]);
   const allPicked = orderedIds.length > 0 && orderedIds.every((id) => selected.includes(id));
   const columns = params.props.filter((property) => property !== "id" && listShows(property));
-  const cell = "border-b border-border px-3 py-2 text-left align-middle whitespace-nowrap";
+  const cell = "border-b border-border px-3 text-left align-middle whitespace-nowrap";
   const sheetColumnMinWidth: Partial<Record<DisplayProperty, string>> = {
-    state: "min-w-28", priority: "min-w-28", assignee: "min-w-28", labels: "min-w-32", dates: "min-w-32", cycle: "min-w-28", modules: "min-w-32", estimate: "min-w-24",
+    state: "min-w-28", priority: "min-w-28", assignee: "min-w-28", labels: "min-w-40", dates: "min-w-32", cycle: "min-w-28", modules: "min-w-32", estimate: "min-w-24",
   };
   const sheetView = <div className="min-w-0 max-w-full rounded-xl border border-border bg-card">
     {filtered && items.length === 0 && <p className="border-b border-border bg-card px-5 py-3 text-14 text-muted-foreground">{t("layout.noMatch")}</p>}
@@ -572,20 +572,29 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
         event.preventDefault();
         event.currentTarget.scrollLeft += (event.key === "ArrowRight" ? 1 : -1) * Math.max(80, event.currentTarget.clientWidth * 0.8);
       }}>
-      <table className="w-max min-w-full table-auto border-separate border-spacing-0 bg-card text-13">
+      <table className="w-max min-w-full table-fixed border-separate border-spacing-0 bg-card text-13">
         <caption className="sr-only">{t("layout.spreadsheet")}</caption>
         <thead><tr className="bg-muted text-12 font-medium text-muted-foreground">
-          <th scope="col" className={`${cell} sticky left-0 z-10 w-80 min-w-64 max-sm:w-52 max-sm:min-w-52 bg-muted`}>{t("layout.sheet.workItem")}</th>
-          {columns.map((property) => <th key={property} scope="col" className={`${cell} ${sheetColumnMinWidth[property] ?? ""}`}>{t(`layout.property.${property}`)}</th>)}
-          {rowAction && <th scope="col" className={`${cell} min-w-24`}><span className="sr-only">{t("layout.sheet.actions")}</span></th>}
+          <th scope="col" style={{ width: "24rem", maxWidth: "24rem" }} className={`${cell} py-2 sticky left-0 z-10 w-96 min-w-80 max-sm:!w-64 max-sm:!max-w-64 max-sm:min-w-64 bg-muted`}>{t("layout.sheet.workItem")}</th>
+          {columns.map((property) => <th key={property} scope="col" className={`${cell} py-2 ${sheetColumnMinWidth[property] ?? ""}`}>{t(`layout.property.${property}`)}</th>)}
+          {rowAction && <th scope="col" className={`${cell} py-2 min-w-24`}><span className="sr-only">{t("layout.sheet.actions")}</span></th>}
         </tr></thead>
-        <tbody>{items.map((item) => <tr key={item.id} data-testid={`row-${item.displayId}`} className="group">
-          <th scope="row" className={`${cell} sticky left-0 z-10 w-80 min-w-64 max-sm:w-52 max-sm:min-w-52 bg-card font-normal group-hover:bg-muted`}>
+        <tbody>{items.map((item) => <tr key={item.id} data-testid={`row-${item.displayId}`} className="group h-12"
+          onPointerEnter={() => setActiveSheetRow(item.id)}
+          onPointerLeave={(event) => { if (!event.currentTarget.contains(document.activeElement)) setActiveSheetRow(null); }}
+          onFocusCapture={() => setActiveSheetRow(item.id)}
+          onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setActiveSheetRow(null); }}>
+          <th scope="row" style={{ width: "24rem", maxWidth: "24rem" }} className={`${cell} h-12 py-0 sticky left-0 z-10 w-96 min-w-80 max-sm:!w-64 max-sm:!max-w-64 max-sm:min-w-64 bg-card font-normal group-hover:bg-muted`}>
             <span className="flex min-w-0 items-center gap-3">{pickBox(item)}{shows("id") && <span className="shrink-0 text-12 text-muted-foreground">{item.displayId}</span>}
-              <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="block min-w-0 max-w-48 whitespace-normal text-14 font-medium text-foreground [overflow-wrap:anywhere]">{item.title}</Link></span>
+              <Link title={item.title} to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="block min-w-0 flex-1 truncate text-14 font-medium text-foreground">{item.title}</Link></span>
           </th>
-          {columns.map((property) => <td key={property} className={`${cell} ${sheetColumnMinWidth[property] ?? ""} [&_button]:rounded-md [&_button]:border-transparent [&_button]:bg-transparent [&_button]:px-1 [&_button]:py-1 group-hover:bg-muted`}>{cellOf(item, property, false, true)}</td>)}
-          {rowAction && <td className={`${cell} min-w-24`}>{rowAction(item)}</td>}
+          {columns.map((property) => {
+            const empty = isEmptyProperty(item, property);
+            return <td key={property} data-empty-property={empty || undefined} className={`${cell} h-12 py-0 ${sheetColumnMinWidth[property] ?? ""} [&_button]:rounded-md [&_button]:border-transparent [&_button]:bg-transparent [&_button]:px-1 [&_button]:py-1 group-hover:bg-muted`}>
+              <span className={empty && activeSheetRow !== item.id ? "opacity-0" : ""}>{cellOf(item, property, false, true)}</span>
+            </td>;
+          })}
+          {rowAction && <td className={`${cell} h-12 py-0 min-w-24`}>{rowAction(item)}</td>}
         </tr>)}</tbody>
       </table>
     </div>
@@ -698,13 +707,27 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const renderBoard = (columns: Array<BoardColumn<Item>>) => <Board columns={columns} canDrag={canWrite && ["state", "priority", "assignee"].includes(boardGroup)} reorderWithinColumn={boardGroup === "state" && !/\border\s+by\b/i.test(params.q)} announcePosition={boardGroup === "state" && !/\border\s+by\b/i.test(params.q)} canAdd={canCreate && canWrite} collapsed={collapsedColumns} onDrop={(id, column, beforeId, sourceColumn) => dropCard(id, column, beforeId, sourceColumn)}
     onToggle={(column) => setCollapsedColumns((list) => list.includes(column) ? list.filter((key) => key !== column) : [...list, column])}
     onAdd={(column) => { setQuick(column); setQuickTitle(""); }} quick={quick} quickForm={quickForm}
-    renderCard={(item, reorderHandle) => <div className="grid gap-2">
-      <div className="flex items-start justify-between gap-2">{pickBox(item)}<div className="grid min-w-0 flex-1 gap-1">
-        {shows("id") && <span className="text-12 text-muted-foreground">{item.displayId}</span>}
-        <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} draggable={false} data-testid="card-title" className="text-14 font-medium text-foreground [overflow-wrap:anywhere]">{item.title}</Link></div>
-        {reorderHandle}{rowAction && <span data-no-drag>{rowAction(item)}</span>}</div>
-      <div className="flex flex-wrap items-center gap-1.5 [@media(pointer:coarse)]:gap-2">{propertiesOf(item, boardGroup === "state", true)}</div>
-    </div>}
+    renderCard={(item, reorderHandle, active) => {
+      const cardProperties = propertiesOf(item, boardGroup === "state");
+      const setCardProperties = cardProperties.filter((property) => !isEmptyProperty(item, property));
+      const visibleCardProperties = setCardProperties.slice(0, 3);
+      const hiddenCardProperties = setCardProperties.slice(3);
+      return <div className="grid gap-2">
+        <div className="flex items-start justify-between gap-2">
+          <span data-testid="card-selection" className={`opacity-0 ${active || selected.includes(item.id) ? "opacity-100" : ""}`}>{pickBox(item)}</span>
+          <div className="grid min-w-0 flex-1 gap-1">
+            {shows("id") && <span className="text-12 text-muted-foreground">{item.displayId}</span>}
+            <Link title={item.title} to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} draggable={false} data-testid="card-title" className="line-clamp-2 text-14 font-medium text-foreground [overflow-wrap:anywhere]">{item.title}</Link>
+          </div>
+          {reorderHandle}{rowAction && <span data-no-drag>{rowAction(item)}</span>}
+        </div>
+        {cardProperties.length > 0 && <div data-testid="card-properties" className="flex min-w-0 flex-nowrap items-center gap-1.5 overflow-x-auto [@media(pointer:coarse)]:gap-2">
+          {visibleCardProperties.map((property) => <React.Fragment key={property}>{cellOf(item, property, true)}</React.Fragment>)}
+          {hiddenCardProperties.length > 0 && <span className="shrink-0 text-12 text-muted-foreground" title={hiddenCardProperties.map((property) => t(`layout.property.${property}`)).join(", ")}>+{hiddenCardProperties.length}</span>}
+          {cardProperties.filter((property) => isEmptyProperty(item, property)).map((property) => <span key={property} className={active ? "" : "opacity-0"}>{cellOf(item, property, true)}</span>)}
+        </div>}
+      </div>;
+    }}
     ghost={(item) => <div className="flex items-baseline gap-2"><span className="text-12 text-muted-foreground">{item.displayId}</span><span className="text-14 font-medium text-foreground">{item.title}</span></div>} />;
 
   const peekPanel = peek && <>

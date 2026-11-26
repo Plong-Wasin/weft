@@ -35,7 +35,7 @@ export function WorkItemSearch({ workspace }: { workspace: { id: string; slug: s
   const box = React.useRef<HTMLDivElement>(null);
   const input = React.useRef<HTMLInputElement>(null);
   const { pathname } = useLocation();
-  React.useEffect(() => { setExpanded(false); setQuery(""); setClosed(false); }, [pathname]);
+  React.useEffect(() => { setExpanded(false); }, [pathname]);
   React.useEffect(() => { if (expanded) input.current?.focus(); }, [expanded]);
   React.useEffect(() => {
     const onPointerDown = (event: MouseEvent) => { if (!box.current?.contains(event.target as Node)) setClosed(true); };
@@ -69,12 +69,12 @@ export function WorkItemSearch({ workspace }: { workspace: { id: string; slug: s
       {failed && <li role="alert">{translate("search.failed")}</li>}
       {!failed && results.items.length === 0 && results.wiki.length === 0 && <li>{translate("search.empty")}</li>}
       {results.items.map((item) => <li key={item.id}>
-        <Link to={paths.workItem(workspace.slug, item.displayId)}><strong>{item.displayId}</strong> {item.title}</Link>
+        <Link to={paths.workItem(workspace.slug, item.displayId)} onClick={() => setClosed(true)}><strong>{item.displayId}</strong> {item.title}</Link>
         {item.snippet && <small>{item.snippet}</small>}
       </li>)}
       {results.wiki.length > 0 && <li role="presentation"><strong>{translate("search.wikiHeading")}</strong></li>}
       {results.wiki.map((page) => <li key={page.id}>
-        <Link to={paths.wikiPage(workspace.slug, page.id)}>{page.title}</Link>
+        <Link to={paths.wikiPage(workspace.slug, page.id)} onClick={() => setClosed(true)}>{page.title}</Link>
         {page.snippet && <small>{page.snippet}</small>}
       </li>)}
     </ul>}

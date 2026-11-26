@@ -37,17 +37,17 @@ export function AssistPreview({ view, canReplace = true, onRun, onReplace, onIns
   view: AssistView; canReplace?: boolean; onRun: (task: AssistTask, targetLanguage?: string) => void; onReplace: () => void; onInsertBelow: () => void; onDiscard: () => void;
 }) {
   if (view.status === "idle") return null;
-  return <section aria-label={translate("assist.preview")} className="grid w-96 max-w-full gap-2 rounded-md border border-strong bg-surface-1 p-2 shadow-lg">
-    {view.status === "loading" && <p role="status" className="m-0 text-13 text-secondary">{translate("assist.loading")}</p>}
-    {view.status === "error" && <p role="alert" className="m-0 text-13 text-danger-primary">{translate(`assist.error.${view.error}` as MessageKey)}</p>}
-    {view.status === "result" && <p data-testid="assist-result" className="m-0 max-h-60 overflow-auto whitespace-pre-wrap text-13 text-primary">{view.result}</p>}
-    {view.status === "result" && !canReplace && <p role="note" className="m-0 text-12 text-secondary">{translate("assist.replaceBlocked")}</p>}
+  return <section aria-label={translate("assist.preview")} className="grid w-96 max-w-full gap-2 rounded-md border border-border bg-card p-2 shadow-lg">
+    {view.status === "loading" && <p role="status" className="m-0 text-13 text-muted-foreground">{translate("assist.loading")}</p>}
+    {view.status === "error" && <p role="alert" className="m-0 text-13 text-destructive">{translate(`assist.error.${view.error}` as MessageKey)}</p>}
+    {view.status === "result" && <p data-testid="assist-result" className="m-0 max-h-60 overflow-auto whitespace-pre-wrap text-13 text-foreground">{view.result}</p>}
+    {view.status === "result" && !canReplace && <p role="note" className="m-0 text-12 text-muted-foreground">{translate("assist.replaceBlocked")}</p>}
     <div className="flex flex-wrap gap-1">
       {view.status === "result" && <Button type="button" onClick={onReplace} disabled={!canReplace}>{translate("assist.replace")}</Button>}
       {view.status === "result" && <Button type="button" className="secondary" onClick={onInsertBelow}>{translate("assist.insertBelow")}</Button>}
       <Button type="button" className="secondary" onClick={onDiscard}>{translate("assist.discard")}</Button>
     </div>
-    <details className="text-12 text-secondary">
+    <details className="text-12 text-muted-foreground">
       <summary>{translate("assist.rerun")}</summary>
       <TaskPicker current={view.task} initialLanguage={view.targetLanguage} onRun={onRun} />
     </details>
@@ -164,9 +164,9 @@ function AssistMenuFor({ editor, workspaceId }: { editor: Editor; workspaceId: s
   return <div ref={root} className="absolute z-20" style={{ top: place.top, left: place.left }} onMouseDown={(event) => { if (!(event.target instanceof HTMLInputElement) && !(event.target instanceof Element && event.target.closest("[data-testid=assist-result], summary"))) event.preventDefault(); }}>
     {view.status !== "idle"
       ? <AssistPreview view={view} canReplace={canReplace} onRun={run} onReplace={() => accept(replaceSelection)} onInsertBelow={() => accept(insertBelow)} onDiscard={clear} />
-      : pickerShown && <div role="toolbar" aria-label={translate("assist.menu")} className="assist-menu-surface rounded-lg border border-subtle bg-surface-1 p-1.5">
+      : pickerShown && <div role="toolbar" aria-label={translate("assist.menu")} className="assist-menu-surface rounded-lg border border-border bg-card p-1.5">
         <TaskPicker onRun={run} unavailable={notConfigured ? translate("assist.notConfigured") : undefined} onUnavailable={() => setExplain(true)} />
-        {notConfigured && explain && <p role="status" className="m-0 mt-1 w-64 max-w-full px-1 py-0.5 text-13 text-secondary">{translate("assist.notConfigured")}</p>}
+        {notConfigured && explain && <p role="status" className="m-0 mt-1 w-64 max-w-full px-1 py-0.5 text-13 text-muted-foreground">{translate("assist.notConfigured")}</p>}
       </div>}
   </div>;
 }

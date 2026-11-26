@@ -116,7 +116,7 @@ function CreatedVsResolved({ months }: { months: Month[] }) {
 }
 
 function Tabs({ workspaceSlug, active }: { workspaceSlug: string; active: "overview" | "workItems" }) {
-  const tab = (isActive: boolean) => `border-b-2 px-3 py-1.5 text-sm font-medium no-underline ${isActive ? "border-primary text-foreground" : "border-transparent text-muted-foreground"}`;
+  const tab = (isActive: boolean) => `border-b-2 px-3 py-1.5 text-sm font-medium no-underline ${isActive ? "border-border text-foreground" : "border-transparent text-muted-foreground"}`;
   return <nav aria-label={t("analytics.title")} className="flex gap-1 border-b border-border">
     <NavLink to={paths.analyticsOverview(workspaceSlug)} aria-current={active === "overview" ? "page" : undefined} className={tab(active === "overview")}>{t("analytics.tabOverview")}</NavLink>
     <NavLink to={paths.analyticsWorkItems(workspaceSlug)} aria-current={active === "workItems" ? "page" : undefined} className={tab(active === "workItems")}>{t("analytics.tabWorkItems")}</NavLink>

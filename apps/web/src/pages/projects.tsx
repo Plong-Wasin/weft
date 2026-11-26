@@ -64,7 +64,7 @@ export function ProjectsPanel() {
       <fieldset className="m-0 grid gap-2 border-0 p-0">
         <legend className="mb-2 p-0 text-sm font-medium text-muted-foreground">{translate("projects.shape")}</legend>
         <div className="grid gap-3 sm:grid-cols-2">
-          {(["simple", "full"] as const).map((option) => <label key={option} className={`grid cursor-pointer gap-1 rounded-lg border p-3 text-sm ${shape === option ? "border-primary bg-muted" : "border-border"}`}>
+          {(["simple", "full"] as const).map((option) => <label key={option} className={`grid cursor-pointer gap-1 rounded-lg border p-3 text-sm ${shape === option ? "border-border bg-muted" : "border-border"}`}>
             <span className="flex items-center gap-2 font-medium text-foreground"><input type="radio" name="project-shape" value={option} checked={shape === option} onChange={() => setShape(option)} />{translate(`projects.shape${option === "simple" ? "Simple" : "Full"}` as MessageKey)}</span>
             <span className="pl-6 text-muted-foreground">{translate(`projects.shape${option === "simple" ? "Simple" : "Full"}Desc` as MessageKey)}</span>
           </label>)}
@@ -95,7 +95,7 @@ export function ProjectsPanel() {
         const starred = preferenceOf(prefs, project.id)?.starred ?? false;
         const label = translate(starred ? "sidebar.unstar" : "sidebar.star");
         return <Button type="button" aria-pressed={starred} aria-label={`${label}: ${project.name}`} title={label} onClick={() => void setPreference(project.id, { starred: !starred })} className="bg-transparent p-1 text-muted-foreground hover:bg-transparent hover:text-foreground">
-          <Star aria-hidden size={14} className={starred ? "text-primary" : undefined} fill={starred ? "currentColor" : "none"} />
+          <Star aria-hidden size={14} className={starred ? "text-foreground" : undefined} fill={starred ? "currentColor" : "none"} />
         </Button>;
       })()}
       <span className="flex items-center gap-1.5 text-sm text-muted-foreground">{project.visibility === "private" ? <Lock aria-hidden size={13} /> : <Globe aria-hidden size={13} />}{translate(`projects.visibility.${project.visibility}`)}</span>

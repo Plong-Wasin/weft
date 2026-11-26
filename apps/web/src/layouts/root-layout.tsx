@@ -45,26 +45,26 @@ export function WorkspaceChooser({ current, languageSwitch, signOut, refresh }: 
   }
 
   const signOutAction = <>
-    <span className="hidden text-secondary sm:inline">{current.user.email}</span>
-    <Button type="button" className="!h-auto !bg-transparent !p-0 font-semibold !text-accent-text hover:underline" onClick={() => void signOut()}>{translate("auth.signOut")}</Button>
+    <span className="hidden text-muted-foreground sm:inline">{current.user.email}</span>
+    <Button type="button" className="!h-auto !bg-transparent !p-0 font-semibold !text-foreground hover:underline" onClick={() => void signOut()}>{translate("auth.signOut")}</Button>
   </>;
 
   return <OnboardingShell action={signOutAction}>
     <h1 className="text-20 font-semibold">{needsFirstWorkspace ? translate("workspace.firstTitle") : translate("workspace.yourWorkspaces")}</h1>
     {current.workspaces.length > 0 && <ul className="grid gap-2">
-      {current.workspaces.map((item) => <li key={item.id}><a className="block rounded-md border border-subtle px-3.5 py-3 text-14 font-medium !text-primary hover:bg-layer-1-hover" href={paths.home(item.slug)}>{item.name}</a></li>)}
+      {current.workspaces.map((item) => <li key={item.id}><a className="block rounded-md border border-border px-3.5 py-3 text-14 font-medium !text-foreground hover:bg-accent" href={paths.home(item.slug)}>{item.name}</a></li>)}
     </ul>}
     {current.canCreateWorkspace && <form onSubmit={createWorkspace} className="grid gap-4">
-      <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("workspace.name")}<Input className={fieldClass} required value={workspaceName} onChange={(event) => {
+      <label className="grid gap-1.5 text-13 font-medium text-muted-foreground">{translate("workspace.name")}<Input className={fieldClass} required value={workspaceName} onChange={(event) => {
         const value = event.target.value; setWorkspaceName(value);
         if (!slug || slug === slugify(workspaceName)) setSlug(slugify(value));
       }} /></label>
-      <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("workspace.slug")}<Input className={fieldClass} required pattern="[a-z0-9]+(-[a-z0-9]+)*" value={slug} onChange={(event) => setSlug(event.target.value)} /></label>
+      <label className="grid gap-1.5 text-13 font-medium text-muted-foreground">{translate("workspace.slug")}<Input className={fieldClass} required pattern="[a-z0-9]+(-[a-z0-9]+)*" value={slug} onChange={(event) => setSlug(event.target.value)} /></label>
       <Button className={primaryButton}>{translate("workspace.create")}</Button>
     </form>}
-    {needsFirstWorkspace && !current.canCreateWorkspace && <p className="text-14 text-secondary">{translate("workspace.noAccess")}</p>}
-    {error && <p role="alert" className="text-13 text-danger-text">{error}</p>}
-    <div className="flex items-center gap-4 pt-2 text-13 text-secondary">{languageSwitch}<ThemeSwitch /></div>
+    {needsFirstWorkspace && !current.canCreateWorkspace && <p className="text-14 text-muted-foreground">{translate("workspace.noAccess")}</p>}
+    {error && <p role="alert" className="text-13 text-destructive">{error}</p>}
+    <div className="flex items-center gap-4 pt-2 text-13 text-muted-foreground">{languageSwitch}<ThemeSwitch /></div>
   </OnboardingShell>;
 }
 
@@ -149,7 +149,7 @@ export function RootLayout() {
   if (current === null) return <AuthScreen api={api} inviteToken={inviteToken} onSignedIn={refresh} languageSwitch={languageSwitch} minPasswordLength={minPasswordLength} emailEnabled={emailEnabled} contextualNotice={window.location.pathname === "/cli/authorize" ? translate("cliDevice.signedOut") : undefined} />;
   if (inviteToken) return <OnboardingShell>
     <h1 className="text-20 font-semibold">{translate("invite.title")}</h1>
-    <p role={inviteError ? "alert" : "status"} className={`text-14 ${inviteError ? "text-danger-text" : "text-secondary"}`}>{inviteError ?? translate("invite.joining")}</p>
+    <p role={inviteError ? "alert" : "status"} className={`text-14 ${inviteError ? "text-destructive" : "text-muted-foreground"}`}>{inviteError ?? translate("invite.joining")}</p>
     {inviteError && <a href={paths.home("")} className="text-14 font-medium">{translate("invite.goHome")}</a>}
   </OnboardingShell>;
   const notice = current.account?.securityNotice ?? null;

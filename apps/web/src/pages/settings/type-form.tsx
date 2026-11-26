@@ -34,23 +34,23 @@ export function TypeForm({ idPrefix, initial, submitLabel, onSubmit, onCancel }:
   };
   const nameId = `${idPrefix}-name`;
   const descriptionId = `${idPrefix}-description`;
-  return <form className="grid gap-4 rounded-md border border-subtle bg-layer-1 p-4" data-type-form onSubmit={submit}>
+  return <form className="grid gap-4 rounded-md border border-border bg-muted p-4" data-type-form onSubmit={submit}>
     <div className="grid gap-4 md:grid-cols-2">
       <div className="grid content-start gap-1.5">
-        <label htmlFor={nameId} className="text-13 font-medium text-primary">{t("types.name")}</label>
+        <label htmlFor={nameId} className="text-13 font-medium text-foreground">{t("types.name")}</label>
         <Input id={nameId} required value={name} maxLength={40} className="w-full" onChange={(event) => setName(event.target.value)} />
       </div>
       <Field label={t("types.color")}>{(labelId) => <ColourChoice labelId={labelId} idPrefix={idPrefix} color={color} custom={custom} onPick={(next, nextCustom) => { setColor(next); setCustom(nextCustom); }} />}</Field>
       <Field label={t("types.icon")} className="md:col-span-2">{(labelId) => <IconChoice labelId={labelId} icon={icon} onPick={setIcon} />}</Field>
       <div className="grid content-start gap-1.5 md:col-span-2">
-        <label htmlFor={descriptionId} className="text-13 font-medium text-primary">{t("types.description")}</label>
+        <label htmlFor={descriptionId} className="text-13 font-medium text-foreground">{t("types.description")}</label>
         <Input id={descriptionId} value={description} maxLength={200} placeholder={t("types.descriptionHint")} className="w-full" onChange={(event) => setDescription(event.target.value)} />
       </div>
     </div>
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <span data-type-preview className="inline-flex min-w-0 items-center gap-2 rounded-md border border-subtle bg-surface-1 px-2.5 py-1 text-13">
+      <span data-type-preview className="inline-flex min-w-0 items-center gap-2 rounded-md border border-border bg-card px-2.5 py-1 text-13">
         <TypeIconMark icon={icon} color={color} />
-        <span className={`truncate font-medium ${name.trim() ? "text-primary" : "text-tertiary"}`}>{name.trim() || t("types.previewEmpty")}</span>
+        <span className={`truncate font-medium ${name.trim() ? "text-foreground" : "text-muted-foreground"}`}>{name.trim() || t("types.previewEmpty")}</span>
       </span>
       <span className="flex flex-wrap gap-2">
         <Button type="submit" disabled={saving}>{submitLabel}</Button>
@@ -63,7 +63,7 @@ export function TypeForm({ idPrefix, initial, submitLabel, onSubmit, onCancel }:
 function Field({ label, className = "", children }: { label: string; className?: string; children: (labelId: string) => React.ReactNode }) {
   const labelId = React.useId();
   return <div className={`grid content-start gap-1.5 ${className}`}>
-    <span id={labelId} className="text-13 font-medium text-primary">{label}</span>
+    <span id={labelId} className="text-13 font-medium text-foreground">{label}</span>
     {children(labelId)}
   </div>;
 }
@@ -85,8 +85,8 @@ function useChoiceKeys(count: number, select: (index: number) => void) {
   return { refs, onKeyDown };
 }
 
-const choiceBase = "inline-flex items-center justify-center rounded-md border border-subtle bg-surface-1 text-secondary hover:bg-layer-transparent-hover focus-visible:outline-2 focus-visible:outline-accent-primary";
-const choiceChecked = "border-transparent text-primary ring-2 ring-accent-primary ring-offset-2 ring-offset-layer-1";
+const choiceBase = "inline-flex items-center justify-center rounded-md border border-border bg-card text-muted-foreground hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring";
+const choiceChecked = "border-transparent text-foreground ring-2 ring-ring ring-offset-2 ring-offset-muted";
 
 /**
  * The icon of a type: a search field above a scrollable library of real icon buttons in headed groups, each named and shown as a tooltip.
@@ -109,11 +109,11 @@ function IconChoice({ labelId, icon, onPick }: { labelId: string; icon: TypeIcon
   return <div className="grid min-w-0 gap-2">
     <Input type="search" aria-label={t("types.iconSearch")} placeholder={t("types.iconSearch")} autoComplete="off" value={query}
       onChange={(event) => setQuery(event.target.value)} onKeyDown={onSearchKeyDown}
-      className="w-full rounded-md border border-subtle bg-surface-1 px-2.5 py-1.5 text-13 text-primary placeholder:text-tertiary" />
-    <div role="radiogroup" aria-labelledby={labelId} data-icon-library className="max-h-56 overflow-y-auto overflow-x-hidden rounded-md border border-subtle bg-surface-1 p-2">
-      {matches.length === 0 && <p className="px-1 py-1.5 text-13 text-tertiary">{t("types.iconNoMatch")}</p>}
+      className="w-full rounded-md border border-border bg-card px-2.5 py-1.5 text-13 text-foreground placeholder:text-muted-foreground" />
+    <div role="radiogroup" aria-labelledby={labelId} data-icon-library className="max-h-56 overflow-y-auto overflow-x-hidden rounded-md border border-border bg-card p-2">
+      {matches.length === 0 && <p className="px-1 py-1.5 text-13 text-muted-foreground">{t("types.iconNoMatch")}</p>}
       {shown.map(({ group, entries }) => <section key={group} data-icon-group={group} className="mb-2 last:mb-0">
-        <h4 className="mb-1 text-11 font-medium uppercase tracking-wide text-tertiary">{t(`types.iconGroup.${group}`)}</h4>
+        <h4 className="mb-1 text-11 font-medium uppercase tracking-wide text-muted-foreground">{t(`types.iconGroup.${group}`)}</h4>
         <div className="flex flex-wrap gap-1.5">
           {entries.map(({ key: value }) => {
             const index = matches.findIndex((entry) => entry.key === value);
@@ -154,7 +154,7 @@ function ColourChoice({ labelId, idPrefix, color, custom, onPick }: { labelId: s
         <Palette aria-hidden size={16} />
       </Button>
     </div>
-    {(custom || !isSwatch(color)) && <label htmlFor={customId} className="flex items-center gap-2 text-13 text-secondary">
+    {(custom || !isSwatch(color)) && <label htmlFor={customId} className="flex items-center gap-2 text-13 text-muted-foreground">
       {t("types.colour.custom")}
       <input id={customId} type="color" value={color} onChange={(event) => onPick(event.target.value.toLowerCase(), true)} className="h-8 w-12 cursor-pointer p-0.5" />
     </label>}

@@ -391,6 +391,7 @@ try {
   check(await page.locator('.ProseMirror .asset-image-unverified').isVisible(), "Wiki inline image warning is not visible at mobile width");
   await page.setViewportSize({ width: 1440, height: 900 });
   const wikiAttachments = page.getByTestId("wiki-attachments");
+  await page.getByTestId("wiki-attachments-toggle").click();
   await wikiAttachments.waitFor({ state: "visible" });
   await page.waitForFunction(() => document.querySelector('[data-testid="wiki-attachments"]')?.getAttribute("aria-busy") === "false");
   check(await wikiAttachments.getByText("w.png").count() === 0, "an image embedded in the Wiki page must not also appear as a downloadable attachment");

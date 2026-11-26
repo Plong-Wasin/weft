@@ -64,6 +64,7 @@ try {
 
   // 1440px, panel closed: the body column is about 760px and centred in its grid, with no box.
   await openPage(`${web}/${slug}/wiki/${wikiPage.id}`);
+  check(await page.getByRole("heading", { level: 1, name: "Column handbook", exact: true }).count() === 1, "the editable Wiki title must be the page's accessible h1");
   const closedColumn = await box(column());
   const closedGrid = await box(grid());
   check(closedColumn.width >= 700 && closedColumn.width <= 780, `the text column must be about 760px wide at 1440px, found ${closedColumn.width}`);

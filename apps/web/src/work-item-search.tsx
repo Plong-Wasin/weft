@@ -57,14 +57,14 @@ export function WorkItemSearch({ workspace }: { workspace: { id: string; slug: s
   }, [query, workspace.id]);
 
   return <>
-    <Button type="button" aria-label={translate("search.label")} aria-expanded={expanded} onClick={() => setExpanded(true)} className="rounded-lg bg-transparent p-2 text-secondary hover:bg-layer-transparent-hover hover:text-primary md:hidden"><Search aria-hidden size={18} /></Button>
-    <div ref={box} role="search" className={`search ${expanded ? "max-md:fixed max-md:inset-x-0 max-md:top-0 max-md:z-40 max-md:flex max-md:h-header max-md:max-w-none max-md:items-center max-md:gap-2 max-md:border-b max-md:border-subtle max-md:bg-surface-1 max-md:px-3" : "max-md:hidden"}`}>
+    <Button type="button" aria-label={translate("search.label")} aria-expanded={expanded} onClick={() => setExpanded(true)} className="rounded-lg bg-transparent p-2 text-muted-foreground hover:bg-accent hover:text-foreground md:hidden"><Search aria-hidden size={18} /></Button>
+    <div ref={box} role="search" className={`search ${expanded ? "max-md:fixed max-md:inset-x-0 max-md:top-0 max-md:z-40 max-md:flex max-md:h-header max-md:max-w-none max-md:items-center max-md:gap-2 max-md:border-b max-md:border-border max-md:bg-sidebar max-md:px-3" : "max-md:hidden"}`}>
     <div className="relative min-w-0 flex-1">
-      <Search aria-hidden size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-tertiary" />
+      <Search aria-hidden size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
       <Input ref={input} type="search" className="h-9 w-full rounded-lg pl-8" value={query} placeholder={translate("search.placeholder")} aria-label={translate("search.label")}
         onChange={(event) => { setQuery(event.target.value); setClosed(false); }} onKeyDown={(event) => { if (event.key === "Escape") { setQuery(""); setClosed(true); setExpanded(false); } }} />
     </div>
-    {expanded && <Button type="button" aria-label={translate("search.close")} onClick={() => { setQuery(""); setExpanded(false); }} className="rounded-md bg-transparent p-1.5 text-secondary hover:bg-layer-transparent-hover md:hidden"><X aria-hidden size={18} /></Button>}
+    {expanded && <Button type="button" aria-label={translate("search.close")} onClick={() => { setQuery(""); setExpanded(false); }} className="rounded-md bg-transparent p-1.5 text-muted-foreground hover:bg-accent md:hidden"><X aria-hidden size={18} /></Button>}
     {results && !closed && <ul className="search-results top-full" aria-label={translate("search.results")}>
       {failed && <li role="alert">{translate("search.failed")}</li>}
       {!failed && results.items.length === 0 && results.wiki.length === 0 && <li>{translate("search.empty")}</li>}

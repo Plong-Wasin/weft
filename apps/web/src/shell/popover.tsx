@@ -71,7 +71,7 @@ export function Popover({ label, panelLabel = label, trigger, align = "left", cl
   </PopoverPrimitive>;
 }
 
-export const menuItemClass = "inset-row-hover flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm text-popover-foreground outline-none focus:bg-accent focus:text-accent-foreground data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground pointer-coarse:min-h-11";
+export const menuItemClass = "transition-colors flex w-full hover:bg-accent items-center gap-2 px-2.5 py-1.5 text-left text-sm text-popover-foreground outline-none focus:bg-accent focus:text-accent-foreground data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground pointer-coarse:min-h-11";
 
 /**
  * A menu row with a leading icon. A `menuitemcheckbox` row carries `aria-checked` and a check mark while it is on.
@@ -84,7 +84,7 @@ export function MenuItem({ icon: Icon, role = "menuitem", checked, hint, danger 
   const isSwitch = role === "menuitemcheckbox";
   const rowClass = cn(menuItemClass, "cursor-default outline-none select-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50", isSwitch && "!justify-between", danger && "text-destructive focus:text-destructive", className);
   if (isSwitch) return <Button type="button" role={role} aria-checked={Boolean(checked)} title={hint} aria-describedby={hint ? hintId : undefined} className={rowClass} {...props}>
-    <span className="flex min-w-0 items-center gap-2"><Icon aria-hidden size={16} className={`shrink-0 ${danger ? "" : "text-secondary"}`} />{children}</span>
+    <span className="flex min-w-0 items-center gap-2"><Icon aria-hidden size={16} className={`shrink-0 ${danger ? "" : "text-muted-foreground"}`} />{children}</span>
     <Check aria-hidden size={14} className={`shrink-0 ${checked ? "text-current" : "invisible"}`} />
     {hint && <span id={hintId} hidden>{hint}</span>}
   </Button>;

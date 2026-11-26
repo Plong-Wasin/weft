@@ -27,9 +27,9 @@ const entries: Array<{ section: Section; label: MessageKey; icon: typeof Bot; to
 export function AppRail({ workspaceSlug, horizontal = false }: { workspaceSlug: string; horizontal?: boolean }) {
   const active = sectionOf(useLocation().pathname, workspaceSlug);
   const aiOn = useAiEnabled();
-  return <nav aria-label={translate("shell.rail")} className={horizontal ? "flex gap-1 border-b border-subtle p-3" : "flex w-16 shrink-0 flex-col items-center gap-1 border-r border-subtle bg-surface-1 py-3"}>
+  return <nav aria-label={translate("shell.rail")} className={horizontal ? "flex gap-1 border-b border-border p-3" : "flex w-16 shrink-0 flex-col items-center gap-1 border-r border-border bg-sidebar py-3"}>
     {entries.filter((entry) => entry.section !== "ai" || aiOn).map((entry) => <NavLink key={entry.section} to={entry.to(workspaceSlug)} aria-current={active === entry.section ? "page" : undefined} title={translate(entry.label)}
-      className={`inset-row-hover flex items-center gap-1 rounded-lg ${horizontal ? "min-h-11 flex-1 flex-col px-2 py-1.5 text-12" : "w-14 flex-col px-0.5 py-2 text-11"} font-medium ${active === entry.section ? "bg-layer-1-selected text-primary" : "text-secondary hover:bg-layer-transparent-hover"}`}>
+      className={`transition-colors hover:bg-accent flex items-center gap-1 rounded-lg ${horizontal ? "min-h-11 flex-1 flex-col px-2 py-1.5 text-[12px]" : "w-14 flex-col px-0.5 py-2 text-[12px]"} font-medium ${active === entry.section ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent"}`}>
       <entry.icon aria-hidden size={18} /><span>{translate(entry.label)}</span></NavLink>)}
   </nav>;
 }

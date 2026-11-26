@@ -25,8 +25,8 @@ import { Input } from "@/ui/input";
 export const projectsKey = (workspaceId: string) => ["projects", workspaceId] as const;
 const favoritesKey = (workspaceId: string) => ["favorite-wiki-pages", workspaceId] as const;
 
-const itemClass = ({ isActive }: { isActive: boolean }) => `inset-row-hover flex min-h-9 max-md:min-h-11 items-center gap-2 rounded-lg px-3 py-1.5 text-14 font-medium ${isActive ? "bg-layer-1-selected text-primary" : "text-secondary hover:bg-layer-transparent-hover"}`;
-const heading = "px-3 pb-1 pt-4 text-12 font-medium text-tertiary";
+const itemClass = ({ isActive }: { isActive: boolean }) => `transition-colors flex min-h-9 max-md:min-h-11 items-center gap-2 rounded-lg px-3 py-1.5 text-[14px] font-medium ${isActive ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent"}`;
+const heading = "px-3 pb-1 pt-4 text-[12px] font-medium text-muted-foreground";
 
 /** What a project row can do to the order. The list owns the state; a row only reports the gesture. */
 type Reorder = {
@@ -65,17 +65,17 @@ function ProjectEntry({ workspace, project, current, starred, expanded, canMoveU
     onDragOver={(event) => { if (drag.current && drag.current.starred === starred && drag.current.id !== project.id) event.preventDefault(); }}
     onDrop={(event) => { event.preventDefault(); const from = drag.current; drag.current = null; if (from && from.starred === starred) reorder.drop(from.id, project.id); }}
     onDragEnd={() => { drag.current = null; }}>
-    <div className="inset-row-hover flex items-center gap-0.5 rounded-lg">
-      <span aria-hidden title={translate("sidebar.dragHandle")} className="flex shrink-0 cursor-grab items-center px-0.5 text-tertiary max-md:hidden"><GripVertical size={14} /></span>
-      <Button type="button" aria-pressed={starred} aria-label={`${starLabel}: ${project.name}`} title={starLabel} onClick={() => reorder.star(project.id, !starred)} className="shrink-0 bg-transparent p-1 text-tertiary hover:bg-transparent hover:text-primary">
-        <Star aria-hidden size={14} className={starred ? "text-accent-primary" : undefined} fill={starred ? "currentColor" : "none"} />
+    <div className="transition-colors hover:bg-accent focus-within:bg-accent flex items-center gap-0.5 rounded-lg">
+      <span aria-hidden title={translate("sidebar.dragHandle")} className="flex shrink-0 cursor-grab items-center px-0.5 text-muted-foreground max-md:hidden"><GripVertical size={14} /></span>
+      <Button type="button" aria-pressed={starred} aria-label={`${starLabel}: ${project.name}`} title={starLabel} onClick={() => reorder.star(project.id, !starred)} className="shrink-0 bg-transparent p-1 text-muted-foreground hover:bg-transparent hover:text-foreground">
+        <Star aria-hidden size={14} className={starred ? "text-foreground" : undefined} fill={starred ? "currentColor" : "none"} />
       </Button>
       <Button type="button" data-project-toggle={project.id} aria-expanded={expanded} aria-label={`${translate("sidebar.toggleProject")}: ${project.name}`} title={translate("sidebar.reorderHint")} onKeyDown={onKeyDown} onClick={() => reorder.expand(project.id, !expanded)}
-        className="flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-lg bg-transparent px-1 py-1.5 text-left text-14 font-medium text-primary hover:bg-transparent max-md:min-h-11">
-        <Folder aria-hidden size={14} className="shrink-0 text-secondary" /><span className="flex-1 truncate">{project.name}</span>
-        <ChevronRight aria-hidden size={14} className={`shrink-0 text-tertiary transition-transform ${expanded ? "rotate-90" : ""}`} />
+        className="flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-lg bg-transparent px-1 py-1.5 text-left text-[14px] font-medium text-foreground hover:bg-transparent max-md:min-h-11">
+        <Folder aria-hidden size={14} className="shrink-0 text-muted-foreground" /><span className="flex-1 truncate">{project.name}</span>
+        <ChevronRight aria-hidden size={14} className={`shrink-0 text-muted-foreground transition-transform ${expanded ? "rotate-90" : ""}`} />
       </Button>
-      <Popover label={`${translate("sidebar.projectOptions")}: ${project.name}`} align="right" panelClassName="!min-w-44" trigger={<MoreHorizontal aria-hidden size={14} />} className="!p-1 text-tertiary">
+      <Popover label={`${translate("sidebar.projectOptions")}: ${project.name}`} align="right" panelClassName="!min-w-44" trigger={<MoreHorizontal aria-hidden size={14} />} className="!p-1 text-muted-foreground">
         {(close) => <>
           <MenuItem icon={Settings} onClick={() => { close(); navigate(paths.projectSettings(workspace.slug, project.key)); }}>{translate("projects.settingsTitle")}</MenuItem>
           <MenuItem icon={ArrowUp} disabled={!canMoveUp} onClick={() => { close(); reorder.move(project.id, -1); }}>{translate("sidebar.moveUp")}</MenuItem>
@@ -99,8 +99,8 @@ function SettingsProjectNav({ workspace, projects, projectKey }: { workspace: Wo
   const section = pathname.split(`/settings/projects/${encodeURIComponent(projectKey)}`)[1]?.replace(/^\//, "").split("/")[0] ?? "";
   const known = settingsSections.some((item) => item.path === section) ? section : "";
   return <div className="grid min-w-0 gap-1">
-    <label className="grid min-w-0 gap-1 px-3 text-12 font-medium text-secondary">{translate("sidebar.projectSwitcher")}
-      <select value={projectKey} onChange={(event) => navigate(paths.projectSettings(workspace.slug, event.target.value, known))} className="min-w-0 rounded-lg px-3 py-2 text-14 text-primary">
+    <label className="grid min-w-0 gap-1 px-3 text-[12px] font-medium text-muted-foreground">{translate("sidebar.projectSwitcher")}
+      <select value={projectKey} onChange={(event) => navigate(paths.projectSettings(workspace.slug, event.target.value, known))} className="min-w-0 rounded-lg px-3 py-2 text-[14px] text-foreground">
         {/* The open project may be missing from the list while it loads, or after it was archived: it stays selectable so the sections keep showing. */}
         {!projects.some((project) => project.key === projectKey) && <option value={projectKey}>{projectKey}</option>}
         {projects.map((project) => <option key={project.id} value={project.key}>{project.name}</option>)}
@@ -108,7 +108,7 @@ function SettingsProjectNav({ workspace, projects, projectKey }: { workspace: Wo
     </label>
     <nav aria-label={`${translate("settings.label")} ${projectKey}`}><ul className="grid gap-0.5">
       {settingsSections.map((item) => <li key={item.label}><NavLink end to={paths.projectSettings(workspace.slug, projectKey, item.path)}
-        className={({ isActive }) => `flex items-center rounded-md px-2.5 py-1 text-13 font-medium ${isActive ? "bg-layer-1-selected text-primary" : "text-secondary hover:bg-layer-transparent-hover"}`}>{translate(item.label)}</NavLink></li>)}
+        className={({ isActive }) => `flex items-center rounded-md px-2.5 py-1 text-[13px] font-medium ${isActive ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent"}`}>{translate(item.label)}</NavLink></li>)}
     </ul></nav>
   </div>;
 }
@@ -116,9 +116,9 @@ function SettingsProjectNav({ workspace, projects, projectKey }: { workspace: Wo
 /** Outside a project's settings: every project as one link to its settings, starred first. */
 function SettingsProjectList({ workspace, projects, query }: { workspace: Workspace; projects: Project[]; query: string }) {
   const visible = projects.filter((project) => matchesProjectSearch(project, query));
-  return <>{visible.length === 0 && query.trim() ? <p role="status" className="m-0 px-2.5 py-2 text-12 text-secondary">{translate("projects.noSearchResults")}</p> : null}
+  return <>{visible.length === 0 && query.trim() ? <p role="status" className="m-0 px-2.5 py-2 text-[12px] text-muted-foreground">{translate("projects.noSearchResults")}</p> : null}
   <ul aria-label={translate("projects.title")} className="grid min-w-0 gap-0.5">{visible.map((project) => <li key={project.id} className="min-w-0">
-    <NavLink to={paths.projectSettings(workspace.slug, project.key)} className={itemClass}><Folder aria-hidden size={14} className="shrink-0 text-secondary" /><span className="truncate">{project.name}</span></NavLink>
+    <NavLink to={paths.projectSettings(workspace.slug, project.key)} className={itemClass}><Folder aria-hidden size={14} className="shrink-0 text-muted-foreground" /><span className="truncate">{project.name}</span></NavLink>
   </li>)}</ul></>;
 }
 
@@ -139,10 +139,10 @@ function ProjectGroups({ workspace, projects, prefs, projectKey, reorder, drag, 
       <ul aria-label={translate("sidebar.starred")} className="grid gap-0.5">{starred.map((project) => entry(project, true))}</ul>
     </>}
     <div className="flex items-center justify-between"><p className={heading}>{translate("projects.title")}</p>
-      <NavLink to={paths.projects(workspace.slug)} end aria-label={translate("sidebar.allProjects")} title={translate("sidebar.allProjects")} className="mt-2 rounded-md p-1 text-secondary hover:bg-layer-transparent-hover"><Plus aria-hidden size={14} /></NavLink></div>
+      <NavLink to={paths.projects(workspace.slug)} end aria-label={translate("sidebar.allProjects")} title={translate("sidebar.allProjects")} className="mt-2 rounded-md p-1 text-muted-foreground hover:bg-accent"><Plus aria-hidden size={14} /></NavLink></div>
     <ul aria-label={translate("projects.title")} className="grid gap-0.5">{others.map((project) => entry(project, false))}</ul>
-    {query.trim() && starred.length + others.length === 0 && <p role="status" className="m-0 px-2.5 py-2 text-12 text-secondary">{translate("projects.noSearchResults")}</p>}
-    {prefs.some((pref) => pref.position !== null) && <Button type="button" title={translate("sidebar.resetOrderTip")} onClick={() => void reorder.reset()} className="mx-2.5 mt-1 justify-self-start bg-transparent px-0 py-1 text-12 font-medium text-secondary hover:bg-transparent hover:text-primary">{translate("sidebar.resetOrder")}</Button>}
+    {query.trim() && starred.length + others.length === 0 && <p role="status" className="m-0 px-2.5 py-2 text-[12px] text-muted-foreground">{translate("projects.noSearchResults")}</p>}
+    {prefs.some((pref) => pref.position !== null) && <Button type="button" title={translate("sidebar.resetOrderTip")} onClick={() => void reorder.reset()} className="mx-2.5 mt-1 justify-self-start bg-transparent px-0 py-1 text-[12px] font-medium text-muted-foreground hover:bg-transparent hover:text-foreground">{translate("sidebar.resetOrder")}</Button>}
   </>;
 }
 
@@ -215,7 +215,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
     <p className={heading}>{translate("sidebar.favorites")}</p>
     <ul className="grid gap-0.5">{favorites.map((page) => <li key={page.id}><NavLink to={page.projectId ? paths.page(workspace.slug, (data ?? []).find((project) => project.id === page.projectId)?.key ?? "", page.id) : paths.wikiPage(workspace.slug, page.id)} className={itemClass}><FileText aria-hidden size={14} /><span className="truncate">{page.title}</span></NavLink></li>)}</ul>
   </> : null;
-  return <nav aria-label={translate("shell.sidebar")} className="flex w-64 shrink-0 max-md:w-auto max-md:flex-1 max-md:border-r-0 flex-col gap-1 overflow-y-auto border-r border-subtle bg-surface-1 p-3">
+  return <nav aria-label={translate("shell.sidebar")} className="flex w-64 shrink-0 max-md:w-auto max-md:flex-1 max-md:border-r-0 flex-col gap-1 overflow-y-auto border-r border-border bg-sidebar p-3">
     <InboxNavLink workspace={workspace} />
     {section === "work" && <>
       <span role="status" aria-live="polite" aria-atomic="true" className="sr-only">{reorderAnnouncement}</span>
@@ -224,9 +224,9 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       <NavLink to={paths.activeCycles(workspace.slug)} className={itemClass}>{translate("cycles.activeTitle")}</NavLink>
       {canSeeAnalytics && <NavLink to={paths.analytics(workspace.slug)} className={itemClass}>{translate("analytics.title")}</NavLink>}
       {favoritesBlock}
-      <label className="grid gap-1 px-3 pt-2 text-12 font-medium text-secondary">
+      <label className="grid gap-1 px-3 pt-2 text-[12px] font-medium text-muted-foreground">
         {translate("projects.find")}
-        <Input type="search" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder={translate("projects.searchPlaceholder")} className="min-h-9 min-w-0 rounded-lg px-3 py-2 text-13" />
+        <Input type="search" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder={translate("projects.searchPlaceholder")} className="min-h-9 min-w-0 rounded-lg px-3 py-2 text-[13px]" />
       </label>
       <ProjectGroups workspace={workspace} projects={projectList} prefs={prefs} projectKey={projectKey} reorder={reorder} drag={drag} query={projectQuery} />
     </>}
@@ -257,9 +257,9 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       {webhooksOn && <NavLink to={paths.workspaceWebhooks(workspace.slug)} className={itemClass}>{translate("outboundWebhooks.nav")}</NavLink>}
       <NavLink to={paths.workspaceProjectOrder(workspace.slug)} className={itemClass}>{translate("settings.projectOrder")}</NavLink>
       <p className={heading}>{translate("projects.title")}</p>
-      <label className="grid gap-1 px-3 pt-2 text-12 font-medium text-secondary">
+      <label className="grid gap-1 px-3 pt-2 text-[12px] font-medium text-muted-foreground">
         {translate("projects.find")}
-        <Input type="search" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder={translate("projects.searchPlaceholder")} className="min-h-9 min-w-0 rounded-lg px-3 py-2 text-13" />
+        <Input type="search" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder={translate("projects.searchPlaceholder")} className="min-h-9 min-w-0 rounded-lg px-3 py-2 text-[13px]" />
       </label>
       <SettingsProjectList workspace={workspace} projects={[...projectSort.starred, ...projectSort.others]} query={projectQuery} />
     </>}

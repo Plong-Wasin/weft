@@ -30,6 +30,6 @@ export function CreateWorkspaceForm({ onCreated, onCancel }: { onCreated: (works
     }} /></label>
     <label className="grid gap-1.5">{translate("workspace.slug")}<Input required pattern="[a-z0-9]+(-[a-z0-9]+)*" value={slug} onChange={(event) => setSlug(event.target.value)} /></label>
     <div className="flex gap-2"><Button>{translate("workspace.create")}</Button>{onCancel && <Button type="button" className="secondary" onClick={onCancel}>{translate("workspace.close")}</Button>}</div>
-    {error && <p role="alert" className="text-danger-text">{error}</p>}
+    {error && <p role="alert" className="text-destructive">{error}</p>}
   </form>;
 }

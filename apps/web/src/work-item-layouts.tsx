@@ -49,6 +49,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   /** Previews of released bars whose save is still running, so a bar never snaps back before the server answers. */
   const [ganttSaving, setGanttSaving] = React.useState<Record<string, GanttPreview>>({});
   const [items, setItems] = React.useState<Item[]>([]);
+  /** Board cards whose overflow properties a pointer user opened with the "+N" button. */
+  const [expandedCards, setExpandedCards] = React.useState<string[]>([]);
   // Set once the first list has arrived, so an empty project is not announced while the list is still loading or after it failed to load.
   const [loaded, setLoaded] = React.useState(false);
   const [states, setStates] = React.useState<State[]>([]);
@@ -457,7 +459,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   /** The properties a board card shows, in the same order as a list row. */
   const propertiesOf = (item: Item, hideState = false) => (["state", "priority", "estimate", "assignee", "labels", "dates", "cycle", "modules"] as const)
     .filter((property) => listShows(property) && !(hideState && property === "state"));
-  /** An empty value stays a reachable control showing a muted dash. The icon is dropped for an empty cell only in the one-line table; phones and the narrow fallback keep icon and dash so each cell stays identifiable without the header. */
+  /** An empty value with a mouse is a muted dash that appears on row hover or focus. A touch device (hover: none, at any width, including a phone browser's desktop-site mode) has no hover to reveal it, so the empty cell keeps its grid track but is not painted; phones leave empty properties out of the row entirely. */
   const isEmptyProperty = (item: Item, property: DisplayProperty) => property === "priority" ? item.priority === "none" : property === "estimate" ? !item.estimatePointId
     : property === "assignee" ? item.assigneeIds.length === 0 : property === "labels" ? item.labelIds.length === 0 : property === "dates" ? !item.startDate && !item.dueDate
     : property === "cycle" ? !cycleOf[item.id] : property === "modules" ? (modulesOf[item.id] ?? []).length === 0 : false;
@@ -490,7 +492,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const columnStyle = { "--cols": gridColumns } as React.CSSProperties;
   const propertyCell = (item: Item, property: (typeof allListProperties)[number], mobile = false) => {
     const empty = isEmptyProperty(item, property);
-    return <span key={property} data-list-property={property} data-empty-property={empty ? "true" : undefined} className={`flex min-w-0 items-center justify-end whitespace-nowrap sm:order-6 ${mobile ? "rounded-md bg-muted text-11 text-muted-foreground [&_button]:px-1 [&_button]:py-0 [&_button]:text-11" : ""} ${empty ? "[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-hover/row:pointer-events-auto [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:pointer-events-auto" : ""} [&>*]:max-w-full [&_*]:min-w-0 [&_svg]:shrink-0`}>
+    return <span key={property} data-list-property={property} data-empty-property={empty ? "true" : undefined} className={`flex min-w-0 items-center justify-end whitespace-nowrap sm:order-6 ${mobile ? "rounded-md bg-muted text-11 text-muted-foreground [&_button]:px-1 [&_button]:py-0 [&_button]:text-11" : ""} ${empty ? "[@media(hover:none)]:invisible [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-hover/row:pointer-events-auto [@media(hover:hover)]:group-has-[:focus-visible]/row:opacity-100 [@media(hover:hover)]:group-has-[:focus-visible]/row:pointer-events-auto" : ""} [&>*]:max-w-full [&_*]:min-w-0 [&_svg]:shrink-0`}>
     {cellOf(item, property, false, true)}
   </span>;
   };
@@ -500,7 +502,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     const phoneProperties = allListProperties.filter((property) => !isEmptyProperty(item, property));
     const priorityEmpty = isEmptyProperty(item, "priority");
     return <li key={item.id} data-testid={`row-${item.displayId}`} data-list-row className="work-item-list-row group/row border-b border-border px-1 py-0.5 max-sm:py-0">
-      <div style={columnStyle} className={`mx-1 grid min-w-0 grid-cols-1 gap-y-0 rounded-lg px-3 py-1 max-sm:py-0.5 ${selected.includes(item.id) ? "bg-background" : "bg-transparent hover:bg-accent"} sm:grid-cols-[var(--cols)] sm:gap-x-2 sm:gap-y-0 sm:py-0`}>
+      <div style={columnStyle} className={`mx-1 grid min-w-0 grid-cols-1 gap-y-0 rounded-lg px-3 py-1 max-sm:py-0.5 ${selected.includes(item.id) ? "bg-background" : "bg-transparent hover:bg-accent"} sm:grid-cols-[var(--cols)] sm:items-center sm:gap-x-2 sm:gap-y-0 sm:py-0`}>
         <div className="flex min-h-10 min-w-0 items-center gap-2 sm:contents">
           <span className="flex size-4 shrink-0 items-center justify-center sm:order-1">{checkbox ? React.cloneElement(checkbox, { className: `${checkbox.props.className ?? ""} rounded-sm` }) : <span aria-hidden />}</span>
           <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} title={item.title} className="min-w-0 flex-1 truncate text-14 font-medium text-foreground sm:order-5">{item.title}</Link>
@@ -513,7 +515,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
             {oneLine ? shownProperties.map((property) => propertyCell(item, property))
               : <div data-testid="list-property-wrap" className="flex min-w-0 flex-wrap items-center justify-end gap-x-1 gap-y-1 sm:col-span-full">{shownProperties.map((property) => propertyCell(item, property))}</div>}
           </div>
-          {phoneProperties.map((property) => <span key={`phone-${property}`} data-phone-property className="min-w-0 max-w-[3rem] sm:hidden">{propertyCell(item, property, true)}</span>)}
+          {phoneProperties.map((property) => <span key={`phone-${property}`} data-phone-property className="min-w-0 max-w-[8rem] sm:hidden">{propertyCell(item, property, true)}</span>)}
           {rowActionCell && <span className="sm:order-7">{rowActionCell}</span>}
         </div>
       </div>
@@ -713,10 +715,10 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     <aside aria-label={t("layout.gantt.undated")} className="mt-2 rounded-lg bg-muted p-3"><h3 className="mb-2 text-13 font-medium">{t("layout.gantt.undated")}</h3>{gantt.undated.length ? <ul className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">{gantt.undated.map((item) => <li key={item.id}><Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="block rounded-md px-2 py-1.5 text-13 text-foreground hover:bg-accent">{item.title}</Link></li>)}</ul> : <p className="text-13 text-muted-foreground">{t("layout.gantt.noUndated")}</p>}</aside>
   </section>;
 
-  const toolbar = <div data-testid="work-items-toolbar" className="work-items-toolbar flex flex-wrap items-center gap-2 [@media(max-height:480px)]:[&_span]:sr-only">
+  const toolbar = <div data-testid="work-items-toolbar" className="work-items-toolbar flex flex-wrap items-center gap-2 [@media(max-height:480px)]:[&_span:not([data-slot=checkbox]):not([data-slot=checkbox]_*):not(:has([data-slot=checkbox]))]:sr-only">
     <div role="group" aria-label={t("layout.switch")} className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
       {(["list", "board", "spreadsheet", "calendar", "gantt"] as const).map((layout) => { const Icon = layout === "list" ? List : layout === "board" ? Columns3 : layout === "spreadsheet" ? Table2 : layout === "calendar" ? CalendarDays : BarChart3; return <Button key={layout} type="button" aria-pressed={params.layout === layout} aria-label={t(`layout.${layout}`)} title={t(`layout.${layout}`)}
-        className={`inline-flex items-center rounded-md p-1.5 max-sm:min-h-9 max-sm:min-w-9 max-sm:flex-col max-sm:justify-center max-sm:gap-0.5 ${params.layout === layout ? "bg-card text-foreground shadow-sm" : "bg-transparent text-muted-foreground hover:bg-accent"} hover:text-foreground`} onClick={() => update({ layout })}><Icon aria-hidden size={16} /><span className="hidden text-11 leading-none max-sm:inline">{t(`layout.${layout}`)}</span></Button>; })}
+        className={`inline-flex items-center rounded-md p-1.5 max-sm:min-h-9 max-sm:min-w-9 max-sm:flex-col max-sm:justify-center max-sm:gap-0.5 ${params.layout === layout ? "bg-card text-foreground shadow-sm" : "bg-transparent text-muted-foreground max-sm:text-foreground hover:bg-accent"} hover:text-foreground`} onClick={() => update({ layout })}><Icon aria-hidden size={16} /><span className="hidden text-11 leading-none max-sm:inline">{t(`layout.${layout}`)}</span></Button>; })}
     </div>
     {selectable && <label className="inline-flex min-h-11 cursor-pointer items-center" title={t("bulk.selectAll")}><span className={cn(toolbarSecondarySm, "gap-2")}><Checkbox className="size-4" checked={allPicked} onChange={() => setSelected(allPicked ? [] : orderedIds.slice(0, 500))} /><span className="sr-only">{t("bulk.selectAll")}</span><span aria-hidden>{t("bulk.selectShown")}</span></span></label>}
     <FilterPicker sections={sections} filters={chips ?? emptyFilters()} count={filterCount} onChange={setFilters} onClear={() => update({ q: "" })} />
@@ -771,7 +773,12 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
         </div>
         {cardProperties.length > 0 && <div data-testid="card-properties" className="flex min-w-0 flex-nowrap items-center gap-1.5 overflow-x-auto [@media(pointer:coarse)]:gap-2">
           {visibleCardProperties.map((property) => <React.Fragment key={property}>{cellOf(item, property, true)}</React.Fragment>)}
-          {hiddenCardProperties.length > 0 && <span className="shrink-0 text-12 text-muted-foreground" title={hiddenCardProperties.map((property) => t(`layout.property.${property}`)).join(", ")}>+{hiddenCardProperties.length}</span>}
+          {/* Overflow properties stay rendered and in the tab order: a keyboard user reveals each by focusing it, a pointer user opens them all with "+N". */}
+          {hiddenCardProperties.length > 0 && <span data-testid="card-overflow-properties" onFocus={(event) => event.target.scrollIntoView({ block: "nearest", inline: "nearest" })} className={`flex shrink-0 items-center gap-1.5 [@media(pointer:coarse)]:gap-2 ${expandedCards.includes(item.id) ? "" : "max-w-0 overflow-hidden focus-within:max-w-none focus-within:overflow-visible"}`}>
+            {hiddenCardProperties.map((property) => <React.Fragment key={property}>{cellOf(item, property, true)}</React.Fragment>)}
+          </span>}
+          {hiddenCardProperties.length > 0 && !expandedCards.includes(item.id) && <Button type="button" data-no-drag aria-expanded={false} aria-label={`${t("workItems.more")}: ${hiddenCardProperties.map((property) => t(`layout.property.${property}`)).join(", ")}`} title={hiddenCardProperties.map((property) => t(`layout.property.${property}`)).join(", ")}
+            className="shrink-0 rounded-md bg-transparent px-1.5 py-0.5 text-12 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => setExpandedCards((list) => [...list, item.id])}>+{hiddenCardProperties.length}</Button>}
           {cardProperties.filter((property) => isEmptyProperty(item, property)).map((property) => <span key={property} className={active ? "" : "opacity-0"}>{cellOf(item, property, true)}</span>)}
         </div>}
       </div>;

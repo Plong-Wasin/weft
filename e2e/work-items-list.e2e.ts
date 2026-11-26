@@ -511,9 +511,63 @@ try {
     return { height: rect.height, borderWidth: style.borderTopWidth, background: style.backgroundColor };
   })));
   check(secondaryMetrics.every((metric) => metric.height <= 36 && metric.borderWidth === "1px" && (metric.background === "rgba(0, 0, 0, 0)" || metric.background === "transparent")), "390px secondary toolbar controls share the outline-sm treatment: " + JSON.stringify(secondaryMetrics));
+  // Reads each toolbar control as the user sees it: its accessible label, its text colour and the colour behind it, and the WCAG contrast ratio between them.
+  const readToolbarContrast = () => mobilePage.evaluate(() => {
+    const toolbar = document.querySelector<HTMLElement>('[data-testid="work-items-toolbar"]');
+    // A 2D canvas resolves any computed colour (oklch, color-mix, rgb) to 8-bit sRGB, so the contrast is measured on the colour the browser paints.
+    const context = document.createElement("canvas").getContext("2d", { willReadFrequently: true })!;
+    const parse = (value: string) => {
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = "rgba(0, 0, 0, 0)";
+      context.fillStyle = value;
+      context.fillRect(0, 0, 1, 1);
+      const [r, g, b, a] = context.getImageData(0, 0, 1, 1).data;
+      return { r: r!, g: g!, b: b!, a: a! / 255 };
+    };
+    const luminance = ({ r, g, b }: { r: number; g: number; b: number }) => {
+      const [R, G, B] = [r, g, b].map((channel) => { const s = channel / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; });
+      return 0.2126 * R! + 0.7152 * G! + 0.0722 * B!;
+    };
+    const pageBackground = parse(getComputedStyle(document.body).backgroundColor);
+    const backdrop = (element: HTMLElement) => {
+      for (let node: HTMLElement | null = element; node; node = node.parentElement) {
+        const color = parse(getComputedStyle(node).backgroundColor);
+        if (color.a > 0) return color;
+      }
+      return pageBackground;
+    };
+    const controls = [...(toolbar?.querySelectorAll<HTMLElement>("button, a[href], label") ?? [])].filter((element) => {
+      const style = getComputedStyle(element);
+      return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
+    });
+    return controls.map((element) => {
+      const text = element.textContent?.trim() ?? "";
+      const name = element.getAttribute("aria-label") ?? element.getAttribute("title") ?? text;
+      const foreground = parse(getComputedStyle(element).color);
+      const background = backdrop(element);
+      const [hi, lo] = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+      return { name, text, color: getComputedStyle(element).color, background: `rgb(${background.r}, ${background.g}, ${background.b})`, ratio: Number(((hi! + 0.05) / (lo! + 0.05)).toFixed(2)) };
+    });
+  });
+  const assertToolbarReadable = async (label: string) => {
+    const controls = await readToolbarContrast();
+    check(controls.length >= 6 && controls.every((control) => control.name.trim() !== ""), `${label}: every toolbar control has an accessible label: ${JSON.stringify(controls.filter((control) => control.name.trim() === ""))}`);
+    check(controls.every((control) => control.ratio >= 4.5), `${label}: toolbar text contrast is at least 4.5:1: ${JSON.stringify(controls.filter((control) => control.ratio < 4.5))}`);
+  };
+  for (const theme of ["light", "dark"] as const) {
+    // Stored the way the app stores it (theme.ts): a reload applies the theme before first paint, so the check reads the page a user gets.
+    await mobilePage.evaluate((value) => localStorage.setItem("weft.theme", value), theme);
+    await mobilePage.goto(mobileListUrl);
+    await mobilePage.getByTestId("row-MOB-1").getByRole("button", { name: `${translate("workItems.cycle")}: Sprint 17` }).waitFor();
+    await assertToolbarReadable(`390px ${theme} after reload`);
+    await mobilePage.screenshot({ path: `${evidenceShots}/work-items-list-touch-390-${theme}.png`, fullPage: true });
+  }
+  // The theme picker switches data-theme at runtime (theme.ts applyTheme); the same toolbar must stay readable after that switch too.
   for (const theme of ["light", "dark"] as const) {
     await mobilePage.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
-    await mobilePage.screenshot({ path: `${evidenceShots}/work-items-list-touch-390-${theme}.png`, fullPage: true });
+    // Colour transitions (transition-colors) still run for a moment after the switch; read the settled colours a user sees.
+    await mobilePage.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished)));
+    await assertToolbarReadable(`390px ${theme} after runtime switch`);
   }
   for (const [width, height] of [[390, 844], [844, 390]] as const) {
     await mobilePage.setViewportSize({ width, height });
@@ -595,6 +649,82 @@ try {
       check(denseRows.length === 2 && denseRows.every((row) => row.elementOverflows.length === 0 && row.glyphOverflows.length === 0), `${width}x${height} ${theme} dense MOB-1/MOB-4 rows contain every chip and glyph: ${JSON.stringify(denseRows)}`);
     }
   }
+  // Touch devices at any width (TouchListAnyWidth): a phone in portrait or landscape, and a phone browser in "Desktop site" mode,
+  // which keeps the touch screen (hover: none, pointer: coarse) but lays the page out about 980px wide, so the wide list grid renders.
+  const assertTouchList = async (target: typeof mobilePage, label: string) => {
+    const media = await target.evaluate(() => ({ hoverNone: matchMedia("(hover: none)").matches, coarse: matchMedia("(pointer: coarse)").matches }));
+    check(media.hoverNone && media.coarse, `${label} runs as a touch device: ${JSON.stringify(media)}`);
+    const touch = await target.evaluate(() => {
+      const shown = (element: Element) => {
+        for (let node: Element | null = element; node; node = node.parentElement) {
+          const style = getComputedStyle(node);
+          if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+        }
+        return element.getClientRects().length > 0;
+      };
+      const box = (element: Element | null | undefined) => { if (!element) return null; const r = element.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height }; };
+      const overlaps = (a: ReturnType<typeof box>, b: ReturnType<typeof box>) => !!a && !!b && a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
+      const rows = [...document.querySelectorAll<HTMLElement>("[data-list-row]")];
+      const measured = rows.map((row) => {
+        const rowBox = row.getBoundingClientRect();
+        const checkbox = row.querySelector<HTMLElement>('[role="checkbox"]');
+        const before = checkbox ? getComputedStyle(checkbox, "::before") : null;
+        const displayId = (row.dataset.testid ?? "").replace(/^row-/, "");
+        const id = [...row.querySelectorAll<HTMLElement>("span")].find((span) => span.children.length === 0 && span.textContent?.trim() === displayId);
+        const title = row.querySelector<HTMLElement>("a[href]");
+        const shownEmpty = [...row.querySelectorAll<HTMLElement>('[data-empty-property="true"]')].filter(shown).map((cell) => cell.dataset.listProperty);
+        const dashes = [...row.querySelectorAll<HTMLElement>("button, span")].filter((element) => element.children.length === 0 && element.textContent?.trim() === "—" && shown(element)).length;
+        const outside = [...row.querySelectorAll<HTMLElement>("button, a[href], [data-list-property], [data-phone-property]")].filter(shown).filter((element) => {
+          const r = element.getBoundingClientRect();
+          return r.left < rowBox.left - 0.5 || r.right > rowBox.right + 0.5 || r.top < rowBox.top - 0.5 || r.bottom > rowBox.bottom + 0.5;
+        }).map((element) => element.getAttribute("aria-label") ?? element.tagName);
+        return {
+          id: row.dataset.testid, height: rowBox.height, shownEmpty, dashes, outside,
+          checkbox: box(checkbox), hitWidth: before ? parseFloat(before.width) : 0, hitHeight: before ? parseFloat(before.height) : 0,
+          checkboxOverId: overlaps(box(checkbox), box(id)), checkboxOverTitle: overlaps(box(checkbox), box(title)),
+          // Rows with the same number of painted properties on the same number of lines, and the same title line count, carry the same data shape, so their heights must match.
+          signature: (() => { const cells = [...row.querySelectorAll<HTMLElement>("[data-list-property], [data-phone-property]")].filter(shown); return `${cells.length}x${new Set(cells.map((cell) => Math.round(cell.getBoundingClientRect().top))).size}`; })() + "/" + (title ? new Set([...(() => { const range = document.createRange(); range.selectNodeContents(title); return range.getClientRects(); })()].map((rect) => Math.round(rect.top))).size : 0),
+        };
+      });
+      const selectAll = document.querySelector<HTMLElement>('[data-testid="work-items-toolbar"] [role="checkbox"]');
+      const selectAllBefore = selectAll ? getComputedStyle(selectAll, "::before") : null;
+      const heights = new Map<string, number[]>();
+      for (const row of measured) heights.set(row.signature, [...heights.get(row.signature) ?? [], row.height]);
+      return {
+        viewportWidth: window.innerWidth, documentWidth: document.documentElement.scrollWidth, rows: measured,
+        selectAll: box(selectAll), selectAllHit: selectAllBefore ? { width: parseFloat(selectAllBefore.width), height: parseFloat(selectAllBefore.height) } : null,
+        unequalHeights: [...heights].filter(([, list]) => Math.max(...list) - Math.min(...list) > 1).map(([signature, list]) => ({ signature, list })),
+      };
+    });
+    check(touch.rows.length >= 5, `${label} renders list rows to measure: ${touch.rows.length}`);
+    check(touch.documentWidth <= touch.viewportWidth, `${label} nothing is wider than the viewport (TouchNoHorizontalOverflow): ${touch.documentWidth} > ${touch.viewportWidth}`);
+    check(touch.rows.every((row) => row.shownEmpty.length === 0 && row.dashes === 0), `${label} paints no empty property slot or dash (TouchNoEmptySlots): ${JSON.stringify(touch.rows.filter((row) => row.shownEmpty.length || row.dashes).map((row) => ({ id: row.id, shownEmpty: row.shownEmpty, dashes: row.dashes })))}`);
+    const smallBox = (rect: { width: number; height: number } | null) => !!rect && rect.width >= 12 && rect.width <= 24 && rect.height >= 12 && rect.height <= 24;
+    check(touch.rows.every((row) => smallBox(row.checkbox) && row.hitWidth >= 44 && row.hitHeight >= 44) && smallBox(touch.selectAll) && !!touch.selectAllHit && touch.selectAllHit.width >= 44 && touch.selectAllHit.height >= 44,
+      `${label} checkboxes draw a 12-24px box with a 44px hit area (TouchSmallCheckbox): ${JSON.stringify({ rows: touch.rows.map((row) => ({ id: row.id, checkbox: row.checkbox, hit: [row.hitWidth, row.hitHeight] })), selectAll: touch.selectAll, selectAllHit: touch.selectAllHit })}`);
+    check(touch.rows.every((row) => !row.checkboxOverId && !row.checkboxOverTitle), `${label} the checkbox never covers the ID or title (TouchCheckboxNoOverlap): ${JSON.stringify(touch.rows.filter((row) => row.checkboxOverId || row.checkboxOverTitle))}`);
+    check(touch.rows.every((row) => row.outside.length === 0), `${label} row content stays inside its row (TouchRowContained): ${JSON.stringify(touch.rows.filter((row) => row.outside.length))}`);
+    check(touch.unequalHeights.length === 0, `${label} rows with the same data have equal heights (TouchEqualRowHeights): ${JSON.stringify(touch.unequalHeights)}`);
+  };
+  const desktopSiteContext = await browser.newContext({ viewport: { width: 980, height: 1800 }, deviceScaleFactor: 2.3, isMobile: false, hasTouch: true, storageState: await context.storageState() });
+  const desktopSitePage = await desktopSiteContext.newPage();
+  for (const theme of ["light", "dark"] as const) {
+    await desktopSitePage.addInitScript((value) => localStorage.setItem("weft.theme", value), theme);
+    await desktopSitePage.goto(mobileListUrl);
+    await desktopSitePage.getByTestId("row-MOB-1").getByRole("link", { name: "Alpha" }).waitFor();
+    await assertTouchList(desktopSitePage, `980px desktop-site touch ${theme}`);
+    await desktopSitePage.screenshot({ path: `${evidenceShots}/work-items-list-touch-desktop-site-980-${theme}.png` });
+  }
+  await desktopSiteContext.close();
+  for (const [width, height] of [[390, 844], [844, 390]] as const) {
+    await mobilePage.setViewportSize({ width, height });
+    for (const theme of ["light", "dark"] as const) {
+      await mobilePage.evaluate((value) => localStorage.setItem("weft.theme", value), theme);
+      await mobilePage.goto(mobileListUrl);
+      await mobilePage.getByTestId("row-MOB-1").getByRole("link", { name: "Alpha" }).waitFor();
+      await assertTouchList(mobilePage, `${width}x${height} touch ${theme}`);
+    }
+  }
   await mobilePage.setViewportSize({ width: 390, height: 844 });
   await mobileRow.getByRole("button", { name: `${translate("workItems.cycle")}: Sprint 17` }).waitFor();
   const mobileRowLines = await mobileRow.evaluate((row) => {
@@ -656,22 +786,21 @@ try {
     if (layout === "board") {
       await page.setViewportSize({ width: 1440, height: 900 });
       await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
-      // The board shows the first three populated properties (state hidden when grouped by state); Module sits in the "+N" overflow for MOB-1, so use the visible State chip for focus coverage.
-      const boardStateChip = page.getByTestId("card-MOB-1").getByRole("button", { name: `${translate("workItems.state")}: In Progress` });
-      await boardStateChip.waitFor();
+      const authChip = page.getByTestId("card-MOB-1").getByRole("button", { name: `${translate("workItems.modules")}: Auth` });
+      await authChip.waitFor();
       await page.evaluate(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
-      const defaultOutline = await boardStateChip.evaluate((element) => ({ width: getComputedStyle(element).outlineWidth, style: getComputedStyle(element).outlineStyle, visible: element.matches(":focus-visible") }));
-      check(!defaultOutline.visible && (defaultOutline.style === "none" || defaultOutline.width === "0px"), `Board State chip has no default blue focus box: ${JSON.stringify(defaultOutline)}`);
+      const defaultOutline = await authChip.evaluate((element) => ({ width: getComputedStyle(element).outlineWidth, style: getComputedStyle(element).outlineStyle, visible: element.matches(":focus-visible") }));
+      check(!defaultOutline.visible && (defaultOutline.style === "none" || defaultOutline.width === "0px"), `Auth chip has no default blue focus box: ${JSON.stringify(defaultOutline)}`);
       let keyboardFocused = false;
       for (let attempt = 0; attempt < 100 && !keyboardFocused; attempt += 1) {
         await page.keyboard.press("Tab");
-        keyboardFocused = await boardStateChip.evaluate((element) => document.activeElement === element);
+        keyboardFocused = await authChip.evaluate((element) => document.activeElement === element);
       }
-      check(keyboardFocused, "Board State chip is reachable by keyboard (BoardStateKeyboardReachable)");
-      const keyboardOutline = await boardStateChip.evaluate((element) => ({ width: getComputedStyle(element).outlineWidth, style: getComputedStyle(element).outlineStyle, visible: element.matches(":focus-visible") }));
-      check(keyboardOutline.visible && keyboardOutline.width === "2px", `Board State chip focus ring is 2px: ${JSON.stringify(keyboardOutline)}`);
-      await page.screenshot({ path: `${evidenceShots}/board-state-keyboard-focus-dark-1440.png`, fullPage: true });
-      await boardStateChip.evaluate((element) => element.blur());
+      check(keyboardFocused, "Auth chip is reachable by keyboard (BoardAuthKeyboardReachable)");
+      const keyboardOutline = await authChip.evaluate((element) => ({ width: getComputedStyle(element).outlineWidth, style: getComputedStyle(element).outlineStyle, visible: element.matches(":focus-visible") }));
+      check(keyboardOutline.visible && keyboardOutline.width === "2px", `Auth blue box is the 2px keyboard focus ring: ${JSON.stringify(keyboardOutline)}`);
+      await page.screenshot({ path: `${evidenceShots}/board-auth-keyboard-focus-dark-1440.png`, fullPage: true });
+      await authChip.evaluate((element) => element.blur());
     }
     for (const [width, height] of [[1440, 900], [390, 844]] as const) {
       await page.setViewportSize({ width, height });

@@ -361,6 +361,19 @@ try {
   await page.getByRole("button", { name: translate("workItems.attachAction"), exact: true }).click();
   await page.getByTestId("attachment-dropzone").waitFor({ state: "visible" });
 
+  // On a phone, Add opens the same attachment picker and accepts a file end to end.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("group", { name: translate("workItems.actions") }).getByRole("button", { name: translate("layout.addShort"), exact: true }).click();
+  const [phoneAttachment] = await Promise.all([
+    page.waitForEvent("filechooser"),
+    page.getByRole("menuitem", { name: translate("workItems.attachAction"), exact: true }).click(),
+  ]);
+  await phoneAttachment.setFiles({ name: "phone-attachment.txt", mimeType: "text/plain", buffer: Buffer.from("Attached from the phone menu") });
+  await page.getByTestId("attachments").getByText("phone-attachment.txt", { exact: true }).waitFor();
+  await page.getByRole("button", { name: `${translate("assets.delete")} phone-attachment.txt`, exact: true }).click();
+  await page.getByTestId("attachments").getByText("phone-attachment.txt", { exact: true }).waitFor({ state: "hidden" });
+  await page.setViewportSize({ width: 1440, height: 900 });
+
   // A wiki page image.
   await page.goto(`${web}/${slug}/wiki`);
   await page.getByRole("main").getByRole("button", { name: translate("wiki.new") }).click();

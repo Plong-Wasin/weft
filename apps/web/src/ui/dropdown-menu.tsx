@@ -23,7 +23,7 @@ const DropdownMenuContent = React.forwardRef<HTMLDivElement, MenuPrimitive.Popup
 });
 
 function DropdownMenuItem({ className, ...props }: MenuPrimitive.Item.Props) {
-  return <MenuPrimitive.Item nativeButton data-slot="dropdown-menu-item" className={cn("rounded-[var(--radius)] transition-colors duration-[120ms] hover:bg-accent focus-visible:bg-accent flex w-full cursor-default items-center gap-2 px-2.5 py-1.5 text-left text-sm outline-none select-none focus:bg-accent focus:text-accent-foreground data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 pointer-coarse:min-h-11", className)} {...props} />;
+  return <MenuPrimitive.Item data-slot="dropdown-menu-item" className={cn("rounded-[var(--radius)] transition-colors duration-[120ms] hover:bg-accent focus-visible:bg-accent flex w-full cursor-default items-center gap-2 px-2.5 py-1.5 text-left text-sm outline-none select-none focus:bg-accent focus:text-accent-foreground data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 pointer-coarse:min-h-11", className)} {...props} />;
 }
 
 function DropdownMenuCheckboxItem({ className, children, ...props }: MenuPrimitive.CheckboxItem.Props) {

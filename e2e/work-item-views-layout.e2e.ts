@@ -141,7 +141,8 @@ try {
     faults.push(...await checkboxFaults("spreadsheet", phone.getByTestId("sheet-scroll").getByRole("checkbox")));
     await go(phone, "board");
     await phone.getByTestId("board").getByRole("checkbox").first().waitFor({ state: "attached" });
-    await toolbarOf(phone).locator("label").filter({ has: phone.getByRole("checkbox") }).tap();
+    await toolbarOf(phone).getByRole("button", { name: t("workItems.moreActions"), exact: true }).tap();
+    await phone.getByRole("menuitemcheckbox", { name: t("bulk.selectShown"), exact: true }).tap();
     faults.push(...await checkboxFaults("board", phone.getByTestId("board").getByRole("checkbox")));
     await go(phone, "list");
     await toolbarOf(phone).getByRole("button", { name: t("layout.filters"), exact: true }).tap();
@@ -164,7 +165,8 @@ try {
   });
   await step("phone bulk bar has equal rows and does not trap the last work item under it (390)", async () => {
     await go(phone, "list");
-    await toolbarOf(phone).locator("label").filter({ has: phone.getByRole("checkbox") }).tap();
+    await toolbarOf(phone).getByRole("button", { name: t("workItems.moreActions"), exact: true }).tap();
+    await phone.getByRole("menuitemcheckbox", { name: t("bulk.selectShown"), exact: true }).tap();
     const bar = phone.getByTestId("bulk-bar");
     await bar.waitFor();
     const widths = await bar.getByTestId("bulk-actions").locator("button").evaluateAll((buttons) => buttons.map((button) => Math.round(button.getBoundingClientRect().width)));

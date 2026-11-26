@@ -14,6 +14,7 @@ import { Checkbox } from "@/ui/checkbox";
 import { Input } from "@/ui/input";
 import { DatePicker } from "@/ui/date-picker";
 import { Textarea } from "@/ui/textarea";
+import { cn } from "./lib/utils";
 const t = (key: string) => translate(key as MessageKey);
 const secondarySm = `${buttonVariants({ variant: "secondary", size: "sm" })} bg-transparent text-foreground`;
 const chipClass = "flex items-center gap-1.5 rounded-md border border-transparent bg-muted py-0.5 pl-2 pr-1 text-12 text-foreground";
@@ -23,7 +24,7 @@ export type FilterSection = { key: NamedFilter; options: Option[] };
 const rangeText = (range: { from: string; to: string }) => range.from && range.to ? `${range.from} – ${range.to}` : range.from ? `≥ ${range.from}` : `≤ ${range.to}`;
 
 /** The Filters button with its picker; the chips and the filter query editor are separate pieces so the page can lay them out. */
-export function FilterPicker({ sections, filters, count, onChange, onClear }: { sections: FilterSection[]; filters: Filters; count: number; onChange: (next: Filters) => void; onClear: () => void }) {
+export function FilterPicker({ sections, filters, count, onChange, onClear, compactOnPhone = false }: { sections: FilterSection[]; filters: Filters; count: number; onChange: (next: Filters) => void; onClear: () => void; compactOnPhone?: boolean }) {
   const [search, setSearch] = React.useState("");
   const [open, setOpen] = React.useState<string | null>(null);
   const label = count > 0 ? t("layout.filtersActive").replace("{count}", String(count)) : t("layout.filters");
@@ -36,7 +37,7 @@ export function FilterPicker({ sections, filters, count, onChange, onClear }: { 
   });
   const hasMatches = matchingSections.length > 0 || matchingDates.length > 0;
   const toggle = (key: NamedFilter, id: string, on: boolean) => onChange({ ...filters, [key]: on ? [...filters[key], id] : filters[key].filter((other) => other !== id) });
-  return <Popover label={label} className={secondarySm} panelRole="dialog" panelClassName="grid w-72 max-w-[calc(100vw-2rem)] max-h-[min(32rem,calc(100dvh-2rem))] gap-1 overflow-auto p-2" trigger={<><Filter aria-hidden size={14} /><span>{label}</span></>}>
+  return <Popover label={label} className={cn(secondarySm, compactOnPhone && "phone-layout:size-11 phone-layout:shrink-0 phone-layout:justify-center phone-layout:p-0")} panelRole="dialog" panelClassName="grid w-72 max-w-[calc(100vw-2rem)] max-h-[min(32rem,calc(100dvh-2rem))] gap-1 overflow-auto p-2" trigger={<><Filter aria-hidden size={14} /><span className={compactOnPhone ? "phone-layout:sr-only" : undefined}>{label}</span></>}>
     {() => <>
       <label className="relative my-0 block"><span className="sr-only">{t("layout.filter.search")}</span>
         <Search aria-hidden size={14} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -143,6 +144,6 @@ function FilterQueryGenerate({ scope, onQuery }: { scope: FilterQueryScope; onQu
   </div>;
 }
 
-export function FilterQueryToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
-  return <Button type="button" variant="secondary" size="sm" className="bg-transparent text-foreground aria-pressed:bg-muted" aria-pressed={open} aria-label={t("layout.filterQuery.toggle")} title={t("layout.filterQuery.toggle")} onClick={onToggle}><Code2 aria-hidden size={14} /><span className="max-sm:sr-only">{t("layout.filterQuery.button")}</span></Button>;
+export function FilterQueryToggle({ open, onToggle, className }: { open: boolean; onToggle: () => void; className?: string }) {
+  return <Button type="button" variant="secondary" size="sm" className={cn("bg-transparent text-foreground aria-pressed:bg-muted", className)} aria-pressed={open} aria-label={t("layout.filterQuery.toggle")} title={t("layout.filterQuery.toggle")} onClick={onToggle}><Code2 aria-hidden size={14} /><span className="max-sm:sr-only">{t("layout.filterQuery.button")}</span></Button>;
 }

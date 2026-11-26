@@ -2,7 +2,7 @@ import { Button } from "@/ui/button";
 import { copyText } from "./toast";
 import React from "react";
 import { Link, useNavigate } from "react-router";
-import { BookmarkPlus, ChevronRight, Globe, Layers, Lock, MoreHorizontal, Plus, Search, X } from "lucide-react";
+import { ChevronRight, Globe, Layers, Lock, MoreHorizontal, Plus, Search, X } from "lucide-react";
 import { formatDate, translate, type MessageKey } from "@weft/shared";
 import { action, actionResult } from "./api";
 import { paths } from "./routes";
@@ -174,14 +174,9 @@ export function ViewsPage({ workspaceSlug, project, selfId }: Scope) {
 }
 
 /** "Save as view" next to the filter and display controls: saves what is applied now as a new View and opens it. */
-export function SaveAsViewButton({ params, project, workspaceSlug }: { params: LayoutParams; project: Project; workspaceSlug: string }) {
-  const [open, setOpen] = React.useState(false);
+export function SaveAsViewModal({ params, project, workspaceSlug, onClose }: { params: LayoutParams; project: Project; workspaceSlug: string; onClose: () => void }) {
   const navigate = useNavigate();
-  return <>
-    {/* On phone the label drops out of the toolbar (the icon and title remain), so the toolbar fits in two rows. */}
-    <Button type="button" variant="ghost" className="max-sm:min-h-9" aria-label={t("views.saveAs")} title={t("views.saveAs")} onClick={(event) => { event.currentTarget.focus(); setOpen(true); }}><BookmarkPlus aria-hidden size={14} /><span className="max-sm:sr-only">{t("views.saveAs")}</span></Button>
-    {open && <ViewFormModal mode="save" target={{ projectId: project.id }} settings={paramsToSettings(params)} onClose={() => setOpen(false)} onSaved={(view) => { setOpen(false); navigate(paths.view(workspaceSlug, project.key, view.id)); }} />}
-  </>;
+  return <ViewFormModal mode="save" target={{ projectId: project.id }} settings={paramsToSettings(params)} onClose={onClose} onSaved={(view) => { onClose(); navigate(paths.view(workspaceSlug, project.key, view.id)); }} />;
 }
 
 /** One View: its saved settings are applied to the URL once, then the usual layouts run on them; changes can be saved back with Update view. */

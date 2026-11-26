@@ -10,7 +10,7 @@ import { Input } from "@/ui/input";
 const DIALOG_WIDTH = 320;
 
 /** The editor Link action: an icon button that opens a small form (URL, Save, Remove, Cancel) instead of the browser prompt. */
-export function LinkButton({ editor, disabled = false }: { editor: Editor | null; disabled?: boolean }) {
+export function LinkButton({ editor, disabled = false, compactOnPhone = false }: { editor: Editor | null; disabled?: boolean; compactOnPhone?: boolean }) {
   const [open, setOpen] = React.useState(false);
   const [url, setUrl] = React.useState("");
   const [place, setPlace] = React.useState<{ top: number; left: number; width: number }>();
@@ -57,8 +57,9 @@ export function LinkButton({ editor, disabled = false }: { editor: Editor | null
       onMouseDown={(event) => event.preventDefault()}
       onClick={() => { if (open) setOpen(false); else openForm(); }}>
       <Link2 aria-hidden size={14} />
+      {compactOnPhone && <span className="editor-tool-label">{label}</span>}
     </Button>
-    {open && <form ref={form} role="dialog" aria-label={label} className="link-dialog m-0" style={place ? { position: "fixed", top: place.top, left: place.left, width: place.width } : undefined} onSubmit={save} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); close(); editor.commands.focus(); } }}>
+    {open && <form ref={form} role="dialog" aria-label={label} className="link-dialog m-0" style={place ? { position: "fixed", top: compactOnPhone ? `var(--editor-link-top, ${place.top}px)` : place.top, left: place.left, width: place.width, "--editor-link-anchor": `${place.top}px` } as React.CSSProperties : undefined} onSubmit={save} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); close(); editor.commands.focus(); } }}>
       <label>{translate("wiki.linkUrl")}<Input autoFocus type="text" inputMode="url" autoCapitalize="off" autoCorrect="off" spellCheck={false} value={url} placeholder={translate("wiki.linkPlaceholder")} onChange={(event) => setUrl(event.target.value)} /></label>
       <small className="text-12 text-muted-foreground">{translate("wiki.linkHelp")}</small>
       <div className="flex flex-wrap gap-2">

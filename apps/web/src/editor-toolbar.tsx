@@ -8,7 +8,7 @@ import { SourceModeButton } from "./editor-source-mode";
 import { withShortcut } from "./shortcuts";
 
 /** One slim row of icon buttons shared by the Work item description and the comment composer. Each button names itself, shows its shortcut in the tooltip and reports its active state. */
-export function EditorToolbar({ editor, label, testId, onImage, source, end }: { editor: Editor | null; label: string; testId: string; onImage?: () => void; source?: { active: boolean; onToggle: () => void }; end?: React.ReactNode }) {
+export function EditorToolbar({ editor, label, testId, onImage, source, end, compactOnPhone = false }: { editor: Editor | null; label: string; testId: string; onImage?: () => void; source?: { active: boolean; onToggle: () => void }; end?: React.ReactNode; compactOnPhone?: boolean }) {
   const [, refresh] = React.useReducer((n: number) => n + 1, 0);
   React.useEffect(() => {
     if (!editor) return;
@@ -18,11 +18,11 @@ export function EditorToolbar({ editor, label, testId, onImage, source, end }: {
   const run = (action: (chain: ReturnType<NonNullable<Editor>["chain"]>) => unknown) => () => { if (editor) action(editor.chain().focus()); };
   const tool = (name: string, shortcut: string | null, Icon: typeof Bold, onClick: () => void, active?: boolean) => {
     const text = shortcut ? withShortcut(name, shortcut) : name;
-    return <Button key={name} type="button" className="editor-tool !size-7 !p-0" aria-label={name} title={text} aria-pressed={active} onMouseDown={(event) => event.preventDefault()} onClick={onClick}><Icon aria-hidden size={14} /></Button>;
+    return <Button key={name} type="button" className="editor-tool !size-7 !p-0" aria-label={name} title={text} aria-pressed={active} onMouseDown={(event) => event.preventDefault()} onClick={onClick}><Icon aria-hidden size={14} />{compactOnPhone && <span className="editor-tool-label">{name}</span>}</Button>;
   };
   const separator = (id: string) => <span key={id} aria-hidden className="editor-tool-sep" />;
   const ed = editor;
-  return <div role="toolbar" aria-label={label} data-testid={testId} className="editor-toolbar rounded-lg bg-muted p-0">
+  return <div role="toolbar" aria-label={label} data-testid={testId} className="editor-toolbar rounded-lg">
     {tool(translate("wiki.tool.bold"), "B", Bold, run((chain) => chain.toggleBold().run()), ed?.isActive("bold"))}
     {tool(translate("wiki.tool.italic"), "I", Italic, run((chain) => chain.toggleItalic().run()), ed?.isActive("italic"))}
     {tool(translate("wiki.tool.underline"), "U", Underline, run((chain) => chain.toggleUnderline().run()), ed?.isActive("underline"))}
@@ -34,12 +34,12 @@ export function EditorToolbar({ editor, label, testId, onImage, source, end }: {
     {tool(translate("wiki.insert.todo"), "Shift+9", ListChecks, run((chain) => chain.toggleTaskList().run()), ed?.isActive("taskList"))}
     {tool(translate("wiki.tool.quote"), "Shift+B", Quote, run((chain) => chain.toggleBlockquote().run()), ed?.isActive("blockquote"))}
     {separator("sep-lists")}
-    <LinkButton key="link" editor={editor} />
+    <LinkButton key="link" editor={editor} compactOnPhone={compactOnPhone} />
     {tool(translate("wiki.insert.table"), null, Table2, run((chain) => chain.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()))}
     {onImage && tool(translate("wiki.insert.image"), null, ImagePlus, onImage)}
-    <span className="editor-toolbar-end">
+    <div className="editor-toolbar-end">
       {end}
-      {source && <SourceModeButton active={source.active} onClick={source.onToggle} />}
-    </span>
+      {source && <SourceModeButton active={source.active} onClick={source.onToggle} compactOnPhone={compactOnPhone} />}
+    </div>
   </div>;
 }

@@ -309,7 +309,7 @@ try {
   await page.getByRole("navigation", { name: `${translate("settings.label")} MOBX` }).getByRole("link", { name: translate("states.title"), exact: true }).click();
   const startedBlock = page.locator("section").filter({ has: page.getByRole("heading", { name: translate("states.group.started") }) }).last();
   await page.getByRole("button", { name: translate("states.add"), exact: true }).click();
-  await page.getByLabel(translate("layout.group"), { exact: true }).selectOption("started");
+  await page.getByLabel(translate("analytics.axis.stateGroup"), { exact: true }).selectOption("started");
   await page.getByLabel(translate("states.name"), { exact: true }).fill("Review");
   await page.getByRole("button", { name: translate("states.create"), exact: true }).click();
   await startedBlock.getByText("Review", { exact: true }).waitFor();

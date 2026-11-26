@@ -1,7 +1,7 @@
 // Browser end-to-end flow: design fixes for the workspace and project settings.
 // Phone width: every settings route fits without a sideways page scroll, a long member name is not cut off, and the
 // Members and access section sits clear of the member list. Desktop: project rows keep one height, settings navigation
-// puts the project finder first, one state form targets a workflow group, and the populated Inbox text stays unclipped.
+// puts the project finder first, one state form targets a workflow group, and the populated Inbox text stays inside its row (clamped text keeps a full-text title).
 // Run with `bun e2e/design-fixes-settings.e2e.ts` (set DATABASE_URL to an isolated test database).
 import { chromium } from "playwright";
 import { createDatabase, notifications } from "../packages/db/src";
@@ -353,20 +353,31 @@ try {
   ]);
   await database.client.end();
   await page.goto(`${web}/${slug}/notifications`);
-  const notificationRows = page.locator("li").filter({ has: page.locator("div[id^='notification-description-']") });
+  const notificationRows = page.locator("li").filter({ has: page.locator("[id^='notification-description-']") });
   await notificationRows.first().waitFor();
   check(await notificationRows.count() === 2, "the Inbox populated-state fixture did not render both notifications");
-  const notificationTextBounds = await notificationRows.evaluateAll((rows) => rows.map((row) => {
-    const content = row.querySelector("div[id^='notification-description-']")!;
-    const bounds = content.getBoundingClientRect();
-    const range = document.createRange();
-    range.selectNodeContents(content);
-    const glyph = range.getBoundingClientRect();
-    const boxes = [...row.children].map((child) => child.getBoundingClientRect());
-    const overlaps = boxes.some((box, index) => boxes.slice(index + 1).some((next) => Math.min(box.right, next.right) - Math.max(box.left, next.left) > 1 && Math.min(box.bottom, next.bottom) - Math.max(box.top, next.top) > 1));
-    return { inside: glyph.left >= bounds.left - 1 && glyph.right <= bounds.right + 1 && glyph.top >= bounds.top - 1 && glyph.bottom <= bounds.bottom + 1, visible: content.scrollHeight <= content.clientHeight + 1 || getComputedStyle(content).overflowY !== "hidden", overlaps };
-  }));
-  check(notificationTextBounds.every((item) => item.inside && item.visible && !item.overlaps), `Inbox notification text clips, overlaps, or escapes its row: ${JSON.stringify(notificationTextBounds)}`);
+  // Linked rows clamp to two lines and carry the full text in a title; a row without a target cannot be opened, so it shows everything.
+  for (const size of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(size);
+    const notificationTextBounds = await notificationRows.evaluateAll((rows) => rows.map((row) => {
+      const content = row.querySelector<HTMLElement>("[id^='notification-description-']")!;
+      const bounds = content.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(content);
+      const glyph = range.getBoundingClientRect();
+      const action = row.querySelector("button")!.getBoundingClientRect();
+      const linked = Boolean(row.querySelector("a"));
+      const within = glyph.left >= bounds.left - 1 && glyph.right <= bounds.right + 1;
+      return {
+        linked,
+        inside: linked ? within : within && glyph.top >= bounds.top - 2 && glyph.bottom <= bounds.bottom + 2,
+        complete: linked ? content.title === content.textContent : content.scrollHeight <= content.clientHeight + 1 && ["none", ""].includes(getComputedStyle(content).webkitLineClamp),
+        overlaps: bounds.right > action.left + 1,
+      };
+    }));
+    check(notificationTextBounds.some((item) => item.linked) && notificationTextBounds.some((item) => !item.linked) && notificationTextBounds.every((item) => item.inside && item.complete && !item.overlaps), `[F2] Inbox notification text is lost, overlaps its action, or escapes its row at ${size.width}px: ${JSON.stringify(notificationTextBounds)}`);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
   console.log("inbox ok: populated rows keep measured text inside their content boxes");
 
   // A real coarse-pointer context keeps the key controls reachable at touch target size.

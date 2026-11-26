@@ -1231,6 +1231,8 @@ export const en = {
     "inbox.navLabel": "Inbox",
     "inbox.unread": "{count} unread",
     "inbox.empty": "No notifications yet.",
+    "inbox.selectNotification": "Select a notification to read it here.",
+    "inbox.open": "Open",
     "inbox.mention": "{actor} mentioned you on",
     "inbox.reply": "{actor} replied to your comment on",
     "inbox.assignment": "{actor} assigned you to",

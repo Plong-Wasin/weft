@@ -3,7 +3,7 @@ import React from "react";
 import { Link, useParams } from "react-router";
 import { formatDate, translate, translateDynamic } from "@weft/shared";
 import { action } from "../api";
-import { useInboxNotificationOpen } from "../inbox";
+import { useInboxNotificationOpen } from "../notification-open";
 import { useWorkspace } from "../layouts/workspace-layout";
 import { paths } from "../routes";
 import { runFailureText } from "../run-failure";

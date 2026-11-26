@@ -15,7 +15,7 @@ import { AttachmentsPanel } from "./asset-images";
 import { uploadAsset } from "./asset-upload";
 import { actionResult, api } from "./api";
 import { paths } from "./routes";
-import { useInboxNotificationOpen } from "./inbox";
+import { useInboxNotificationOpen } from "./notification-open";
 
 import { Input } from "@/ui/input";
 import { DatePicker } from "@/ui/date-picker";

@@ -25,7 +25,7 @@ import { Avatar } from "./avatar";
 import { priorityOrder } from "./work-item-layout";
 import { useWorkspace } from "./layouts/workspace-layout";
 import { useLocale } from "./locale";
-import { useInboxNotificationOpen } from "./inbox";
+import { useInboxNotificationOpen } from "./notification-open";
 import type { Estimate, Label, Member, Project, WorkItem, WorkState } from "./types";
 import { PropertyFields, TypePicker, droppedByTypeChange, missingRequired, propertiesOfType, useWorkItemTypes, type CustomProperty } from "./work-item-types";
 import { DetailsPanelToggle, useDetailsPanel } from "./details-panel";
@@ -115,13 +115,20 @@ const VERSIONS_PAGE = 20;
 /** A page is full at 20 rows, or earlier when the server stopped at its size budget (about 1 MB of Markdown): either way there may be older versions. */
 const hasMoreVersions = (rows: Array<{ contentMarkdown?: string }>) => rows.length >= VERSIONS_PAGE || rows.reduce((sum, row) => sum + (row.contentMarkdown?.length ?? 0), 0) > 700_000;
 /** A work item in full: used as the peek panel body and as the full page. Every property in the sidebar is editable inline. */
-export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displayId: string; mode: "page" | "peek"; onClose?: () => void; onChanged?: () => void }) {
+export function WorkItemDetail({ displayId, mode, onClose, onChanged, onLoaded, onUnavailable }: { displayId: string; mode: "page" | "peek"; onClose?: () => void; onChanged?: () => void; onLoaded?: () => void; onUnavailable?: () => void }) {
   const { workspace, selfId } = useWorkspace();
   const locale = useLocale();
   const integrationsOn = useIntegrationsEnabled();
   const navigate = useNavigate();
   const inboxOpen = useInboxNotificationOpen();
   const [item, setItem] = React.useState<WorkItem | null | undefined>(undefined);
+  const reportedLoaded = React.useRef(false);
+  React.useEffect(() => {
+    if (!item || !onLoaded || reportedLoaded.current) return;
+    reportedLoaded.current = true;
+    onLoaded();
+  }, [item, onLoaded]);
+  React.useEffect(() => { if (item === null) onUnavailable?.(); }, [item, onUnavailable]);
   const [timelineKey, setTimelineKey] = React.useState(0);
   const [project, setProject] = React.useState<Project | null>(null);
   const [states, setStates] = React.useState<WorkState[]>([]);
@@ -239,6 +246,14 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
   }, []);
   // Closing the peek or leaving the page must not lose a description typed in the last moments.
   React.useEffect(() => () => { void flush(); }, [flush]);
+  // The title saves on blur, and an unmounting field never blurs. Only a title typed since the last blur is saved here.
+  const titleDraft = React.useRef<{ id: string; value: string; saved: string } | null>(null);
+  React.useEffect(() => () => {
+    const draft = titleDraft.current;
+    titleDraft.current = null;
+    const next = draft?.value.trim();
+    if (draft && next && next !== draft.saved) void action("update_work_item", { workItemId: draft.id, title: next });
+  }, [displayId]);
 
   // While the item loads, the column shows its shape (title and description blocks) instead of going blank.
   if (item === undefined) return <section aria-busy="true" aria-label={t("workItems.loading")} className="grid content-start gap-6 p-4 sm:p-6" data-testid="work-item-skeleton">
@@ -402,8 +417,8 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged }: { displa
       {mode === "peek" && <p className="m-0 text-13 text-muted-foreground">{item.displayId}</p>}
       <TitleHeading aria-label={title} className="m-0 text-2xl font-semibold leading-tight text-foreground">
       <Textarea ref={titleRef} rows={1} aria-label={t("workItems.titleField")} value={title} maxLength={500} readOnly={!canWrite} className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-2xl font-semibold leading-tight text-foreground md:text-2xl [overflow-wrap:anywhere]"
-        onChange={(event) => setTitle(event.target.value)}
-        onBlur={() => { const next = title.trim(); if (!next) setTitle(item.title); else if (next !== item.title) void change({ title: next }); }}
+        onChange={(event) => { setTitle(event.target.value); titleDraft.current = { id: item.id, value: event.target.value, saved: item.title }; }}
+        onBlur={() => { titleDraft.current = null; const next = title.trim(); if (!next) setTitle(item.title); else if (next !== item.title) void change({ title: next }); }}
         onKeyDown={(event) => { handleImeSafeEnter(event.nativeEvent, () => event.currentTarget.blur()); }} />
       </TitleHeading>
     </div>

@@ -107,11 +107,14 @@ try {
   check(Boolean(notificationId), "scheduled Run notice was not listed for its Originator");
 
   await page.goto(`${web}/${slug}/notifications`);
-  const openRun = page.getByRole("link", { name: translate("inbox.openScheduledRun"), exact: true });
+  // The whole Inbox row is the link, so its name holds the sentence and date around the Run label.
+  const openRun = page.getByRole("link", { name: translate("inbox.openScheduledRun") });
   await openRun.waitFor();
   await noHorizontalOverflow(page, "desktop Inbox");
   await page.screenshot({ path: `${shots}/scheduled-inbox-1440.png`, fullPage: true });
+  // On a wide screen the row selects a summary; its Open link leads to the Run.
   await openRun.click();
+  await page.getByRole("link", { name: translate("inbox.open"), exact: true }).click();
   await page.waitForURL(`${web}/${slug}/runs/${run!.id}`);
   await page.getByRole("heading", { name: translate("runs.scheduled"), exact: true }).waitFor();
   await page.getByText(translate("runs.failure.runtime_capability_missing"), { exact: true }).waitFor();
@@ -138,7 +141,8 @@ try {
   await page.reload();
   await page.getByText(translate("runs.scheduledUnavailable"), { exact: true }).waitFor();
   await page.goto(`${web}/${slug}/notifications`);
-  check(await page.getByRole("link", { name: translate("inbox.openScheduledRun"), exact: true }).count() === 0, "Inbox exposed a scheduled Run after Project access was revoked");
+  await page.getByText(translate("inbox.empty")).waitFor();
+  check(await openRun.count() === 0, "Inbox exposed a scheduled Run after Project access was revoked");
   check((await createNotificationActions(db).listNotifications.handler({ userId: memberIdentity.user.id }, { workspaceId: workspace.id })).notifications.length === 0, "permission-filtered Inbox still returned the scheduled notice");
 
   console.log(`scheduled capability notification: inbox → run detail and revoked Project access verified; screenshots: ${shots}`);

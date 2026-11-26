@@ -9,6 +9,7 @@ import { paths } from "./routes";
 import { inboxNotificationIdFromSearch, notificationTarget, notificationTargetWithInboxId, withoutInboxNotificationId } from "./notification-target";
 import { autoRuleReasonText } from "./auto-rule-reason";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { PageHeader } from "./shell/page-header";
 
 
 type Workspace = { id: string; slug: string; name: string };
@@ -64,7 +65,7 @@ export function InboxLink({ workspace }: { workspace: Workspace }) {
   const label = translate("topbar.notifications");
   return <Tooltip><TooltipTrigger render={<Link to={paths.notifications(workspace.slug)} aria-label={label}
     className="relative inline-flex items-center justify-center rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-foreground pointer-coarse:min-h-11 pointer-coarse:min-w-11"><Bell aria-hidden size={18} />
-    {unread > 0 && <span aria-label={translate("inbox.unread").replace("{count}", formatNumber(unread))} className="absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-primary px-1 text-[12px] font-semibold text-primary-foreground">{formatNumber(unread)}</span>}
+    {unread > 0 && <span aria-label={translate("inbox.unread").replace("{count}", formatNumber(unread))} className="absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-[var(--primary)] px-1 text-[12px] font-semibold text-primary-foreground">{formatNumber(unread)}</span>}
   </Link>} /><TooltipContent>{label}</TooltipContent></Tooltip>;
 }
 
@@ -74,7 +75,7 @@ export function InboxNavLink({ workspace }: { workspace: Workspace }) {
   const unread = data?.unreadCount ?? 0;
   return <Link to={paths.notifications(workspace.slug)} aria-label={`${translate("inbox.navLabel")}${unread ? `, ${translate("inbox.unread").replace("{count}", formatNumber(unread))}` : ""}`}
     className="flex items-center justify-between gap-2 transition-colors min-h-9 max-md:min-h-11 rounded-lg px-3 py-1.5 text-[14px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground">
-    <span>{translate("inbox.navLabel")}</span>{unread > 0 && <span className="rounded-full bg-primary px-1.5 text-[12px] font-semibold text-primary-foreground">{formatNumber(unread)}</span>}
+    <span>{translate("inbox.navLabel")}</span>{unread > 0 && <span className="rounded-full bg-[var(--primary)] px-1.5 text-[12px] font-semibold text-primary-foreground">{formatNumber(unread)}</span>}
   </Link>;
 }
 
@@ -87,8 +88,8 @@ export function InboxPanel({ workspace }: { workspace: Workspace }) {
   const markUnread = useMutation({ mutationFn: (notificationId: string) => call("mark_notification_unread", { notificationId }), ...changed });
   const markAll = useMutation({ mutationFn: () => call("mark_all_notifications_read", { workspaceId: workspace.id }), ...changed });
   const shown = (data?.notifications ?? []).filter((item) => !unreadOnly || item.readAt === null);
-  return <section aria-labelledby="inbox-title" className="mx-auto w-full max-w-5xl">
-    <h1 id="inbox-title" className="mb-5 text-[24px] font-semibold text-foreground">{translate("inbox.title")}{data ? ` — ${translate("inbox.unread").replace("{count}", formatNumber(data.unreadCount))}` : ""}</h1>
+  return <section aria-labelledby="inbox-title" className="w-full max-w-5xl">
+    <PageHeader title={<span id="inbox-title">{translate("inbox.title")}</span>} actions={data ? <span className="text-sm text-muted-foreground">{translate("inbox.unread").replace("{count}", formatNumber(data.unreadCount))}</span> : undefined} className="mb-5" />
     {isError && <p role="alert">{translate("inbox.failed")}</p>}
     <div className="mb-4 flex flex-wrap items-center gap-2">
       <div role="group" aria-label={translate("inbox.title")} className="inline-flex rounded-lg border border-border bg-muted p-1">
@@ -104,7 +105,7 @@ export function InboxPanel({ workspace }: { workspace: Workspace }) {
         const actionLabelId = `notification-action-${item.id}`;
         const actionLabel = translate(item.readAt ? "inbox.markUnread" : "inbox.markRead");
         return <li key={item.id} className={`grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-3 rounded-xl p-4 transition-colors sm:grid-cols-[auto_minmax(0,1fr)_auto] ${item.readAt ? "bg-muted" : "bg-popover"}`}>
-        <span aria-hidden="true" className={`mt-1.5 size-2 shrink-0 rounded-full ${item.readAt ? "bg-muted-foreground" : "bg-primary"}`} />
+        <span aria-hidden="true" className={`mt-1.5 size-2 shrink-0 rounded-full ${item.readAt ? "bg-muted-foreground" : "bg-[var(--primary)]"}`} />
         <div id={descriptionId} className={`min-w-0 ${item.readAt ? "" : "font-medium"}`}>
         {item.kind === "recurrence_paused" ? `${translate(inboxMessage[item.kind])}: ${item.detail ?? ""}` : <>{translate(item.kind === "wake_skipped" ? `inbox.wakeSkipped.${item.detail ?? "no_agent_access"}` as never : item.kind === "run_skipped" && item.detail ? `inbox.runSkipped.${item.detail}` as never : inboxMessage[item.kind]).replace("{actor}", item.actorName)}{" "}
         {item.workItemId || item.wikiPageId || item.runId ? <Link to={item.readAt ? notificationTarget(workspace.slug, item) : notificationTargetWithInboxId(workspace.slug, item, item.id)}>{item.wikiPageId ? item.pageTitle : item.runId ? translate("inbox.openScheduledRun") : `${item.displayId} ${item.workItemTitle}`}</Link> : <span>{item.kind === "secret_output_blocked" ? translate("inbox.secretOutputBlockedDetail") : item.detail}</span>}{item.kind === "auto_rule" && item.detail && <>{": "}{autoRuleReasonText(item.detail, translate)}</>}</>}{" "}

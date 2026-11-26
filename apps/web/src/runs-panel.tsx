@@ -22,7 +22,7 @@ const pretty = (value: unknown) => typeof value === "string" ? value : JSON.stri
 function StepView({ step }: { step: Step }) {
   if (step.kind === "tool_call") return <li data-step="tool_call" className="grid gap-1">
     <span className="font-medium">{translate("runs.tool")}: {step.toolName}{step.failed ? ` (${translate("runs.toolFailed")})` : ""}</span>
-    <details className="text-12 text-tertiary"><summary className="cursor-pointer">{translate("ai.details")}</summary>
+    <details className="text-12 text-muted-foreground"><summary className="cursor-pointer">{translate("ai.details")}</summary>
       {step.input === null && step.result === null ? <p className="m-0">{translate("runs.hidden")}</p> : <><pre className="whitespace-pre-wrap">{pretty(step.input)}</pre>{step.result !== null && <pre className="whitespace-pre-wrap">{pretty(step.result)}</pre>}</>}</details>
   </li>;
   if (step.kind === "person") return <li data-step="person"><span className="font-medium">{translate("runs.personMessage").replace("{name}", () => step.author)}: </span>{step.text}</li>;
@@ -39,7 +39,7 @@ const sessionReasonKeys = {
 function RunSession({ run }: { run: Run }) {
   if (!run.sessionMode) return null;
   const reason = run.sessionReason && run.sessionReason in sessionReasonKeys ? translate(sessionReasonKeys[run.sessionReason as keyof typeof sessionReasonKeys]) : null;
-  return <span className="text-12 text-tertiary" data-testid="run-session" data-session-mode={run.sessionMode}>
+  return <span className="text-12 text-muted-foreground" data-testid="run-session" data-session-mode={run.sessionMode}>
     {translate(run.sessionMode === "resumed" ? "runs.session.resumed" : "runs.session.new")}{reason ? ` (${reason})` : ""}
   </span>;
 }
@@ -47,7 +47,7 @@ function RunSession({ run }: { run: Run }) {
 /** The Agent and the Runtime a Run ran as and on: the names and labels it kept when it was created, or the live ones. Nothing is shown when neither is known. */
 function RunLabels({ run }: { run: Run }) {
   if (!run.agentName && !run.runtimeLabel) return null;
-  return <span className="flex flex-wrap gap-x-2 text-12 text-tertiary" data-testid="run-labels">
+  return <span className="flex flex-wrap gap-x-2 text-12 text-muted-foreground" data-testid="run-labels">
     {run.agentName && <span data-testid="run-agent">{translate("runs.ranAs").replace("{agent}", () => run.agentName!)}</span>}
     {run.runtimeLabel && <span data-testid="run-runtime">{translate("runs.onRuntime").replace("{runtime}", () => run.runtimeLabel!)}</span>}
   </span>;
@@ -57,7 +57,7 @@ function RunLabels({ run }: { run: Run }) {
 function RunWokenBy({ run }: { run: Run }) {
   if (!run.wokenBy) return null;
   const { runId, agentName, depth } = run.wokenBy;
-  return <span className="flex flex-wrap items-baseline gap-x-1 text-12 text-tertiary" data-testid="run-woken-by">
+  return <span className="flex flex-wrap items-baseline gap-x-1 text-12 text-muted-foreground" data-testid="run-woken-by">
     {runId ? <a href={runFocusHref(runId)}>{translate("runs.wokenBy").replace("{agent}", () => agentName)}</a> : <span>{translate("runs.wokenBy").replace("{agent}", () => agentName)}</span>}
     <span>· {translate("runs.wokenByDepth").replace("{depth}", String(depth))}</span>
   </span>;
@@ -68,7 +68,7 @@ function RunUsage({ run }: { run: Run }) {
   const tokens = run.usageReported ? tokensOf({ inputTokens: run.inputTokens, outputTokens: run.outputTokens, cacheReadTokens: run.cacheReadTokens, cacheCreationTokens: run.cacheCreationTokens }) : null;
   const time = formatDuration(run.elapsedMs, (unit, values) => unit === "seconds" ? translate("usage.duration.seconds").replace("{count}", String(values.count)) : translate("usage.duration.minutes").replace("{minutes}", String(values.minutes)).replace("{seconds}", String(values.seconds)));
   const cost = formatUsd(run.estimatedCostUsd);
-  return <span className="flex flex-wrap gap-x-2 text-12 text-tertiary" data-testid="run-usage">
+  return <span className="flex flex-wrap gap-x-2 text-12 text-muted-foreground" data-testid="run-usage">
     <span data-usage="tokens">{tokens === null ? translate("runs.usageUnknown") : translate("runs.tokens").replace("{count}", String(tokens))}</span>
     <span data-usage="time">{time === null ? translate("runs.timeUnknown") : translate("runs.timeLabel").replace("{time}", time)}</span>
     <span data-usage="cost" title={translate(run.costReported ? "runs.costReportedHelp" : "runs.costHelp")}>{cost === null ? translate("runs.costUnknown") : translate(run.costReported ? "runs.costReportedLabel" : "runs.costLabel").replace("{cost}", cost)}</span>
@@ -89,10 +89,10 @@ function RunCard({ run, workspaceId, highlighted, canControl, action, tick, onCh
   }, [action, run.id, run.status, showTranscript, tick]);
   const control = async (name: "cancel_run" | "rerun_run", extra: { newSession?: boolean } = {}) => { setFailed(await action(name, { runId: run.id, ...extra }) === null); onChanged(); };
   const pending = (transcript?.confirmations ?? []).filter((card) => card.status === "pending").map((card) => card.id);
-  return <li id={`run-${run.id}`} data-run-status={run.status} data-highlighted={highlighted || undefined} className={`grid gap-2 rounded-xl border bg-surface-1 px-4 py-4 ${highlighted ? "border-accent-strong" : "border-subtle"}`}>
+  return <li id={`run-${run.id}`} data-run-status={run.status} data-highlighted={highlighted || undefined} className={`grid gap-2 rounded-xl border bg-card px-4 py-4 ${highlighted ? "border-ring" : "border-border"}`}>
     <div className="flex flex-wrap items-center gap-2 text-14">
       <strong data-testid="run-status">{translate(runStatusKey(run.status))}</strong>
-      <small className="text-tertiary">{formatDate(run.createdAt)} · {translate("runs.attempt").replace("{attempt}", String(run.attempt + 1))}</small>
+      <small className="text-muted-foreground">{formatDate(run.createdAt)} · {translate("runs.attempt").replace("{attempt}", String(run.attempt + 1))}</small>
       <RunLabels run={run} />
       <RunUsage run={run} />
       <RunSession run={run} />
@@ -102,14 +102,14 @@ function RunCard({ run, workspaceId, highlighted, canControl, action, tick, onCh
       {canControl && canRerunRun(run) && <Button type="button" className="secondary" onClick={() => void control("rerun_run", { newSession: true })}>{translate("runs.rerunNewSession")}</Button>}
       {!waiting && <Button type="button" className="secondary" aria-expanded={open} onClick={() => setOpen(!open)}>{translate(open ? "runs.hideTranscript" : "runs.showTranscript")}</Button>}
     </div>
-    {(failureText || run.failureMessage) && <div role="alert" className="grid gap-0.5 text-13 text-danger-text">
+    {(failureText || run.failureMessage) && <div role="alert" className="grid gap-0.5 text-13 text-destructive">
       {failureText && <p className="m-0">{failureText}</p>}
-      {run.failureMessage && <p className="m-0 text-secondary">{translate("runs.failureDetail").replace("{detail}", () => run.failureMessage!)}</p>}
+      {run.failureMessage && <p className="m-0 text-muted-foreground">{translate("runs.failureDetail").replace("{detail}", () => run.failureMessage!)}</p>}
     </div>}
-    {failed && <p role="alert" className="text-13 text-danger-text">{translate("runs.failed")}</p>}
+    {failed && <p role="alert" className="text-13 text-destructive">{translate("runs.failed")}</p>}
     {showTranscript && <div aria-label={translate("runs.transcript")} data-testid="run-transcript-content" className="[overflow-wrap:anywhere]">
-      {transcript?.runtimeProfile && <div className="rounded-md bg-surface-2 px-3 py-2 text-12" data-testid="run-runtime-profile"><strong>{translate("runs.runtimeProfileHeader")}: {transcript.runtimeProfile.name}</strong> · {translate(transcript.runtimeProfile.sandbox === "full" ? "runtimes.fullAccessWarning" : "runtimes.sandboxEnabled")}</div>}
-      {transcript && transcript.steps.length === 0 && <p className="text-13 text-secondary">{translate("runs.noSteps")}</p>}
+      {transcript?.runtimeProfile && <div className="rounded-md bg-muted px-3 py-2 text-12" data-testid="run-runtime-profile"><strong>{translate("runs.runtimeProfileHeader")}: {transcript.runtimeProfile.name}</strong> · {translate(transcript.runtimeProfile.sandbox === "full" ? "runtimes.fullAccessWarning" : "runtimes.sandboxEnabled")}</div>}
+      {transcript && transcript.steps.length === 0 && <p className="text-13 text-muted-foreground">{translate("runs.noSteps")}</p>}
       <ol className="m-0 grid list-none gap-1.5 p-0 text-13">{transcript?.steps.map((step) => <StepView key={step.seq} step={step} />)}</ol>
     </div>}
     {pending.length > 0 && <ProposalSet ids={pending} refreshKey={tick} onResolved={onChanged} workspaceId={workspaceId} />}
@@ -141,8 +141,8 @@ export function RunsPanel({ workItemId, workspaceId, canControl, selfId, isAdmin
   }, [anyActive, load]);
   if (runs === null || (runs.length === 0 && !focused)) return null;
   return <section aria-labelledby="runs-title" data-testid="runs-panel" className="grid gap-2">
-    <h3 id="runs-title" className="text-16 font-medium text-primary">{translate("runs.title")}</h3>
-    {focused && !runs.some((run) => run.id === focused) && <p role="status" className="text-13 text-secondary">{translate("runs.empty")}</p>}
+    <h3 id="runs-title" className="text-16 font-medium text-foreground">{translate("runs.title")}</h3>
+    {focused && !runs.some((run) => run.id === focused) && <p role="status" className="text-13 text-muted-foreground">{translate("runs.empty")}</p>}
     <ul className="m-0 grid list-none gap-2 p-0">{runs.map((run) => <RunCard key={run.id} run={run} workspaceId={workspaceId} highlighted={run.id === focused} canControl={canControl && (isAdmin || run.originatorId === selfId)} action={action} tick={tick} onChanged={() => void load()} />)}</ul>
   </section>;
 }

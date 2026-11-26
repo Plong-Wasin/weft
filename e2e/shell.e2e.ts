@@ -68,6 +68,33 @@ try {
     const rail = page.getByRole("navigation", { name: translate("shell.rail") });
     check(await rail.evaluate((element) => document.elementFromPoint(32, 90)?.closest("nav") === element), `${state}: sidebar covers the app rail`);
   };
+  const assertCompactSidebar = async (width: number) => {
+    check(await page.getByRole("button", { name: translate("shell.expandSidebar") }).getAttribute("aria-expanded") === "false", `${width}px should start with the secondary sidebar collapsed`);
+    check(await page.locator("#desktop-sidebar").evaluate((element) => element.parentElement?.getBoundingClientRect().width === 0), `${width}px should reserve no width for the collapsed sidebar`);
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${width}px collapsed shell overflows horizontally`);
+    await page.screenshot({ path: `${shots}/shell-${width}-auto-collapsed.png` });
+  };
+  const assertPageHeaderGeometry = async () => {
+    check(await page.getByTestId("page-header").evaluate((header) => {
+      const children = [...header.children] as HTMLElement[];
+      const boxes = children.map((element) => element.getBoundingClientRect());
+      for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i]!; const b = boxes[j]!;
+        if (a.width && b.width && a.height && b.height && Math.min(a.right, b.right) - Math.max(a.left, b.left) > 1 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 1) return false;
+      }
+      for (const element of children) {
+        const bounds = element.getBoundingClientRect();
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+        let node: Text | null;
+        while ((node = walker.nextNode() as Text | null)) {
+          if (!/\S/.test(node.textContent ?? "")) continue;
+          const range = document.createRange(); range.selectNodeContents(node);
+          for (const glyph of [...range.getClientRects()]) if (glyph.left < bounds.left - 1 || glyph.right > bounds.right + 1 || glyph.top < bounds.top - 1 || glyph.bottom > bounds.bottom + 1) return false;
+        }
+      }
+      return true;
+    }), "page header siblings overlap or text glyphs escape their measured row boxes");
+  };
   // The sidebar and the rail slide over CSS transitions: wait until no transition runs, then take the screenshot.
   const sidebarTransitionsDone = () => page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished)));
   // Peeking opens the sidebar on pointer or focus; wait until its position reads open (x >= 64) or closed (x < 0), the same reads the checks make.
@@ -80,6 +107,11 @@ try {
     throw new Error(`${description}: sidebar did not ${open ? "open" : "close"} within 3 s`);
   };
   const captureDesktopSidebarStates = async (prefix: string) => {
+    const expandButton = page.getByRole("button", { name: translate("shell.expandSidebar") });
+    if (await expandButton.count()) {
+      await expandButton.click();
+      await sidebarTransitionsDone();
+    }
     await assertOneSidebarToggle(`${prefix} expanded`);
     await assertFirstTextIsNotCovered(page.getByRole("link", { name: translate("projects.back"), exact: true }), `${prefix} breadcrumb`);
     check(await page.getByRole("navigation", { name: translate("shell.rail") }).isVisible(), `${prefix} expanded: app rail is missing`);
@@ -123,6 +155,7 @@ try {
   await page.getByText(translate("projects.shapeFull"), { exact: true }).click(); // a new project starts Simple; this flow needs Cycles, Modules and Intake
   await page.getByRole("button", { name: translate("projects.create") }).click();
   await page.getByRole("link", { name: /MOB · Mobile/ }).waitFor();
+  await assertPageHeaderGeometry();
   const me = await (await page.request.get(`${api}/api/me`)).json() as { workspaces: Array<{ id: string; slug: string }> };
   const workspaceId = me.workspaces.find((item) => item.slug === slug)!.id;
   const project = await call<{ id: string }>("get_project", { workspaceId, key: "MOB" });
@@ -327,6 +360,7 @@ try {
   await page.getByRole("link", { name: translate("topbar.notifications") }).click();
   await page.waitForURL(`${web}/${slug}/notifications`);
   await page.getByRole("heading", { name: new RegExp(translate("inbox.title")) }).waitFor();
+  await page.screenshot({ path: `${shots}/page-header-inbox-1440-light.png` });
   console.log("shell ok: notifications");
 
   // Theme persists across reload; dark theme screenshot.
@@ -335,6 +369,11 @@ try {
   await page.getByRole("menuitemradio", { name: translate("theme.dark") }).click();
   await page.keyboard.press("Escape");
   check(await page.evaluate(() => document.documentElement.dataset.theme) === "dark", "dark theme not applied");
+  await page.goto(`${web}/${slug}/notifications`);
+  await page.getByRole("heading", { name: new RegExp(translate("inbox.title")) }).waitFor();
+  await page.screenshot({ path: `${shots}/page-header-inbox-1440-dark.png` });
+  await page.goto(`${web}/${slug}/projects/MOB/issues`);
+  await page.getByRole("link", { name: /Alpha shell item/ }).waitFor();
   await captureDesktopSidebarStates("shell-1440-dark");
   await page.reload();
   await page.getByRole("link", { name: /Alpha shell item/ }).waitFor();
@@ -349,9 +388,12 @@ try {
   console.log("shell ok: theme");
 
   // Intermediate desktop width uses the same sidebar states without a content gap.
-  await page.setViewportSize({ width: 1024, height: 900 });
+  await page.setViewportSize({ width: 1024, height: 768 });
   await page.reload();
   await page.getByRole("link", { name: /Alpha shell item/ }).waitFor();
+  await assertCompactSidebar(1024);
+  await page.getByRole("button", { name: translate("shell.expandSidebar") }).click();
+  await sidebarTransitionsDone();
   await captureDesktopSidebarStates("shell-1024-light");
   await page.getByRole("button", { name: translate("profile.menu") }).click();
   await page.getByRole("menuitemradio", { name: translate("theme.dark") }).click();
@@ -361,20 +403,42 @@ try {
   await page.getByRole("menuitemradio", { name: translate("theme.system") }).click();
   await page.keyboard.press("Escape");
 
+  for (const viewport of [{ width: 820, height: 1180, name: "820x1180" }, { width: 844, height: 390, name: "844x390" }]) {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await page.reload();
+    await page.getByRole("link", { name: /Alpha shell item/ }).waitFor();
+    await assertCompactSidebar(viewport.width);
+    await page.screenshot({ path: `${shots}/shell-${viewport.name}-light.png` });
+  }
+
   // Tablet width keeps the workspace switcher directly beside the drawer button.
   await page.setViewportSize({ width: 768, height: 1024 });
   await page.reload();
   await page.getByRole("link", { name: /Alpha shell item/ }).waitFor();
+  await assertCompactSidebar(768);
+  await page.getByRole("button", { name: translate("shell.expandSidebar") }).click();
+  await sidebarTransitionsDone();
   check(await page.getByRole("link", { name: translate("app.title"), exact: true }).count() === 0, "brand link remains in the tablet shell");
   check(await page.getByRole("button", { name: translate("workspace.switch") }).isVisible(), "workspace switcher is missing at tablet width");
   check((await page.getByRole("button", { name: translate("workspace.switch") }).innerText()).includes("E2E team"), "tablet workspace switcher does not identify the current workspace");
-  await captureDesktopSidebarStates("shell-768-light");
+  await page.screenshot({ path: `${shots}/shell-768-light-expanded.png` });
+  await page.getByRole("button", { name: translate("shell.collapseSidebar") }).click();
+  await sidebarTransitionsDone();
+  check(await page.locator("#desktop-sidebar").evaluate((element) => element.parentElement?.getBoundingClientRect().width === 0), "768px manual collapse did not release sidebar width");
+  await page.screenshot({ path: `${shots}/shell-768-light-collapsed.png` });
+  await page.getByRole("button", { name: translate("shell.expandSidebar") }).click();
+  await sidebarTransitionsDone();
   await page.screenshot({ path: `${shots}/shell-768-tablet.png` });
   check(await page.getByRole("button", { name: translate("shell.collapseSidebar") }).isVisible(), "desktop sidebar toggle missing at tablet breakpoint");
   await page.getByRole("button", { name: translate("profile.menu") }).click();
   await page.getByRole("menuitemradio", { name: translate("theme.dark") }).click();
   await page.keyboard.press("Escape");
-  await captureDesktopSidebarStates("shell-768-dark");
+  await page.screenshot({ path: `${shots}/shell-768-dark-expanded.png` });
+  await page.getByRole("button", { name: translate("shell.collapseSidebar") }).click();
+  await sidebarTransitionsDone();
+  await page.screenshot({ path: `${shots}/shell-768-dark-collapsed.png` });
+  await page.getByRole("button", { name: translate("shell.expandSidebar") }).click();
+  await sidebarTransitionsDone();
   await page.getByRole("button", { name: translate("profile.menu") }).click();
   await page.getByRole("menuitemradio", { name: translate("theme.system") }).click();
   await page.keyboard.press("Escape");

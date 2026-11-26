@@ -152,7 +152,7 @@ function PasswordField({ label, value, onChange, visible, onToggle, autoComplete
     <label htmlFor={id} className="text-sm font-medium text-muted-foreground">{label}</label>
     <div className="relative">
       <Input id={id} className={`${fieldClass} ${onToggle ? "pr-10" : ""} ${invalid ? "border-destructive" : ""}`} required type={visible ? "text" : "password"} minLength={minLength} maxLength={256} autoComplete={autoComplete} aria-invalid={invalid || undefined} aria-describedby={[invalid ? describedBy : null, hint ? `${id}-hint` : null].filter(Boolean).join(" ") || undefined} value={value} onChange={(event) => onChange(event.target.value)} />
-      {onToggle && <Button type="button" aria-label={translate(visible ? "auth.hidePassword" : "auth.showPassword")} title={translate(visible ? "auth.hidePassword" : "auth.showPassword")} aria-pressed={visible} onClick={onToggle} className="absolute right-1 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-strong">
+      {onToggle && <Button type="button" aria-label={translate(visible ? "auth.hidePassword" : "auth.showPassword")} title={translate(visible ? "auth.hidePassword" : "auth.showPassword")} aria-pressed={visible} onClick={onToggle} className="absolute right-1 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">
         <Icon size={16} aria-hidden />
       </Button>}
     </div>

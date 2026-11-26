@@ -1,4 +1,5 @@
 import { Button } from "@/ui/button";
+import { PageHeader } from "./shell/page-header";
 import React from "react";
 import { Link, useNavigate } from "react-router";
 import { Archive, ArchiveRestore, CalendarRange, ChevronRight, CircleUserRound, Ellipsis, LayoutGrid, List, Package, Pencil, Plus, Trash2, Users, X } from "lucide-react";
@@ -190,17 +191,11 @@ export function ModulesPage({ workspaceId, workspaceSlug, projectKey, projectId,
   const toggle = (value: Display, icon: React.ReactNode) => <Button type="button" aria-pressed={display === value} aria-label={t(`modules.display.${value}`)} title={t(`modules.display.${value}`)}
     className={`${iconButton} ${display === value ? "bg-accent text-foreground" : ""}`} onClick={() => setDisplay(value)}>{icon}</Button>;
   return <section className="grid gap-4">
-    <header className="flex flex-wrap items-center gap-3 border-b border-border pb-3">
-      <nav aria-label={t("workItems.breadcrumb")} className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Link to={paths.workItems(workspaceSlug, projectKey)} className="text-muted-foreground hover:text-foreground">{projectKey}</Link><ChevronRight aria-hidden size={12} />
-        <Package aria-hidden size={14} /><h2 className="m-0 text-sm font-medium text-foreground">{t("modules.title")}</h2>
-      </nav>
-      <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+    <PageHeader level={2} title={<><Package aria-hidden size={20} />{t("modules.title")}</>} breadcrumb={<><Link to={paths.workItems(workspaceSlug, projectKey)} className="hover:text-foreground">{projectKey}</Link><ChevronRight aria-hidden size={14} /></>} actions={<>
         <label className="flex items-center gap-1.5 whitespace-nowrap text-sm text-muted-foreground"><Checkbox checked={archived} onChange={(event) => setArchived(event.target.checked)} />{t("modules.showArchived")}</label>
         <div role="group" aria-label={t("modules.display")} className="flex items-center gap-0.5 rounded-md bg-muted p-0.5">{toggle("list", <List aria-hidden size={15} />)}{toggle("grid", <LayoutGrid aria-hidden size={15} />)}</div>
         {canWrite && !archived && <Button type="button" className={primaryButton} onClick={() => setForm({})}><Plus aria-hidden size={14} />{t("modules.addNew")}</Button>}
-      </div>
-    </header>
+    </>} className="border-b border-border pb-3" />
     <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card p-3">
       <Input type="search" aria-label={t("modules.searchModules")} placeholder={t("modules.searchModules")} value={search} onChange={(event) => setSearch(event.target.value)} className="w-48" />
       <select aria-label={t("modules.statusFilter")} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">{t("modules.anyStatus")}</option>{statuses.map((value) => <option key={value} value={value}>{t(`modules.status.${value}`)}</option>)}</select>

@@ -117,7 +117,7 @@ function Activity({ pageId, refresh }: { pageId: string; refresh: string }) {
   const [rows, setRows] = React.useState<ActivityRow[]>([]);
   React.useEffect(() => { void call<ActivityRow[]>("list_wiki_page_activities", { pageId }).then((result) => setRows(result ?? [])); }, [pageId, refresh]);
   return <section aria-label={translate("wiki.activity")}>
-    <ul className="m-0 grid list-none gap-2 p-0 text-13 text-secondary">{rows.map((row) => <li key={row.id} className="grid gap-0.5"><span><strong className="font-medium text-primary">{row.actorName}</strong> {translateDynamic(`wiki.activity.${row.field}`) ?? row.field}</span><small className="text-12 text-tertiary">{row.source ? `${translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${row.source}`) ?? row.source)} · ` : ""}{formatDate(row.createdAt)}</small></li>)}</ul>
+    <ul className="m-0 grid list-none gap-2 p-0 text-13 text-muted-foreground">{rows.map((row) => <li key={row.id} className="grid gap-0.5"><span><strong className="font-medium text-foreground">{row.actorName}</strong> {translateDynamic(`wiki.activity.${row.field}`) ?? row.field}</span><small className="text-12 text-muted-foreground">{row.source ? `${translate("workItems.via").replace("{source}", translateDynamic(`activity.source.${row.source}`) ?? row.source)} · ` : ""}{formatDate(row.createdAt)}</small></li>)}</ul>
   </section>;
 }
 type PaneTab = "info" | "outline" | "links" | "comments" | "activity";
@@ -406,16 +406,16 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
     { key: "info", label: translate("wiki.details") }, { key: "outline", label: translate("wiki.outline") }, { key: "links", label: translate("outlinks.title") },
     { key: "comments", label: translate("wiki.comments.tab"), count: threads.length }, { key: "activity", label: translate("wiki.activity") },
   ];
-  const mutedButton = "grid size-7 shrink-0 place-items-center rounded-md !bg-transparent !p-0 text-secondary hover:!bg-layer-transparent-hover hover:text-primary";
+  const mutedButton = "grid size-7 shrink-0 place-items-center rounded-md !bg-transparent !p-0 text-muted-foreground hover:!bg-accent hover:text-foreground";
   return <div className={wide && panelOpen ? "grid gap-6 grid-cols-[minmax(0,1fr)_minmax(0,20rem)]" : "grid gap-6"}>
     <section aria-label={title} className={`min-w-0 w-full ${fullWidth ? "" : "max-w-[760px]"}`}>
     <div className="wiki-print-document">
     <h1 aria-hidden="true" className="wiki-print-title">{title}</h1>
     <div className="flex flex-wrap items-center gap-2">
       <h1 aria-label={title} data-testid="wiki-page-heading" className="m-0 min-w-0 flex-1">
-      <Textarea ref={titleRef} rows={1} className="wiki-edit-title w-full min-w-0 resize-none overflow-hidden border-0 bg-transparent px-0 text-28 font-semibold leading-tight text-primary md:text-40" aria-label={translate("wiki.untitled")} value={title} disabled={!page.canEdit} onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }} onChange={(event) => { setTitle(event.target.value); dirtyTitle.current = event.target.value || translate("wiki.untitled"); schedule(); }} onBlur={onChanged} />
+      <Textarea ref={titleRef} rows={1} className="wiki-edit-title w-full min-w-0 resize-none overflow-hidden border-0 bg-transparent px-0 text-28 font-semibold leading-tight text-foreground md:text-40" aria-label={translate("wiki.untitled")} value={title} disabled={!page.canEdit} onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }} onChange={(event) => { setTitle(event.target.value); dirtyTitle.current = event.target.value || translate("wiki.untitled"); schedule(); }} onBlur={onChanged} />
       </h1>
-      {page.locked && <span data-testid="wiki-locked-badge" className="shrink-0 rounded-md border border-subtle bg-surface-2 px-2 py-0.5 text-12 text-secondary">{translate("wiki.locked")}</span>}
+      {page.locked && <span data-testid="wiki-locked-badge" className="shrink-0 rounded-md border border-border bg-muted px-2 py-0.5 text-12 text-muted-foreground">{translate("wiki.locked")}</span>}
       <div className="wiki-page-actions flex items-center gap-1">
         {!page.projectId && page.ownerId === self && <Button type="button" className="secondary rounded-lg" data-testid="wiki-header-share" onClick={() => revealPanelSection("wiki-share-members")}>{translate("wiki.share.action")}</Button>}
         {canPublishHere(page) && <Button type="button" className="secondary rounded-lg" aria-pressed={Boolean(page.published)} data-testid="wiki-header-publish" onClick={() => revealPanelSection("wiki-published-link")}>{translate(page.published ? "wiki.published" : "wiki.publish")}</Button>}
@@ -447,7 +447,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
           ];
           // Five groups, a line between the groups that have items; Delete stays last.
           return groups.map((group) => group.filter(Boolean)).filter((group) => group.length > 0).map((group, index) => <React.Fragment key={index}>
-            {index > 0 && <div role="separator" className="my-1 h-px bg-subtle" />}
+            {index > 0 && <div role="separator" className="my-1 h-px bg-muted" />}
             {group}
           </React.Fragment>);
         }}
@@ -455,39 +455,39 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
         </div>
     </div>
     <input id="wiki-markdown-import" type="file" accept=".md,text/markdown,text/plain" hidden onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void importMarkdown(file); }} />
-    {importFeedback && <section role={importFeedback.warnings.length ? "alert" : "status"} aria-label={translate("wiki.importResult")} className="my-3 rounded-md border border-subtle bg-surface-2 p-3 text-13">
+    {importFeedback && <section role={importFeedback.warnings.length ? "alert" : "status"} aria-label={translate("wiki.importResult")} className="my-3 rounded-md border border-border bg-muted p-3 text-13">
       <Button type="button" className="secondary float-right !size-10 !p-0" aria-label={translate("wiki.dismissImportResult")} onClick={() => setImportFeedback(null)}>×</Button>
-      <p className="m-0 font-medium text-primary">{translate("wiki.importSuccess")}</p>
-      <p className="mb-0 mt-1 text-secondary">{translate("wiki.importFileUnchanged")}</p>
-      {importFeedback.warnings.length > 0 && <><p className="mb-1 mt-3 font-medium text-primary">{translate("wiki.importWarningsTitle")}</p><ul className="m-0 grid gap-1 pl-5 text-secondary">{importFeedback.warnings.map((warning, index) => <li key={`${warning.code}-${index}`} title={translate(markdownWarningKey(warning.code))}>{translate(markdownWarningKey(warning.code)).replace("{text}", markdownWarningText(warning.code, importFeedback.source))}</li>)}</ul></>}
+      <p className="m-0 font-medium text-foreground">{translate("wiki.importSuccess")}</p>
+      <p className="mb-0 mt-1 text-muted-foreground">{translate("wiki.importFileUnchanged")}</p>
+      {importFeedback.warnings.length > 0 && <><p className="mb-1 mt-3 font-medium text-foreground">{translate("wiki.importWarningsTitle")}</p><ul className="m-0 grid gap-1 pl-5 text-muted-foreground">{importFeedback.warnings.map((warning, index) => <li key={`${warning.code}-${index}`} title={translate(markdownWarningKey(warning.code))}>{translate(markdownWarningKey(warning.code)).replace("{text}", markdownWarningText(warning.code, importFeedback.source))}</li>)}</ul></>}
     </section>}
-    {exportFeedback && <div data-testid="wiki-download-toast" role={exportFeedback.state === "failed" ? "alert" : "status"} className={`fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] left-4 right-auto z-50 flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-lg border border-subtle bg-surface-1 px-3 py-2 text-13 shadow-lg sm:bottom-4 sm:left-4 sm:right-auto ${exportFeedback.state === "failed" ? "text-danger-text" : "text-primary"}`}>
+    {exportFeedback && <div data-testid="wiki-download-toast" role={exportFeedback.state === "failed" ? "alert" : "status"} className={`fixed bottom-[calc(env(safe-area-inset-bottom)+1rem)] left-4 right-auto z-50 flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-13 shadow-lg sm:bottom-4 sm:left-4 sm:right-auto ${exportFeedback.state === "failed" ? "text-destructive" : "text-foreground"}`}>
       <span className="min-w-0 break-words">{translate(exportFeedback.state === "failed" ? "wiki.downloadFailed" : "wiki.downloadStarted").replace("{filename}", exportFeedback.filename)}</span>
       {exportFeedback.state === "failed" && <Button type="button" className="secondary" onClick={() => void exportMarkdown()}>{translate("wiki.retryDownload")}</Button>}
       <Button type="button" className="secondary !size-8 !p-0" aria-label={translate("wiki.dismissDownload")} onClick={() => setExportFeedback(null)}>×</Button>
     </div>}
-    {importFailed && <p role="alert" className="my-2 text-13 text-danger">{translate("wiki.importFailed")}</p>}
+    {importFailed && <p role="alert" className="my-2 text-13 text-destructive">{translate("wiki.importFailed")}</p>}
     {pdfDialog && <Dialog title={translate("wiki.pdfTitle")} onClose={() => { if (!pdfExporting) setPdfDialog(false); }}>
       <form className="grid gap-4" onSubmit={(event) => void exportPdf(event)}>
-        <label className="grid gap-1 text-13 text-secondary">{translate("wiki.pdfPaperSize")}
+        <label className="grid gap-1 text-13 text-muted-foreground">{translate("wiki.pdfPaperSize")}
           <select aria-label={translate("wiki.pdfPaperSize")} value={pdfPaperSize} onChange={(event) => setPdfPaperSize(event.target.value as WikiPaperSize)}>
             {(["a4", "a3", "a2", "letter", "legal", "tabloid"] as const).map((size) => <option key={size} value={size}>{translate(`wiki.pdfSize.${size}` as MessageKey)}</option>)}
           </select>
         </label>
-        <label className="flex items-center gap-2 text-13 text-secondary"><Checkbox checked={pdfIncludeImages} onChange={(event) => setPdfIncludeImages(event.target.checked)} />{translate("wiki.pdfIncludeImages")}</label>
-        {pdfError && <p role="alert" className="m-0 text-13 text-danger">{pdfError}</p>}
+        <label className="flex items-center gap-2 text-13 text-muted-foreground"><Checkbox checked={pdfIncludeImages} onChange={(event) => setPdfIncludeImages(event.target.checked)} />{translate("wiki.pdfIncludeImages")}</label>
+        {pdfError && <p role="alert" className="m-0 text-13 text-destructive">{pdfError}</p>}
         <DialogActions onClose={() => setPdfDialog(false)} submit={pdfExporting ? translate("wiki.pdfExporting") : translate("wiki.exportPdf")} />
       </form>
     </Dialog>}
-    <small role="status" className={`mt-2 text-12 ${status === "not-saved" ? "text-danger-text" : "text-tertiary"}`}>{translate(status === "saved" ? "wiki.saved" : status === "saving" ? "wiki.saving" : status === "not-saved" ? "wiki.notSaved" : "wiki.saveFailed")}</small>
+    <small role="status" className={`mt-2 text-12 ${status === "not-saved" ? "text-destructive" : "text-muted-foreground"}`}>{translate(status === "saved" ? "wiki.saved" : status === "saving" ? "wiki.saving" : status === "not-saved" ? "wiki.notSaved" : "wiki.saveFailed")}</small>
     <div data-testid="wiki-editor-shell" className="wiki-editor-shell grid gap-4">
     <div className="relative">
       <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-testid="inline-image-input" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !editor) return; const assetId = await uploadFile(file); if (assetId) { const { selection } = editor.state; const at = "node" in selection ? selection.to : selection.from; editor.chain().focus().insertContentAt(at, { type: "assetImage", attrs: { assetId } }).run(); } }} />
     <div className="wiki-editor relative min-h-40" data-testid="wiki-editor"><EditorSourceMode editor={page.canEdit ? editor : null} initialWarnings={limitWarnings} onSourceDraftChange={(hasDraft) => { if (hasDraft) setStatus("not-saved"); }} toggleRef={sourceToggle} onModeChange={setSourceActive} /><CalloutControls editor={editor} editable={page.canEdit} /><CodeBlockControls editor={editor} editable={page.canEdit} /><TableControls editor={editor} editable={page.canEdit} /><EditorContent editor={editor} /><WikiBlockControls editor={editor} editable={page.canEdit} /><WikiBubbleMenu editor={page.canEdit ? editor : null} />{page.canEdit && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>
     </div>
     </div>
-    <details data-testid="wiki-attachments-disclosure" className="mt-2 rounded-xl border border-subtle bg-surface-1 p-4 [&_[data-testid=attachment-dropzone]]:rounded-lg">
-      <summary data-testid="wiki-attachments-toggle" className="cursor-pointer text-16 font-semibold text-primary">{translate("assets.title")}</summary>
+    <details data-testid="wiki-attachments-disclosure" className="mt-2 rounded-xl border border-border bg-card p-4 [&_[data-testid=attachment-dropzone]]:rounded-lg">
+      <summary data-testid="wiki-attachments-toggle" className="cursor-pointer text-16 font-semibold text-foreground">{translate("assets.title")}</summary>
       <div className="mt-3"><AttachmentsPanel workItemId={page.id} ownerType="wiki_page" canWrite={page.canEdit} action={call} showForm={page.canEdit} onCount={() => {}} testId="wiki-attachments" excludeAssetIds={inlineAssetIds} /></div>
     </details>
     {imageError && <p role="alert">{imageError}</p>}
@@ -495,36 +495,36 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
     </section>
     {panelOpen && <DetailsPanelFrame wide={wide} onDismiss={() => setDrawerOpen(false)}>
     <aside aria-label={translate("wiki.details")} className={wide
-      ? "grid min-w-0 max-w-full grid-cols-[minmax(0,1fr)] [&_select]:min-w-0 [&_select]:max-w-full [&_.grid]:min-w-0 h-fit content-start gap-4 self-start overflow-x-hidden rounded-lg border border-subtle bg-surface-1 p-3 text-13 sticky top-0 max-h-[calc(100vh-8rem)] overflow-y-auto"
-      : "absolute inset-y-0 right-0 grid w-[min(20rem,calc(100vw-2rem))] min-w-0 content-start gap-4 overflow-y-auto overflow-x-hidden border-l border-subtle bg-surface-1 p-3 text-13 shadow-xl [&_select]:min-w-0 [&_select]:max-w-full [&_.grid]:min-w-0"}>
+      ? "grid min-w-0 max-w-full grid-cols-[minmax(0,1fr)] [&_select]:min-w-0 [&_select]:max-w-full [&_.grid]:min-w-0 h-fit content-start gap-4 self-start overflow-x-hidden rounded-lg border border-border bg-card p-3 text-13 sticky top-0 max-h-[calc(100vh-8rem)] overflow-y-auto"
+      : "absolute inset-y-0 right-0 grid w-[min(20rem,calc(100vw-2rem))] min-w-0 content-start gap-4 overflow-y-auto overflow-x-hidden border-l border-border bg-card p-3 text-13 shadow-xl [&_select]:min-w-0 [&_select]:max-w-full [&_.grid]:min-w-0"}>
       {!wide && <div className="flex justify-end"><Button type="button" autoFocus data-drawer-close className="secondary !size-8 !p-0" aria-label={translate("wiki.details.close")} title={translate("wiki.details.close")} onClick={() => setDrawerOpen(false)}><X aria-hidden size={16} /></Button></div>}
       <Tabs value={pane} onValueChange={(value) => setPane(value as typeof pane)}>
-        <TabsList aria-label={translate("wiki.breadcrumb")} className="-mx-1 flex h-auto flex-nowrap justify-start gap-x-1 overflow-x-auto rounded-none border-b border-subtle bg-transparent p-0">
-          {tabs.map((tab) => <TabsTrigger key={tab.key} value={tab.key} className={`-mb-px shrink-0 whitespace-nowrap rounded-none border-0 border-b-2 !bg-transparent px-0.5 py-2 text-13 font-medium ${pane === tab.key ? "border-b-[var(--primary)] !text-accent-text" : "border-b-transparent !text-secondary hover:!text-primary"}`}>{tab.label}{tab.count ? <span className="ml-1 font-normal text-tertiary">{tab.count}</span> : null}</TabsTrigger>)}
+        <TabsList aria-label={translate("wiki.breadcrumb")} className="-mx-1 flex h-auto flex-nowrap justify-start gap-x-1 overflow-x-auto rounded-none border-b border-border bg-transparent p-0">
+          {tabs.map((tab) => <TabsTrigger key={tab.key} value={tab.key} className={`-mb-px shrink-0 whitespace-nowrap rounded-none border-0 border-b-2 !bg-transparent px-0.5 py-2 text-13 font-medium ${pane === tab.key ? "border-b-[var(--primary)] !text-foreground" : "border-b-transparent !text-muted-foreground hover:!text-foreground"}`}>{tab.label}{tab.count ? <span className="ml-1 font-normal text-muted-foreground">{tab.count}</span> : null}</TabsTrigger>)}
         </TabsList>
         <TabsContent value={pane} className="grid gap-3">
       {pane === "info" && <div className="grid gap-3">{info}</div>}
       {pane === "outline" && <nav aria-label={translate("wiki.outline")} data-testid="wiki-outline">
-        {headings.length === 0 ? <p className="m-0 text-secondary">{translate("wiki.outlineEmpty")}</p> : <ul className="m-0 grid list-none gap-0.5 p-0">{headings.map((heading, index) => <li key={`${heading.pos}-${index}`} style={{ paddingLeft: `${(heading.level - 1) * 12}px` }}><Button type="button" className="w-full truncate rounded-md !bg-transparent !px-2 !py-1 text-left text-13 !font-normal !text-secondary hover:!bg-layer-transparent-hover hover:!text-primary" onClick={() => { editor?.chain().focus().setTextSelection(heading.pos + 1).run(); editor?.view.domAtPos(heading.pos).node.parentElement?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>{heading.text || translate("wiki.outlineUntitled")}</Button></li>)}</ul>}
+        {headings.length === 0 ? <p className="m-0 text-muted-foreground">{translate("wiki.outlineEmpty")}</p> : <ul className="m-0 grid list-none gap-0.5 p-0">{headings.map((heading, index) => <li key={`${heading.pos}-${index}`} style={{ paddingLeft: `${(heading.level - 1) * 12}px` }}><Button type="button" className="w-full truncate rounded-md !bg-transparent !px-2 !py-1 text-left text-13 !font-normal !text-muted-foreground hover:!bg-accent hover:!text-foreground" onClick={() => { editor?.chain().focus().setTextSelection(heading.pos + 1).run(); editor?.view.domAtPos(heading.pos).node.parentElement?.scrollIntoView({ behavior: "smooth", block: "center" }); }}>{heading.text || translate("wiki.outlineUntitled")}</Button></li>)}</ul>}
       </nav>}
       {pane === "links" && <OutlinksPanel kind={page.projectId ? "page" : "wiki"} id={page.id} run={call} />}
       {pane === "comments" && <section aria-label={translate("wiki.comments")} className="grid gap-3">
-        <label className="flex items-center gap-2 text-secondary"><Checkbox checked={showResolved} onChange={(event) => setShowResolved(event.target.checked)} /> {translate("wiki.comments.showResolved")}</label>
-        {threads.length === 0 && <p className="m-0 text-secondary">{translate("wiki.comments.empty")}</p>}
-        <ul className="m-0 grid list-none gap-2 p-0">{threads.map((thread) => <li key={thread.id} className={`grid gap-1.5 rounded-lg border p-2.5 ${replyTo === thread.id ? "border-[var(--primary)]" : "border-subtle"} ${thread.resolved ? "opacity-60" : ""}`} data-comment-anchor={thread.anchor ?? ""}>
+        <label className="flex items-center gap-2 text-muted-foreground"><Checkbox checked={showResolved} onChange={(event) => setShowResolved(event.target.checked)} /> {translate("wiki.comments.showResolved")}</label>
+        {threads.length === 0 && <p className="m-0 text-muted-foreground">{translate("wiki.comments.empty")}</p>}
+        <ul className="m-0 grid list-none gap-2 p-0">{threads.map((thread) => <li key={thread.id} className={`grid gap-1.5 rounded-lg border p-2.5 ${replyTo === thread.id ? "border-[var(--primary)]" : "border-border"} ${thread.resolved ? "opacity-60" : ""}`} data-comment-anchor={thread.anchor ?? ""}>
           {editingComment?.id === thread.id
             ? <form className="grid gap-1.5" onSubmit={async (event) => { event.preventDefault(); const text = editingComment.text.trim(); if (!text) return; await call("update_wiki_page_comment", { commentId: thread.id, body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] } }); setEditingComment(null); await loadThreads(); }}>
               <Input aria-label={translate("wiki.comments.edit")} autoFocus value={editingComment.text} onChange={(event) => setEditingComment({ id: thread.id, text: event.target.value })} />
               <div className="flex gap-1 [&_button]:!px-2 [&_button]:!py-0.5 [&_button]:!text-12"><Button type="submit">{translate("webLinks.save")}</Button><Button type="button" className="secondary" onClick={() => setEditingComment(null)}>{translate("comments.cancel")}</Button></div>
             </form>
-            : <div><strong className="text-primary">{thread.authorName}</strong>: {thread.bodyText}</div>}
-          {thread.replies.map((reply) => <p key={reply.id} className="m-0 border-l-2 border-subtle pl-2 text-secondary">{reply.authorName}: {reply.bodyText}</p>)}
+            : <div><strong className="text-foreground">{thread.authorName}</strong>: {thread.bodyText}</div>}
+          {thread.replies.map((reply) => <p key={reply.id} className="m-0 border-l-2 border-border pl-2 text-muted-foreground">{reply.authorName}: {reply.bodyText}</p>)}
           {replyTo === thread.id && <form className="grid gap-1.5" onSubmit={(event) => { event.preventDefault(); void reply(thread.id); }} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); closeReply(); } }}>
             <Input aria-label={`${translate("wiki.comments.replyTo")} ${thread.authorName}`} autoFocus value={replyText} onChange={(event) => setReplyText(event.target.value)} />
             <div className="flex gap-1 [&_button]:!px-2 [&_button]:!py-0.5 [&_button]:!text-12"><Button type="submit" disabled={!replyText.trim()}>{translate("wiki.comments.send")}</Button><Button type="button" className="secondary" onClick={closeReply}>{translate("comments.cancel")}</Button></div>
           </form>}
           <div className="flex items-center gap-3 text-13">
-            {!thread.resolved && <Button type="button" className="!bg-transparent !p-0 font-medium text-accent-text hover:underline" onClick={() => { setReplyText(""); setReplyTo(thread.id); }}>{translate("wiki.comments.reply")}</Button>}
+            {!thread.resolved && <Button type="button" className="!bg-transparent !p-0 font-medium text-foreground hover:underline" onClick={() => { setReplyText(""); setReplyTo(thread.id); }}>{translate("wiki.comments.reply")}</Button>}
             <Popover label={translate("wiki.comments.more")} align="right" className="icon-button-ghost ml-auto !grid !place-items-center !p-0" panelClassName="w-48" trigger={<MoreHorizontal aria-hidden size={14} />}>
               {(close) => <>
                 <MenuItem icon={Check} onClick={() => { close(); void call("resolve_wiki_page_comment", { commentId: thread.id, resolved: !thread.resolved }).then(() => loadThreads()); }}>{translate(thread.resolved ? "wiki.comments.reopen" : "wiki.comments.resolve")}</MenuItem>
@@ -533,16 +533,16 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
             </Popover>
           </div>
         </li>)}</ul>
-        <div className="grid gap-2 border-t border-subtle pt-3">
+        <div className="grid gap-2 border-t border-border pt-3">
           {!replyTo && <Button type="button" className="secondary w-fit" disabled={!editor || editor.state.selection.empty} onClick={() => setReplyTo(null)}>{translate("wiki.comments.selected")}</Button>}
           <div className="flex gap-2"><Input className="min-w-0 flex-1" aria-label={translate("wiki.comments.text")} value={commentText} onChange={(event) => setCommentText(event.target.value)} /><Button type="button" className="secondary" disabled={!commentText.trim()} onClick={() => void addComment()}>{translate("wiki.comments.add")}</Button></div>
         </div>
       </section>}
       {pane === "activity" && <div className="grid gap-4">
         <Activity pageId={page.id} refresh={status} />
-        <section aria-label={translate("wiki.history")} className="grid gap-2 border-t border-subtle pt-3">
-          <h3 className="m-0 text-13 font-semibold text-primary">{translate("wiki.history")}</h3>
-          <ul className="m-0 grid list-none gap-2 p-0">{versions.map((version) => <li key={version.id} className="flex items-center justify-between gap-2 text-secondary"><span className="min-w-0 truncate">{formatDate(version.createdAt)} — {version.title}</span><Button className="secondary !px-2 !py-0.5 !text-12" disabled={!page.canEdit} onClick={() => void restore(version.id)}>{translate("wiki.restore")}</Button></li>)}</ul>
+        <section aria-label={translate("wiki.history")} className="grid gap-2 border-t border-border pt-3">
+          <h3 className="m-0 text-13 font-semibold text-foreground">{translate("wiki.history")}</h3>
+          <ul className="m-0 grid list-none gap-2 p-0">{versions.map((version) => <li key={version.id} className="flex items-center justify-between gap-2 text-muted-foreground"><span className="min-w-0 truncate">{formatDate(version.createdAt)} — {version.title}</span><Button className="secondary !px-2 !py-0.5 !text-12" disabled={!page.canEdit} onClick={() => void restore(version.id)}>{translate("wiki.restore")}</Button></li>)}</ul>
         </section>
       </div>}
         </TabsContent>
@@ -585,10 +585,10 @@ function DetailsPanelFrame({ wide, onDismiss, children }: { wide: boolean; onDis
   </div>;
 }
 
-const roleIcon = (page: Summary) => page.access === "private" ? <Lock aria-hidden size={14} className="text-tertiary" /> : <Globe aria-hidden size={14} className="text-tertiary" />;
+const roleIcon = (page: Summary) => page.access === "private" ? <Lock aria-hidden size={14} className="text-muted-foreground" /> : <Globe aria-hidden size={14} className="text-muted-foreground" />;
 /** The list shows the day only: the time made the date columns wrap to three lines on a phone. */
 const formatDay = (value: string) => new Intl.DateTimeFormat(getLocale() === "th" ? "th-TH" : "en-US", { dateStyle: "medium" }).format(new Date(value));
-const rowLink = "flex items-center gap-2 text-14 text-primary hover:underline";
+const rowLink = "flex items-center gap-2 text-14 text-foreground hover:underline";
 type ListTab = "all" | "public" | "private" | "archived" | "shared";
 type ListOrder = "name" | "created" | "updated";
 type ListFilters = { tab: ListTab; owner: string; createdAfter: string; updatedAfter: string; order: ListOrder };
@@ -605,21 +605,21 @@ function ListControls({ pages, filters, update, shared = false }: { pages: Summa
   const owners = Array.from(new Map(pages.map((page) => [page.ownerId, page.ownerName ?? page.ownerId])).entries());
   return <div className="grid gap-3">
     <Tabs value={filters.tab} onValueChange={(value) => update("tab", value)}>
-      <TabsList className="flex h-auto justify-start gap-x-3 overflow-x-auto rounded-none border-b border-subtle bg-transparent p-0 sm:gap-x-4">
+      <TabsList className="flex h-auto justify-start gap-x-3 overflow-x-auto rounded-none border-b border-border bg-transparent p-0 sm:gap-x-4">
         {(["all", "public", "private", "archived", ...(shared ? ["shared" as const] : [])] as const).map((name) => <TabsTrigger key={name} value={name}
-          className={`-mb-px whitespace-nowrap border-0 border-b-2 bg-transparent px-1 py-2 text-13 font-medium ${filters.tab === name ? "border-b-[var(--primary)] text-accent-text" : "border-b-transparent text-secondary"}`}>{translate(`pages.tab.${name}` as MessageKey)}</TabsTrigger>)}
+          className={`-mb-px whitespace-nowrap border-0 border-b-2 bg-transparent px-1 py-2 text-13 font-medium ${filters.tab === name ? "border-b-[var(--primary)] text-foreground" : "border-b-transparent text-muted-foreground"}`}>{translate(`pages.tab.${name}` as MessageKey)}</TabsTrigger>)}
       </TabsList>
     </Tabs>
     <div className="flex flex-wrap items-end gap-3 text-13">
-      <label className="grid min-w-40 gap-1 text-secondary">{translate("pages.filter.owner")}
+      <label className="grid min-w-40 gap-1 text-muted-foreground">{translate("pages.filter.owner")}
         <Select value={filters.owner || "any"} items={[{ value: "any", label: translate("pages.filter.anyOwner") }, ...owners.map(([value, label]) => ({ value, label }))]} onValueChange={(value) => update("owner", value === "any" || value === null ? "" : value)}>
           <SelectTrigger aria-label={translate("pages.filter.owner")} className="pointer-coarse:min-h-11"><SelectValue /></SelectTrigger>
           <SelectContent><SelectItem value="any"><SelectItemText>{translate("pages.filter.anyOwner")}</SelectItemText></SelectItem>{owners.map(([id, name]) => <SelectItem key={id} value={id}><SelectItemText>{name}</SelectItemText></SelectItem>)}</SelectContent>
         </Select>
       </label>
-      <label className="grid min-w-40 gap-1 text-secondary">{translate("pages.filter.createdAfter")}<Input aria-label={translate("pages.filter.createdAfter")} type="date" value={filters.createdAfter} onChange={(event) => update("createdAfter", event.target.value)} /></label>
-      <label className="grid min-w-40 gap-1 text-secondary">{translate("pages.filter.updatedAfter")}<Input aria-label={translate("pages.filter.updatedAfter")} type="date" value={filters.updatedAfter} onChange={(event) => update("updatedAfter", event.target.value)} /></label>
-      <label className="grid min-w-40 gap-1 text-secondary">{translate("pages.order")}
+      <label className="grid min-w-40 gap-1 text-muted-foreground">{translate("pages.filter.createdAfter")}<Input aria-label={translate("pages.filter.createdAfter")} type="date" value={filters.createdAfter} onChange={(event) => update("createdAfter", event.target.value)} /></label>
+      <label className="grid min-w-40 gap-1 text-muted-foreground">{translate("pages.filter.updatedAfter")}<Input aria-label={translate("pages.filter.updatedAfter")} type="date" value={filters.updatedAfter} onChange={(event) => update("updatedAfter", event.target.value)} /></label>
+      <label className="grid min-w-40 gap-1 text-muted-foreground">{translate("pages.order")}
         <Select value={filters.order} items={[{ value: "name", label: translate("pages.order.name") }, { value: "created", label: translate("pages.order.created") }, { value: "updated", label: translate("pages.order.updated") }]} onValueChange={(value) => update("order", value ?? "name")}>
           <SelectTrigger aria-label={translate("pages.order")} className="pointer-coarse:min-h-11"><SelectValue /></SelectTrigger>
           <SelectContent><SelectItem value="name"><SelectItemText>{translate("pages.order.name")}</SelectItemText></SelectItem><SelectItem value="created"><SelectItemText>{translate("pages.order.created")}</SelectItemText></SelectItem><SelectItem value="updated"><SelectItemText>{translate("pages.order.updated")}</SelectItemText></SelectItem></SelectContent>
@@ -693,41 +693,41 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
   }
   return <section aria-label={translate("wiki.title")} className="grid gap-4">
     <header className="flex items-center justify-between gap-3">
-      <h1 className="text-20 font-semibold text-primary">{translate("wiki.title")}</h1>
+      <h1 className="text-20 font-semibold text-foreground">{translate("wiki.title")}</h1>
       <div className="flex gap-2"><Button type="button" onClick={() => setCollectionDialog({ kind: "create" })} className="secondary">{translate("wiki.collection.new")}</Button><Button type="button" onClick={() => void create()} className="primary inline-flex items-center gap-1.5"><Plus aria-hidden size={14} />{translate("wiki.new")}</Button></div>
     </header>
     {failed && <p role="alert">{translate("wiki.failed")}</p>}
     <ListControls pages={pages} filters={filters} update={update} shared />
     {isError && <p role="alert">{translate("wiki.failed")}</p>}
     {isLoading && <p role="status">{translate("wiki.loading")}</p>}
-    {!isLoading && shown.length === 0 && <p className="text-secondary">{translate("wiki.empty")}</p>}
-    {(shown.length > 0 || collections.length > 0) && <div className="overflow-x-auto rounded-xl border border-subtle bg-surface-1 p-3 sm:p-4"><table className="w-full table-fixed border-collapse text-left text-13">
-      <thead><tr className="border-b border-subtle text-12 text-tertiary"><th className="w-[45%] py-2 font-medium md:w-auto">{translate("wiki.col.name")}</th><th className="w-[25%] py-2 font-medium md:w-auto">{translate("wiki.access")}</th><th className="hidden py-2 font-medium md:table-cell">{translate("pages.created")}</th><th className="w-[30%] py-2 font-medium md:w-auto">{translate("pages.updated")}</th><th className="hidden py-2 font-medium md:table-cell">{translate("wiki.col.nested")}</th></tr></thead>
+    {!isLoading && shown.length === 0 && <p className="text-muted-foreground">{translate("wiki.empty")}</p>}
+    {(shown.length > 0 || collections.length > 0) && <div className="overflow-x-auto rounded-xl border border-border bg-card p-3 sm:p-4"><table className="w-full table-fixed border-collapse text-left text-13">
+      <thead><tr className="border-b border-border text-12 text-muted-foreground"><th className="w-[45%] py-2 font-medium md:w-auto">{translate("wiki.col.name")}</th><th className="w-[25%] py-2 font-medium md:w-auto">{translate("wiki.access")}</th><th className="hidden py-2 font-medium md:table-cell">{translate("pages.created")}</th><th className="w-[30%] py-2 font-medium md:w-auto">{translate("pages.updated")}</th><th className="hidden py-2 font-medium md:table-cell">{translate("wiki.col.nested")}</th></tr></thead>
       <tbody>{collections.map((collection) => <React.Fragment key={collection.id}>
-        <tr className="border-b border-subtle"><th colSpan={5} className="pb-2 pr-2 pt-6 text-left font-semibold text-primary"><div className="flex items-center gap-2"><span>{collection.icon} {collectionLabel(collection)}{collection.visibility === "private" ? ` · ${translate("wiki.access.private")}` : ""}</span><Popover label={`${translate("wiki.collection.actions")}: ${collection.name}`} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-72">
+        <tr className="border-b border-border"><th colSpan={5} className="pb-2 pr-2 pt-6 text-left font-semibold text-foreground"><div className="flex items-center gap-2"><span>{collection.icon} {collectionLabel(collection)}{collection.visibility === "private" ? ` · ${translate("wiki.access.private")}` : ""}</span><Popover label={`${translate("wiki.collection.actions")}: ${collection.name}`} align="right" trigger={<MoreHorizontal aria-hidden size={16} />} panelClassName="w-72">
           {(close) => <>
             <MenuItem icon={Pencil} onClick={() => { close(); setCollectionDialog({ kind: "rename", collection }); }}>{translate("wiki.collection.rename")}</MenuItem>
             {!collection.isDefault && <MenuItem icon={collection.visibility === "public" ? EyeOff : Globe} onClick={async () => { close(); await call("set_collection_visibility", { collectionId: collection.id, visibility: collection.visibility === "public" ? "private" : "public" }); await refreshCollections(); }}>{translate(collection.visibility === "public" ? "wiki.collection.makePrivate" : "wiki.collection.makePublic")}</MenuItem>}
             {!collection.isDefault && <MenuItem icon={Trash2} danger onClick={() => { close(); setCollectionDialog({ kind: "delete", collection }); }}>{translate("wiki.collection.delete")}</MenuItem>}
           </>}
         </Popover></div></th></tr>
-        {flatten(shown.filter((page) => page.collectionId === collection.id)).map(({ page, depth, nested }) => <tr key={page.id} className="border-b border-subtle hover:bg-layer-transparent-hover">
-        <td className="py-2" style={{ paddingLeft: `${depth * 1.25}rem` }}><Link className={rowLink} to={paths.wikiPage(workspace.slug, page.id)}><FileText aria-hidden size={14} className="shrink-0 text-secondary" /><span className="min-w-0 truncate">{page.title}</span></Link></td>
-        <td className="py-2 align-middle text-secondary"><span className="inline-flex items-center gap-1.5 align-middle">{roleIcon(page)}{translate(`wiki.access.${page.access}` as MessageKey)}</span></td>
-        <td className="hidden py-2 text-secondary md:table-cell">{formatDay(page.createdAt)}</td><td className="py-2 text-secondary">{formatDay(page.updatedAt)}</td>
-        <td className="hidden py-2 text-secondary md:table-cell">{nested}</td>
+        {flatten(shown.filter((page) => page.collectionId === collection.id)).map(({ page, depth, nested }) => <tr key={page.id} className="border-b border-border hover:bg-accent">
+        <td className="py-2" style={{ paddingLeft: `${depth * 1.25}rem` }}><Link className={rowLink} to={paths.wikiPage(workspace.slug, page.id)}><FileText aria-hidden size={14} className="shrink-0 text-muted-foreground" /><span className="min-w-0 truncate">{page.title}</span></Link></td>
+        <td className="py-2 align-middle text-muted-foreground"><span className="inline-flex items-center gap-1.5 align-middle">{roleIcon(page)}{translate(`wiki.access.${page.access}` as MessageKey)}</span></td>
+        <td className="hidden py-2 text-muted-foreground md:table-cell">{formatDay(page.createdAt)}</td><td className="py-2 text-muted-foreground">{formatDay(page.updatedAt)}</td>
+        <td className="hidden py-2 text-muted-foreground md:table-cell">{nested}</td>
       </tr>)}
       </React.Fragment>)}
       {projectGroups.map((project) => {
         const rows = flatten(shown.filter((page) => page.projectId === project.id));
         if (rows.length === 0) return null;
         return <React.Fragment key={`project:${project.id}`}>
-          <tr className="border-b border-subtle"><th colSpan={5} className="pb-2 pr-2 pt-6 text-left font-semibold text-primary">{project.name}</th></tr>
-          {rows.map(({ page, depth, nested }) => <tr key={page.id} className="border-b border-subtle hover:bg-layer-transparent-hover">
-            <td className="py-2" style={{ paddingLeft: `${depth * 1.25}rem` }}><Link className={rowLink} to={paths.wikiPage(workspace.slug, page.id)}><FileText aria-hidden size={14} className="shrink-0 text-secondary" /><span className="min-w-0 truncate">{page.title}</span></Link></td>
-            <td className="py-2 align-middle text-secondary"><span className="inline-flex items-center gap-1.5 align-middle">{roleIcon(page)}{translate(`wiki.access.${page.access}` as MessageKey)}</span></td>
-            <td className="hidden py-2 text-secondary md:table-cell">{formatDay(page.createdAt)}</td><td className="py-2 text-secondary">{formatDay(page.updatedAt)}</td>
-            <td className="hidden py-2 text-secondary md:table-cell">{nested}</td>
+          <tr className="border-b border-border"><th colSpan={5} className="pb-2 pr-2 pt-6 text-left font-semibold text-foreground">{project.name}</th></tr>
+          {rows.map(({ page, depth, nested }) => <tr key={page.id} className="border-b border-border hover:bg-accent">
+            <td className="py-2" style={{ paddingLeft: `${depth * 1.25}rem` }}><Link className={rowLink} to={paths.wikiPage(workspace.slug, page.id)}><FileText aria-hidden size={14} className="shrink-0 text-muted-foreground" /><span className="min-w-0 truncate">{page.title}</span></Link></td>
+            <td className="py-2 align-middle text-muted-foreground"><span className="inline-flex items-center gap-1.5 align-middle">{roleIcon(page)}{translate(`wiki.access.${page.access}` as MessageKey)}</span></td>
+            <td className="hidden py-2 text-muted-foreground md:table-cell">{formatDay(page.createdAt)}</td><td className="py-2 text-muted-foreground">{formatDay(page.updatedAt)}</td>
+            <td className="hidden py-2 text-muted-foreground md:table-cell">{nested}</td>
           </tr>)}
         </React.Fragment>;
       })}
@@ -735,8 +735,8 @@ export function WikiListPage({ workspace }: { workspace: { id: string; slug: str
     </table></div>}
     {collectionDialog && (collectionDialog.kind === "delete"
       ? <Dialog title={translate("wiki.collection.delete")} onClose={() => setCollectionDialog(null)}>
-        <p className="m-0 text-14 text-secondary">{translate("wiki.collection.deleteConfirm").replace("{name}", collectionDialog.collection.name)}</p>
-        <div className="flex justify-end gap-2"><Button type="button" className="secondary" onClick={() => setCollectionDialog(null)}>{translate("comments.cancel")}</Button><Button type="button" className="!bg-danger-primary hover:!bg-danger-primary-hover" onClick={() => void removeCollection(collectionDialog.collection)}>{translate("wiki.collection.delete")}</Button></div>
+        <p className="m-0 text-14 text-muted-foreground">{translate("wiki.collection.deleteConfirm").replace("{name}", collectionDialog.collection.name)}</p>
+        <div className="flex justify-end gap-2"><Button type="button" className="secondary" onClick={() => setCollectionDialog(null)}>{translate("comments.cancel")}</Button><Button type="button" className="!bg-destructive hover:!bg-destructive/90" onClick={() => void removeCollection(collectionDialog.collection)}>{translate("wiki.collection.delete")}</Button></div>
       </Dialog>
       : <CollectionNameDialog initial={collectionDialog.kind === "rename" ? collectionDialog.collection.name : ""} title={translate(collectionDialog.kind === "create" ? "wiki.collection.new" : "wiki.collection.rename")} onSubmit={saveCollection} onClose={() => setCollectionDialog(null)} />)}
   </section>;
@@ -746,7 +746,7 @@ function CollectionNameDialog({ initial, title, onSubmit, onClose }: { initial: 
   const [name, setName] = React.useState(initial);
   return <Dialog title={title} onClose={onClose}>
     <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); onSubmit(name); }}>
-      <label className="grid gap-1 text-13 text-secondary">{translate("wiki.collection.name")}<Input required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} /></label>
+      <label className="grid gap-1 text-13 text-muted-foreground">{translate("wiki.collection.name")}<Input required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} /></label>
       <DialogActions onClose={onClose} submit={translate("webLinks.save")} />
     </form>
   </Dialog>;
@@ -881,30 +881,30 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
   if (page === undefined) return null;
   if (page === null) return <NotFound to={back} label={translate(projectKey ? "projectNav.pages" : "wiki.title")} />;
   return <section aria-label={translate("wiki.title")} className="grid gap-4">
-    <nav aria-label={translate("wiki.breadcrumb")} className="flex items-center gap-1 text-13 text-secondary">
-      <Link to={back} className="hover:underline">{translate(projectKey ? "projectNav.pages" : "wiki.title")}</Link><ChevronRight aria-hidden size={12} /><span className="text-primary">{page.title}</span>
+    <nav aria-label={translate("wiki.breadcrumb")} className="flex items-center gap-1 text-13 text-muted-foreground">
+      <Link to={back} className="hover:underline">{translate(projectKey ? "projectNav.pages" : "wiki.title")}</Link><ChevronRight aria-hidden size={12} /><span className="text-foreground">{page.title}</span>
       <span className="ml-auto flex items-center gap-2"><Button type="button" className="secondary" aria-pressed={isFavorite} aria-label={translate(isFavorite ? "wiki.unfavorite" : "wiki.favorite")} title={translate(isFavorite ? "wiki.unfavorite" : "wiki.favorite")} onClick={() => void toggleFavorite()}><Heart aria-hidden size={14} fill={isFavorite ? "currentColor" : "none"} /></Button><AiOnly><SidecarTrigger context={{ type: "wiki_page", id: page.id, title: page.title }} /></AiOnly></span>
     </nav>
     {failed && <p role="alert">{translate("wiki.failed")}</p>}
-    {page.archived && <p role="status" className="text-secondary">{translate("pages.archivedReadOnly")}</p>}
-    {page.locked && <p role="status" data-testid="wiki-page-locked" className="rounded-md border border-subtle bg-surface-2 px-3 py-2 text-secondary">{translate("wiki.lockedBanner")}</p>}
+    {page.archived && <p role="status" className="text-muted-foreground">{translate("pages.archivedReadOnly")}</p>}
+    {page.locked && <p role="status" data-testid="wiki-page-locked" className="rounded-md border border-border bg-muted px-3 py-2 text-muted-foreground">{translate("wiki.lockedBanner")}</p>}
     <Editor key={`${page.id}:${editorGeneration}`} onResync={() => setEditorGeneration((generation) => generation + 1)} onImported={(id) => navigate(projectKey ? paths.page(workspace.slug, projectKey, id) : paths.wikiPage(workspace.slug, id))} workspaceId={workspace.id} page={page} self={self} onChanged={refreshPage} actions={{
       onLock: () => void change(page.locked ? "unlock_wiki_page" : "lock_wiki_page", {}),
       onArchive: () => void change(page.archived ? "unarchive_wiki_page" : "archive_wiki_page", {}),
       onAddSubpage: () => void create(page.id),
       onDelete: () => { if (window.confirm(translate("wiki.deleteConfirm"))) void change("delete_wiki_page", {}); },
     }} info={<>
-        <label className="grid gap-1 text-secondary">{translate("wiki.access")}
+        <label className="grid gap-1 text-muted-foreground">{translate("wiki.access")}
           <select value={page.access} disabled={page.archived || page.ownerId !== self} onChange={(event) => void change("set_wiki_page_access", { access: event.target.value })}>
             <option value="public">{translate("wiki.access.public")}</option><option value="private">{translate("wiki.access.private")}</option>
           </select></label>
-        <label className="grid gap-1 text-secondary">{translate("wiki.parent")}
+        <label className="grid gap-1 text-muted-foreground">{translate("wiki.parent")}
           <select value={page.parentId ?? ""} disabled={page.archived} onChange={(event) => void change("move_wiki_page", { parentId: event.target.value || null })}>
             <option value="">{translate("wiki.noParent")}</option>
             {pages.filter((other) => other.id !== page.id).map((other) => <option key={other.id} value={other.id}>{other.title}</option>)}
           </select></label>
         <div role="group" aria-label={translate("wiki.location")} className="grid gap-1.5">
-          <span className="text-secondary">{translate("wiki.location")}</span>
+          <span className="text-muted-foreground">{translate("wiki.location")}</span>
           <select aria-label={translate("wiki.linkProject")} value={page.projectId ? `project:${page.projectId}` : `collection:${page.collectionId ?? ""}`} disabled={page.archived} onChange={(event) => {
             const [kind, id] = event.target.value.split(":", 2);
             void change("move_page_scope", kind === "project" ? { projectId: id, collectionId: null } : { projectId: null, collectionId: id || null });
@@ -913,16 +913,16 @@ export function WikiPageScreen({ workspace, self, pageId, projectKey }: { worksp
             {collections.filter((collection) => !collection.isDefault).map((collection) => <option key={collection.id} value={`collection:${collection.id}`}>{collection.name}</option>)}
             {projects.filter((project) => project.role === "Admin" || project.role === "Member").map((project) => <option key={project.id} value={`project:${project.id}`}>{project.key} · {project.name}</option>)}
           </select>
-          <small className="text-12 text-tertiary">{translate("wiki.location.help")}</small>
+          <small className="text-12 text-muted-foreground">{translate("wiki.location.help")}</small>
         </div>
-        {canPublishHere(page) && <section id="wiki-published-link" aria-label={translate("wiki.publishedLink")} className="grid gap-2 border-t border-subtle pt-3">
-          <span className="font-medium text-primary">{translate("wiki.publishedLink")}</span>
-          {publishedUrl ? <><a className="break-all text-secondary underline" href={publishedUrl} target="_blank" rel="noreferrer">{publishedUrl}</a><Button type="button" className="secondary" onClick={() => void revokePublishedLink()}>{translate("wiki.revokePublishedLink")}</Button></>
-            : page.published ? <><span className="text-secondary">{translate("wiki.published")}</span><Button type="button" className="secondary" onClick={() => void revokePublishedLink()}>{translate("wiki.revokePublishedLink")}</Button></>
+        {canPublishHere(page) && <section id="wiki-published-link" aria-label={translate("wiki.publishedLink")} className="grid gap-2 border-t border-border pt-3">
+          <span className="font-medium text-foreground">{translate("wiki.publishedLink")}</span>
+          {publishedUrl ? <><a className="break-all text-muted-foreground underline" href={publishedUrl} target="_blank" rel="noreferrer">{publishedUrl}</a><Button type="button" className="secondary" onClick={() => void revokePublishedLink()}>{translate("wiki.revokePublishedLink")}</Button></>
+            : page.published ? <><span className="text-muted-foreground">{translate("wiki.published")}</span><Button type="button" className="secondary" onClick={() => void revokePublishedLink()}>{translate("wiki.revokePublishedLink")}</Button></>
             : <Button type="button" className="secondary" onClick={() => void publishPage()}>{translate("wiki.publishLink")}</Button>}
         </section>}
-        {!page.projectId && page.ownerId === self && <section id="wiki-share-members" aria-label={translate("wiki.shareMembers")} className="grid gap-2 border-t border-subtle pt-3">
-          <span className="font-medium text-primary">{translate("wiki.shareMembers")}</span>
+        {!page.projectId && page.ownerId === self && <section id="wiki-share-members" aria-label={translate("wiki.shareMembers")} className="grid gap-2 border-t border-border pt-3">
+          <span className="font-medium text-foreground">{translate("wiki.shareMembers")}</span>
           <div className="grid gap-2">
             <select aria-label={translate("wiki.share.member")} value={shareTarget} onChange={(event) => setShareTarget(event.target.value)}>
               <option value="">{translate("wiki.share.chooseMember")}</option>{shareMembers.filter((member) => member.userId !== self).map((member) => <option key={member.userId} value={member.userId}>{member.name}</option>)}
@@ -970,19 +970,19 @@ export function ProjectPagesPage({ workspace, project, canWrite }: { workspace: 
   const linkable = all.filter((page) => !(pages ?? []).some((linked) => linked.id === page.id));
   return <section aria-label={translate("projectNav.pages")} className="grid gap-3">
     <header className="flex items-center justify-between gap-3">
-      <h2 className="text-18 font-semibold text-primary">{translate("projectNav.pages")}</h2>
+      <h2 className="text-18 font-semibold text-foreground">{translate("projectNav.pages")}</h2>
       {canWrite && <Button type="button" onClick={() => void add()} className="inline-flex items-center gap-1.5"><Plus aria-hidden size={14} />{translate("pages.add")}</Button>}
     </header>
     <ListControls pages={pages} filters={filters} update={update} />
     {failed && <p role="alert">{translate("wiki.failed")}</p>}
     {isError && <p role="alert">{translate("wiki.failed")}</p>}
     {isLoading && <p role="status">{translate("wiki.loading")}</p>}
-    {!isLoading && shown.length === 0 && <p className="text-secondary">{translate("pages.empty")}</p>}
-    <ul className="grid">{shown.map((page) => <li key={page.id} className="flex items-center justify-between gap-2 border-b border-subtle py-2 hover:bg-layer-transparent-hover">
-      <Link className={rowLink} to={paths.page(workspace.slug, project.key, page.id)}><FileText aria-hidden size={14} className="shrink-0 text-secondary" />{page.title}</Link>
+    {!isLoading && shown.length === 0 && <p className="text-muted-foreground">{translate("pages.empty")}</p>}
+    <ul className="grid">{shown.map((page) => <li key={page.id} className="flex items-center justify-between gap-2 border-b border-border py-2 hover:bg-accent">
+      <Link className={rowLink} to={paths.page(workspace.slug, project.key, page.id)}><FileText aria-hidden size={14} className="shrink-0 text-muted-foreground" />{page.title}</Link>
       <span className="flex items-center gap-2">{roleIcon(page)}{canWrite && <Button type="button" className="secondary" aria-label={`${translate("wiki.unlink")}: ${page.title}`} onClick={() => void move(page.id, null)}>{translate("wiki.unlink")}</Button>}</span>
     </li>)}</ul>
-    {canWrite && linkable.length > 0 && <label className="grid max-w-xs gap-1 text-13 text-secondary">{translate("pages.linkExisting")}
+    {canWrite && linkable.length > 0 && <label className="grid max-w-xs gap-1 text-13 text-muted-foreground">{translate("pages.linkExisting")}
       <select value="" onChange={(event) => { if (event.target.value) void move(event.target.value, project.id); }}>
         <option value="">{translate("pages.choose")}</option>
         {linkable.map((page) => <option key={page.id} value={page.id}>{page.title}</option>)}

@@ -353,24 +353,24 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
   return <div ref={root} className="pointer-events-none absolute inset-0 z-20" data-testid="wiki-block-controls">
     {current && handleTop !== null && <div className="pointer-events-auto absolute -left-6 flex items-start gap-1" style={{ top: handleTop }}>
       <Button type="button" data-testid="wiki-block-handle" aria-label={translate("wiki.blockHandle")} title={translate("wiki.blockHandle")}
-        className="grid size-6 shrink-0 cursor-grab place-items-center rounded text-tertiary hover:bg-layer-transparent-hover hover:text-primary active:cursor-grabbing"
+        className="grid size-6 shrink-0 cursor-grab place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground active:cursor-grabbing"
         aria-haspopup="menu" aria-expanded={menu?.pos === current.pos}
         onPointerDown={(event) => { if (event.button !== 0) return; pointerStart.current = { x: event.clientX, y: event.clientY, pos: current.pos }; didDrag.current = false; }}
         onKeyDown={(event) => { if (event.key === "Escape" && menu) setMenu(null); }}
         onClick={() => { if (didDrag.current) { didDrag.current = false; return; } setMenu(menu?.pos === current.pos ? null : current); }}>
         <GripVertical aria-hidden size={16} />
       </Button>
-      {menu?.pos === current.pos && <div role="menu" data-testid="wiki-block-menu" aria-label={translate("wiki.blockMenu")} className="absolute left-6 top-0 grid min-w-36 gap-0.5 rounded-md border border-subtle bg-surface-1 p-1 shadow-lg"
+      {menu?.pos === current.pos && <div role="menu" data-testid="wiki-block-menu" aria-label={translate("wiki.blockMenu")} className="absolute left-6 top-0 grid min-w-36 gap-0.5 rounded-md border border-border bg-card p-1 shadow-lg"
         onKeyDown={(event) => { if (event.key === "Escape") { setMenu(null); root.current?.querySelector<HTMLElement>('[data-testid="wiki-block-handle"]')?.focus(); } }}>
-        {above && <Button type="button" role="menuitem" className="flex items-center gap-2 rounded px-2 py-1.5 text-left text-13 hover:bg-layer-transparent-hover" onClick={() => moveFromMenu(menu, "up")}>
+        {above && <Button type="button" role="menuitem" className="flex items-center gap-2 rounded px-2 py-1.5 text-left text-13 hover:bg-accent" onClick={() => moveFromMenu(menu, "up")}>
           <ArrowUp aria-hidden size={14} />{translate("wiki.blockMoveUp")}</Button>}
-        {below && <Button type="button" role="menuitem" className="flex items-center gap-2 rounded px-2 py-1.5 text-left text-13 hover:bg-layer-transparent-hover" onClick={() => moveFromMenu(menu, "down")}>
+        {below && <Button type="button" role="menuitem" className="flex items-center gap-2 rounded px-2 py-1.5 text-left text-13 hover:bg-accent" onClick={() => moveFromMenu(menu, "down")}>
           <ArrowDown aria-hidden size={14} />{translate("wiki.blockMoveDown")}</Button>}
-        <Button type="button" role="menuitem" className="flex items-center gap-2 rounded px-2 py-1.5 text-left text-13 hover:bg-layer-transparent-hover" onClick={() => {
+        <Button type="button" role="menuitem" className="flex items-center gap-2 rounded px-2 py-1.5 text-left text-13 hover:bg-accent" onClick={() => {
           duplicateTopLevelBlock(editor, menu.pos);
           setMenu(null);
         }}><Copy aria-hidden size={14} />{translate("wiki.blockDuplicate")}</Button>
-        <Button type="button" role="menuitem" className="flex items-center gap-2 rounded px-2 py-1.5 text-left text-13 text-danger hover:bg-layer-transparent-hover" onClick={() => {
+        <Button type="button" role="menuitem" className="flex items-center gap-2 rounded px-2 py-1.5 text-left text-13 text-destructive hover:bg-accent" onClick={() => {
           const node = editor.state.doc.nodeAt(menu.pos);
           if (node) editor.chain().focus().deleteRange({ from: menu.pos, to: menu.pos + node.nodeSize }).run();
           setMenu(null);

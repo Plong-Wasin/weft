@@ -10,6 +10,7 @@ import { matchesProjectSearch, preferenceOf, useProjectPreferences } from "../sh
 import { paths } from "../routes";
 import { useWorkspace } from "../layouts/workspace-layout";
 import { EmptyState } from "../empty-state";
+import { PageHeader } from "../shell/page-header";
 import type { Project } from "../types";
 
 import { Checkbox } from "@/ui/checkbox";
@@ -63,7 +64,7 @@ export function ProjectsPanel() {
       <fieldset className="m-0 grid gap-2 border-0 p-0">
         <legend className="mb-2 p-0 text-sm font-medium text-muted-foreground">{translate("projects.shape")}</legend>
         <div className="grid gap-3 sm:grid-cols-2">
-          {(["simple", "full"] as const).map((option) => <label key={option} className={`grid cursor-pointer gap-1 rounded-lg border p-3 text-sm ${shape === option ? "border-primary bg-muted" : "border-border"}`}>
+          {(["simple", "full"] as const).map((option) => <label key={option} className={`grid cursor-pointer gap-1 rounded-lg border p-3 text-sm ${shape === option ? "border-border bg-muted" : "border-border"}`}>
             <span className="flex items-center gap-2 font-medium text-foreground"><input type="radio" name="project-shape" value={option} checked={shape === option} onChange={() => setShape(option)} />{translate(`projects.shape${option === "simple" ? "Simple" : "Full"}` as MessageKey)}</span>
             <span className="pl-6 text-muted-foreground">{translate(`projects.shape${option === "simple" ? "Simple" : "Full"}Desc` as MessageKey)}</span>
           </label>)}
@@ -76,12 +77,11 @@ export function ProjectsPanel() {
       {note && <p role="alert" className="m-0 text-sm text-destructive">{note}</p>}
     </form>;
   return <section className="grid gap-4">
-    <header className="flex flex-wrap items-center gap-3">
-      <h1 className="m-0 flex-1 text-xl font-semibold text-foreground">{translate("projects.title")}</h1>
-      <label className="w-full max-w-sm text-sm font-medium text-muted-foreground">{translate("projects.find")}<Input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={translate("projects.searchPlaceholder")} /></label>
+    <PageHeader title={translate("projects.title")} actions={<>
+      <Input aria-label={translate("projects.find")} type="search" className="w-full sm:w-64" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={translate("projects.searchPlaceholder")} />
       <label className="secondary flex items-center gap-2 text-sm"><Checkbox checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />{translate("projects.showArchived")}</label>
       {!creating && <Button type="button" className="flex items-center gap-1.5" onClick={() => setCreating(true)}><Plus aria-hidden size={14} />{translate("projects.new")}</Button>}
-    </header>
+    </>} />
     {form}
     {projects !== null && projects.length === 0 && <EmptyState title={translate(showArchived ? "projects.noArchived" : "projects.empty")} description={showArchived ? undefined : translate("projects.emptyHint")}
       action={showArchived || creating ? undefined : <Button type="button" onClick={() => setCreating(true)}>{translate("projects.createFirst")}</Button>} />}
@@ -95,7 +95,7 @@ export function ProjectsPanel() {
         const starred = preferenceOf(prefs, project.id)?.starred ?? false;
         const label = translate(starred ? "sidebar.unstar" : "sidebar.star");
         return <Button type="button" aria-pressed={starred} aria-label={`${label}: ${project.name}`} title={label} onClick={() => void setPreference(project.id, { starred: !starred })} className="bg-transparent p-1 text-muted-foreground hover:bg-transparent hover:text-foreground">
-          <Star aria-hidden size={14} className={starred ? "text-primary" : undefined} fill={starred ? "currentColor" : "none"} />
+          <Star aria-hidden size={14} className={starred ? "text-foreground" : undefined} fill={starred ? "currentColor" : "none"} />
         </Button>;
       })()}
       <span className="flex items-center gap-1.5 text-sm text-muted-foreground">{project.visibility === "private" ? <Lock aria-hidden size={13} /> : <Globe aria-hidden size={13} />}{translate(`projects.visibility.${project.visibility}`)}</span>

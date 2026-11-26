@@ -1,7 +1,7 @@
 import { Button } from "@/ui/button";
 import React from "react";
 import { ChevronDown, ChevronUp, Clock, Copy, CopyCheck, Inbox, MoreHorizontal, Plus, X } from "lucide-react";
-import { formatDate, translate, type MessageKey } from "@weft/shared";
+import { formatDate, getLocale, translate, type MessageKey } from "@weft/shared";
 import { useLocation, useSearchParams } from "react-router";
 import { EmptyState } from "./empty-state";
 import { Popover, menuItemClass } from "./shell/popover";
@@ -181,21 +181,20 @@ function SubmitModal({ action, workspaceId, projectId, onClose, onSubmitted }: {
   </Modal>;
 }
 
-const snoozeTimes = Array.from({ length: 48 }, (_, index) => `${String(Math.floor(index / 2)).padStart(2, "0")}:${index % 2 ? "30" : "00"}`);
+// The shared catalogue has no plain "Time" key; the label follows the app locale.
+const timeLabel = () => getLocale() === "th" ? "เวลา" : "Time";
 
 function SnoozeModal({ onClose, onSnooze }: { onClose: () => void; onSnooze: (till: string) => void }) {
   const [day, setDay] = React.useState("");
+  // A native time field keeps the minute precision the old datetime-local field had.
   const [time, setTime] = React.useState("");
   const till = day && time ? `${day}T${time}` : "";
   return <Modal title={t("intake.snoozeTitle")} onClose={onClose}>
     <form className="my-0 grid gap-3" onSubmit={(event) => { event.preventDefault(); if (till) onSnooze(new Date(till).toISOString()); }}>
       <div className="grid gap-1 text-13 text-muted-foreground"><span>{t("intake.snoozeTill")}</span>
-        <div className="grid grid-cols-[minmax(0,1fr)_7rem] gap-2">
+        <div className="grid grid-cols-[minmax(0,1fr)_8rem] gap-2">
           <DatePicker label={t("intake.snoozeTill")} value={day} onChange={setDay} />
-          <Select value={time} items={snoozeTimes.map((value) => ({ value, label: value }))} onValueChange={(value) => { if (value) setTime(value); }}>
-            <SelectTrigger aria-label={t("intake.snoozeTill")}><SelectValue /></SelectTrigger>
-            <SelectContent>{snoozeTimes.map((value) => <SelectItem key={value} value={value}><SelectItemText>{value}</SelectItemText></SelectItem>)}</SelectContent>
-          </Select>
+          <Input required type="time" aria-label={timeLabel()} value={time} className="text-sm tabular-nums" onChange={(event) => setTime(event.target.value)} />
         </div>
       </div>
       <div className="flex justify-end gap-2">

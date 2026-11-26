@@ -21,8 +21,9 @@ export function DatePicker({ label, value, onChange, field = "start", min, max, 
 }) {
   const range: DateRange = field === "start" ? { startDate: value || null, dueDate: null } : { startDate: null, dueDate: value || null };
   const shown = value ? shortDay(value) : t("datePicker.noDate");
-  const trigger = <span data-date-value={value} className="flex min-w-0 w-full items-center justify-between gap-2"><span className="flex min-w-0 items-center gap-2"><CalendarDays aria-hidden size={15} className="shrink-0 text-muted-foreground" /><span className="truncate">{shown}</span></span><ChevronDown aria-hidden size={15} className="shrink-0 text-muted-foreground" /></span>;
-  const triggerClass = `h-9 w-full justify-between rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-xs hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50 ${className}`;
+  // Same box, type and empty-value tone as SelectTrigger, so a date sits beside a Select as one kind of control.
+  const trigger = <span data-date-value={value} className="flex min-w-0 w-full items-center justify-between gap-2"><span className="flex min-w-0 items-center gap-2"><CalendarDays aria-hidden className="size-4 shrink-0 text-muted-foreground" /><span className={cn("truncate", !value && "text-muted-foreground")}>{shown}</span></span><ChevronDown aria-hidden className="size-4 shrink-0 opacity-50" /></span>;
+  const triggerClass = "h-9 w-full justify-between gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm font-normal text-foreground shadow-xs hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50";
   if (disabled) return <Button type="button" aria-label={`${label}: ${shown}`} data-date-value={value} disabled className={cn(triggerClass, className)}>{trigger}</Button>;
   return <Popover label={`${label}: ${shown}`} panelRole="dialog" panelClassName="grid w-[22rem] max-w-[calc(100vw-2rem)] gap-2 p-3"
     className={cn(triggerClass, className)} trigger={trigger}>

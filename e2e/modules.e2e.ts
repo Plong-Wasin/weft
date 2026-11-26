@@ -162,6 +162,7 @@ try {
   await page.screenshot({ path: `${shots}/modules-list-1440.png` });
   await page.screenshot({ path: `${auditAfter}/modules-1440-light.png`, fullPage: true });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+  await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition).map((animation) => animation.finished))); // colour transitions must settle before the shot
   await page.screenshot({ path: `${auditAfter}/modules-1440-dark.png`, fullPage: true });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   // Visible controls only: Base UI keeps 1px aria-hidden inputs behind its selects, which are not touch targets.

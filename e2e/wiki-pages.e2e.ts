@@ -6,6 +6,7 @@ import { createDatabase, users, workspaceMembers, workspaces } from "../packages
 import { createWikiActions } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { chooseDate, expectDate as expectTriggerDate } from "../tools/choose-date";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31157);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52157);
@@ -53,32 +54,8 @@ try {
     await page.getByRole("option", { name: option, exact: true }).click();
   };
   const dateTrigger = (scope: Locator, label: string) => scope.getByRole("button", { name: new RegExp(`^${label}:`) });
-  const setDate = async (scope: Locator, label: string, value: string) => {
-    const trigger = dateTrigger(scope, label);
-    await trigger.click();
-    const panel = page.locator('[data-popover-panel][role="dialog"]').filter({ has: page.locator("[data-date-picker]") }).last();
-    await panel.waitFor();
-    if (!value) {
-      await panel.getByRole("button", { name: translate("datePicker.noDate"), exact: true }).click();
-      return;
-    }
-    await panel.getByRole("spinbutton", { name: "Year" }).fill(value.slice(0, 4));
-    for (let turn = 0; turn < 120; turn++) {
-      const month = await panel.locator("[data-month]").getAttribute("data-month");
-      if (month === value.slice(0, 7)) break;
-      await panel.getByRole("button", { name: month! < value.slice(0, 7) ? translate("datePicker.nextMonth") : translate("datePicker.previousMonth") }).click();
-    }
-    await panel.locator(`[data-date="${value}"]`).click();
-    for (let attempt = 0; attempt < 50; attempt++) {
-      const actual = await trigger.locator("[data-date-value]").getAttribute("data-date-value");
-      if (actual === value) return;
-      await Bun.sleep(100);
-    }
-    throw new Error(`${label} did not retain ${value}; got ${await trigger.locator("[data-date-value]").getAttribute("data-date-value")}, URL ${page.url()}`);
-  };
-  const expectDate = async (scope: Locator, label: string, value: string) => {
-    check(await dateTrigger(scope, label).locator("[data-date-value]").getAttribute("data-date-value") === value, `${label} did not retain ${value}`);
-  };
+  const setDate = async (scope: Locator, label: string, value: string) => await chooseDate(dateTrigger(scope, label), value);
+  const expectDate = async (scope: Locator, label: string, value: string) => await expectTriggerDate(dateTrigger(scope, label), value, label);
   const call = async <T>(name: string, body: unknown) => await (await page.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
   async function waitForStoredText(pageId: string, text: string) {
     for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -136,6 +113,7 @@ try {
   check(filterControls.every((box) => Math.abs(box!.height - filterControls[0]!.height) <= 1 && Math.abs(box!.y + box!.height - (filterControls[0]!.y + filterControls[0]!.height)) <= 1), `Wiki filters must have equal heights and aligned baselines: ${JSON.stringify(filterControls)}`);
   for (const theme of ["light", "dark"] as const) {
     await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+    await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition).map((animation) => animation.finished))); // colour transitions must settle before the shot
     await page.screenshot({ path: `${shots}/wiki-list-after-${theme}-1440.png`, fullPage: true });
   }
   await page.goto(`${web}/${slug}/wiki/${handbook.id}`);
@@ -144,6 +122,7 @@ try {
   check(emptyEditorBox !== null && emptyEditorBox.height <= 112, `the empty Wiki editor must reserve a compact writing area before Attachments, found ${emptyEditorBox?.height}px`);
   for (const theme of ["light", "dark"] as const) {
     await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+    await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition).map((animation) => animation.finished))); // colour transitions must settle before the shot
     await page.screenshot({ path: `${shots}/wiki-page-after-${theme}-1440.png`, fullPage: true });
   }
   const attachmentsDisclosure = page.getByTestId("wiki-attachments-disclosure");
@@ -458,6 +437,7 @@ try {
   for (const [theme, width, height] of [["light", 1440, 900], ["dark", 1440, 900], ["light", 768, 900], ["dark", 768, 900], ["light", 390, 844], ["dark", 390, 844]] as const) {
     await page.setViewportSize({ width, height });
     await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+    await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition).map((animation) => animation.finished))); // colour transitions must settle before the shot
     await page.screenshot({ path: `${shots}/ticket13-project-page-${theme}-${width}.png`, fullPage: true });
   }
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -676,6 +656,7 @@ try {
   for (const [theme, width, height] of [["light", 1440, 900], ["dark", 1440, 900], ["light", 768, 900], ["dark", 768, 900], ["light", 390, 844], ["dark", 390, 844]] as const) {
     await page.setViewportSize({ width, height });
     await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+    await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition).map((animation) => animation.finished))); // colour transitions must settle before the shot
     await page.screenshot({ path: `${shots}/ticket13-wiki-list-${theme}-${width}.png`, fullPage: true });
   }
 

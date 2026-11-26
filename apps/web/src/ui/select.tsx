@@ -3,11 +3,18 @@ import React from "react";
 import { Check, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const SelectRootContext = React.createContext<React.RefObject<HTMLElement | null> | null>(null);
+/** The modal a Select sits in, so its popup portals into that top layer instead of the inert `<body>`. */
+const SelectContainerContext = React.createContext<HTMLElement | undefined>(undefined);
+const modalSelector = 'dialog, [data-slot="dialog-content"], [data-create-modal]';
 
 function Select(props: SelectPrimitive.Root.Props<string, false>) {
-  const root = React.useRef<HTMLElement>(null);
-  return <SelectRootContext.Provider value={root}><div ref={root as React.RefObject<HTMLDivElement>} className="contents" data-slot="select-root"><SelectPrimitive.Root data-slot="select" {...props} /></div></SelectRootContext.Provider>;
+  const root = React.useRef<HTMLSpanElement>(null);
+  const [container, setContainer] = React.useState<HTMLElement | undefined>(undefined);
+  // `dialog`, not `dialog[open]`: a parent calls showModal() in its own effect, which runs after this one.
+  // Found after mount, never from a ref during render: the first render has no DOM yet, and the popup would then portal
+  // to <body>, under a showModal() dialog, until something else happened to re-render it.
+  React.useLayoutEffect(() => { setContainer(root.current?.closest<HTMLElement>(modalSelector) ?? undefined); }, []);
+  return <SelectContainerContext.Provider value={container}><span ref={root} className="contents" data-slot="select-root"><SelectPrimitive.Root data-slot="select" {...props} /></span></SelectContainerContext.Provider>;
 }
 
 function SelectTrigger({ className, children, ...props }: SelectPrimitive.Trigger.Props) {
@@ -21,8 +28,7 @@ function SelectValue(props: SelectPrimitive.Value.Props) {
 }
 
 function SelectContent({ className, children, ...props }: SelectPrimitive.Popup.Props) {
-  const root = React.useContext(SelectRootContext);
-  const container = root?.current?.closest<HTMLElement>('dialog[open], [data-slot="dialog-content"], [data-create-modal]') ?? undefined;
+  const container = React.useContext(SelectContainerContext);
   return <SelectPrimitive.Portal container={container}>
     <SelectPrimitive.Positioner sideOffset={4} alignItemWithTrigger={false} className="z-50 outline-none">
       <SelectPrimitive.Popup data-slot="select-content" className={cn("relative z-50 max-h-[min(18rem,var(--available-height))] min-w-32 origin-(--transform-origin) overflow-x-hidden overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:hidden data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95", className)} {...props}>

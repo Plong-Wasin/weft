@@ -6,7 +6,7 @@ import { eq, like } from "drizzle-orm";
 import { createDatabase, projectMembers, projects as dbProjects, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
-import { chooseDate } from "../tools/choose-date";
+import { chooseDate, expectDate as expectTriggerDate } from "../tools/choose-date";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3108);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5208);
@@ -39,32 +39,8 @@ try {
   const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
   const page = await browser.newPage();
   const dateTrigger = (scope: Locator) => scope.getByRole("button", { name: new RegExp(`^${translate("workItems.dueDate")}:`) });
-  const setDate = async (scope: Locator, value: string) => {
-    const trigger = dateTrigger(scope);
-    await trigger.click();
-    const panel = page.locator('[data-popover-panel][role="dialog"]').filter({ has: page.locator("[data-date-picker]") }).last();
-    await panel.waitFor();
-    await panel.getByRole("spinbutton", { name: "Year" }).fill(value.slice(0, 4));
-    for (let turn = 0; turn < 120; turn++) {
-      const month = await panel.locator("[data-month]").getAttribute("data-month");
-      if (month === value.slice(0, 7)) break;
-      await panel.getByRole("button", { name: month! < value.slice(0, 7) ? translate("datePicker.nextMonth") : translate("datePicker.previousMonth") }).click();
-    }
-    await panel.locator(`[data-date="${value}"]`).click();
-    for (let attempt = 0; attempt < 50; attempt++) {
-      if (await trigger.locator("[data-date-value]").getAttribute("data-date-value") === value) return;
-      await Bun.sleep(100);
-    }
-    check(false, `Due date did not retain ${value}`);
-  };
-  const expectDate = async (scope: Locator, expected: string, label: string) => {
-    const locator = dateTrigger(scope).locator("[data-date-value]");
-    for (let attempt = 0; attempt < 50; attempt += 1) {
-      if (await locator.getAttribute("data-date-value") === expected) return;
-      await Bun.sleep(100);
-    }
-    throw new Error(`Expected ${label} value ${expected}; got ${await locator.getAttribute("data-date-value")}`);
-  };
+  const setDate = async (scope: Locator, value: string) => await chooseDate(dateTrigger(scope), value);
+  const expectDate = async (scope: Locator, expected: string, label: string) => await expectTriggerDate(dateTrigger(scope), expected, label);
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   await page.goto(web);
@@ -217,6 +193,28 @@ try {
   await page.mouse.click(0, 0);
   await backdropDialog.waitFor({ state: "detached" });
   check(await add.evaluate((element) => document.activeElement === element), "backdrop click did not restore focus to the Intake trigger");
+  // A Select inside a showModal() dialog opens in that dialog's top layer and takes a click, even as the first thing
+  // done in the modal. The modal's member and label loads are held until after the pick, so no data arrival
+  // re-renders the modal first; a popup portalled to the inert <body> would sit under the modal.
+  let releaseModalData = () => {};
+  const modalDataHeld = new Promise<void>((resolve) => { releaseModalData = resolve; });
+  const holdModalData = async (route: import("playwright").Route) => { await modalDataHeld; await route.continue(); };
+  await page.route("**/actions/list_project_members", holdModalData);
+  await page.route("**/actions/list_labels", holdModalData);
+  await add.click();
+  const selectDialog = page.getByRole("dialog", { name: translate("intake.modalTitle") });
+  const firstPriority = selectDialog.getByRole("combobox", { name: translate("intake.priority") });
+  await firstPriority.click();
+  const highOption = page.getByRole("option", { name: translate("workItems.priority.high"), exact: true });
+  await highOption.waitFor();
+  check(await highOption.evaluate((node) => !!node.closest("dialog[open]")), "the Priority options must render inside the open Intake dialog, not under it");
+  await highOption.click({ timeout: 5_000 });
+  check((await firstPriority.innerText()).trim() === translate("workItems.priority.high"), "clicking High in the Select inside the dialog must set the Priority");
+  releaseModalData();
+  await page.unroute("**/actions/list_project_members", holdModalData);
+  await page.unroute("**/actions/list_labels", holdModalData);
+  await selectDialog.getByRole("button", { name: translate("intake.cancel"), exact: true }).last().click();
+  await selectDialog.waitFor({ state: "detached" });
   await submit("Dark mode please", "Users want a dark theme", true, [
     { name: "evidence.txt", mimeType: "text/plain", buffer: Buffer.from("evidence") },
     { name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("saved") },
@@ -382,10 +380,14 @@ try {
   const pad = (n: number) => String(n).padStart(2, "0");
   const snoozeDialog = page.getByRole("dialog");
   await chooseDate(snoozeDialog.getByRole("button", { name: new RegExp(`^${translate("intake.snoozeTill")}:`) }), `${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())}`);
-  await snoozeDialog.getByRole("combobox", { name: translate("intake.snoozeTill"), exact: true }).click();
-  await page.getByRole("option", { name: "10:00", exact: true }).click();
-  check((await snoozeDialog.getByRole("combobox", { name: translate("intake.snoozeTill"), exact: true }).innerText()).trim() === "10:00", "snooze time must show 10:00 before saving");
+  // Minute precision, as the old datetime-local field had: 10:17 must reach the API as 10:17 local time.
+  const snoozeTime = snoozeDialog.getByLabel("Time", { exact: true });
+  await snoozeTime.fill("10:17");
+  check(await snoozeTime.inputValue() === "10:17", "snooze time must hold 10:17 before saving");
+  const snoozeRequest = page.waitForRequest((request) => request.url().includes("/actions/snooze_intake_item"));
   await page.getByRole("dialog").getByRole("button", { name: translate("intake.snooze"), exact: true }).click();
+  const snoozedTill = new Date((await snoozeRequest).postDataJSON().snoozedTill as string);
+  check(snoozedTill.getDate() === tomorrow.getDate() && snoozedTill.getHours() === 10 && snoozedTill.getMinutes() === 17, `snooze must send tomorrow 10:17 local, sent ${snoozedTill.toISOString()}`);
   await page.getByRole("dialog").waitFor({ state: "detached" });
   await page.getByTestId("intake-MOB-3").getByTestId("intake-status").getByText(translate("intake.status.snoozed")).waitFor();
   await page.getByTestId("intake-MOB-3").click();

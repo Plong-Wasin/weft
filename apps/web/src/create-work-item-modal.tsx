@@ -113,10 +113,12 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
 
   const stateOf = states.find((state) => state.id === stateId);
   const chipRow = "grid grid-cols-2 gap-2 sm:grid-cols-3";
+  // One control style for the property grid and the date triggers below it: the ui/ Select box and type size.
+  const propertyControl = "h-9 w-full min-w-0 justify-start border-input bg-background px-2.5 text-sm font-normal text-foreground shadow-xs";
   return <DialogPrimitive.Root open disablePointerDismissal={unsaved} onOpenChange={(open) => { if (!open) onClose(); }}>
     <DialogPortal>
       <DialogOverlay />
-      <DialogPrimitive.Popup data-create-modal aria-label={t("workItems.modal.title")} finalFocus={() => (opener?.isConnected ? opener : true)} className="fixed left-1/2 top-[6dvh] z-50 max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-2xl -translate-x-1/2 overflow-y-auto rounded-2xl border border-border bg-popover text-popover-foreground shadow-lg outline-none">
+      <DialogPrimitive.Popup data-create-modal aria-label={t("workItems.modal.title")} finalFocus={() => (opener?.isConnected ? opener : true)} className="fixed left-1/2 top-[6dvh] z-50 max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-2xl -translate-x-1/2 overflow-y-auto rounded-2xl border border-border bg-background text-foreground shadow-lg outline-none">
       <form className="my-0 grid gap-5 p-6 max-sm:gap-4 max-sm:p-4 pointer-coarse:[&_button]:min-h-11 pointer-coarse:[&_input]:min-h-11" onSubmit={submit}>
         <div className="flex items-center gap-2">
           <DialogTitle className="m-0 flex-1">{t("workItems.modal.title")}</DialogTitle>
@@ -130,27 +132,27 @@ export function CreateWorkItemModal({ project, onClose, onCreated }: { project: 
             onChange={(property, value) => setPropertyValues((current) => new Map(current).set(property.id, value))} />
         </div>}
         <div data-testid="create-property-grid" className={chipRow}>
-          <SingleSelect className="h-9 w-full min-w-0 justify-start border-input bg-background px-2.5 text-foreground shadow-xs" label={t("workItems.state")} summary={stateOf?.name ?? ""} value={stateId} icon={<StateIcon group={stateOf?.group ?? "unstarted"} />}
+          <SingleSelect className={propertyControl} label={t("workItems.state")} summary={stateOf?.name ?? ""} value={stateId} icon={<StateIcon group={stateOf?.group ?? "unstarted"} />}
             options={states.map((state) => ({ id: state.id, name: state.name, icon: <StateIcon group={state.group} /> }))} onSelect={setStateId} />
-          <SingleSelect className="h-9 w-full min-w-0 justify-start border-input bg-background px-2.5 text-foreground shadow-xs" label={t("workItems.priority")} summary={t(`workItems.priority.${priority}`)} value={priority} icon={<PriorityIcon priority={priority} />}
+          <SingleSelect className={propertyControl} label={t("workItems.priority")} summary={t(`workItems.priority.${priority}`)} display={priority === "none" ? t("workItems.priority.none") : undefined} value={priority} icon={<PriorityIcon priority={priority} />}
             options={priorityOrder.map((id) => ({ id, name: t(`workItems.priority.${id}`), icon: <PriorityIcon priority={id} /> }))} onSelect={setPriority} />
-          <EstimateSelect className="h-9 w-full min-w-0 justify-start border-input bg-background px-2.5 text-foreground shadow-xs" estimate={estimate} pointId={estimatePointId} onSelect={setEstimatePointId} />
-          <MultiSelect className="h-9 w-full min-w-0 justify-start border-input bg-background px-2.5 text-foreground shadow-xs" label={t("workItems.assignees")} selected={assigneeIds} searchAlways icon={assigneeIds.length ? undefined : <Users aria-hidden size={14} className="text-muted-foreground" />}
+          <EstimateSelect className={propertyControl} estimate={estimate} pointId={estimatePointId} onSelect={setEstimatePointId} />
+          <MultiSelect className={propertyControl} label={t("workItems.assignees")} selected={assigneeIds} searchAlways icon={assigneeIds.length ? undefined : <Users aria-hidden size={14} className="text-muted-foreground" />}
             onOpen={() => { void action<Member[]>("list_project_members", { projectId: project.id }).then((rows) => rows && setPeople(rows)); }}
-            summary={assigneeIds.length === 0 ? <span>{t("workItems.noAssignee")}</span> : <span className="flex min-w-0 items-center -space-x-1">{assigneeIds.slice(0, 3).map((id) => <Avatar key={id} name={people.find((person) => person.userId === id)?.name ?? id} id={id} agent={people.find((person) => person.userId === id)?.isAgent} />)}</span>}
+            summary={assigneeIds.length === 0 ? <span className="text-muted-foreground">{t("workItems.noAssignee")}</span> : <span className="flex min-w-0 items-center gap-1.5"><span className="flex shrink-0 items-center -space-x-1">{assigneeIds.slice(0, 3).map((id) => <Avatar key={id} name={people.find((person) => person.userId === id)?.name ?? id} id={id} agent={people.find((person) => person.userId === id)?.isAgent} />)}</span><span className="truncate">{people.find((person) => person.userId === assigneeIds[0])?.name}{assigneeIds.length > 1 ? ` +${assigneeIds.length - 1}` : ""}</span></span>}
             options={people.map((person) => ({ id: person.userId, name: person.name, icon: <Avatar name={person.name} id={person.userId} agent={person.isAgent} />, isAgent: person.isAgent, codeCapable: person.codeCapable, hasAccess: person.hasAccess, accessReason: accessReasonText(person) }))}
             onToggle={(id, on) => setAssigneeIds(on ? [...assigneeIds, id] : assigneeIds.filter((other) => other !== id))} />
-          <MultiSelect className="h-9 w-full min-w-0 justify-start border-input bg-background px-2.5 text-foreground shadow-xs" label={t("workItems.labels")} selected={labelIds} icon={<Tag aria-hidden size={14} className="text-muted-foreground" />}
-            summary={labelIds.length === 0 ? <span>{t("workItems.noLabels")}</span> : <span className="truncate">{labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ")}</span>}
+          <MultiSelect className={propertyControl} label={t("workItems.labels")} selected={labelIds} icon={<Tag aria-hidden size={14} className="text-muted-foreground" />}
+            summary={labelIds.length === 0 ? <span className="text-muted-foreground">{t("workItems.noLabels")}</span> : <span className="truncate">{labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ")}</span>}
             options={labels.map((label) => ({ id: label.id, name: label.name, icon: <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: label.color }} /> }))}
             onToggle={(id, on) => setLabelIds(on ? [...labelIds, id] : labelIds.filter((other) => other !== id))} />
-          {project.features.cycles && <SingleSelect className="h-9 w-full min-w-0 justify-start border-input bg-background px-2.5 text-foreground shadow-xs" label={t("workItems.cycle")} value={cycleId} icon={<RefreshCw aria-hidden size={14} className="text-muted-foreground" />} summary={cycles.find((cycle) => cycle.id === cycleId)?.name ?? t("workItems.noCycle")}
+          {project.features.cycles && <SingleSelect className={propertyControl} label={t("workItems.cycle")} value={cycleId} icon={<RefreshCw aria-hidden size={14} className="text-muted-foreground" />} summary={cycles.find((cycle) => cycle.id === cycleId)?.name ?? t("workItems.noCycle")} display={cycles.some((cycle) => cycle.id === cycleId) ? undefined : t("workItems.noCycle")}
             options={[{ id: "", name: t("workItems.noCycle") }, ...cycles.filter((cycle) => cycle.status !== "completed").map((cycle) => ({ id: cycle.id, name: cycle.name }))]} onSelect={setCycleId} />}
-          {project.features.modules && <MultiSelect className="h-9 w-full min-w-0 justify-start border-input bg-background px-2.5 text-foreground shadow-xs" label={t("workItems.modules")} selected={moduleIds} icon={<Package aria-hidden size={14} className="text-muted-foreground" />}
-            summary={moduleIds.length === 0 ? <span>{t("workItems.noModules")}</span> : <span className="truncate">{moduleIds.map((id) => modules.find((module) => module.id === id)?.name).filter(Boolean).join(", ")}</span>}
+          {project.features.modules && <MultiSelect className={propertyControl} label={t("workItems.modules")} selected={moduleIds} icon={<Package aria-hidden size={14} className="text-muted-foreground" />}
+            summary={moduleIds.length === 0 ? <span className="text-muted-foreground">{t("workItems.noModules")}</span> : <span className="truncate">{moduleIds.map((id) => modules.find((module) => module.id === id)?.name).filter(Boolean).join(", ")}</span>}
             options={modules.map((module) => ({ id: module.id, name: module.name }))} onToggle={(id, on) => setModuleIds(on ? [...moduleIds, id] : moduleIds.filter((other) => other !== id))} />}
           <div data-testid="create-parent-control" className="col-span-2 min-w-0 sm:col-span-1">
-            <SingleSelect className="h-9 w-full min-w-0 justify-start border-input bg-background px-2.5 text-foreground shadow-xs" label={t("workItems.modal.parent")} value={parentId} icon={<Layers aria-hidden size={14} className="text-muted-foreground" />} summary={items.find((item) => item.id === parentId)?.displayId ?? t("workItems.addParent")}
+            <SingleSelect className={propertyControl} label={t("workItems.modal.parent")} value={parentId} icon={<Layers aria-hidden size={14} className="text-muted-foreground" />} summary={items.find((item) => item.id === parentId)?.displayId ?? t("workItems.addParent")} display={items.some((item) => item.id === parentId) ? undefined : t("workItems.addParent")}
               options={[{ id: "", name: t("workItems.noParent") }, ...items.map((item) => ({ id: item.id, name: `${item.displayId} ${item.title}` }))]} onSelect={setParentId} />
           </div>
         </div>

@@ -521,7 +521,12 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     const phoneProperties = allListProperties.filter((property) => !isEmptyProperty(item, property));
     const priorityEmpty = isEmptyProperty(item, "priority");
     return <li key={item.id} data-testid={`row-${item.displayId}`} data-list-row className="work-item-list-row group/row border-b border-border px-1 py-0.5 max-sm:py-0">
-      <div style={columnStyle} className={`mx-1 grid min-w-0 grid-cols-1 gap-y-0 rounded-lg px-3 py-1 max-sm:py-0.5 ${selected.includes(item.id) ? "bg-background" : "bg-transparent hover:bg-accent"} sm:grid-cols-[var(--cols)] sm:items-center sm:gap-x-2 sm:gap-y-0 sm:py-0 [@media(hover:none)]:sm:min-h-10`}>
+      <div style={columnStyle} className={cn(
+        "mx-1 grid min-w-0 grid-cols-1 gap-y-0 rounded-lg px-3 py-1 max-sm:py-0.5 sm:grid-cols-[var(--cols)] sm:items-center sm:gap-x-2 sm:gap-y-0 sm:py-0 [@media(hover:none)]:sm:min-h-10",
+        selected.includes(item.id) ? "bg-background" : "bg-transparent hover:bg-accent",
+        // Two 40px lines need 4px between them for disjoint 44px tap areas.
+        phoneProperties.length === 0 && "pointer-coarse:max-sm:gap-y-1",
+      )}>
         <div className="flex min-h-10 min-w-0 items-center gap-2 sm:contents [@media(pointer:coarse)]:max-sm:gap-3.5">
           <span className="flex size-4 shrink-0 items-center justify-center sm:order-1 sm:justify-self-center">{checkbox ? React.cloneElement(checkbox, { className: `${checkbox.props.className ?? ""} rounded-sm` }) : <span aria-hidden />}</span>
           <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} title={item.title} className="min-w-0 flex-1 truncate text-14 font-medium text-foreground sm:order-5">{item.title}</Link>
@@ -734,10 +739,13 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     <aside aria-label={t("layout.gantt.undated")} className="mt-2 rounded-lg bg-muted p-3"><h3 className="mb-2 text-13 font-medium">{t("layout.gantt.undated")}</h3>{gantt.undated.length ? <ul className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">{gantt.undated.map((item) => <li key={item.id}><Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="block rounded-md px-2 py-1.5 text-13 text-foreground hover:bg-accent">{item.title}</Link></li>)}</ul> : <p className="text-13 text-muted-foreground">{t("layout.gantt.noUndated")}</p>}</aside>
   </section>;
 
-  const toolbar = <div data-testid="work-items-toolbar" className="work-items-toolbar flex flex-wrap items-center gap-2 [@media(max-height:480px)]:[&_span:not([data-slot=checkbox]):not([data-slot=checkbox]_*):not(:has([data-slot=checkbox]))]:sr-only">
-    <div role="group" aria-label={t("layout.switch")} className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
-      {(["list", "board", "spreadsheet", "calendar", "gantt"] as const).map((layout) => { const Icon = layout === "list" ? List : layout === "board" ? Columns3 : layout === "spreadsheet" ? Table2 : layout === "calendar" ? CalendarDays : BarChart3; return <Button key={layout} type="button" aria-pressed={params.layout === layout} aria-label={t(`layout.${layout}`)} title={t(`layout.${layout}`)}
-        className={`inline-flex items-center rounded-md p-1.5 max-sm:min-h-9 max-sm:min-w-9 max-sm:flex-col max-sm:justify-center max-sm:gap-0.5 ${params.layout === layout ? "bg-card text-foreground shadow-sm" : "bg-transparent text-muted-foreground max-sm:text-foreground hover:bg-accent"} hover:text-foreground`} onClick={() => update({ layout })}><Icon aria-hidden size={16} /><span className="hidden text-11 leading-none max-sm:inline">{t(`layout.${layout}`)}</span></Button>; })}
+  const toolbar = <div data-testid="work-items-toolbar" className="work-items-toolbar @container/work-items-toolbar flex min-w-0 flex-wrap items-center gap-2 pointer-coarse:gap-y-3 [@media(max-height:480px)]:[&_span:not([data-slot=checkbox]):not([data-slot=checkbox]_*):not(:has([data-slot=checkbox]))]:sr-only">
+    <div role="group" aria-label={t("layout.switch")} className="flex min-w-0 flex-wrap items-center gap-0.5 rounded-lg bg-muted p-0.5">
+      {(["list", "board", "spreadsheet", "calendar", "gantt"] as const).map((layout) => { const Icon = layout === "list" ? List : layout === "board" ? Columns3 : layout === "spreadsheet" ? Table2 : layout === "calendar" ? CalendarDays : BarChart3; return <Button key={layout} type="button" data-layout-switch aria-pressed={params.layout === layout} aria-label={t(`layout.${layout}`)} title={t(`layout.${layout}`)}
+        className={cn(
+          "inline-flex items-center rounded-md p-1.5 hover:text-foreground max-sm:min-h-9 max-sm:min-w-9 max-sm:flex-col max-sm:justify-center max-sm:gap-0.5 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:rounded-none",
+          params.layout === layout ? "bg-card text-foreground shadow-sm" : "bg-transparent text-muted-foreground hover:bg-accent max-sm:text-foreground",
+        )} onClick={() => update({ layout })}><Icon aria-hidden size={16} /><span className="hidden text-11 leading-none max-sm:inline @max-[19rem]/work-items-toolbar:sr-only">{t(`layout.${layout}`)}</span></Button>; })}
     </div>
     {selectable && <label className="inline-flex min-h-11 cursor-pointer items-center" title={t("bulk.selectAll")}><span className={cn(toolbarSecondarySm, "gap-2")}><Checkbox hitArea="overlay" className="size-4" checked={allPicked} onChange={() => setSelected(allPicked ? [] : orderedIds.slice(0, 500))} /><span className="sr-only">{t("bulk.selectAll")}</span><span aria-hidden>{t("bulk.selectShown")}</span></span></label>}
     <FilterPicker sections={sections} filters={chips ?? emptyFilters()} count={filterCount} onChange={setFilters} onClear={() => update({ q: "" })} />

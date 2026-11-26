@@ -1006,6 +1006,95 @@ try {
   await activeCyclesTab.waitFor();
   await assertStableBounds(page.getByRole("tab", { name: new RegExp(translate("cycles.status.active")) }), "Tabs");
   await assertStableBounds(activeCyclesTab, "Tabs");
+
+  const edgeTapContext = await browser.newContext({ hasTouch: true, isMobile: true, storageState: await context.storageState() });
+  const edgeTapPage = await edgeTapContext.newPage();
+  const compactItem = await call<{ displayId: string }>("create_work_item", { projectId: project!.id, title: "Priority only", priority: "high" });
+  await edgeTapPage.setViewportSize({ width: 390, height: 844 });
+  await edgeTapPage.goto(mobileListUrl);
+  // A compact row with populated Priority must fit both hit areas even without trailing chips.
+  const compactRow = edgeTapPage.getByTestId(`row-${compactItem.displayId}`);
+  const compactPriorityName = `${translate("workItems.priority")}: ${translate("workItems.priority.high")}`;
+  const compactPriority = compactRow.getByRole("button", { name: compactPriorityName });
+  const compactCheckbox = compactRow.getByRole("checkbox");
+  await compactPriority.evaluate((element) => element.scrollIntoView({ block: "center" }));
+  const compactBounds = await compactRow.boundingBox();
+  check(!!compactBounds && compactBounds.height <= 90 && await compactRow.locator("[data-phone-property]").count() === 0,
+    `390px touch row with only leading properties stays within 90px: ${JSON.stringify(compactBounds)}`);
+  for (const target of [compactPriority, compactCheckbox]) {
+    const misses = await target.evaluate(missedHitPoints);
+    check(misses.length === 0, `Compact touch control receives its entire 44px area: ${JSON.stringify(misses)}`);
+  }
+  const priorityBounds = (await compactPriority.boundingBox())!;
+  await edgeTapPage.touchscreen.tap(priorityBounds.x + priorityBounds.width / 2, priorityBounds.y + priorityBounds.height / 2 - 21);
+  const priorityDialog = edgeTapPage.getByRole("dialog", { name: compactPriorityName });
+  await priorityDialog.waitFor();
+  check(await compactCheckbox.getAttribute("aria-checked") === "false", "The upper edge of Priority opens its picker without selecting the row");
+  await edgeTapPage.keyboard.press("Escape");
+  await priorityDialog.waitFor({ state: "hidden" });
+  const checkboxBounds = (await compactCheckbox.boundingBox())!;
+  await edgeTapPage.touchscreen.tap(checkboxBounds.x + checkboxBounds.width / 2, checkboxBounds.y + checkboxBounds.height / 2 + 21);
+  check(await compactCheckbox.getAttribute("aria-checked") === "true" && !await priorityDialog.isVisible(), "The lower edge of the checkbox selects the row without opening Priority");
+  await compactCheckbox.tap();
+  check(await compactCheckbox.getAttribute("aria-checked") === "false", "The compact row checkbox can clear its selection");
+
+  // Use the same member's locale setting the app reads and exercise real taps near the neighbouring layout button.
+  for (const locale of ["en", "th"] as const) {
+    await call("set_my_locale", { locale });
+    for (const [width, height] of [[320, 700], [844, 390]] as const) {
+      await edgeTapPage.setViewportSize({ width, height });
+      await edgeTapPage.goto(mobileListUrl);
+      await edgeTapPage.waitForFunction((value) => document.documentElement.lang === value, locale);
+      const toolbar = edgeTapPage.getByTestId("work-items-toolbar");
+      const switcher = toolbar.getByRole("group", { name: translate("layout.switch", locale) });
+      await switcher.waitFor();
+      await edgeTapPage.evaluate(() => document.fonts.ready);
+      const dimensions = await toolbar.evaluate((element) => ({
+        documentWidth: document.documentElement.scrollWidth,
+        clippedControls: [...element.querySelectorAll<HTMLElement>('button, a[href], [role="checkbox"]')].flatMap((control) => {
+          const { left, right } = control.getBoundingClientRect();
+          return left < 0 || right > window.innerWidth ? [control.getAttribute("aria-label") ?? control.textContent] : [];
+        }),
+      }));
+      check(dimensions.documentWidth <= width && dimensions.clippedControls.length === 0, `${locale} ${width}px toolbar fits: ${JSON.stringify(dimensions)}`);
+      for (const layout of ["board", "spreadsheet", "calendar", "gantt", "list"] as const) {
+        const control = switcher.getByRole("button", { name: translate(`layout.${layout}`, locale), exact: true });
+        await control.scrollIntoViewIfNeeded();
+        const box = await control.boundingBox();
+        check(!!box && box.width >= 44 && box.height >= 44, `${locale} ${width}px ${layout} occupies its own 44px target: ${JSON.stringify(box)}`);
+        const misses = await control.evaluate(missedHitPoints);
+        check(misses.length === 0, `${locale} ${width}px ${layout} owns its full 44px target: ${JSON.stringify(misses)}`);
+        await edgeTapPage.touchscreen.tap(box!.x + box!.width - 0.5, box!.y + box!.height / 2);
+        await edgeTapPage.waitForURL((url) => (url.searchParams.get("layout") ?? "list") === layout, { timeout: 5000 });
+        check(await control.getAttribute("aria-pressed") === "true", `${locale} ${width}px tapping the right edge selects ${layout}`);
+      }
+      if (width === 320) {
+        const displayName = translate("layout.display", locale);
+        const display = toolbar.getByRole("button", { name: displayName });
+        const displayBox = (await display.boundingBox())!;
+        await edgeTapPage.touchscreen.tap(displayBox.x + displayBox.width / 2, displayBox.y + displayBox.height / 2 + 21);
+        const displayDialog = edgeTapPage.getByRole("dialog", { name: displayName });
+        await displayDialog.waitFor();
+        await edgeTapPage.keyboard.press("Escape");
+        await displayDialog.waitFor({ state: "hidden" });
+        await toolbar.getByRole("button", { name: translate("views.saveAs", locale) }).tap();
+        const saveDialog = edgeTapPage.getByRole("dialog", { name: translate("views.form.saveTitle", locale) });
+        await saveDialog.waitFor();
+        await edgeTapPage.keyboard.press("Escape");
+        await saveDialog.waitFor({ state: "hidden" });
+        const query = toolbar.getByRole("button", { name: translate("layout.filterQuery.toggle", locale) });
+        const background = () => query.evaluate(async (element) => {
+          getComputedStyle(element).backgroundColor;
+          await Promise.all(element.getAnimations().map((animation) => animation.finished));
+          return getComputedStyle(element).backgroundColor;
+        });
+        const closedBackground = await background();
+        await query.tap();
+        check(await query.getAttribute("aria-pressed") === "true" && await background() !== closedBackground, `${locale} Filter Query shows its pressed state`);
+      }
+    }
+  }
+  await edgeTapContext.close();
   console.log("e2e work items list: ok");
   await browser.close();
 } catch (error) {

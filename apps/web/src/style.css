@@ -372,10 +372,10 @@ dialog::backdrop { overflow: hidden; overscroll-behavior: contain; }
     .work-item-row-metadata [data-phone-property] button > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   }
   @media (pointer: coarse) {
-    .work-items-toolbar button,
+    .work-items-toolbar button:not([data-layout-switch]),
     .work-items-toolbar a { position: relative; min-height: 2rem !important; }
     /* Transparent square tap areas: the whole 44x44 box answers a tap, corners included. */
-    .work-items-toolbar button::before,
+    .work-items-toolbar button:not([data-layout-switch])::before,
     .work-items-toolbar a::before {
       position: absolute;
       inset: 50% auto auto 50%;

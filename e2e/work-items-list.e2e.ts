@@ -99,10 +99,16 @@ try {
         }
       }
       const cells = [...row.querySelectorAll<HTMLElement>("[data-phone-property], [data-list-property]")].filter(shown);
-      const chipLines = new Set(cells.map((cell) => Math.round(cell.getBoundingClientRect().top))).size;
+      // Cells of different heights centred on one visual line share that line: a new line starts only below the previous one.
+      let chipLines = 0, lineBottom = -Infinity;
+      for (const rect of cells.map((cell) => cell.getBoundingClientRect()).sort((a, b) => a.top - b.top)) {
+        if (rect.top >= lineBottom - 0.5) chipLines += 1;
+        lineBottom = Math.max(lineBottom, rect.bottom);
+      }
+      const phoneChips = [...row.querySelectorAll<HTMLElement>("[data-phone-property]")].filter(shown).length;
       const title = row.querySelector<HTMLElement>("a[href]");
       const titleLines = title ? (() => { const range = document.createRange(); range.selectNodeContents(title); return new Set([...range.getClientRects()].filter((rect) => rect.height > 0).map((rect) => Math.round(rect.top))).size; })() : 0;
-      return { id: (row as HTMLElement).dataset.testid, top: rowBox.top, bottom: rowBox.bottom, height: rowBox.height, chipLines, emptyPainted, outside, glyphOverflow, signature: `${setProperties.join(",")}|chips:${chipLines}|title:${titleLines}` };
+      return { id: (row as HTMLElement).dataset.testid, top: rowBox.top, bottom: rowBox.bottom, height: rowBox.height, chipLines, phoneChips, emptyPainted, outside, glyphOverflow, signature: `${setProperties.join(",")}|chips:${chipLines}|title:${titleLines}` };
     });
     const ordered = measured.slice().sort((a, b) => a.top - b.top);
     const heights = new Map<string, number[]>();
@@ -371,10 +377,14 @@ try {
         const geometry = await page.locator('[data-testid^="row-"]').evaluateAll(measureRows, emptyValues);
         const overBudget = geometry.rows.filter((row) => row.height >= 100 + 44 * Math.max(0, row.chipLines - 1));
         const escaped = geometry.rows.filter((row) => row.outside.length || row.glyphOverflow.length);
-        return { geometry, overBudget, escaped, ok: phoneHeights.length > 0 && overBudget.length === 0 && escaped.length === 0 && geometry.siblingOverlaps.length === 0 && geometry.unequalHeights.length === 0, context };
+        // A row with no chips holds a title line and an ID line only: no chip line is reserved.
+        const chipless = geometry.rows.filter((row) => row.phoneChips === 0);
+        const reserved = chipless.filter((row) => row.height > 90);
+        return { geometry, overBudget, escaped, chipless, reserved, ok: phoneHeights.length > 0 && overBudget.length === 0 && escaped.length === 0 && geometry.siblingOverlaps.length === 0 && geometry.unequalHeights.length === 0, context };
       };
       const phoneRows = await assertPhoneRows("390px");
       check(phoneRows.ok, `390px list rows are contained, compact and equal for equal data (ListPhoneRowsContained): ${JSON.stringify({ heights: phoneHeights, overBudget: phoneRows.overBudget, escaped: phoneRows.escaped, siblingOverlaps: phoneRows.geometry.siblingOverlaps, unequalHeights: phoneRows.geometry.unequalHeights })}`);
+      check(phoneRows.chipless.length > 0 && phoneRows.reserved.length === 0, `390px rows without chips reserve no chip line (ListPhoneChiplessRowCompact): ${JSON.stringify(phoneRows.chipless.map((row) => ({ id: row.id, height: row.height })))}`);
       // Self-test: a chip forced wider than its row must make the same measure fail, so the assertion cannot pass vacuously.
       await page.addStyleTag({ content: '[data-testid="row-MOB-1"] [data-phone-property], [data-testid="row-MOB-1"] [data-phone-property] button { max-width: none !important; width: 640px !important; flex: none !important; }' }).then((tag) => tag.evaluate((element) => element.setAttribute("data-e2e-overflow-probe", "")));
       const forcedOverflow = await assertPhoneRows("390px with a forced 640px chip");
@@ -562,6 +572,13 @@ try {
   const rowTitleBox = await mobileRow.getByRole("link", { name: "Alpha" }).boundingBox();
   const rowCheckboxBox = await rowCheckbox.boundingBox();
   check(!!rowTitleBox && !!rowCheckboxBox && (rowTitleBox.x >= rowCheckboxBox.x + rowCheckboxBox.width || rowTitleBox.y >= rowCheckboxBox.y + rowCheckboxBox.height || rowTitleBox.x + rowTitleBox.width <= rowCheckboxBox.x || rowTitleBox.y + rowTitleBox.height <= rowCheckboxBox.y), `390px title does not overlap its checkbox: ${JSON.stringify({ title: rowTitleBox, checkbox: rowCheckboxBox })}`);
+  // A hit area must not take taps from its neighbours: the title's left edge opens the item, not the row checkbox.
+  const titleEdge = await mobileRow.getByRole("link", { name: "Alpha" }).evaluate((link) => {
+    link.scrollIntoView({ block: "center" });
+    const rect = link.getBoundingClientRect();
+    return [1, rect.height / 2, rect.height - 1].map((dy) => { const hit = document.elementFromPoint(rect.left + 0.5, rect.top + dy); return hit === link ? "title" : hit?.getAttribute("aria-label") ?? hit?.tagName ?? null; });
+  });
+  check(titleEdge.every((hit) => hit === "title"), `390px title left edge answers as the title (TouchTitleEdgeNotStolen): ${JSON.stringify(titleEdge)}`);
   const toolbar = mobilePage.getByTestId("work-items-toolbar");
   const addWorkItem = toolbar.getByRole("button", { name: translate("workItems.addNew"), exact: true });
   const saveView = toolbar.getByRole("button", { name: translate("views.saveAs") });
@@ -581,6 +598,33 @@ try {
   const filterButton = toolbar.getByRole("button", { name: translate("layout.filters"), exact: true });
   const queryButton = toolbar.getByRole("button", { name: translate("layout.filterQuery.toggle") });
   const displayButton = toolbar.getByRole("button", { name: translate("layout.display") });
+  // Stacked checkboxes (Display > properties): each answers across its own label row, and the midpoint between two belongs to neither neighbour's overlay.
+  await displayButton.tap();
+  const displayFields = mobilePage.getByRole("dialog", { name: translate("layout.display") }).locator("fieldset");
+  await displayFields.waitFor();
+  const stack = await displayFields.evaluate((fieldset) => {
+    const boxes = [...fieldset.querySelectorAll<HTMLElement>('[role="checkbox"]')];
+    const labelOf = (box: Element) => box.closest("label")!;
+    const stolen: unknown[] = [];
+    boxes.slice(0, -1).forEach((upper, index) => {
+      const lower = boxes[index + 1]!;
+      upper.scrollIntoView({ block: "center" });
+      const a = upper.getBoundingClientRect(), b = lower.getBoundingClientRect();
+      const x = a.left + a.width / 2, labelA = labelOf(upper).getBoundingClientRect();
+      const midpoint = (a.top + a.height / 2 + b.top + b.height / 2) / 2;
+      for (const [name, y, owners] of [["midpoint", midpoint, [upper, lower]], ["upper label bottom", labelA.bottom - 1, [upper]]] as const) {
+        const hit = document.elementFromPoint(x, y);
+        const hitBox = boxes.find((box) => !!hit && labelOf(box).contains(hit));
+        if (!hitBox) continue;
+        const own = labelOf(hitBox).getBoundingClientRect();
+        if (!(owners as readonly HTMLElement[]).includes(hitBox) || y < own.top || y > own.bottom) stolen.push({ pair: index, name, toggles: labelOf(hitBox).textContent, rowOf: labelOf(upper).textContent });
+      }
+    });
+    return { count: boxes.length, stolen };
+  });
+  check(stack.count >= 2 && stack.stolen.length === 0, `390px stacked checkboxes keep their taps to their own row (TouchStackedCheckboxNeighbours): ${JSON.stringify(stack)}`);
+  await mobilePage.keyboard.press("Escape");
+  await displayFields.waitFor({ state: "hidden" });
   const selectVisual = mobilePage.locator("label").filter({ hasText: translate("bulk.selectShown") }).locator(":scope > span");
   const secondaryMetrics = await Promise.all([filterButton, queryButton, displayButton, settingsLink, selectVisual].map(async (control) => control.evaluate((element) => {
     const style = getComputedStyle(element);
@@ -696,7 +740,8 @@ try {
           return {
             id: row.dataset.testid,
             box: { top: rowBox.top, bottom: rowBox.bottom, height: rowBox.height },
-            signature: `${titleLines}/${propertyRows}`,
+            // Chipless rows reserve no chip line, so "has chips" is part of the data shape.
+            signature: `${titleLines}/${propertyRows}/${[...row.querySelectorAll<HTMLElement>("[data-phone-property]")].some((cell) => getComputedStyle(cell).display !== "none") ? "chips" : "chipless"}`,
             elementOverflows,
             glyphOverflows,
           };
@@ -760,7 +805,7 @@ try {
           checkbox: box(checkbox), hitWidth: before ? parseFloat(before.width) : 0, hitHeight: before ? parseFloat(before.height) : 0,
           checkboxOverId: overlaps(box(checkbox), box(id)), checkboxOverTitle: overlaps(box(checkbox), box(title)),
           // Rows with the same number of painted properties on the same number of lines, and the same title line count, carry the same data shape, so their heights must match.
-          signature: (() => { const cells = [...row.querySelectorAll<HTMLElement>("[data-list-property], [data-phone-property]")].filter(shown); return `${cells.length}x${new Set(cells.map((cell) => Math.round(cell.getBoundingClientRect().top))).size}`; })() + "/" + (title ? new Set([...(() => { const range = document.createRange(); range.selectNodeContents(title); return range.getClientRects(); })()].map((rect) => Math.round(rect.top))).size : 0),
+          signature: (() => { const cells = [...row.querySelectorAll<HTMLElement>("[data-list-property], [data-phone-property]")].filter(shown); return `${cells.length}x${new Set(cells.map((cell) => Math.round(cell.getBoundingClientRect().top))).size}/${cells.filter((cell) => cell.hasAttribute("data-phone-property")).length}`; })() + "/" + (title ? new Set([...(() => { const range = document.createRange(); range.selectNodeContents(title); return range.getClientRects(); })()].map((rect) => Math.round(rect.top))).size : 0),
         };
       });
       const selectAll = document.querySelector<HTMLElement>('[data-testid="work-items-toolbar"] [role="checkbox"]');

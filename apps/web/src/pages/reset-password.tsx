@@ -31,18 +31,18 @@ export function ResetPasswordScreen({ api, languageSwitch, minPasswordLength }: 
   }
 
   return <AuthShell footer={<>{languageSwitch}</>}>
-    <h1 className="text-balance text-20 font-semibold leading-tight text-primary">{translate("auth.resetTitle")}</h1>
-    {state === "invalid" && <p role="alert" className="mt-4 text-13 text-danger-text">{translate("auth.resetLinkInvalid")}</p>}
-    {state === "done" && <p role="status" className="mt-4 text-13 text-secondary">{translate("auth.resetDone")}</p>}
+    <h1 className="text-balance text-xl font-semibold leading-tight text-foreground">{translate("auth.resetTitle")}</h1>
+    {state === "invalid" && <p role="alert" className="mt-4 text-sm text-destructive">{translate("auth.resetLinkInvalid")}</p>}
+    {state === "done" && <p role="status" className="mt-4 text-sm text-muted-foreground">{translate("auth.resetDone")}</p>}
     {state === "form" && <form onSubmit={submit} className="mt-8 grid gap-4">
-      <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.newPassword")}<Input className={fieldClass} required type="password" minLength={minPasswordLength} autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
-      <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.confirmPassword")}<Input className={`${fieldClass} ${mismatch ? "border-danger-strong" : ""}`} required type="password" minLength={minPasswordLength} autoComplete="new-password" aria-invalid={mismatch || undefined} value={confirm} onChange={(event) => setConfirm(event.target.value)} /></label>
-      {mismatch && <p role="status" className="-mt-2 text-13 text-danger-text">{translate("auth.passwordMismatch")}</p>}
+      <label className="grid gap-1.5 text-sm font-medium text-muted-foreground">{translate("auth.newPassword")}<Input className={fieldClass} required type="password" minLength={minPasswordLength} autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+      <label className="grid gap-1.5 text-sm font-medium text-muted-foreground">{translate("auth.confirmPassword")}<Input className={`${fieldClass} ${mismatch ? "border-destructive" : ""}`} required type="password" minLength={minPasswordLength} autoComplete="new-password" aria-invalid={mismatch || undefined} value={confirm} onChange={(event) => setConfirm(event.target.value)} /></label>
+      {mismatch && <p role="status" className="-mt-2 text-sm text-destructive">{translate("auth.passwordMismatch")}</p>}
       <Button className={primaryButton} disabled={mismatch}>{translate("auth.resetSubmit")}</Button>
-      {error && <p role="alert" className="text-13 text-danger-text">{error}</p>}
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
     </form>}
-    <div className="mt-6 border-t border-subtle pt-6 text-center">
-      <a href={paths.home("")} className="text-14 font-medium text-accent-text">{translate("auth.backToSignIn")}</a>
+    <div className="mt-6 border-t border-border pt-6 text-center">
+      <a href={paths.home("")} className="text-sm font-medium text-foreground">{translate("auth.backToSignIn")}</a>
     </div>
   </AuthShell>;
 }

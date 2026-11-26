@@ -57,21 +57,21 @@ export function AccountNotificationsPage() {
 
   return <main className="mx-auto w-full max-w-[900px]">
     <SettingsHeader title={translate("email.title")} description={translate("email.description")} />
-    {!emailEnabled && <p role="status" className="mb-6 rounded-md bg-layer-2 px-3 py-2 text-13 text-secondary">{translate("email.off")}</p>}
+    {!emailEnabled && <p role="status" className="mb-6 rounded-md bg-card px-3 py-2 text-sm text-muted-foreground">{translate("email.off")}</p>}
     <SettingsBlock>
       <RowList>
         <Row><span className="flex-1">{translate("email.sendingTo")}: <strong className="font-medium">{prefs.email}</strong></span>
           {prefs.emailVerified
-            ? <span className="text-13 text-secondary">{translate("email.confirmed")}</span>
-            : <span className="text-13 text-secondary">{translate("email.unconfirmed")}</span>}
-          {!prefs.emailVerified && emailEnabled && <Button type="button" className="h-8 rounded-md border border-strong px-3 text-13 font-medium text-primary hover:bg-layer-transparent-hover" onClick={() => void sendConfirmation()}>{translate("email.sendConfirmation")}</Button>}
+            ? <span className="text-sm text-muted-foreground">{translate("email.confirmed")}</span>
+            : <span className="text-sm text-muted-foreground">{translate("email.unconfirmed")}</span>}
+          {!prefs.emailVerified && emailEnabled && <Button type="button" className="h-8 rounded-md border border-border px-3 text-sm font-medium text-foreground hover:bg-accent" onClick={() => void sendConfirmation()}>{translate("email.sendConfirmation")}</Button>}
         </Row>
       </RowList>
     </SettingsBlock>
     <SettingsBlock title={translate("email.kindsLabel")}>
       <fieldset className="m-0 grid gap-2 border-0 p-0">
         <legend className="sr-only">{translate("email.kindsLabel")}</legend>
-        {emailKinds.map(({ kind, label }) => <label key={kind} className="flex items-center gap-2 text-14 text-primary">
+        {emailKinds.map(({ kind, label }) => <label key={kind} className="flex items-center gap-2 text-sm text-foreground">
           <Checkbox checked={prefs.kinds.includes(kind)} onChange={(event) => void save(event.target.checked ? [...prefs.kinds, kind] : prefs.kinds.filter((value) => value !== kind))} />
           {translate(label)}
         </label>)}
@@ -79,8 +79,8 @@ export function AccountNotificationsPage() {
     </SettingsBlock>
     <SettingsBlock>
       <div className="grid gap-1">
-        <div><Button type="button" className="h-9 rounded-md border border-strong px-3 text-14 font-medium text-primary hover:bg-layer-transparent-hover disabled:opacity-50" disabled={prefs.kinds.length === 0} onClick={() => void save([])}>{translate("email.turnOffAll")}</Button></div>
-        <p className="m-0 text-13 text-secondary">{translate("email.turnOffHelp")}</p>
+        <div><Button type="button" className="h-9 rounded-md border border-border px-3 text-sm font-medium text-foreground hover:bg-accent disabled:opacity-50" disabled={prefs.kinds.length === 0} onClick={() => void save([])}>{translate("email.turnOffAll")}</Button></div>
+        <p className="m-0 text-sm text-muted-foreground">{translate("email.turnOffHelp")}</p>
       </div>
       <Note note={note} error={noteError} />
     </SettingsBlock>

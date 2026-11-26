@@ -111,35 +111,35 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch, minPa
   if (mode === "forgot") return <ForgotPasswordForm api={api} emailEnabled={emailEnabled} languageSwitch={languageSwitch} onBack={() => setMode("sign-in")} />;
 
   return <AuthShell footer={<>{languageSwitch}<ThemeSwitch /></>}>
-    <h1 className="text-balance text-20 font-semibold leading-tight text-primary">{translate("app.welcome")}
-      <span className="block text-tertiary">{translate(mode === "sign-up" ? "auth.createYourAccount" : "auth.welcomeBack")}</span>
+    <h1 className="text-balance text-xl font-semibold leading-tight text-foreground">{translate("app.welcome")}
+      <span className="block text-muted-foreground">{translate(mode === "sign-up" ? "auth.createYourAccount" : "auth.welcomeBack")}</span>
     </h1>
-    {contextualNotice && <p role="note" className="mt-4 rounded-md bg-layer-1 px-3 py-2 text-13 text-secondary">{contextualNotice}</p>}
-    {inviteToken && <p role="status" className="mt-4 rounded-md bg-accent-subtle px-3 py-2 text-13 text-accent-text">{translate("invite.signInToJoin")}</p>}
-    {authSettings === null ? <p role="status" className="mt-8 text-13 text-secondary">{translate("auth.loading")}</p> : <>
+    {contextualNotice && <p role="note" className="mt-4 rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">{contextualNotice}</p>}
+    {inviteToken && <p role="status" className="mt-4 rounded-md bg-accent px-3 py-2 text-sm text-foreground">{translate("invite.signInToJoin")}</p>}
+    {authSettings === null ? <p role="status" className="mt-8 text-sm text-muted-foreground">{translate("auth.loading")}</p> : <>
     {authSettings.microsoftSignInEnabled && <div className="mt-8 grid gap-2">
-      <Button type="button" className="h-10 w-full rounded-md border border-strong bg-transparent px-3 text-14 font-medium text-primary hover:bg-layer-transparent-hover" onClick={() => void signInWithMicrosoft()}>{translate("auth.microsoftButton")}</Button>
-      <p className="m-0 text-12 text-tertiary">{translate("auth.microsoftHelp")}</p>
+      <Button type="button" className="h-10 w-full rounded-md border border-border bg-transparent px-3 text-sm font-medium text-foreground hover:bg-accent" onClick={() => void signInWithMicrosoft()}>{translate("auth.microsoftButton")}</Button>
+      <p className="m-0 text-xs text-muted-foreground">{translate("auth.microsoftHelp")}</p>
     </div>}
-    {authSettings.passwordSignInEnabled && <form onSubmit={authenticate} aria-busy={pending} className={`${authSettings.microsoftSignInEnabled ? "mt-5 border-t border-subtle pt-5" : "mt-8"} grid gap-4`}>
-      {mode === "sign-up" && <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.name")}<Input className={fieldClass} required autoComplete="name" placeholder={translate("auth.namePlaceholder")} value={name} onChange={(event) => setName(event.target.value)} /></label>}
-      <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.email")}<Input className={fieldClass} required type="email" autoComplete="email" placeholder={translate("auth.emailPlaceholder")} value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+    {authSettings.passwordSignInEnabled && <form onSubmit={authenticate} aria-busy={pending} className={`${authSettings.microsoftSignInEnabled ? "mt-5 border-t border-border pt-5" : "mt-8"} grid gap-4`}>
+      {mode === "sign-up" && <label className="grid gap-1.5 text-sm font-medium text-muted-foreground">{translate("auth.name")}<Input className={fieldClass} required autoComplete="name" placeholder={translate("auth.namePlaceholder")} value={name} onChange={(event) => setName(event.target.value)} /></label>}
+      <label className="grid gap-1.5 text-sm font-medium text-muted-foreground">{translate("auth.email")}<Input className={fieldClass} required type="email" autoComplete="email" placeholder={translate("auth.emailPlaceholder")} value={email} onChange={(event) => setEmail(event.target.value)} /></label>
       <PasswordField label={translate("auth.password")} value={password} onChange={setPassword} visible={showPassword} onToggle={() => setShowPassword(!showPassword)} autoComplete={mode === "sign-up" ? "new-password" : "current-password"} minLength={passwordFieldMinLength(mode, minPasswordLength)} hint={mode === "sign-up" ? translate("auth.passwordHint").replace("{min}", String(minPasswordLength)) : undefined} />
-      {passwordIssue && <p role="alert" className="-mt-3 text-13 text-danger-text">{passwordIssue}</p>}
+      {passwordIssue && <p role="alert" className="-mt-3 text-sm text-destructive">{passwordIssue}</p>}
       {mode === "sign-up" && <PasswordField label={translate("auth.confirmPassword")} value={confirmPassword} onChange={setConfirmPassword} visible={showPassword} onToggle={() => setShowPassword(!showPassword)} autoComplete="new-password" invalid={mismatch} describedBy="password-mismatch" />}
-      {mismatch && <p id="password-mismatch" role="status" className="-mt-2 text-13 text-danger-text">{translate("auth.passwordMismatch")}</p>}
-      {mode === "sign-in" && <Button type="button" disabled={pending} className="-mt-2 justify-self-end text-13 font-medium text-accent-text hover:underline" onClick={() => { if (pendingRef.current) return; setError(null); setMode("forgot"); }}>{translate("auth.forgotPassword")}</Button>}
+      {mismatch && <p id="password-mismatch" role="status" className="-mt-2 text-sm text-destructive">{translate("auth.passwordMismatch")}</p>}
+      {mode === "sign-in" && <Button type="button" disabled={pending} className="-mt-2 justify-self-end text-sm font-medium text-foreground hover:underline" onClick={() => { if (pendingRef.current) return; setError(null); setMode("forgot"); }}>{translate("auth.forgotPassword")}</Button>}
       <Button disabled={pending} className={primaryButton}>{translate(mode === "sign-up" ? "auth.signUp" : "auth.signIn")}</Button>
     </form>}
-    {error && <p role="alert" className="mt-4 text-13 text-danger-text">{error}</p>}
+    {error && <p role="alert" className="mt-4 text-sm text-destructive">{error}</p>}
     {/* The other mode is a full-width secondary button under the form (not small text), so a first-run admin who lands on Sign in finds "Create account". */}
-    {authSettings.passwordSignInEnabled && <div className="mt-6 grid gap-2 border-t border-subtle pt-6 text-center">
-      <p className="m-0 text-13 text-secondary">{translate(mode === "sign-up" ? "auth.haveAccountShort" : "auth.needAccountShort")}</p>
-      <Button type="button" disabled={pending} className="h-10 w-full rounded-md border border-strong bg-transparent px-3 text-14 font-medium text-primary hover:bg-layer-transparent-hover" onClick={() => { if (pendingRef.current) return; setError(null); setConfirmPassword(""); setShowPassword(false); setMode(mode === "sign-up" ? "sign-in" : "sign-up"); }}>
+    {authSettings.passwordSignInEnabled && <div className="mt-6 grid gap-2 border-t border-border pt-6 text-center">
+      <p className="m-0 text-sm text-muted-foreground">{translate(mode === "sign-up" ? "auth.haveAccountShort" : "auth.needAccountShort")}</p>
+      <Button type="button" disabled={pending} className="h-10 w-full rounded-md border border-border bg-transparent px-3 text-sm font-medium text-foreground hover:bg-accent" onClick={() => { if (pendingRef.current) return; setError(null); setConfirmPassword(""); setShowPassword(false); setMode(mode === "sign-up" ? "sign-in" : "sign-up"); }}>
         {translate(mode === "sign-up" ? "auth.signIn" : "auth.signUp")}
       </Button>
     </div>}
-    {!authSettings.microsoftSignInEnabled && !authSettings.passwordSignInEnabled && <p role="alert" className="mt-6 text-13 text-danger-text">{translate("auth.noSignInMethods")}</p>}
+    {!authSettings.microsoftSignInEnabled && !authSettings.passwordSignInEnabled && <p role="alert" className="mt-6 text-sm text-destructive">{translate("auth.noSignInMethods")}</p>}
     </>}
   </AuthShell>;
 }
@@ -149,14 +149,14 @@ function PasswordField({ label, value, onChange, visible, onToggle, autoComplete
   const id = React.useId();
   const Icon = visible ? EyeOff : Eye;
   return <div className="grid gap-1.5">
-    <label htmlFor={id} className="text-13 font-medium text-secondary">{label}</label>
+    <label htmlFor={id} className="text-sm font-medium text-muted-foreground">{label}</label>
     <div className="relative">
-      <Input id={id} className={`${fieldClass} ${onToggle ? "pr-10" : ""} ${invalid ? "border-danger-strong" : ""}`} required type={visible ? "text" : "password"} minLength={minLength} maxLength={256} autoComplete={autoComplete} aria-invalid={invalid || undefined} aria-describedby={[invalid ? describedBy : null, hint ? `${id}-hint` : null].filter(Boolean).join(" ") || undefined} value={value} onChange={(event) => onChange(event.target.value)} />
-      {onToggle && <Button type="button" aria-label={translate(visible ? "auth.hidePassword" : "auth.showPassword")} title={translate(visible ? "auth.hidePassword" : "auth.showPassword")} aria-pressed={visible} onClick={onToggle} className="absolute right-1 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded text-tertiary hover:bg-layer-transparent-hover hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-strong">
+      <Input id={id} className={`${fieldClass} ${onToggle ? "pr-10" : ""} ${invalid ? "border-destructive" : ""}`} required type={visible ? "text" : "password"} minLength={minLength} maxLength={256} autoComplete={autoComplete} aria-invalid={invalid || undefined} aria-describedby={[invalid ? describedBy : null, hint ? `${id}-hint` : null].filter(Boolean).join(" ") || undefined} value={value} onChange={(event) => onChange(event.target.value)} />
+      {onToggle && <Button type="button" aria-label={translate(visible ? "auth.hidePassword" : "auth.showPassword")} title={translate(visible ? "auth.hidePassword" : "auth.showPassword")} aria-pressed={visible} onClick={onToggle} className="absolute right-1 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-strong">
         <Icon size={16} aria-hidden />
       </Button>}
     </div>
-    {hint && <p id={`${id}-hint`} className="m-0 text-12 text-tertiary">{hint}</p>}
+    {hint && <p id={`${id}-hint`} className="m-0 text-xs text-muted-foreground">{hint}</p>}
   </div>;
 }
 
@@ -189,21 +189,21 @@ function ForgotPasswordForm({ api, emailEnabled, languageSwitch, onBack }: { api
   }
 
   return <AuthShell footer={<>{languageSwitch}<ThemeSwitch /></>}>
-    <h1 className="text-balance text-20 font-semibold leading-tight text-primary">{translate("auth.forgotTitle")}</h1>
+    <h1 className="text-balance text-xl font-semibold leading-tight text-foreground">{translate("auth.forgotTitle")}</h1>
     {!emailEnabled
-      ? <p role="status" className="mt-4 text-14 text-secondary">{translate("auth.forgotEmailOff")}</p>
+      ? <p role="status" className="mt-4 text-sm text-muted-foreground">{translate("auth.forgotEmailOff")}</p>
       : sent
-        ? <p role="status" className="mt-4 text-14 text-secondary">{translate("auth.forgotSent")}</p>
+        ? <p role="status" className="mt-4 text-sm text-muted-foreground">{translate("auth.forgotSent")}</p>
         : <>
-          <p className="mt-4 text-14 text-secondary">{translate("auth.forgotHelp")}</p>
+          <p className="mt-4 text-sm text-muted-foreground">{translate("auth.forgotHelp")}</p>
           <form onSubmit={submit} aria-busy={pending} className="mt-6 grid gap-4">
-            <label className="grid gap-1.5 text-13 font-medium text-secondary">{translate("auth.email")}<Input className={fieldClass} required type="email" autoComplete="email" placeholder={translate("auth.emailPlaceholder")} value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+            <label className="grid gap-1.5 text-sm font-medium text-muted-foreground">{translate("auth.email")}<Input className={fieldClass} required type="email" autoComplete="email" placeholder={translate("auth.emailPlaceholder")} value={email} onChange={(event) => setEmail(event.target.value)} /></label>
             <Button disabled={pending} className={primaryButton}>{translate("auth.forgotSubmit")}</Button>
           </form>
-          {error && <p role="alert" className="mt-4 text-13 text-danger-text">{error}</p>}
+          {error && <p role="alert" className="mt-4 text-sm text-destructive">{error}</p>}
         </>}
-    <div className="mt-6 grid gap-2 border-t border-subtle pt-6 text-center">
-      <Button type="button" disabled={pending} className="h-10 w-full rounded-md border border-strong bg-transparent px-3 text-14 font-medium text-primary hover:bg-layer-transparent-hover" onClick={() => { if (!pendingRef.current) onBack(); }}>{translate("auth.backToSignIn")}</Button>
+    <div className="mt-6 grid gap-2 border-t border-border pt-6 text-center">
+      <Button type="button" disabled={pending} className="h-10 w-full rounded-md border border-border bg-transparent px-3 text-sm font-medium text-foreground hover:bg-accent" onClick={() => { if (!pendingRef.current) onBack(); }}>{translate("auth.backToSignIn")}</Button>
     </div>
   </AuthShell>;
 }

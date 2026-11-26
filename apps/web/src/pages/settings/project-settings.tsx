@@ -26,8 +26,8 @@ export function ProjectSettingsLayout() {
   if (project === undefined) return null;
   if (project === null) return <section><p role="alert">{translate("projects.notFound")}</p><Link to={paths.workspaceSettings(workspace.slug)}>{translate("settings.workspaceTitle")}</Link></section>;
   return <div className="mx-auto w-full max-w-[900px]">
-    <p className="mb-2 flex items-center gap-2 text-13 text-secondary"><Link to={paths.workItems(workspace.slug, project.key)}>{project.key} · {project.name}</Link>
-      {project.archived && <span className="rounded-sm bg-layer-1 px-1.5 py-0.5 text-11">{translate("projects.archivedBadge")}</span>}</p>
+    <p className="mb-2 flex items-center gap-2 text-sm text-muted-foreground"><Link to={paths.workItems(workspace.slug, project.key)}>{project.key} · {project.name}</Link>
+      {project.archived && <span className="rounded-sm bg-muted px-1.5 py-0.5 text-xs">{translate("projects.archivedBadge")}</span>}</p>
     <Outlet context={{ project, reload } satisfies ProjectContext} />
   </div>;
 }
@@ -69,7 +69,7 @@ export function ProjectGeneral() {
         <label>{translate("projects.key")}<Input required autoFocus pattern="[A-Z][A-Z0-9]{1,11}" title={translate("projects.keyHint")} value={newKey} onChange={(event) => setNewKey(event.target.value.toUpperCase())} /></label>
         <div className="mt-3 flex flex-wrap gap-2"><Button>{translate("projects.renameConfirm")}</Button><Button type="button" className="secondary" onClick={cancelRename}>{translate("settings.cancel")}</Button></div>
       </form> : <div className="flex flex-wrap items-center gap-3">
-        <span className="font-mono text-14 text-primary">{project.key}</span>
+        <span className="font-mono text-sm text-foreground">{project.key}</span>
         {canAdmin && <Button type="button" className="secondary" onClick={() => setRenaming(true)}>{translate("projects.renameKey")}</Button>}
       </div>}
     </SettingsBlock>
@@ -100,11 +100,11 @@ export function ProjectMembers() {
     <SettingsHeader title={translate("projects.members")} description={translate("settings.projectMembersDesc")} />
     <RowList>{members.map((member) => <Row key={member.userId}>
       <Avatar name={member.name} id={member.userId} agent={member.isAgent} />
-      <span className="grid min-w-0 flex-1"><span className="truncate font-medium">{member.name}</span><span className="truncate text-13 text-secondary">{member.email}</span></span>
+      <span className="grid min-w-0 flex-1"><span className="truncate font-medium">{member.name}</span><span className="truncate text-sm text-muted-foreground">{member.email}</span></span>
       {canAdmin && !member.isAgent ? <select aria-label={`${translate("settings.roleOf")} ${member.name}`} value={member.role} onChange={async (event) => guard(await action("change_project_member_role", { projectId: project.id, userId: member.userId, role: event.target.value }))}>
         {roles.map((role) => <option key={role} value={role}>{translate(`projects.role.${role}`)}</option>)}
-      </select> : <span className="text-secondary">{translate(`projects.role.${member.role}`)}</span>}
-      {canAdmin && !member.isAgent && <Button type="button" className="secondary hover:!text-danger-text" onClick={async () => guard(await action("remove_project_member", { projectId: project.id, userId: member.userId }))}>{translate("members.remove")}</Button>}
+      </select> : <span className="text-muted-foreground">{translate(`projects.role.${member.role}`)}</span>}
+      {canAdmin && !member.isAgent && <Button type="button" className="secondary hover:!text-destructive" onClick={async () => guard(await action("remove_project_member", { projectId: project.id, userId: member.userId }))}>{translate("members.remove")}</Button>}
     </Row>)}</RowList>
     {canAdmin && <SettingsBlock title={translate("projects.addMember")} description={translate("projects.addMemberDesc")}>
       <div className="flex flex-wrap items-center gap-3">
@@ -145,12 +145,12 @@ export function ProjectLabels() {
     <SettingsHeader title={translate("labels.title")} description={translate("settings.labelsDesc")} />
     {canAdmin && <form className="mb-5 mt-0 flex flex-wrap items-end gap-3" onSubmit={async (event) => { event.preventDefault(); if (await guard(await action("create_label", { projectId: project.id, name, color }))) setName(""); }}>
       <label>{translate("labels.name")}<Input required value={name} onChange={(event) => setName(event.target.value)} /></label>
-      <input type="color" aria-label={translate("labels.color")} value={color} onChange={(event) => setColor(event.target.value)} className="h-8 w-10 rounded-md border border-strong bg-surface-1 p-0.5" />
+      <input type="color" aria-label={translate("labels.color")} value={color} onChange={(event) => setColor(event.target.value)} className="h-8 w-10 rounded-md border border-border bg-card p-0.5" />
       <Button>{translate("labels.create")}</Button>
     </form>}
-    {labels.length === 0 ? <p className="text-secondary">{translate("labels.empty")}</p> : <>
-    <search className="mb-3 block"><label className="grid max-w-sm gap-1 text-13 text-secondary">{translate("picker.search")}<Input type="search" autoComplete="off" value={labelQuery} onChange={(event) => setLabelQuery(event.target.value)} /></label></search>
-    {visibleLabels.length === 0 ? <p className="text-secondary">{translate("picker.noMatches")}</p> : <SortableList ids={visibleLabels.map((label) => label.id)} disabled={!reorderable || editing !== null} label={(id) => labels.find((label) => label.id === id)?.name ?? ""}
+    {labels.length === 0 ? <p className="text-muted-foreground">{translate("labels.empty")}</p> : <>
+    <search className="mb-3 block"><label className="grid max-w-sm gap-1 text-sm text-muted-foreground">{translate("picker.search")}<Input type="search" autoComplete="off" value={labelQuery} onChange={(event) => setLabelQuery(event.target.value)} /></label></search>
+    {visibleLabels.length === 0 ? <p className="text-muted-foreground">{translate("picker.noMatches")}</p> : <SortableList ids={visibleLabels.map((label) => label.id)} disabled={!reorderable || editing !== null} label={(id) => labels.find((label) => label.id === id)?.name ?? ""}
       onReorder={reorderLabels}
       renderRow={(id, grip) => {
         const label = labels.find((candidate) => candidate.id === id)!;
@@ -164,7 +164,7 @@ export function ProjectLabels() {
           {canAdmin && grip}
         {editing?.id === label.id ? <form className="my-0 flex flex-1 flex-wrap items-center gap-2" onSubmit={async (event) => { event.preventDefault(); if (await guard(await action("update_label", { labelId: label.id, name: editing.name, color: editing.color }))) setEditing(null); }}>
           <Input required aria-label={translate("labels.name")} value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} />
-          <input type="color" aria-label={translate("labels.color")} value={editing.color} onChange={(event) => setEditing({ ...editing, color: event.target.value })} className="h-8 w-10 rounded-md border border-strong bg-surface-1 p-0.5" />
+          <input type="color" aria-label={translate("labels.color")} value={editing.color} onChange={(event) => setEditing({ ...editing, color: event.target.value })} className="h-8 w-10 rounded-md border border-border bg-card p-0.5" />
           <Button>{translate("labels.save")}</Button>
           <Button type="button" className="secondary" onClick={() => setEditing(null)}>{translate("settings.cancel")}</Button>
         </form> : <>
@@ -205,7 +205,7 @@ export function ProjectStates() {
         return reorder(ids);
       };
       return <SettingsBlock key={group}>
-        <h2 className="flex items-center gap-2 text-14 font-medium text-secondary"><span aria-hidden className="size-2.5 rounded-full" style={{ background: groupDot[group] }} />{translate(`states.group.${group}`)}</h2>
+        <h2 className="flex items-center gap-2 text-sm font-medium text-muted-foreground"><span aria-hidden className="size-2.5 rounded-full" style={{ background: groupDot[group] }} />{translate(`states.group.${group}`)}</h2>
         {inGroup.length > 0 && <SortableList ids={inGroup.map((state) => state.id)} disabled={!canAdmin || editing !== null} label={(id) => inGroup.find((state) => state.id === id)?.name ?? ""}
           onReorder={async (ids) => { setStates((current) => [...current.filter((state) => state.group !== group), ...ids.map((id) => current.find((state) => state.id === id)!)]); await guard(await reorder(ids)); }}
           renderRow={(id, grip) => {
@@ -270,16 +270,16 @@ export function ProjectFeatures() {
   };
   return <section>
     <SettingsHeader title={translate("settings.features")} description={translate("settings.featuresDesc")} />
-    <p className="m-0 text-13 text-secondary">{translate("features.adminOnly")}</p>
+    <p className="m-0 text-sm text-muted-foreground">{translate("features.adminOnly")}</p>
     <RowList>{projectFeatureKeys.map((feature) => <Row key={feature}>
       <span className="grid flex-1 gap-0.5">
         <span className="font-medium">{translate(`features.${feature}` as MessageKey)}</span>
-        <span className="text-13 text-secondary">{translate(`features.${feature}Desc` as MessageKey)}</span>
-        <span className="text-12 text-tertiary">{translate(`features.${feature}Suits` as MessageKey)}</span>
-        {pending?.feature === feature && <span role="group" aria-label={translate("features.confirmOffHeading")} className="mt-2 grid gap-2 rounded-md border border-subtle bg-layer-1 p-3">
+        <span className="text-sm text-muted-foreground">{translate(`features.${feature}Desc` as MessageKey)}</span>
+        <span className="text-xs text-muted-foreground">{translate(`features.${feature}Suits` as MessageKey)}</span>
+        {pending?.feature === feature && <span role="group" aria-label={translate("features.confirmOffHeading")} className="mt-2 grid gap-2 rounded-md border border-border bg-muted p-3">
           <span className="font-medium">{translate("features.confirmOffHeading")}</span>
-          <span className="text-13 text-secondary">{translate("features.confirmOffBody")}</span>
-          <span className="text-13 text-secondary">{translate("features.confirmOffInUse")} {pending.names.join(", ")}</span>
+          <span className="text-sm text-muted-foreground">{translate("features.confirmOffBody")}</span>
+          <span className="text-sm text-muted-foreground">{translate("features.confirmOffInUse")} {pending.names.join(", ")}</span>
           <span className="flex flex-wrap gap-2">
             <Button type="button" onClick={() => void save(feature, false).then(() => setPending(null))}>{translate("features.confirmTurnOff")}</Button>
             <Button type="button" className="secondary" onClick={() => setPending(null)}>{translate("features.confirmKeep")}</Button>
@@ -347,8 +347,8 @@ export function ProjectAutomation() {
         <label className="flex items-center gap-2"><Switch disabled={!canAdmin} checked={closeOn} onChange={(event) => setCloseOn(event.target.checked)} />{translate("autoRules.closeOn")}</label>
         <label>{translate("autoRules.closeAfter")}<Input type="number" min={1} max={3650} required={closeOn} disabled={!canAdmin || !closeOn} value={closeAfter} onChange={(event) => setCloseAfter(event.target.value)} className="max-w-32" /></label>
         <fieldset className="grid gap-2 border-0 p-0">
-          <legend className="mb-1 text-14 font-medium text-secondary">{translate("autoRules.watchStates")}</legend>
-          {openStates.length === 0 ? <p className="text-secondary">{translate("autoRules.noOpenStates")}</p> : openStates.map((state) => <label key={state.id} className="flex items-center gap-2">
+          <legend className="mb-1 text-sm font-medium text-muted-foreground">{translate("autoRules.watchStates")}</legend>
+          {openStates.length === 0 ? <p className="text-muted-foreground">{translate("autoRules.noOpenStates")}</p> : openStates.map((state) => <label key={state.id} className="flex items-center gap-2">
             <Checkbox disabled={!canAdmin || !closeOn} checked={watched.includes(state.id)} onChange={() => toggleWatched(state.id)} />{state.name}</label>)}
         </fieldset>
         <label>{translate("autoRules.moveTo")}
@@ -362,7 +362,7 @@ export function ProjectAutomation() {
         <label className="flex items-center gap-2"><Switch disabled={!canAdmin} checked={archiveOn} onChange={(event) => setArchiveOn(event.target.checked)} />{translate("autoRules.archiveOn")}</label>
         <label>{translate("autoRules.archiveAfter")}<Input type="number" min={1} max={3650} required={archiveOn} disabled={!canAdmin || !archiveOn} value={archiveAfter} onChange={(event) => setArchiveAfter(event.target.value)} className="max-w-32" /></label>
       </SettingsBlock>
-      {preview && <p role="status" className="text-14 text-primary">{translate("autoRules.previewResult").replace("{close}", String(preview.toClose)).replace("{archive}", String(preview.toArchive))}</p>}
+      {preview && <p role="status" className="text-sm text-foreground">{translate("autoRules.previewResult").replace("{close}", String(preview.toClose)).replace("{archive}", String(preview.toArchive))}</p>}
       {canAdmin && <div className="flex flex-wrap gap-3">
         <Button type="button" className="secondary" onClick={async () => {
           const result = await action<{ toClose: number; toArchive: number }>("preview_auto_rules", payload());

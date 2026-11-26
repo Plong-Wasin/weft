@@ -36,18 +36,18 @@ function Connection({ provider, row, secret, onChanged, onSecret, say }: { provi
       say(result === null ? translate("integrations.failed") : null, result === null);
       await onChanged();
     }} />{translate("integrations.enabled")}</label>
-    <p className="m-0 text-13 text-secondary">{translate("integrations.enabledDesc")}</p>
-    <label className="grid gap-1 text-13 text-secondary">{translate("integrations.webhookUrl")}
-      <Input readOnly value={url} onFocus={(event) => event.target.select()} className="bg-layer-1" />
+    <p className="m-0 text-sm text-muted-foreground">{translate("integrations.enabledDesc")}</p>
+    <label className="grid gap-1 text-sm text-muted-foreground">{translate("integrations.webhookUrl")}
+      <Input readOnly value={url} onFocus={(event) => event.target.select()} className="bg-muted" />
     </label>
-    <p className="m-0 text-13 text-secondary">{translate("integrations.webhookUrlHelp")}</p>
-    <p className="m-0 text-13 text-secondary">{setup}</p>
-    {secret && <div className="grid gap-2 rounded-lg bg-layer-1 p-3">
-      <span className="text-14 font-medium">{translate("integrations.secretTitle")}</span>
-      <p className="m-0 text-13 text-secondary">{translate("integrations.secretHelp")}</p>
-      <p className="m-0 text-13 text-secondary">{translate("integrations.secretOnce")}</p>
+    <p className="m-0 text-sm text-muted-foreground">{translate("integrations.webhookUrlHelp")}</p>
+    <p className="m-0 text-sm text-muted-foreground">{setup}</p>
+    {secret && <div className="grid gap-2 rounded-lg bg-muted p-3">
+      <span className="text-sm font-medium">{translate("integrations.secretTitle")}</span>
+      <p className="m-0 text-sm text-muted-foreground">{translate("integrations.secretHelp")}</p>
+      <p className="m-0 text-sm text-muted-foreground">{translate("integrations.secretOnce")}</p>
       <div className="flex flex-wrap items-center gap-2">
-        <Input readOnly value={secret} aria-label={translate("integrations.secretTitle")} onFocus={(event) => event.target.select()} className="min-w-0 flex-1 bg-layer-1" />
+        <Input readOnly value={secret} aria-label={translate("integrations.secretTitle")} onFocus={(event) => event.target.select()} className="min-w-0 flex-1 bg-muted" />
         <Button type="button" className="secondary" onClick={async () => { if (await copyText(secret, translate("integrations.secretCopied"), translate("comments.copyFailed"))) say(translate("integrations.secretCopied")); }}>{translate("integrations.copySecret")}</Button>
       </div>
     </div>}
@@ -58,10 +58,10 @@ function Connection({ provider, row, secret, onChanged, onSecret, say }: { provi
       onSecret(result.secret);
       say(null);
     }}>{translate("integrations.rotate")}</Button>
-    <label className="grid gap-1 text-13 text-secondary">{translate("integrations.repositories")}
+    <label className="grid gap-1 text-sm text-muted-foreground">{translate("integrations.repositories")}
       <Textarea rows={4} value={draft} placeholder={repositoryExample} onChange={(event) => setDraft(event.target.value)} />
     </label>
-    <p className="m-0 text-13 text-secondary">{translate("integrations.repositoriesDesc")}</p>
+    <p className="m-0 text-sm text-muted-foreground">{translate("integrations.repositoriesDesc")}</p>
     <Button type="button" className="secondary w-fit" onClick={async () => {
       const lines = draft.split("\n").map((line) => line.trim()).filter(Boolean);
       if (lines.some((line) => !repositoryLine.test(line))) { say(translate("integrations.invalidRepository"), true); return; }
@@ -101,9 +101,9 @@ export function WorkspaceIntegrations() {
 
   if (adminLoading || !loaded || rows === null) return <section>
     <SettingsHeader title={translate("integrations.title")} description={translate("integrations.desc")} />
-    {!adminLoading && !isAdmin && <p role="status" className="text-secondary">{translate("integrations.adminOnly")}</p>}
-    {!adminLoading && isAdmin && !loaded && <p role="status" className="text-secondary">{translate("account.loading")}</p>}
-    {!adminLoading && isAdmin && loaded && rows === null && <p role="status" className="text-secondary">{translate("integrations.failed")}<Button type="button" className="secondary ml-2" onClick={() => void load()}>{translate("integrations.retry")}</Button></p>}
+    {!adminLoading && !isAdmin && <p role="status" className="text-muted-foreground">{translate("integrations.adminOnly")}</p>}
+    {!adminLoading && isAdmin && !loaded && <p role="status" className="text-muted-foreground">{translate("account.loading")}</p>}
+    {!adminLoading && isAdmin && loaded && rows === null && <p role="status" className="text-muted-foreground">{translate("integrations.failed")}<Button type="button" className="secondary ml-2" onClick={() => void load()}>{translate("integrations.retry")}</Button></p>}
   </section>;
 
   return <section>
@@ -111,7 +111,7 @@ export function WorkspaceIntegrations() {
     {providers.map((provider) => {
       const row = rows?.find((candidate) => candidate.provider === provider);
       if (!row) return <SettingsBlock key={provider} title={providerName(provider)}>
-        <RowList><Row><span className="flex-1 text-secondary">{translate("integrations.notConnected")}</span>
+        <RowList><Row><span className="flex-1 text-muted-foreground">{translate("integrations.notConnected")}</span>
           <Button type="button" onClick={async () => {
             const created = await action<Created>("create_work_item_integration", { workspaceId: workspace.id, provider });
             if (!created) { say(translate("integrations.connectFailed"), true); return; }

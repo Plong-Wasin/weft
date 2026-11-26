@@ -45,8 +45,8 @@ function WebhookBlock({ webhook, secret, onSecret, onChanged, say }: {
   React.useEffect(() => { void load(); }, [load]);
 
   return <SettingsBlock title={webhook.name} description={webhook.displayUrl}>
-    {webhook.disabledReason === "failures" && <div role="status" className="grid gap-2 rounded-lg border border-subtle p-3">
-      <p className="m-0 text-13 text-primary">{translate("outboundWebhooks.disabledByFailures")}</p>
+    {webhook.disabledReason === "failures" && <div role="status" className="grid gap-2 rounded-lg border border-border p-3">
+      <p className="m-0 text-sm text-foreground">{translate("outboundWebhooks.disabledByFailures")}</p>
       <Button type="button" className="secondary w-fit" onClick={async () => {
         const result = await action("update_outbound_webhook", { webhookId: webhook.id, enabled: true });
         say(result === null ? translate("outboundWebhooks.failed") : translate("outboundWebhooks.saved"), result === null);
@@ -58,27 +58,27 @@ function WebhookBlock({ webhook, secret, onSecret, onChanged, say }: {
       say(result === null ? translate("outboundWebhooks.failed") : translate("outboundWebhooks.saved"), result === null);
       await onChanged();
     }} />{translate("outboundWebhooks.enabled")}</label>
-    <p className="m-0 text-13 text-secondary">{translate("outboundWebhooks.enabledHelp")}</p>
+    <p className="m-0 text-sm text-muted-foreground">{translate("outboundWebhooks.enabledHelp")}</p>
     <label className="flex items-center gap-2"><Checkbox checked={webhook.includePrivateProjects} onChange={async (event) => {
       const result = await action("update_outbound_webhook", { webhookId: webhook.id, includePrivateProjects: event.target.checked });
       say(result === null ? translate("outboundWebhooks.failed") : translate("outboundWebhooks.saved"), result === null);
       await onChanged();
     }} />{translate("outboundWebhooks.includePrivate")}</label>
-    <p className="m-0 text-13 text-secondary">{translate("outboundWebhooks.includePrivateHelp")}</p>
-    <p className="m-0 text-13 text-secondary">{translate("outboundWebhooks.sends")} {webhook.events.map(eventLabel).join(" · ")}</p>
+    <p className="m-0 text-sm text-muted-foreground">{translate("outboundWebhooks.includePrivateHelp")}</p>
+    <p className="m-0 text-sm text-muted-foreground">{translate("outboundWebhooks.sends")} {webhook.events.map(eventLabel).join(" · ")}</p>
     <Button type="button" className="secondary w-fit" onClick={async () => {
       if (fullUrl !== null) { setFullUrl(null); return; }
       const result = await action<{ url: string }>("get_outbound_webhook_url", { webhookId: webhook.id });
       if (!result) { say(translate("outboundWebhooks.failed"), true); return; }
       setFullUrl(result.url);
     }}>{fullUrl === null ? translate("outboundWebhooks.revealUrl") : translate("outboundWebhooks.hideUrl")}</Button>
-    {fullUrl !== null && <p className="m-0 break-all text-13 text-secondary">{fullUrl}</p>}
+    {fullUrl !== null && <p className="m-0 break-all text-sm text-muted-foreground">{fullUrl}</p>}
 
-    {secret && <div className="grid gap-2 rounded-lg border border-subtle p-3">
-      <span className="text-14 font-medium">{translate("outboundWebhooks.secretTitle")}</span>
-      <p className="m-0 text-13 text-secondary">{translate("outboundWebhooks.secretOnce")}</p>
+    {secret && <div className="grid gap-2 rounded-lg border border-border p-3">
+      <span className="text-sm font-medium">{translate("outboundWebhooks.secretTitle")}</span>
+      <p className="m-0 text-sm text-muted-foreground">{translate("outboundWebhooks.secretOnce")}</p>
       <div className="flex flex-wrap items-center gap-2">
-        <Input readOnly value={secret} aria-label={translate("outboundWebhooks.secretTitle")} onFocus={(event) => event.target.select()} className="min-w-0 flex-1 bg-layer-1" />
+        <Input readOnly value={secret} aria-label={translate("outboundWebhooks.secretTitle")} onFocus={(event) => event.target.select()} className="min-w-0 flex-1 bg-muted" />
         <Button type="button" className="secondary" onClick={async () => { if (await copyText(secret, translate("outboundWebhooks.copySecret"), translate("comments.copyFailed"))) say(translate("outboundWebhooks.copySecret")); }}>{translate("outboundWebhooks.copySecret")}</Button>
       </div>
     </div>}
@@ -91,7 +91,7 @@ function WebhookBlock({ webhook, secret, onSecret, onChanged, say }: {
           say(result.data.message, result.data.status !== "succeeded");
           await load();
         }}>{translate("outboundWebhooks.test")}</Button>
-        <p className="m-0 text-13 text-secondary">{translate("outboundWebhooks.testHelp")}</p>
+        <p className="m-0 text-sm text-muted-foreground">{translate("outboundWebhooks.testHelp")}</p>
       </div>
       <Button type="button" className="secondary w-fit" onClick={async () => {
         if (!window.confirm(translate("outboundWebhooks.rotateConfirm"))) return;
@@ -110,13 +110,13 @@ function WebhookBlock({ webhook, secret, onSecret, onChanged, say }: {
     </div>
 
     <div className="grid min-w-0 gap-2">
-      <h3 className="m-0 text-14 font-medium text-primary">{translate("outboundWebhooks.log")}</h3>
-      <p className="m-0 text-13 text-secondary">{translate("outboundWebhooks.logHelp")}</p>
+      <h3 className="m-0 text-sm font-medium text-foreground">{translate("outboundWebhooks.log")}</h3>
+      <p className="m-0 text-sm text-muted-foreground">{translate("outboundWebhooks.logHelp")}</p>
       {deliveries === null ? null : deliveries.length === 0
-        ? <p className="m-0 text-13 text-secondary">{translate("outboundWebhooks.logEmpty")}</p>
+        ? <p className="m-0 text-sm text-muted-foreground">{translate("outboundWebhooks.logEmpty")}</p>
         : <div className="relative w-0 min-w-full overflow-x-auto">
-          <table className="w-full min-w-[560px] text-13">
-            <thead><tr className="text-left text-secondary">
+          <table className="w-full min-w-[560px] text-sm">
+            <thead><tr className="text-left text-muted-foreground">
               <th scope="col">{translate("outboundWebhooks.col.when")}</th>
               <th scope="col">{translate("outboundWebhooks.col.event")}</th>
               <th scope="col">{translate("outboundWebhooks.col.status")}</th>
@@ -168,25 +168,25 @@ function AddWebhook({ workspaceId, onCreated, say }: { workspaceId: string; onCr
       onCreated(result.data);
       say(translate("outboundWebhooks.created"));
     }}>
-      <label className="grid gap-1 text-13 text-secondary">{translate("outboundWebhooks.name")}
+      <label className="grid gap-1 text-sm text-muted-foreground">{translate("outboundWebhooks.name")}
         <Input value={name} maxLength={100} onChange={(event) => setName(event.target.value)} />
       </label>
-      <p className="m-0 text-13 text-secondary">{translate("outboundWebhooks.nameHelp")}</p>
-      <label className="grid gap-1 text-13 text-secondary">{translate("outboundWebhooks.url")}
+      <p className="m-0 text-sm text-muted-foreground">{translate("outboundWebhooks.nameHelp")}</p>
+      <label className="grid gap-1 text-sm text-muted-foreground">{translate("outboundWebhooks.url")}
         <Input type="url" value={url} placeholder={urlExample} onChange={(event) => setUrl(event.target.value)} />
       </label>
-      <p className="m-0 text-13 text-secondary">{translate("outboundWebhooks.urlHelp")}</p>
+      <p className="m-0 text-sm text-muted-foreground">{translate("outboundWebhooks.urlHelp")}</p>
       <fieldset className="grid gap-2 border-0 p-0">
-        <legend className="mb-1 text-13 text-secondary">{translate("outboundWebhooks.events")}</legend>
-        {eventTypes.map((type) => <label key={type} className="flex items-center gap-2 text-14">
+        <legend className="mb-1 text-sm text-muted-foreground">{translate("outboundWebhooks.events")}</legend>
+        {eventTypes.map((type) => <label key={type} className="flex items-center gap-2 text-sm">
           <Checkbox checked={events.includes(type)} onChange={() => toggle(type)} />{translate(`outboundWebhooks.event.${type}` as MessageKey)}
         </label>)}
-        <p className="m-0 text-13 text-secondary">{translate("outboundWebhooks.eventsHelp")}</p>
+        <p className="m-0 text-sm text-muted-foreground">{translate("outboundWebhooks.eventsHelp")}</p>
       </fieldset>
-      <label className="flex items-center gap-2 text-14">
+      <label className="flex items-center gap-2 text-sm">
         <Checkbox checked={includePrivate} onChange={(event) => setIncludePrivate(event.target.checked)} />{translate("outboundWebhooks.includePrivate")}
       </label>
-      <p className="m-0 text-13 text-secondary">{translate("outboundWebhooks.includePrivateHelp")}</p>
+      <p className="m-0 text-sm text-muted-foreground">{translate("outboundWebhooks.includePrivateHelp")}</p>
       <Button type="submit" className="primary w-fit" disabled={busy}>{translate("outboundWebhooks.create")}</Button>
     </form>
   </SettingsBlock>;
@@ -209,16 +209,16 @@ export function WorkspaceOutboundWebhooks() {
 
   if (loaded && rows === null) return <section>
     <SettingsHeader title={translate("outboundWebhooks.title")} description={translate("outboundWebhooks.desc")} />
-    <p role="status" className="text-secondary">{translate("settings.adminOnly")}</p>
+    <p role="status" className="text-muted-foreground">{translate("settings.adminOnly")}</p>
   </section>;
 
   return <section>
     <SettingsHeader title={translate("outboundWebhooks.title")} description={translate("outboundWebhooks.desc")} />
     <SettingsBlock>
-      <p className="m-0 text-13 text-secondary">{translate("outboundWebhooks.scope")}</p>
-      <p className="m-0 text-13 text-secondary">{translate("outboundWebhooks.howItWorks")}</p>
+      <p className="m-0 text-sm text-muted-foreground">{translate("outboundWebhooks.scope")}</p>
+      <p className="m-0 text-sm text-muted-foreground">{translate("outboundWebhooks.howItWorks")}</p>
     </SettingsBlock>
-    {rows !== null && rows.length === 0 && <SettingsBlock><RowList><Row><span className="flex-1 text-secondary">{translate("outboundWebhooks.none")}</span></Row></RowList></SettingsBlock>}
+    {rows !== null && rows.length === 0 && <SettingsBlock><RowList><Row><span className="flex-1 text-muted-foreground">{translate("outboundWebhooks.none")}</span></Row></RowList></SettingsBlock>}
     {rows?.map((webhook) => <WebhookBlock key={webhook.id} webhook={webhook} secret={secrets[webhook.id] ?? null}
       onSecret={(value) => setSecrets((current) => ({ ...current, [webhook.id]: value ?? undefined }))} say={say} onChanged={load} />)}
     <AddWebhook workspaceId={workspace.id} say={say} onCreated={(created) => {

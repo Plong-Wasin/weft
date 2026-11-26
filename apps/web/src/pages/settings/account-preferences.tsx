@@ -36,14 +36,14 @@ function AiPreferencesForm() {
       <Note note={translate("accountPrefs.loadFailed")} error />
       <Button type="button" className="secondary" disabled={isFetching} onClick={() => void refetch()}>{translate("account.retry")}</Button>
     </div>}
-    {data === undefined && <p role="status" className="text-13 text-secondary">{translate("account.loading")}</p>}
+    {data === undefined && <p role="status" className="text-sm text-muted-foreground">{translate("account.loading")}</p>}
     {data && <SettingsBlock>
       <div className="grid gap-1">
-        <label htmlFor="ai-selection-menu" className="flex min-h-11 items-center gap-2 text-14 text-primary">
+        <label htmlFor="ai-selection-menu" className="flex min-h-11 items-center gap-2 text-sm text-foreground">
           <Checkbox id="ai-selection-menu" checked={data.showSelectionMenu} aria-describedby="ai-selection-menu-hint" onChange={(event) => void save(event.target.checked)} />
           <span>{translate("accountPrefs.aiMenu")}</span>
         </label>
-        <p id="ai-selection-menu-hint" className="m-0 text-13 text-secondary">{translate("accountPrefs.aiMenuHint")}</p>
+        <p id="ai-selection-menu-hint" className="m-0 text-sm text-muted-foreground">{translate("accountPrefs.aiMenuHint")}</p>
       </div>
     </SettingsBlock>}
     {note && <Note note={note} error={noteError} />}

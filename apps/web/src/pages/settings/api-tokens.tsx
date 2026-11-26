@@ -146,57 +146,57 @@ export function ApiTokensPage() {
   return <main className="mx-auto w-full max-w-[900px]">
     <SettingsHeader title={translate("tokens.title")} description={translate("tokens.description")}>
       <div className="flex flex-wrap items-center gap-3">
-        {workspaceSlug && <Link to={paths.workspaceConnectAi(workspaceSlug)} className="text-13 text-accent-text underline">{translate("tokens.connectAiLink")}</Link>}
+        {workspaceSlug && <Link to={paths.workspaceConnectAi(workspaceSlug)} className="text-sm text-foreground underline">{translate("tokens.connectAiLink")}</Link>}
         <Button type="button" onClick={() => { setDialog(true); setNote(null); }}>{translate("tokens.add")}</Button>
       </div>
     </SettingsHeader>
     <SettingsHeader level={2} title={translate("devices.title")} description={translate("devices.description")} />
     <SettingsBlock>
-      {devices.length === 0 && loaded && !failed && <p className="text-14 text-secondary">{translate("devices.empty")}</p>}
+      {devices.length === 0 && loaded && !failed && <p className="text-sm text-muted-foreground">{translate("devices.empty")}</p>}
       {devices.length > 0 && <RowList>{devices.map((device) => <Row key={device.id}>
         <span className="grid min-w-0 flex-[1_1_15rem] gap-0.5">
-          <span className="font-medium">{device.hostname} <span className="font-mono text-12 text-tertiary">· {device.id.slice(0, 8)}</span></span>
-          <span className="text-12 text-tertiary">{translate("devices.lastActivity")} {formatDate(device.lastActivityAt)} · {translate(device.daemonConnected ? "devices.connected" : "devices.disconnected")}</span>
-          <span className="text-12 text-tertiary">{translate("tokens.expiry")} {device.expiresAt ? formatDate(device.expiresAt) : translate("tokens.never")}</span>
+          <span className="font-medium">{device.hostname} <span className="font-mono text-xs text-muted-foreground">· {device.id.slice(0, 8)}</span></span>
+          <span className="text-xs text-muted-foreground">{translate("devices.lastActivity")} {formatDate(device.lastActivityAt)} · {translate(device.daemonConnected ? "devices.connected" : "devices.disconnected")}</span>
+          <span className="text-xs text-muted-foreground">{translate("tokens.expiry")} {device.expiresAt ? formatDate(device.expiresAt) : translate("tokens.never")}</span>
         </span>
-        <span className={`rounded-full px-2 py-0.5 text-12 ${device.status === "active" ? "bg-accent-subtle text-accent-text" : "bg-layer-2 text-secondary"}`}>{translate(`devices.status.${device.status}`)}</span>
-        <Button type="button" className="secondary hover:!text-danger-text" onClick={() => void revokeDevice(device)}>{translate("devices.revoke")}</Button>
+        <span className={`rounded-full px-2 py-0.5 text-xs ${device.status === "active" ? "bg-accent text-foreground" : "bg-card text-muted-foreground"}`}>{translate(`devices.status.${device.status}`)}</span>
+        <Button type="button" className="secondary hover:!text-destructive" onClick={() => void revokeDevice(device)}>{translate("devices.revoke")}</Button>
       </Row>)}</RowList>}
-      {deviceHistoryCount > 0 && <details className="mt-3 border-t border-subtle pt-3">
-        <summary className="cursor-pointer text-13 font-medium">{translate("devices.history").replace("{count}", String(deviceHistoryCount))}</summary>
+      {deviceHistoryCount > 0 && <details className="mt-3 border-t border-border pt-3">
+        <summary className="cursor-pointer text-sm font-medium">{translate("devices.history").replace("{count}", String(deviceHistoryCount))}</summary>
         <div className="mt-2"><RowList>{deviceHistory.map((device) => <Row key={device.id}>
-          <span className="grid min-w-0 flex-1 gap-0.5"><span className="font-medium">{device.hostname} <span className="font-mono text-12 text-tertiary">· {device.id.slice(0, 8)}</span></span>
-            <span className="text-12 text-tertiary"><span data-testid="device-history-status">{translate(`devices.status.${device.status}`)}</span> · {translate(device.status === "revoked" ? "devices.revokedAt" : "devices.expiredAt")} {device.status === "revoked" ? formatDate(device.revokedAt ?? device.createdAt) : formatDate(device.expiresAt ?? device.createdAt)}</span>
+          <span className="grid min-w-0 flex-1 gap-0.5"><span className="font-medium">{device.hostname} <span className="font-mono text-xs text-muted-foreground">· {device.id.slice(0, 8)}</span></span>
+            <span className="text-xs text-muted-foreground"><span data-testid="device-history-status">{translate(`devices.status.${device.status}`)}</span> · {translate(device.status === "revoked" ? "devices.revokedAt" : "devices.expiredAt")} {device.status === "revoked" ? formatDate(device.revokedAt ?? device.createdAt) : formatDate(device.expiresAt ?? device.createdAt)}</span>
           </span>
-          {device.status !== "revoked" && <Button type="button" className="secondary hover:!text-danger-text" onClick={() => void revokeDevice(device)}>{translate("devices.revoke")}</Button>}
+          {device.status !== "revoked" && <Button type="button" className="secondary hover:!text-destructive" onClick={() => void revokeDevice(device)}>{translate("devices.revoke")}</Button>}
         </Row>)}</RowList></div>
         {deviceHistoryHasMore && <Button type="button" className="secondary mt-3" onClick={() => void loadMoreDevices()}>{translate("devices.loadMore")}</Button>}
       </details>}
     </SettingsBlock>
     <SettingsHeader level={2} title={translate("tokens.activeTitle")} description={translate("tokens.activeDescription")} />
     <SettingsBlock>
-      {loaded && tokens.filter((token) => token.kind === "personal").length === 0 && !failed && <p className="text-14 text-secondary">{translate("tokens.personalEmpty")}</p>}
+      {loaded && tokens.filter((token) => token.kind === "personal").length === 0 && !failed && <p className="text-sm text-muted-foreground">{translate("tokens.personalEmpty")}</p>}
       {tokens.filter((token) => token.kind === "personal").length > 0 && <RowList>{tokens.filter((token) => token.kind === "personal").map((token) => <Row key={token.id}>
         <span className="grid min-w-0 flex-1 gap-0.5"><span className="font-medium">{token.name}</span>
-          {token.description && <span className="text-13 text-secondary">{token.description}</span>}
-          <span className="text-12 text-tertiary">{token.prefix} · {translate("tokens.created")} {formatDate(token.createdAt)} · {translate("tokens.expiry")} {token.expiresAt ? formatDate(token.expiresAt) : translate("tokens.never")}</span>
-          <span className="text-12 text-tertiary">{translate("tokens.lastUsed")} {token.lastUsedAt ? formatDate(token.lastUsedAt) : translate("tokens.notUsed")}</span>
+          {token.description && <span className="text-sm text-muted-foreground">{token.description}</span>}
+          <span className="text-xs text-muted-foreground">{token.prefix} · {translate("tokens.created")} {formatDate(token.createdAt)} · {translate("tokens.expiry")} {token.expiresAt ? formatDate(token.expiresAt) : translate("tokens.never")}</span>
+          <span className="text-xs text-muted-foreground">{translate("tokens.lastUsed")} {token.lastUsedAt ? formatDate(token.lastUsedAt) : translate("tokens.notUsed")}</span>
         </span>
         <Button type="button" className="secondary" onClick={() => void revoke(token)}>{translate("tokens.revoke")}</Button>
       </Row>)}</RowList>}
-      <h3 className="mb-2 mt-5 text-14 font-semibold">{translate("tokens.unassociatedTitle")}</h3>
-      <p className="mb-3 text-13 text-secondary">{translate("tokens.unassociatedDescription")}</p>
-      {tokens.filter((token) => token.kind === "daemon").length === 0 && !failed && <p className="text-14 text-secondary">{translate("tokens.legacyEmpty")}</p>}
+      <h3 className="mb-2 mt-5 text-sm font-semibold">{translate("tokens.unassociatedTitle")}</h3>
+      <p className="mb-3 text-sm text-muted-foreground">{translate("tokens.unassociatedDescription")}</p>
+      {tokens.filter((token) => token.kind === "daemon").length === 0 && !failed && <p className="text-sm text-muted-foreground">{translate("tokens.legacyEmpty")}</p>}
       {tokens.filter((token) => token.kind === "daemon").length > 0 && <RowList>{tokens.filter((token) => token.kind === "daemon").map((token) => <Row key={token.id}>
-        <span className="grid min-w-0 flex-1 gap-0.5"><span className="font-medium">{token.name}</span><span className="text-12 text-tertiary">{token.prefix} · {translate("tokens.created")} {formatDate(token.createdAt)} · {translate("tokens.expiry")} {token.expiresAt ? formatDate(token.expiresAt) : translate("tokens.never")}</span></span>
-        <Button type="button" className="secondary hover:!text-danger-text" onClick={() => void revoke(token)}>{translate("tokens.revoke")}</Button>
+        <span className="grid min-w-0 flex-1 gap-0.5"><span className="font-medium">{token.name}</span><span className="text-xs text-muted-foreground">{token.prefix} · {translate("tokens.created")} {formatDate(token.createdAt)} · {translate("tokens.expiry")} {token.expiresAt ? formatDate(token.expiresAt) : translate("tokens.never")}</span></span>
+        <Button type="button" className="secondary hover:!text-destructive" onClick={() => void revoke(token)}>{translate("tokens.revoke")}</Button>
       </Row>)}</RowList>}
-      {tokenHistoryCount > 0 && <details className="mt-3 border-t border-subtle pt-3">
-        <summary className="cursor-pointer text-13 font-medium">{translate("tokens.history").replace("{count}", String(tokenHistoryCount))}</summary>
+      {tokenHistoryCount > 0 && <details className="mt-3 border-t border-border pt-3">
+        <summary className="cursor-pointer text-sm font-medium">{translate("tokens.history").replace("{count}", String(tokenHistoryCount))}</summary>
         <div className="mt-2"><RowList>{tokenHistory.map((token) => <Row key={token.id}>
-          <span className="grid min-w-0 flex-1 gap-0.5"><span className="font-medium">{token.name} <span className="text-12 text-secondary"><span data-testid="credential-history-status">{translate(`tokens.status.${token.status}`)}</span></span></span>
-            <span className="text-12 text-tertiary">{token.prefix} · {translate("tokens.created")} {formatDate(token.createdAt)} · {translate(token.status === "revoked" ? "tokens.revokedAt" : "tokens.expiredAt")} {formatDate(token.status === "revoked" ? token.revokedAt ?? token.createdAt : token.expiresAt ?? token.createdAt)}</span></span>
-          {token.status !== "revoked" && <Button type="button" className="secondary hover:!text-danger-text" onClick={() => void revokeHistoricalToken(token)}>{translate("tokens.revoke")}</Button>}
+          <span className="grid min-w-0 flex-1 gap-0.5"><span className="font-medium">{token.name} <span className="text-xs text-muted-foreground"><span data-testid="credential-history-status">{translate(`tokens.status.${token.status}`)}</span></span></span>
+            <span className="text-xs text-muted-foreground">{token.prefix} · {translate("tokens.created")} {formatDate(token.createdAt)} · {translate(token.status === "revoked" ? "tokens.revokedAt" : "tokens.expiredAt")} {formatDate(token.status === "revoked" ? token.revokedAt ?? token.createdAt : token.expiresAt ?? token.createdAt)}</span></span>
+          {token.status !== "revoked" && <Button type="button" className="secondary hover:!text-destructive" onClick={() => void revokeHistoricalToken(token)}>{translate("tokens.revoke")}</Button>}
         </Row>)}</RowList></div>
         {tokenHistoryHasMore && <Button type="button" className="secondary mt-3" onClick={() => void loadMoreTokenHistory()}>{translate("tokens.loadMore")}</Button>}
       </details>}
@@ -204,22 +204,22 @@ export function ApiTokensPage() {
     </SettingsBlock>
     <SettingsHeader level={2} title={translate("apps.title")} description={translate("apps.description")} />
     <SettingsBlock>
-      {apps.length === 0 ? <p className="text-14 text-secondary">{translate("apps.empty")}</p> : <RowList>{apps.map((app) => <Row key={app.id}>
+      {apps.length === 0 ? <p className="text-sm text-muted-foreground">{translate("apps.empty")}</p> : <RowList>{apps.map((app) => <Row key={app.id}>
         <span className="grid min-w-0 flex-1 gap-0.5"><span className="font-medium">{app.name}</span>
-          <span className="text-12 text-tertiary">{translate("apps.allowed")} {formatDate(app.allowedAt)} · {translate("apps.lastIssued")} {app.lastUsedAt ? formatDate(app.lastUsedAt) : translate("tokens.notUsed")}</span>
+          <span className="text-xs text-muted-foreground">{translate("apps.allowed")} {formatDate(app.allowedAt)} · {translate("apps.lastIssued")} {app.lastUsedAt ? formatDate(app.lastUsedAt) : translate("tokens.notUsed")}</span>
         </span><Button type="button" className="secondary" onClick={() => void revokeApp(app)}>{translate("apps.revoke")}</Button>
       </Row>)}</RowList>}
     </SettingsBlock>
     <Note note={note} />
     {dialog && <div className="fixed inset-0 z-50 grid place-items-center bg-backdrop p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) closeDialog(); }}>
-      <section role="dialog" aria-modal="true" aria-labelledby="token-dialog-title" className="grid w-full max-w-lg gap-4 rounded-xl border border-subtle bg-surface-1 p-5 shadow-xl">
-        <header className="flex items-start justify-between gap-3"><div><h2 id="token-dialog-title" className="text-18 font-semibold">{secret ? translate("tokens.createdTitle") : translate("tokens.add")}</h2>
-          <p className="mt-1 text-13 text-secondary">{secret ? translate("tokens.secretOnce") : translate("tokens.dialogDescription")}</p></div>
+      <section role="dialog" aria-modal="true" aria-labelledby="token-dialog-title" className="grid w-full max-w-lg gap-4 rounded-xl border border-border bg-card p-5 shadow-xl">
+        <header className="flex items-start justify-between gap-3"><div><h2 id="token-dialog-title" className="text-lg font-semibold">{secret ? translate("tokens.createdTitle") : translate("tokens.add")}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">{secret ? translate("tokens.secretOnce") : translate("tokens.dialogDescription")}</p></div>
           <Button type="button" className="secondary" onClick={closeDialog}>{translate("settings.cancel")}</Button></header>
         {secret ? <div className="grid gap-3">
           <label>{translate("tokens.secret")}<Input readOnly value={secret.token} className="font-mono" /></label>
-          <p role="alert" className="m-0 rounded-md border border-danger-strong px-3 py-2 text-13 text-danger-text">{translate("tokens.secretWarning")}</p>
-          <Button type="button" className="primary w-full !py-3 !text-16" onClick={async () => { if (await copyText(secret.token, translate("tokens.copied"), translate("comments.copyFailed"))) setNote(translate("tokens.copied")); }}>{translate("tokens.copy")}</Button>
+          <p role="alert" className="m-0 rounded-md border border-destructive px-3 py-2 text-sm text-destructive">{translate("tokens.secretWarning")}</p>
+          <Button type="button" className="primary w-full !py-3 !text-base" onClick={async () => { if (await copyText(secret.token, translate("tokens.copied"), translate("comments.copyFailed"))) setNote(translate("tokens.copied")); }}>{translate("tokens.copy")}</Button>
           <div className="flex justify-end gap-2"><Button type="button" className="secondary" onClick={closeDialog}>{translate("settings.cancel")}</Button></div>
         </div> : <form className="grid gap-3" onSubmit={(event) => void create(event)}>
           <label>{translate("tokens.presetLabel")}<select value={preset} onChange={(event) => choosePreset(event.target.value as TokenPreset)}>

@@ -66,6 +66,27 @@ try {
   await page.getByRole("button", { name: translate("layout.board") }).click();
   if (!page.url().includes("layout=board")) throw new Error("layout is not in the URL");
   const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
+  const boardScroller = page.getByTestId("board");
+  check(await boardScroller.evaluate((el) => el.scrollWidth > el.clientWidth), "board should preserve horizontal scrolling when columns overflow");
+  check(await page.getByTestId("board-scroll-affordance").isVisible(), "board should show a horizontal scroll affordance");
+  const firstCard = page.locator('[data-testid^="card-"]').first();
+  const cardSelection = firstCard.getByTestId("card-selection");
+  await page.mouse.move(5, 5);
+  const restingSelection = await cardSelection.evaluate((el) => ({ opacity: getComputedStyle(el).opacity, hover: matchMedia("(hover: hover)").matches, classes: el.className }));
+  check(Number.parseFloat(restingSelection.opacity) === 0, `board card checkbox should be hidden at rest: ${JSON.stringify(restingSelection)}`);
+  await firstCard.hover();
+  const hoveredSelection = await cardSelection.evaluate((el) => ({ opacity: getComputedStyle(el).opacity, parentHover: el.closest("article")?.matches(":hover"), parentClass: el.closest("article")?.className }));
+  check(Number.parseFloat(hoveredSelection.opacity) === 1, `board card checkbox should appear on hover: ${JSON.stringify(hoveredSelection)}`);
+  const cardProperties = firstCard.getByTestId("card-properties");
+  if (await cardProperties.count()) {
+    const chipLayout = await cardProperties.evaluate((row) => {
+      const boxes = [...row.children].map((child) => child.getBoundingClientRect());
+      return { rowHeight: row.getBoundingClientRect().height, boxes: boxes.map(({ left, right, top, height }) => ({ left, right, centerY: top + height / 2 })), height: row.clientHeight, scrollHeight: row.scrollHeight };
+    });
+    const aligned = chipLayout.boxes.every((box) => Math.abs(box.centerY - chipLayout.boxes[0]!.centerY) <= 1);
+    const nonOverlapping = chipLayout.boxes.every((box, index) => index === 0 || chipLayout.boxes[index - 1]!.right <= box.left + 1);
+    check(chipLayout.rowHeight <= 48 && aligned && nonOverlapping && chipLayout.scrollHeight <= chipLayout.height + 1, `board properties should stay in one aligned, non-overlapping row: ${JSON.stringify(chipLayout)}`);
+  }
   await page.getByRole("button", { name: translate("layout.display") }).click();
   check(await page.getByLabel(translate("layout.subGroup")).count() === 1, "board Sub-group control is missing");
   await page.getByLabel(translate("layout.subGroup")).selectOption("priority");

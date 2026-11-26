@@ -85,7 +85,7 @@ try {
   check(await page.getByRole("row").count() === 5, "expected header + 4 rows");
   const scroll = page.getByTestId("sheet-scroll");
   const workItemColumn = await page.getByRole("columnheader", { name: translate("layout.sheet.workItem") }).boundingBox();
-  check(!!workItemColumn && workItemColumn.width >= 300 && workItemColumn.width <= 340, `Work item column should stay within its readable width bounds: ${workItemColumn?.width}`);
+  check(!!workItemColumn && workItemColumn.width >= 350 && workItemColumn.width <= 450, `Work item column should stay within its readable width bounds: ${workItemColumn?.width}`);
   for (const [property, minimum] of [["state", 112], ["priority", 112], ["assignee", 112], ["labels", 128], ["dates", 128], ["cycle", 112], ["modules", 128]] as const) {
     const width = await page.getByRole("columnheader", { name: translate(`layout.property.${property}`) }).evaluate((element) => element.getBoundingClientRect().width);
     check(width >= minimum && width <= 200, `${property} column should stay within ${minimum}–200px bounds, found ${width}`);
@@ -94,7 +94,20 @@ try {
   const longTitleLink = longRow.getByRole("link", { name: longTitle, exact: true });
   await longTitleLink.waitFor();
   const longTitleBox = await longTitleLink.boundingBox();
-  check(!!longTitleBox && longTitleBox.width <= 200 && longTitleBox.height > 30, `long Work item title should wrap within the bounded column: ${JSON.stringify(longTitleBox)}`);
+  check(!!longTitleBox && longTitleBox.width > 200 && longTitleBox.height <= 24, `long Work item title should stay on one visible line in the wider column: ${JSON.stringify(longTitleBox)}`);
+  check(await longTitleLink.getAttribute("title") === longTitle, "clamped title should expose the full text as a tooltip");
+  const rowHeights = await page.getByTestId(/^row-/).evaluateAll((rows) => rows.map((row) => row.getBoundingClientRect().height));
+  check(rowHeights.length === 4 && rowHeights.every((height) => Math.abs(height - 48) <= 1), `spreadsheet rows must be equal 48px rows: ${rowHeights.join(", ")}`);
+  const titleGlyphs = await longTitleLink.evaluate((element) => {
+    const range = document.createRange(); range.selectNodeContents(element);
+    const glyphRects = [...range.getClientRects()];
+    return { lineCount: new Set(glyphRects.map((rect) => Math.round(rect.top))).size, glyphHeight: range.getBoundingClientRect().height, lineHeight: Number.parseFloat(getComputedStyle(element).lineHeight), clippedHorizontally: element.scrollWidth > element.clientWidth };
+  });
+  check(titleGlyphs.lineCount === 1 && titleGlyphs.glyphHeight <= titleGlyphs.lineHeight && titleGlyphs.clippedHorizontally, `long title should render one unclipped glyph line with ellipsis in its bounded cell: ${JSON.stringify(titleGlyphs)}`);
+  const blankAssigneeCell = longRow.getByRole("cell").nth(2);
+  check(await blankAssigneeCell.getAttribute("data-empty-property") === "true" && await blankAssigneeCell.locator("span").first().evaluate((el) => getComputedStyle(el).opacity === "0"), "empty spreadsheet property cells should stay visually blank until row hover or focus");
+  await blankAssigneeCell.hover();
+  check(await blankAssigneeCell.locator("span").first().evaluate((el) => getComputedStyle(el).opacity === "1"), "empty spreadsheet property controls should appear on row hover");
   const longLabelButton = longRow.getByRole("button", { name: `${translate("workItems.labels")}: ${longLabelName}` });
   const longModuleButton = longRow.getByRole("button", { name: `${translate("workItems.modules")}: ${longModuleName}` });
   const longStateButton = longRow.getByRole("button", { name: `${translate("workItems.state")}: ${longStateName}` });

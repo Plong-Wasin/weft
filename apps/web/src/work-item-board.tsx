@@ -1,6 +1,6 @@
 import { Button } from "@/ui/button";
 import React from "react";
-import { ChevronsLeft, ChevronsRight, GripVertical, Plus } from "lucide-react";
+import { ChevronsLeft, ChevronsRight, ChevronRight, GripVertical, Plus } from "lucide-react";
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
 
 const t = (key: string) => translate(key as MessageKey);
@@ -25,7 +25,7 @@ const edge = 48;
  */
 export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag, reorderWithinColumn, announcePosition, onDrop, collapsed, onToggle, canAdd, onAdd, quick, quickForm }: {
   columns: Array<BoardColumn<T>>;
-  renderCard: (item: T, reorderHandle: React.ReactNode) => React.ReactNode;
+  renderCard: (item: T, reorderHandle: React.ReactNode, active: boolean) => React.ReactNode;
   ghost: (item: T) => React.ReactNode;
   canDrag: boolean;
   reorderWithinColumn: boolean;
@@ -39,6 +39,8 @@ export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag
   quickForm: (column: string) => React.ReactNode;
 }) {
   const [drag, setDrag] = React.useState<Drag | null>(null);
+  const [hoveredCard, setHoveredCard] = React.useState<string | null>(null);
+  const [focusedCard, setFocusedCard] = React.useState<string | null>(null);
   const [announce, setAnnounce] = React.useState("");
   const scroller = React.useRef<HTMLDivElement>(null);
   const keyboardQueue = React.useRef<KeyboardMove[]>([]);
@@ -305,14 +307,20 @@ export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag
     <GripVertical aria-hidden size={14} />
   </Button>;
 
-  return <div ref={scroller} tabIndex={-1} className="flex min-h-96 items-start gap-3 overflow-x-auto pb-3" data-testid="board">
+  return <div className="relative min-w-0">
+    <div className="mb-1 flex justify-end">
+      <Button type="button" aria-label={`${t("layout.board")}: ${t("layout.gantt.scrollHint")}`} data-testid="board-scroll-affordance"
+        className="grid size-8 shrink-0 place-items-center rounded-md border border-border bg-card p-0 text-muted-foreground shadow-sm hover:bg-accent hover:text-foreground"
+        onClick={() => { const board = scroller.current; board?.scrollBy({ left: board.clientWidth * 0.8 }); }}><ChevronRight aria-hidden size={16} /></Button>
+    </div>
+    <div ref={scroller} tabIndex={-1} className="flex min-h-96 items-start gap-3 overflow-x-auto pb-3" data-testid="board">
     <span role="status" aria-live="polite" className="sr-only">{announce}</span>
     {columns.map((column) => {
       const closed = collapsed.includes(column.key);
       const over = drag?.over?.column === column.key;
       if (closed) return <section key={column.key} data-column={column.key} data-testid={`column-${column.name}`} aria-label={column.name} data-collapsed
         className={`flex w-11 shrink-0 flex-col items-center gap-2 rounded-xl border border-border py-2 ${over ? "bg-accent" : "bg-card"}`}>
-        <Button type="button" aria-expanded={false} aria-label={`${t("layout.toggleGroup")}: ${column.name}`} title={t("layout.toggleGroup")} className="rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => onToggle(column.key)}><ChevronsRight aria-hidden size={14} /></Button>
+        <Button type="button" aria-expanded={false} aria-label={`${t("layout.toggleGroup")}: ${column.name}`} title={t("layout.toggleGroup")} className="grid size-8 place-items-center rounded-md bg-transparent p-0 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => onToggle(column.key)}><ChevronsRight aria-hidden size={14} /></Button>
         {column.icon}
         <span className="text-13 font-medium text-foreground [writing-mode:vertical-rl]">{column.name}</span>
         <span className="text-12 text-muted-foreground">{formatNumber(column.items.length)}</span>
@@ -322,18 +330,20 @@ export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag
         <header className="flex items-center gap-2 px-1 py-0.5">
           {column.icon}
           <h4 className="m-0 flex-1 truncate text-16 font-medium text-foreground">{column.name} <span className="font-normal text-muted-foreground">{formatNumber(column.items.length)}</span></h4>
-          <Button type="button" aria-expanded aria-label={`${t("layout.toggleGroup")}: ${column.name}`} title={t("layout.toggleGroup")} className="rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => onToggle(column.key)}><ChevronsLeft aria-hidden size={14} /></Button>
-          {canAdd && <Button type="button" aria-label={t("layout.addToGroup").replace("{group}", column.name)} title={t("layout.addToGroup").replace("{group}", column.name)} className="inline-flex items-center gap-1 rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => onAdd(column.key)}><Plus aria-hidden size={14} /><span className="hidden text-11 max-sm:inline">{t("layout.addShort")}</span></Button>}
+          <Button type="button" aria-expanded aria-label={`${t("layout.toggleGroup")}: ${column.name}`} title={t("layout.toggleGroup")} className="grid size-8 shrink-0 place-items-center rounded-md bg-transparent p-0 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => onToggle(column.key)}><ChevronsLeft aria-hidden size={14} /></Button>
+          {canAdd && <Button type="button" aria-label={t("layout.addToGroup").replace("{group}", column.name)} title={t("layout.addToGroup").replace("{group}", column.name)} className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md bg-transparent px-1 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => onAdd(column.key)}><Plus aria-hidden size={14} /><span className="hidden text-11 max-sm:inline">{t("layout.addShort")}</span></Button>}
         </header>
         <div className="flex min-h-12 flex-col gap-2">
           {column.items.map((item) => <React.Fragment key={item.id}>
             {drag?.over?.column === column.key && drag.over.before === item.id && <div aria-hidden className="h-0.5 rounded-full bg-primary" />}
             <article data-card-id={item.id} data-testid={`card-${item.displayId}`} data-dragging={drag?.id === item.id ? "" : undefined}
-              className={`select-none rounded-xl border border-border bg-card p-3 shadow-sm ${canDrag ? "cursor-grab" : ""} ${drag?.id === item.id ? "opacity-40" : ""}`}
+              className={`group select-none rounded-xl border border-border bg-card p-3 shadow-sm ${canDrag ? "cursor-grab" : ""} ${drag?.id === item.id ? "opacity-40" : ""}`}
               onPointerDown={(event) => start(event, item, column.key)} onDragStart={(event) => event.preventDefault()}
+              onPointerEnter={() => setHoveredCard(item.id)} onPointerLeave={() => setHoveredCard(null)}
+              onFocusCapture={() => setFocusedCard(item.id)} onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocusedCard(null); }}
               onClickCapture={(event) => { if (justDragged.current) { event.preventDefault(); event.stopPropagation(); } }}
               onContextMenu={(event) => { if (drag || touching.current) event.preventDefault(); }}>
-              {renderCard(item, reorderHandle(item, column.key))}
+              {renderCard(item, reorderHandle(item, column.key), hoveredCard === item.id || focusedCard === item.id)}
             </article>
           </React.Fragment>)}
           {drag?.over?.column === column.key && drag.over.before === null && <div aria-hidden className="h-0.5 rounded-full bg-primary" />}
@@ -344,5 +354,7 @@ export function Board<T extends Draggable>({ columns, renderCard, ghost, canDrag
     })}
     {drag && dragged && <div aria-hidden data-testid="drag-ghost" className="pointer-events-none fixed z-50 rotate-1 rounded-lg border border-ring bg-card p-3 shadow-xl"
       style={{ left: drag.x - drag.offsetX, top: drag.y - drag.offsetY, width: drag.width }}>{ghost(dragged)}</div>}
+    </div>
+    <div aria-hidden className="pointer-events-none absolute bottom-3 right-0 top-9 w-14 bg-gradient-to-l from-background/95 via-background/70 to-transparent" />
   </div>;
 }

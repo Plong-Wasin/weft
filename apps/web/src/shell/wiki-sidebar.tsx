@@ -13,8 +13,8 @@ import { collectionLabel } from "../type-descriptions";
 type PageRow = { id: string; title: string; parentId: string | null; collectionId?: string | null; projectId?: string | null; access: "public" | "private"; ownerId: string; archived: boolean; canEdit: boolean; canMoveAcrossCollections: boolean };
 type Collection = { id: string; name: string; icon: string; visibility: "public" | "private"; isDefault: boolean };
 
-const row = (active: boolean) => `inset-row-hover flex min-h-9 max-md:min-h-11 min-w-0 items-center gap-2 rounded-lg px-3 py-1.5 text-13 ${active ? "bg-layer-1-selected font-medium text-primary" : "text-secondary hover:bg-layer-transparent-hover hover:text-primary"}`;
-const heading = "inset-row-hover flex min-h-9 max-md:min-h-11 w-full items-center gap-1 rounded-lg !bg-transparent px-3 py-1.5 text-left text-12 font-medium text-tertiary";
+const row = (active: boolean) => `transition-colors flex min-h-9 max-md:min-h-11 min-w-0 items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] ${active ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground"}`;
+const heading = "transition-colors flex min-h-9 max-md:min-h-11 w-full items-center gap-1 rounded-lg !bg-transparent px-3 py-1.5 text-left text-[12px] font-medium text-muted-foreground";
 
 /** Pages of one level, each with its children below it when it is open; the path to the open page is always open. */
 function PageTree({ workspace, pages, parentId, activeId, open, toggle, depth, dragging, over, dragStart, overKind, moveBeside }: { workspace: Workspace; pages: PageRow[]; parentId: string | null; activeId: string; open: Set<string>; toggle: (id: string) => void; depth: number; dragging: string | null; over: string | null; dragStart: (id: string, event: React.PointerEvent) => void; overKind: string | null; moveBeside: (page: PageRow, sibling: PageRow, position: "before" | "after") => void }) {
@@ -24,14 +24,14 @@ function PageTree({ workspace, pages, parentId, activeId, open, toggle, depth, d
     const children = pages.filter((child) => child.parentId === page.id);
     const expanded = open.has(page.id);
     return <li key={page.id} className="min-w-0">
-      <div data-wiki-drop-id={`page:${page.id}`} className={`relative flex min-w-0 items-center gap-1 ${over === `page:${page.id}` && overKind === "nest" ? "rounded-md bg-accent-primary/15 ring-1 ring-accent-primary" : ""} ${dragging === page.id ? "opacity-50" : ""}`} style={{ paddingLeft: `${depth * 0.75}rem` }}>
-        {over === `page:${page.id}` && overKind === "before" && <span aria-hidden data-wiki-drop-line="before" className="pointer-events-none absolute inset-x-0 -top-px h-0.5 rounded bg-accent-primary" />}
-        {over === `page:${page.id}` && overKind === "after" && <span aria-hidden data-wiki-drop-line="after" className="pointer-events-none absolute inset-x-0 -bottom-px h-0.5 rounded bg-accent-primary" />}
+      <div data-wiki-drop-id={`page:${page.id}`} className={`relative flex min-w-0 items-center gap-1 ${over === `page:${page.id}` && overKind === "nest" ? "rounded-md bg-primary/15 ring-1 ring-ring" : ""} ${dragging === page.id ? "opacity-50" : ""}`} style={{ paddingLeft: `${depth * 0.75}rem` }}>
+        {over === `page:${page.id}` && overKind === "before" && <span aria-hidden data-wiki-drop-line="before" className="pointer-events-none absolute inset-x-0 -top-px h-0.5 rounded bg-primary" />}
+        {over === `page:${page.id}` && overKind === "after" && <span aria-hidden data-wiki-drop-line="after" className="pointer-events-none absolute inset-x-0 -bottom-px h-0.5 rounded bg-primary" />}
         {children.length > 0
-          ? <Button type="button" aria-expanded={expanded} aria-label={`${translate("wikiSidebar.toggle")}: ${page.title}`} onClick={() => toggle(page.id)} className="grid size-5 max-md:size-11 shrink-0 place-items-center rounded !bg-transparent !p-0 text-tertiary hover:!bg-layer-transparent-hover"><ChevronRight aria-hidden size={12} className={`transition-transform ${expanded ? "rotate-90" : ""}`} /></Button>
+          ? <Button type="button" aria-expanded={expanded} aria-label={`${translate("wikiSidebar.toggle")}: ${page.title}`} onClick={() => toggle(page.id)} className="grid size-5 max-md:size-11 shrink-0 place-items-center rounded !bg-transparent !p-0 text-muted-foreground hover:!bg-accent"><ChevronRight aria-hidden size={12} className={`transition-transform ${expanded ? "rotate-90" : ""}`} /></Button>
           : <span className="size-5 shrink-0" />}
         <NavLink to={paths.wikiPage(workspace.slug, page.id)} className={({ isActive }) => `${row(isActive)} min-w-0 flex-1`}><FileText aria-hidden size={13} className="shrink-0" /><span className="truncate">{page.title}</span></NavLink>
-        {over === `page:${page.id}` && <span className="px-1 text-11 font-medium text-accent-primary">{translate(overKind === "before" ? "wikiSidebar.dropBefore" : overKind === "after" ? "wikiSidebar.dropAfter" : "wikiSidebar.dropNest")}</span>}
+        {over === `page:${page.id}` && <span className="px-1 text-[12px] font-medium text-foreground">{translate(overKind === "before" ? "wikiSidebar.dropBefore" : overKind === "after" ? "wikiSidebar.dropAfter" : "wikiSidebar.dropNest")}</span>}
         {page.canEdit && <Button type="button" aria-label={`${translate("sortable.reorder")}: ${page.title}`} data-wiki-drag-handle={page.id} onPointerDown={(event) => dragStart(page.id, event)} onKeyDown={(event) => {
           // Arrow Up places the page before its previous sibling and Arrow Down after its next one, in the order shown here.
           const index = level.findIndex((item) => item.id === page.id);
@@ -41,7 +41,7 @@ function PageTree({ workspace, pages, parentId, activeId, open, toggle, depth, d
           if (!neighbour) return;
           event.preventDefault();
           moveBeside(page, neighbour, event.key === "ArrowUp" ? "before" : "after");
-        }} className="grid size-5 max-md:size-11 shrink-0 touch-none place-items-center rounded !bg-transparent !p-0 text-tertiary hover:!bg-layer-transparent-hover hover:text-primary cursor-grab"><GripVertical aria-hidden size={12} /></Button>}
+        }} className="grid size-5 max-md:size-11 shrink-0 touch-none place-items-center rounded !bg-transparent !p-0 text-muted-foreground hover:!bg-accent hover:text-foreground cursor-grab"><GripVertical aria-hidden size={12} /></Button>}
       </div>
       {expanded && children.length > 0 && <PageTree workspace={workspace} pages={pages} parentId={page.id} activeId={activeId} open={open} toggle={toggle} depth={depth + 1} dragging={dragging} over={over} dragStart={dragStart} overKind={overKind} moveBeside={moveBeside} />}
     </li>;
@@ -54,7 +54,7 @@ function Group({ label, icon, count, defaultOpen, holdsActive = false, dropHint,
   React.useEffect(() => { if (holdsActive) setOpen(true); }, [holdsActive]);
   return <section className="grid gap-0.5">
     <Button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className={heading}>
-      <ChevronRight aria-hidden size={12} className={`transition-transform ${open ? "rotate-90" : ""}`} />{icon}<span className="flex-1 truncate">{label}</span>{dropHint && <span className="text-11 font-medium text-accent-primary">{dropHint}</span>}{count !== undefined && <span className="font-normal">{count}</span>}
+      <ChevronRight aria-hidden size={12} className={`transition-transform ${open ? "rotate-90" : ""}`} />{icon}<span className="flex-1 truncate">{label}</span>{dropHint && <span className="text-[12px] font-medium text-foreground">{dropHint}</span>}{count !== undefined && <span className="font-normal">{count}</span>}
     </Button>
     {open && <div className="grid gap-0.5 pl-1">{children}</div>}
   </section>;
@@ -169,13 +169,13 @@ export function WikiSidebar({ workspace, selfId }: { workspace: Workspace; selfI
   return <>
     <Button type="button" onClick={() => void create()} className={`${row(false)} mb-1 w-full`}><Plus aria-hidden size={13} />{translate("wiki.new")}</Button>
     <NavLink end to={paths.wiki(workspace.slug)} className={({ isActive }) => row(isActive)}>{translate("sidebar.allPages")}</NavLink>
-    <p className="px-3 pb-1 pt-4 text-12 font-medium text-tertiary">{translate("wikiSidebar.collections")}</p>
+    <p className="px-3 pb-1 pt-4 text-[12px] font-medium text-muted-foreground">{translate("wikiSidebar.collections")}</p>
     <p role="status" className="sr-only">{announcement}</p>
-    {dropMessage && <p role="alert" className="px-2 text-12 text-danger">{dropMessage}</p>}
+    {dropMessage && <p role="alert" className="px-2 text-[12px] text-destructive">{dropMessage}</p>}
     {collections.map((collection) => {
       const inCollection = workspacePages.filter((page) => !isMine.has(page.id)).filter((page) => collection.isDefault ? !page.collectionId || page.collectionId === collection.id : page.collectionId === collection.id);
-      return <div key={collection.id} data-wiki-drop-id={`collection:${collection.id}`} className={over === `collection:${collection.id}` ? "rounded-lg bg-accent-primary/15 ring-1 ring-accent-primary" : ""}><Group label={collectionLabel(collection)} icon={collection.visibility === "private" ? <Lock aria-hidden size={12} /> : <Folder aria-hidden size={12} />} count={inCollection.length} defaultOpen={collection.isDefault} holdsActive={inCollection.some((page) => page.id === activeId)} dropHint={over === `collection:${collection.id}` ? translate("wikiSidebar.dropTopLevel") : undefined}>
-        {inCollection.length === 0 ? <p className="m-0 px-2 py-1 text-12 text-tertiary">{translate("wikiSidebar.emptyCollection")}</p> : tree(inCollection)}
+      return <div key={collection.id} data-wiki-drop-id={`collection:${collection.id}`} className={over === `collection:${collection.id}` ? "rounded-lg bg-primary/15 ring-1 ring-ring" : ""}><Group label={collectionLabel(collection)} icon={collection.visibility === "private" ? <Lock aria-hidden size={12} /> : <Folder aria-hidden size={12} />} count={inCollection.length} defaultOpen={collection.isDefault} holdsActive={inCollection.some((page) => page.id === activeId)} dropHint={over === `collection:${collection.id}` ? translate("wikiSidebar.dropTopLevel") : undefined}>
+        {inCollection.length === 0 ? <p className="m-0 px-2 py-1 text-[12px] text-muted-foreground">{translate("wikiSidebar.emptyCollection")}</p> : tree(inCollection)}
       </Group></div>;
     })}
     {shared.length > 0 && <Group label={translate("pages.tab.shared")} icon={<Users aria-hidden size={12} />} count={shared.length} defaultOpen={false} holdsActive={shared.some((page) => page.id === activeId)}>{tree(shared)}</Group>}

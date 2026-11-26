@@ -41,25 +41,25 @@ export function avatarColor(key: string | null | undefined, name: string): strin
 
 export type AvatarProps = { name: string; id?: string | null; image?: string | null; agent?: boolean; size?: "sm" | "md" };
 
-const box = { sm: "size-5 text-10", md: "size-6 text-12" } as const;
+const box = { sm: "size-5 text-[12px]", md: "size-6 text-[12px]" } as const;
 const icon = { sm: 14, md: 16 } as const;
 
 /** The Agent label next to a name: plain text, explained by a tooltip. */
 export function AgentLabel() {
-  return <span className="text-10 font-medium text-tertiary" title={translate("avatar.agentHint")}>{translate("comments.agent")}</span>;
+  return <span className="text-[12px] font-medium text-muted-foreground" title={translate("avatar.agentHint")}>{translate("comments.agent")}</span>;
 }
 
 export function Avatar({ name, id, image, agent, size = "sm" }: AvatarProps) {
   const [failed, setFailed] = React.useState(false);
   const letter = avatarLetter(name);
   if (agent) {
-    return <span aria-hidden className={`grid ${box[size]} shrink-0 place-items-center rounded-md border border-subtle bg-surface-1 text-primary`}><Bot size={icon[size]} /></span>;
+    return <span aria-hidden className={`grid ${box[size]} shrink-0 place-items-center rounded-md border border-border bg-card text-foreground`}><Bot size={icon[size]} /></span>;
   }
   if (image && !failed) {
     return <img src={image} alt="" aria-hidden onError={() => setFailed(true)} className={`${box[size]} shrink-0 rounded-full object-cover`} />;
   }
   if (letter === null) {
-    return <span aria-hidden className={`grid ${box[size]} shrink-0 place-items-center rounded-full bg-layer-3 text-secondary`}><User size={icon[size]} /></span>;
+    return <span aria-hidden className={`grid ${box[size]} shrink-0 place-items-center rounded-full bg-muted text-muted-foreground`}><User size={icon[size]} /></span>;
   }
   return <span aria-hidden className={`grid ${box[size]} shrink-0 place-items-center rounded-full font-semibold`} style={{ backgroundColor: avatarColor(id, name), color: "#fff" }}>{letter}</span>;
 }

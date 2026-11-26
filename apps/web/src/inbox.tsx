@@ -63,8 +63,8 @@ export function InboxLink({ workspace }: { workspace: Workspace }) {
   const unread = data?.unreadCount ?? 0;
   const label = translate("topbar.notifications");
   return <Tooltip><TooltipTrigger render={<Link to={paths.notifications(workspace.slug)} aria-label={label}
-    className="relative inline-flex items-center justify-center rounded-lg p-2 text-secondary hover:bg-layer-transparent-hover hover:text-primary pointer-coarse:min-h-11 pointer-coarse:min-w-11"><Bell aria-hidden size={18} />
-    {unread > 0 && <span aria-label={translate("inbox.unread").replace("{count}", formatNumber(unread))} className="absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-accent-primary px-1 text-10 font-semibold text-on-color">{formatNumber(unread)}</span>}
+    className="relative inline-flex items-center justify-center rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-foreground pointer-coarse:min-h-11 pointer-coarse:min-w-11"><Bell aria-hidden size={18} />
+    {unread > 0 && <span aria-label={translate("inbox.unread").replace("{count}", formatNumber(unread))} className="absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-primary px-1 text-[12px] font-semibold text-primary-foreground">{formatNumber(unread)}</span>}
   </Link>} /><TooltipContent>{label}</TooltipContent></Tooltip>;
 }
 
@@ -73,8 +73,8 @@ export function InboxNavLink({ workspace }: { workspace: Workspace }) {
   const { data } = useQuery({ queryKey: inboxKey(workspace.id), queryFn: () => fetchInbox(workspace.id) });
   const unread = data?.unreadCount ?? 0;
   return <Link to={paths.notifications(workspace.slug)} aria-label={`${translate("inbox.navLabel")}${unread ? `, ${translate("inbox.unread").replace("{count}", formatNumber(unread))}` : ""}`}
-    className="flex items-center justify-between gap-2 inset-row-hover min-h-9 max-md:min-h-11 rounded-lg px-3 py-1.5 text-14 font-medium text-secondary hover:bg-layer-transparent-hover hover:text-primary">
-    <span>{translate("inbox.navLabel")}</span>{unread > 0 && <span className="rounded-full bg-accent-primary px-1.5 text-11 font-semibold text-on-color">{formatNumber(unread)}</span>}
+    className="flex items-center justify-between gap-2 transition-colors min-h-9 max-md:min-h-11 rounded-lg px-3 py-1.5 text-[14px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground">
+    <span>{translate("inbox.navLabel")}</span>{unread > 0 && <span className="rounded-full bg-primary px-1.5 text-[12px] font-semibold text-primary-foreground">{formatNumber(unread)}</span>}
   </Link>;
 }
 
@@ -88,27 +88,27 @@ export function InboxPanel({ workspace }: { workspace: Workspace }) {
   const markAll = useMutation({ mutationFn: () => call("mark_all_notifications_read", { workspaceId: workspace.id }), ...changed });
   const shown = (data?.notifications ?? []).filter((item) => !unreadOnly || item.readAt === null);
   return <section aria-labelledby="inbox-title" className="mx-auto w-full max-w-5xl">
-    <h1 id="inbox-title" className="mb-5 text-24 font-semibold text-primary">{translate("inbox.title")}{data ? ` — ${translate("inbox.unread").replace("{count}", formatNumber(data.unreadCount))}` : ""}</h1>
+    <h1 id="inbox-title" className="mb-5 text-[24px] font-semibold text-foreground">{translate("inbox.title")}{data ? ` — ${translate("inbox.unread").replace("{count}", formatNumber(data.unreadCount))}` : ""}</h1>
     {isError && <p role="alert">{translate("inbox.failed")}</p>}
     <div className="mb-4 flex flex-wrap items-center gap-2">
-      <div role="group" aria-label={translate("inbox.title")} className="inline-flex rounded-lg border border-subtle bg-layer-1 p-1">
+      <div role="group" aria-label={translate("inbox.title")} className="inline-flex rounded-lg border border-border bg-muted p-1">
         <Button type="button" aria-pressed={unreadOnly} className={unreadOnly ? "primary" : "secondary"} onClick={() => setUnreadOnly(true)}>{translate("inbox.unreadTab")}{data ? ` (${formatNumber(data.unreadCount)})` : ""}</Button>
         <Button type="button" aria-pressed={!unreadOnly} className={!unreadOnly ? "primary" : "secondary"} onClick={() => setUnreadOnly(false)}>{translate("inbox.all")}</Button>
       </div>
       <Button className="secondary" disabled={!data || data.unreadCount === 0 || markAll.isPending} onClick={() => markAll.mutate()}>{translate("inbox.markAllRead")}</Button>
     </div>
-    {data && shown.length === 0 && <p className="rounded-xl border border-subtle bg-surface-1 px-5 py-8 text-center text-14 text-secondary">{translate("inbox.empty")}</p>}
+    {data && shown.length === 0 && <p className="rounded-xl border border-border bg-card px-5 py-8 text-center text-[14px] text-muted-foreground">{translate("inbox.empty")}</p>}
     <ul className="m-0 grid list-none gap-2 p-0">
       {shown.map((item) => {
         const descriptionId = `notification-description-${item.id}`;
         const actionLabelId = `notification-action-${item.id}`;
         const actionLabel = translate(item.readAt ? "inbox.markUnread" : "inbox.markRead");
-        return <li key={item.id} className={`grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-3 rounded-xl p-4 transition-colors hover:bg-layer-transparent-hover sm:grid-cols-[auto_minmax(0,1fr)_auto] ${item.readAt ? "bg-layer-1" : "bg-layer-2"}`}>
-        <span aria-hidden="true" className={`mt-1.5 size-2 shrink-0 rounded-full ${item.readAt ? "bg-tertiary" : "bg-accent-primary"}`} />
+        return <li key={item.id} className={`grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-3 rounded-xl p-4 transition-colors sm:grid-cols-[auto_minmax(0,1fr)_auto] ${item.readAt ? "bg-muted" : "bg-popover"}`}>
+        <span aria-hidden="true" className={`mt-1.5 size-2 shrink-0 rounded-full ${item.readAt ? "bg-muted-foreground" : "bg-primary"}`} />
         <div id={descriptionId} className={`min-w-0 ${item.readAt ? "" : "font-medium"}`}>
         {item.kind === "recurrence_paused" ? `${translate(inboxMessage[item.kind])}: ${item.detail ?? ""}` : <>{translate(item.kind === "wake_skipped" ? `inbox.wakeSkipped.${item.detail ?? "no_agent_access"}` as never : item.kind === "run_skipped" && item.detail ? `inbox.runSkipped.${item.detail}` as never : inboxMessage[item.kind]).replace("{actor}", item.actorName)}{" "}
         {item.workItemId || item.wikiPageId || item.runId ? <Link to={item.readAt ? notificationTarget(workspace.slug, item) : notificationTargetWithInboxId(workspace.slug, item, item.id)}>{item.wikiPageId ? item.pageTitle : item.runId ? translate("inbox.openScheduledRun") : `${item.displayId} ${item.workItemTitle}`}</Link> : <span>{item.kind === "secret_output_blocked" ? translate("inbox.secretOutputBlockedDetail") : item.detail}</span>}{item.kind === "auto_rule" && item.detail && <>{": "}{autoRuleReasonText(item.detail, translate)}</>}</>}{" "}
-        <small className="block font-normal text-secondary">{formatDate(item.createdAt)}</small>
+        <small className="block font-normal text-muted-foreground">{formatDate(item.createdAt)}</small>
         </div>
         <Button type="button" aria-labelledby={`${actionLabelId} ${descriptionId}`} className="secondary col-start-2 min-h-11 justify-self-start sm:col-start-auto sm:min-h-9 sm:justify-self-end" disabled={markRead.isPending || markUnread.isPending} onClick={() => item.readAt ? markUnread.mutate(item.id) : markRead.mutate(item.id)}><span id={actionLabelId}>{actionLabel}</span></Button>
       </li>;

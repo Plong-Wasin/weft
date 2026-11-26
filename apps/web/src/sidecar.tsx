@@ -115,16 +115,16 @@ function SidecarPanel({ workspace, userId, open, context, onClose }: { workspace
     if (loaded) { setChat({ id, initial: loaded.messages, mode: loaded.mode ?? "build" }); setStarted(true); }
   }
   return <aside aria-label={translate("sidecar.title")} hidden={!open} data-sidecar-width={width} style={{ "--sidecar-w": `${width}px` } as React.CSSProperties}
-    className={`relative z-40 shrink-0 flex-col border-l border-subtle bg-surface-1 max-md:fixed max-md:inset-0 max-md:w-full md:w-[var(--sidecar-w)] ${open ? "flex" : "hidden"} ${dragging ? "select-none" : ""}`}>
+    className={`relative z-40 shrink-0 flex-col border-l border-border bg-card max-md:fixed max-md:inset-0 max-md:w-full md:w-[var(--sidecar-w)] ${open ? "flex" : "hidden"} ${dragging ? "select-none" : ""}`}>
     <div role="separator" aria-orientation="vertical" aria-label={translate("sidecar.resize")} aria-valuemin={SIDECAR_MIN} aria-valuemax={SIDECAR_MAX} aria-valuenow={width} tabIndex={0}
       onPointerDown={startDrag} onPointerMove={drag} onPointerUp={endDrag} onPointerCancel={endDrag} onKeyDown={key}
-      className={`absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize touch-none hover:bg-accent-primary/30 focus-visible:bg-accent-primary/40 max-md:hidden ${dragging ? "bg-accent-primary/40" : ""}`} />
-    <header className="flex shrink-0 items-center gap-1 border-b border-subtle px-3 py-2">
-      <Sparkles aria-hidden size={16} className="text-secondary" />
-      <h2 className="m-0 mr-auto text-14 font-medium text-primary">{translate("sidecar.title")}</h2>
+      className={`absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize touch-none hover:bg-primary/10 focus-visible:bg-primary/15 max-md:hidden ${dragging ? "bg-primary/15" : ""}`} />
+    <header className="flex shrink-0 items-center gap-1 border-b border-border px-3 py-2">
+      <Sparkles aria-hidden size={16} className="text-muted-foreground" />
+      <h2 className="m-0 mr-auto text-[14px] font-medium text-foreground">{translate("sidecar.title")}</h2>
       <Tooltip><TooltipTrigger render={<Button type="button" className={headerButton} aria-label={translate("ai.new")} onClick={() => { setChat(freshChat()); setStarted(false); }}><SquarePen aria-hidden size={15} /></Button>} /><TooltipContent>{translate("ai.new")}</TooltipContent></Tooltip>
       <Popover label={translate("sidecar.history")} align="right" trigger={<History aria-hidden size={15} />} className="p-1.5" panelClassName="max-h-72 w-64 overflow-y-auto">
-        {(close) => recents.length === 0 ? <p className="m-0 px-2.5 py-1.5 text-14 text-tertiary">{translate("sidecar.noHistory")}</p>
+        {(close) => recents.length === 0 ? <p className="m-0 px-2.5 py-1.5 text-[14px] text-muted-foreground">{translate("sidecar.noHistory")}</p>
           : recents.map((recent) => <Button key={recent.id} type="button" role="menuitem" className={`${menuItemClass} truncate`} onClick={() => { close(); void pick(recent.id); }}>{recent.title}</Button>)}
       </Popover>
       {started && <Tooltip><TooltipTrigger render={<Link to={paths.aiChat(workspace.slug, chat.id)} onClick={onClose} className={headerButton} aria-label={translate("sidecar.openPage")}><Maximize2 aria-hidden size={15} /></Link>} /><TooltipContent>{translate("sidecar.openPage")}</TooltipContent></Tooltip>}
@@ -134,7 +134,7 @@ function SidecarPanel({ workspace, userId, open, context, onClose }: { workspace
   </aside>;
 }
 
-const headerButton = "inline-flex size-7 items-center justify-center rounded-md border-0 bg-transparent p-0 text-secondary hover:bg-layer-transparent-hover hover:text-primary pointer-coarse:min-h-11 pointer-coarse:min-w-11";
+const headerButton = "inline-flex size-7 items-center justify-center rounded-md border-0 bg-transparent p-0 text-muted-foreground hover:bg-accent hover:text-foreground pointer-coarse:min-h-11 pointer-coarse:min-w-11";
 
 /** Header button for a work item or wiki page: offers that entity as the Sidecar's context while the page is shown, and opens the panel. */
 export function SidecarTrigger({ context }: { context: SidecarContext }) {
@@ -148,5 +148,5 @@ export function SidecarToggle() {
   const { open, toggle } = useSidecar();
   const label = translate("sidecar.open");
   return <Tooltip><TooltipTrigger render={<Button type="button" aria-label={label} aria-expanded={open} onClick={toggle}
-    className={`rounded-md border-0 p-1.5 hover:bg-layer-transparent-hover hover:text-primary pointer-coarse:min-h-11 pointer-coarse:min-w-11 ${open ? "bg-layer-1-selected text-primary" : "bg-transparent text-secondary"}`}><Sparkles aria-hidden size={18} /></Button>} /><TooltipContent>{label}</TooltipContent></Tooltip>;
+    className={`rounded-md border-0 p-1.5 hover:bg-accent hover:text-foreground pointer-coarse:min-h-11 pointer-coarse:min-w-11 ${open ? "bg-accent text-foreground" : "bg-transparent text-muted-foreground"}`}><Sparkles aria-hidden size={18} /></Button>} /><TooltipContent>{label}</TooltipContent></Tooltip>;
 }

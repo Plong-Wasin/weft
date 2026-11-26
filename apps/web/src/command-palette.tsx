@@ -216,7 +216,7 @@ export function CommandPalette({ current, signOut }: { current: Current; signOut
 export function CommandPaletteButton({ shortcut }: { shortcut: string }) {
   const label = `${translate("palette.button")} (${shortcut})`;
   return <Button type="button" aria-label={label} title={label} onClick={() => window.dispatchEvent(new Event(openPaletteEvent))}
-    className="flex items-center rounded-lg bg-transparent p-2 text-secondary hover:bg-layer-transparent-hover hover:text-primary pointer-coarse:min-h-11 pointer-coarse:min-w-11">
+    className="flex items-center rounded-lg bg-transparent p-2 text-muted-foreground hover:bg-accent hover:text-foreground pointer-coarse:min-h-11 pointer-coarse:min-w-11">
     <CommandIcon aria-hidden size={18} />
   </Button>;
 }

@@ -35,8 +35,8 @@ export function Shell({ current, workspace, signOut, refresh }: { current: Curre
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, []);
-  return <SidecarProvider workspace={workspace} userId={current.user.id}><div className="flex h-dvh flex-col bg-canvas text-primary">
-    <a href="#main-content" className="skip-link rounded-md bg-accent-primary px-3 py-1.5 text-14 font-medium text-on-color">{translate("shell.skipToMain")}</a>
+  return <SidecarProvider workspace={workspace} userId={current.user.id}><div className="flex h-dvh flex-col bg-background text-foreground">
+    <a href="#main-content" className="skip-link rounded-md bg-primary px-3 py-1.5 text-[14px] font-medium text-primary-foreground">{translate("shell.skipToMain")}</a>
     <TopBar current={current} workspace={workspace} signOut={signOut} refresh={refresh} onOpenDrawer={() => setDrawer(true)} sidebarCollapsed={sidebarCollapsed} onToggleSidebar={() => { setSidebarCollapsed((value) => !value); setSidebarPeek(false); }} onPeekSidebar={setSidebarPeek} />
     <div className="flex min-h-0 flex-1">
       <div className="max-md:hidden"><AppRail workspaceSlug={workspace.slug} /></div>
@@ -50,7 +50,7 @@ export function Shell({ current, workspace, signOut, refresh }: { current: Curre
         <SheetContent side="left" closeLabel={translate("shell.closeMenu")} aria-label={translate("shell.sidebar")} className="md:hidden">
           <SheetTitle className="sr-only">{translate("shell.sidebar")}</SheetTitle>
           <AppRail workspaceSlug={workspace.slug} horizontal />
-          <Button type="button" onClick={() => { setDrawer(false); window.dispatchEvent(new Event(openPaletteEvent)); }} className="inset-row-hover mx-3 mt-2 flex min-h-11 items-center gap-2 rounded-lg bg-transparent px-3 text-left text-14 text-primary"><Command aria-hidden size={16} />{translate("palette.menuLabel")}</Button>
+          <Button type="button" onClick={() => { setDrawer(false); window.dispatchEvent(new Event(openPaletteEvent)); }} className="transition-colors hover:bg-accent mx-3 mt-2 flex min-h-11 items-center gap-2 rounded-lg bg-transparent px-3 text-left text-[14px] text-foreground"><Command aria-hidden size={16} />{translate("palette.menuLabel")}</Button>
           <Sidebar workspace={workspace} />
         </SheetContent>
       </Sheet>

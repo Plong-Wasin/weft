@@ -37,6 +37,8 @@ try {
   const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
+  // Suppress transitions for the duration of the capture, including any that a theme change would start after the next frame.
+  const themeShot = (path: string) => page.screenshot({ path, fullPage: true, style: "*, *::before, *::after { transition: none !important; }" });
   const renderLoops: string[] = [];
   page.on("console", (message) => { if (message.type() === "error") { console.error(`browser console: ${message.text()}`); if (message.text().includes("Maximum update depth exceeded")) renderLoops.push(message.text()); } });
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
@@ -113,8 +115,7 @@ try {
   check(filterControls.every((box) => Math.abs(box!.height - filterControls[0]!.height) <= 1 && Math.abs(box!.y + box!.height - (filterControls[0]!.y + filterControls[0]!.height)) <= 1), `Wiki filters must have equal heights and aligned baselines: ${JSON.stringify(filterControls)}`);
   for (const theme of ["light", "dark"] as const) {
     await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
-    await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition).map((animation) => animation.finished))); // colour transitions must settle before the shot
-    await page.screenshot({ path: `${shots}/wiki-list-after-${theme}-1440.png`, fullPage: true });
+    await themeShot(`${shots}/wiki-list-after-${theme}-1440.png`);
   }
   await page.goto(`${web}/${slug}/wiki/${handbook.id}`);
   await page.locator(".ProseMirror").waitFor();
@@ -122,8 +123,7 @@ try {
   check(emptyEditorBox !== null && emptyEditorBox.height <= 112, `the empty Wiki editor must reserve a compact writing area before Attachments, found ${emptyEditorBox?.height}px`);
   for (const theme of ["light", "dark"] as const) {
     await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
-    await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition).map((animation) => animation.finished))); // colour transitions must settle before the shot
-    await page.screenshot({ path: `${shots}/wiki-page-after-${theme}-1440.png`, fullPage: true });
+    await themeShot(`${shots}/wiki-page-after-${theme}-1440.png`);
   }
   const attachmentsDisclosure = page.getByTestId("wiki-attachments-disclosure");
   const attachmentsToggle = page.getByTestId("wiki-attachments-toggle");
@@ -437,8 +437,7 @@ try {
   for (const [theme, width, height] of [["light", 1440, 900], ["dark", 1440, 900], ["light", 768, 900], ["dark", 768, 900], ["light", 390, 844], ["dark", 390, 844]] as const) {
     await page.setViewportSize({ width, height });
     await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
-    await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition).map((animation) => animation.finished))); // colour transitions must settle before the shot
-    await page.screenshot({ path: `${shots}/ticket13-project-page-${theme}-${width}.png`, fullPage: true });
+    await themeShot(`${shots}/ticket13-project-page-${theme}-${width}.png`);
   }
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
@@ -656,8 +655,7 @@ try {
   for (const [theme, width, height] of [["light", 1440, 900], ["dark", 1440, 900], ["light", 768, 900], ["dark", 768, 900], ["light", 390, 844], ["dark", 390, 844]] as const) {
     await page.setViewportSize({ width, height });
     await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
-    await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition).map((animation) => animation.finished))); // colour transitions must settle before the shot
-    await page.screenshot({ path: `${shots}/ticket13-wiki-list-${theme}-${width}.png`, fullPage: true });
+    await themeShot(`${shots}/ticket13-wiki-list-${theme}-${width}.png`);
   }
 
   // The mobile Wiki tree lives in the sidebar drawer; verify its real touch targets and row spacing.

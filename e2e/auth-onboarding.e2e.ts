@@ -59,7 +59,8 @@ try {
     await page.getByRole("heading", { name: new RegExp(translate("app.welcome")) }).waitFor();
     check(await page.getByText(translate("auth.welcomeBack")).isVisible(), "sign-in must be the default view");
     check(await page.getByLabel(translate("auth.name")).count() === 0, "sign-in must not ask for a name");
-    check(await page.getByText(translate("auth.needAccountShort")).isVisible(), "header mode link missing");
+    // The sign-in methods load after the heading: wait for the mode switch under the form.
+    await page.getByText(translate("auth.needAccountShort")).waitFor();
     await page.screenshot({ path: `${shots}/sign-in-${size}.png` });
     await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
     await page.getByText(translate("auth.createYourAccount")).waitFor();

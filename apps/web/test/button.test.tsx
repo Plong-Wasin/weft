@@ -27,3 +27,17 @@ test("Button keeps the caller's utilities, which win over the variant's", () => 
 
   for (const name of ["rounded-lg", "px-3", "py-1", "text-13"]) expect(html).toContain(name);
 });
+
+test("a Button with a self-styled component class gets no variant or size utilities to override it", () => {
+  for (const name of ["attachment-action-button", "editor-tool", "icon-button-ghost", "table-control", "wiki-bubble-button is-active", "wiki-bubble-reset", "wiki-bubble-swatch"]) {
+    const html = renderToStaticMarkup(<Button type="button" className={name}>x</Button>);
+    expect(html).toContain(name);
+    expect(html).not.toMatch(/\b(h-9|px-4|py-2|bg-background|shadow-xs|rounded-md|text-sm)\b/);
+  }
+});
+
+test("a Button sized by a size-N class keeps no default height or padding", () => {
+  const html = renderToStaticMarkup(<Button type="button" className="grid size-6 place-items-center">x</Button>);
+  expect(html).toContain("size-6");
+  expect(html).not.toMatch(/\b(h-9|px-4|py-2|px-3)\b/);
+});

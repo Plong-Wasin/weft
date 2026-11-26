@@ -73,7 +73,7 @@ export function Popover({ label, panelLabel = label, trigger, align = "left", cl
   </PopoverPrimitive>;
 }
 
-export const menuItemClass = "transition-colors flex w-full hover:bg-accent items-center gap-2 px-2.5 py-1.5 text-left text-sm text-popover-foreground outline-none focus:bg-accent focus:text-accent-foreground data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground pointer-coarse:min-h-11";
+export const menuItemClass = "transition-colors flex h-auto min-h-9 w-full hover:bg-accent items-center gap-2 px-2.5 py-1.5 text-left text-sm text-popover-foreground outline-none focus:bg-accent focus:text-accent-foreground data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground pointer-coarse:min-h-11";
 
 /**
  * A menu row with a leading icon. A `menuitemcheckbox` row carries `aria-checked` and a check mark while it is on.

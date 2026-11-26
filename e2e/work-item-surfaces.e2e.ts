@@ -73,7 +73,7 @@ try {
     const submit = page.locator(".editor-footer").getByRole("button", { name: t("comments.add"), exact: true });
     await submit.waitFor();
     const measure = () => submit.evaluate((button) => {
-      const card = button.closest<HTMLElement>("div.sticky")!;
+      const card = button.closest<HTMLElement>("[data-comment-composer]")!;
       const style = getComputedStyle(card);
       const box = card.getBoundingClientRect();
       const btn = button.getBoundingClientRect();
@@ -90,12 +90,12 @@ try {
     check(wide.insetRight >= 12 && wide.insetBottom >= 12, `the Comment button should sit inside the card, insets right ${wide.insetRight}px bottom ${wide.insetBottom}px`);
     await page.getByRole("complementary", { name: t("workItems.properties") }).waitFor();
     await submit.scrollIntoViewIfNeeded();
-    await submit.locator("xpath=ancestor::div[contains(concat(' ', normalize-space(@class), ' '), ' sticky ')][1]").screenshot({ path: `${shots}/composer-1440-dark.png` });
+    await submit.locator("xpath=ancestor::div[@data-comment-composer][1]").screenshot({ path: `${shots}/composer-1440-dark.png` });
     await page.setViewportSize({ width: 390, height: 844 });
     await submit.scrollIntoViewIfNeeded();
     const narrow = await measure();
     check(narrow.insetRight >= 12 && narrow.insetBottom >= 12, `at 390 px the Comment button should sit inside the card, insets right ${narrow.insetRight}px bottom ${narrow.insetBottom}px`);
-    await submit.locator("xpath=ancestor::div[contains(concat(' ', normalize-space(@class), ' '), ' sticky ')][1]").screenshot({ path: `${shots}/composer-390-dark.png` });
+    await submit.locator("xpath=ancestor::div[@data-comment-composer][1]").screenshot({ path: `${shots}/composer-390-dark.png` });
     await page.setViewportSize({ width: 1440, height: 900 });
   });
 

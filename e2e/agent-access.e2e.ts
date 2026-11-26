@@ -143,6 +143,8 @@ try {
   for (const viewport of [{ width: 1440, height: 900 }, { width: 768, height: 900 }, { width: 390, height: 844 }]) {
     await pm.page.setViewportSize(viewport);
     await pmAssignees.scrollIntoViewIfNeeded();
+    // The layout change at a new width can hide the trigger, which closes the picker on purpose: open it again.
+    if (!await unavailable.isVisible()) await pmAssignees.click();
     await unavailable.scrollIntoViewIfNeeded();
     for (const theme of ["light", "dark"] as const) {
       await pm.page.evaluate((value) => { localStorage.setItem("weft.theme", value); document.documentElement.setAttribute("data-theme", value); }, theme);

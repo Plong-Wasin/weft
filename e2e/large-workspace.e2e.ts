@@ -161,7 +161,7 @@ try {
   const targetProject = access.getByRole("checkbox", { name: "SCL249 · Scale Project 249" });
   await targetProject.click();
   await accessSearch.fill("SCL248");
-  await access.getByLabel("SCL248 · Scale Project 248").waitFor();
+  await access.getByRole("checkbox", { name: "SCL248 · Scale Project 248" }).waitFor();
   await access.getByRole("button", { name: translate("agents.save"), exact: true }).click();
   await accessSearch.fill("SCL249");
   check(await targetProject.getAttribute("aria-checked") === "true", "filtering another Project removed the selected Project from Agent access");

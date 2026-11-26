@@ -348,8 +348,9 @@ export function WikiBlockControls({ editor, editable }: { editor: Editor | null;
   const blocks = current ? topLevel() : [];
   const above = range ? blocks.find((block) => block.pos + block.size === range.from) ?? null : null;
   const below = range ? blocks.find((block) => block.pos === range.to) ?? null : null;
-  const editorBox = editor.view.dom.getBoundingClientRect();
-  const dropLine = drag?.drop && frame ? { top: drag.drop.top - frame.top - 1, left: editorBox.left - frame.left, width: editorBox.width } : null;
+  // Read the view only for a drag: React can render these controls before the editor view is mounted, and view.dom throws then.
+  const editorBox = drag?.drop ? editor.view.dom.getBoundingClientRect() : null;
+  const dropLine = drag?.drop && frame && editorBox ? { top: drag.drop.top - frame.top - 1, left: editorBox.left - frame.left, width: editorBox.width } : null;
   return <div ref={root} className="pointer-events-none absolute inset-0 z-20" data-testid="wiki-block-controls">
     {current && handleTop !== null && <div className="pointer-events-auto absolute -left-6 flex items-start gap-1" style={{ top: handleTop }}>
       <Button type="button" data-testid="wiki-block-handle" aria-label={translate("wiki.blockHandle")} title={translate("wiki.blockHandle")}

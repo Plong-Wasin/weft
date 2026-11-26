@@ -64,7 +64,7 @@ try {
   // A shared Claude Runtime and a Coder Agent on it, opened to the project.
   const daemonToken = await createApiTokenActions(db).createApiToken.handler({ userId: ownerId }, { name: "e2e daemon" });
   const runtimeActions = createRuntimeActions(db);
-  const registered = await runtimeActions.registerDaemon.handler({ userId: ownerId, apiTokenId: daemonToken.id }, { hostname: "session-runtime", version: "1", agentClis: ["claude"] });
+  const registered = await runtimeActions.registerDaemon.handler({ userId: ownerId, apiTokenId: daemonToken.id }, { hostname: "session-runtime", version: "1", agentClis: ["claude"], capabilities: ["runtime_environment", "runtime_sandbox"] });
   const runtime = registered.runtimes[0]!;
   await runtimeActions.shareRuntime.handler({ userId: ownerId }, { runtimeId: runtime.id });
   const coder = await createAgentActions(db).createAgent.handler({ userId: ownerId }, { workspaceId, name: "Coder", model: "default", runtimeId: runtime.id });

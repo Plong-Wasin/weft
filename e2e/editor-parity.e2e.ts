@@ -4,6 +4,7 @@ import { mkdirSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import { comments, createDatabase, users, workspaces, workItemDescriptionVersions } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
+import { cleanUp, stopProcess, withDeadline } from "./shutdown";
 
 // AI is off when the server has no provider key, so the AI assist menu this flow checks needs a placeholder key (no call is made).
 Bun.env.OPENAI_API_KEY ??= "sk-e2e-placeholder-no-call";
@@ -21,6 +22,7 @@ const servers = [
 ];
 let slug = "";
 let browser: Browser | null = null;
+let failed = false;
 
 async function waitFor(url: string) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -332,6 +334,22 @@ try {
   await commentGrip("column-0").click();
   await page.getByRole("menuitem", { name: translate("table.insertColumnRight"), exact: true }).click();
   check(await insertedCommentTable.locator("tr").count() === 4 && await insertedCommentTable.locator("tr").first().locator("th, td").count() === 4, "Comment table controls did not insert a row and column");
+  const paragraphAfterTable = comment.locator(":scope > p").last();
+  check(await paragraphAfterTable.evaluate((paragraph) => {
+    const precedingTable = paragraph.closest(".ProseMirror")?.querySelector("table");
+    return !!precedingTable && !!(precedingTable.compareDocumentPosition(paragraph) & Node.DOCUMENT_POSITION_FOLLOWING);
+  }), "the Comment fixture has an editable paragraph after its table");
+  const addCommentRow = commentEditorRoot.locator('[data-table-add="row"]');
+  await addCommentRow.waitFor();
+  const paragraphBox = await paragraphAfterTable.boundingBox();
+  const addBox = await addCommentRow.boundingBox();
+  check(!!paragraphBox && !!addBox && addBox.y + addBox.height <= paragraphBox.y + 1, "Add row sits fully in the gutter above the editable paragraph after the table");
+  await paragraphAfterTable.click({ timeout: 5000 });
+  check(await paragraphAfterTable.evaluate((paragraph) => {
+    const selection = document.getSelection();
+    return !!selection?.anchorNode && selection.isCollapsed && paragraph.contains(selection.anchorNode);
+  }), "clicking the center of the paragraph below the active table places the caret there");
+  console.log("case passed: Add row leaves the paragraph below the active table clickable");
   const firstCommentCell = insertedCommentTable.locator("th, td").first();
   await firstCommentCell.click(); await page.keyboard.type("Inserted Comment table");
   await page.keyboard.press("Control+Home");
@@ -390,8 +408,13 @@ try {
     const emptyParagraph = editor.locator(":scope > p.is-empty");
     await emptyParagraph.waitFor({ state: "attached" });
     check(await emptyParagraph.getAttribute("data-placeholder") === translate("editor.placeholder"), `${name} placeholder translation is missing`);
-    await emptyParagraph.click();
+    await emptyParagraph.click({ timeout: 5000 });
+    check(await emptyParagraph.evaluate((paragraph) => {
+      const selection = document.getSelection();
+      return !!selection?.anchorNode && selection.isCollapsed && paragraph.contains(selection.anchorNode);
+    }), `${name}: clicking the middle of the empty paragraph did not place the caret there`);
     await page.keyboard.type("placeholder check");
+    await editor.getByText("placeholder check", { exact: true }).waitFor();
     await emptyParagraph.waitFor({ state: "detached" });
     await editor.press("Control+A");
     await editor.press("Backspace");
@@ -466,7 +489,7 @@ try {
     await page.keyboard.type("/");
     const menu = page.getByRole("listbox", { name: translate("editor.slashMenu") });
     await menu.waitFor();
-    const menuLabels = ["wiki.tool.text", "wiki.tool.h1", "wiki.tool.h2", "wiki.tool.h3", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.codeBlock", "wiki.tool.divider", "wiki.insert.table", "wiki.insert.callout", "wiki.insert.emoji", "wiki.insert.todo", "wiki.insert.color", "wiki.insert.image"];
+    const menuLabels = ["wiki.tool.text", "wiki.tool.h1", "wiki.tool.h2", "wiki.tool.h3", "wiki.tool.bulletList", "wiki.tool.orderedList", "wiki.tool.quote", "wiki.tool.codeBlock", "wiki.tool.divider", "wiki.insert.table", "wiki.insert.callout", "wiki.insert.emoji", "wiki.insert.todo", "wiki.insert.color", "wiki.insert.image", "assist.menu"];
     check(await menu.getByRole("option").count() === menuLabels.length, "slash menu is missing a block command");
     for (const label of menuLabels) await menu.getByRole("option", { name: translate(label), exact: true }).waitFor();
     await page.keyboard.type("hea");
@@ -955,6 +978,9 @@ try {
   await page.getByRole("dialog").getByRole("button", { name: translate("workItems.close") }).click();
   await page.getByRole("button", { name: translate("profile.menu") }).click();
   await page.getByRole("menuitemradio", { name: "ไทย" }).click();
+  // The profile menu stays open after a language choice and is modal: close it first.
+  await page.keyboard.press("Escape");
+  await page.getByRole("menuitemradio", { name: "ไทย" }).waitFor({ state: "detached" });
   await page.getByTestId("description-last-edited").click();
   await page.getByRole("dialog", { name: "ประวัติรายละเอียด" }).waitFor();
   check(!/\b(?:seconds?|minutes?|hours?|days?) ago\b/i.test(await page.getByRole("dialog").innerText()), "Thai description history still shows English relative-time text");
@@ -1004,6 +1030,11 @@ try {
   await historyDialog.waitFor({ state: "detached" });
   await captureThaiModes("description", "[data-testid='description-editor']");
   const thaiComment = page.locator("li[id^='comment-']").filter({ hasText: "Converter formatting" }).first();
+  // History and Edit live in the comment's "more" menu, which opens outside the comment's own element.
+  const commentAction = async (comment: typeof thaiComment, name: string) => {
+    await comment.getByRole("button", { name: translate("comments.more", "th"), exact: true }).first().click();
+    await page.getByRole("dialog", { name: translate("comments.more", "th") }).getByRole("button", { name, exact: true }).click();
+  };
   // The comment history pages too: 25 seeded versions show 20, and Show older versions adds the rest.
   {
     const commentId = (await thaiComment.getAttribute("id"))!.replace("comment-", "");
@@ -1015,16 +1046,16 @@ try {
     await seed.close();
     await page.reload();
     const reloaded = page.locator("li[id^='comment-']").filter({ hasText: "Converter formatting" }).first();
-    await reloaded.getByRole("button", { name: "ประวัติ", exact: true }).click();
+    await commentAction(reloaded, "ประวัติ");
     const list = reloaded.getByRole("list", { name: "ประวัติ" });
     await list.waitFor();
     check(await list.locator("li").count() === 21, `the comment history showed ${await list.locator("li").count() - 1} versions first, not 20`);
     await list.getByTestId("show-older-comment-versions").click();
     await list.locator("li").nth(24).waitFor();
     check(await list.getByTestId("show-older-comment-versions").count() === 0, "Show older versions stays on the comment history after the last page");
-    await reloaded.getByRole("button", { name: "ประวัติ", exact: true }).click();
+    await commentAction(reloaded, "ประวัติ");
   }
-  await thaiComment.getByRole("button", { name: "แก้ไข", exact: true }).click();
+  await commentAction(thaiComment, "แก้ไข");
   await captureThaiModes("comment", "[data-testid='comment-editor']");
   await thaiComment.getByRole("button", { name: "ยกเลิก" }).click();
   await page.goto(`${web}/${slug}/wiki/${projectPageCreated.id}`);
@@ -1036,18 +1067,35 @@ try {
   await captureThaiModes("wiki-page", "[data-testid='wiki-editor']");
   console.log("case passed: published Wiki renders highlighted code and coloured callouts");
   console.log("editor parity ok: placeholders, visible markdown blocks, shared slash menu, and safe links in description, Comment, Wiki, and published Wiki");
-  await browser.close();
-  browser = null;
 } catch (error) {
-  if (error !== "DIFF_CAPTURE_COMPLETE" && error !== "WORK_ITEM_CAPTURE_COMPLETE") throw error;
+  if (error !== "DIFF_CAPTURE_COMPLETE" && error !== "WORK_ITEM_CAPTURE_COMPLETE") {
+    failed = true;
+    throw error;
+  }
   console.log(error === "DIFF_CAPTURE_COMPLETE" ? "diff browser assertions and captures complete" : "work-item phone assertions and captures complete");
 } finally {
-  await browser?.close();
-  if (slug) {
-    const { client, db } = createDatabase();
-    await db.delete(workspaces).where(eq(workspaces.slug, slug));
-    await db.delete(users).where(eq(users.email, `${slug}@example.test`));
-    await client.end();
-  }
-  for (const server of servers) server.kill();
+  await cleanUp([
+    async () => { if (browser) await withDeadline(browser.close(), 5_000, "editor browser close"); },
+    () => Promise.allSettled(servers.map((server) => stopProcess(server))).then((results) => {
+      const errors = results.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+      if (errors.length) throw new AggregateError(errors, "editor server shutdown");
+    }),
+    async () => {
+      if (!slug) return;
+      const { client, db } = createDatabase();
+      let deleteFailed = false;
+      try {
+        await withDeadline(db.delete(workspaces).where(eq(workspaces.slug, slug)), 5_000, "editor workspace delete");
+        await withDeadline(db.delete(users).where(eq(users.email, `${slug}@example.test`)), 5_000, "editor user delete");
+      } catch (error) {
+        deleteFailed = true;
+        throw error;
+      } finally {
+        await cleanUp(
+          [() => withDeadline(client.end({ timeout: 1 }), 5_000, "editor database close")],
+          deleteFailed ? (error) => console.error("editor cleanup:", error) : undefined,
+        );
+      }
+    },
+  ], failed ? (error) => console.error("editor cleanup:", error) : undefined);
 }

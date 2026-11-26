@@ -62,6 +62,8 @@ try {
   const aiStatus = await context.request.post(`${api}/api/ai/status`, { data: { workspaceId } });
   check(aiStatus.status() === 404, "this flow assumes no provider key in the test environment");
 
+  const editorErrors: string[] = [];
+  page.on("pageerror", (error) => editorErrors.push(error.message));
   await page.goto(`${web}/${slug}/wiki/${wiki.id}`);
   const wikiEditor = page.getByTestId("wiki-editor").locator(".ProseMirror");
   const title = page.locator(".wiki-edit-title");
@@ -73,6 +75,9 @@ try {
   const overlaps = (a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 
   await wikiEditor.getByText("Lower target text", { exact: true }).waitFor();
+  await wikiEditor.getByText("Lower target text", { exact: true }).hover();
+  await page.getByTestId("wiki-block-handle").waitFor();
+  check(editorErrors.length === 0, `the Wiki block hover listener attaches when the editor opens: ${editorErrors.join(", ")}`);
   await selectTarget();
   await bubble.waitFor();
   // Single row: every control shares one top edge, and the bubble never covers the Page title.
@@ -216,6 +221,43 @@ try {
   check(await aiMenu.count() === 0, "the AI menu is shown while AI is off");
   check(await page.getByRole("status").filter({ hasText: translate("assist.notConfigured") }).count() === 0, "an AI-not-configured note is shown while AI is off");
   console.log("PASS with AI off, selecting text shows no AI menu");
+
+  const phone = await browser.newContext({ viewport: { width: 320, height: 700 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
+  try {
+    const touchPage = await phone.newPage();
+    await touchPage.goto(`${web}/${slug}/wiki/${wiki.id}`);
+    const text = touchPage.locator(".ProseMirror").getByText("Filler line 1", { exact: true });
+    await text.tap();
+    await touchPage.keyboard.press("End");
+    await touchPage.keyboard.press("Shift+Home");
+    const toolbar = touchPage.getByTestId("wiki-bubble-menu");
+    await toolbar.waitFor();
+    check(await toolbar.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      const controls = [...element.querySelectorAll("button, select")];
+      return matchMedia("(pointer: coarse)").matches && controls.length === 8 &&
+        bounds.left >= 0 && bounds.right <= innerWidth && document.documentElement.scrollWidth <= innerWidth &&
+        controls.every((control) => {
+          const box = control.getBoundingClientRect();
+          return box.width >= 44 && box.height >= 44 && box.left >= bounds.left && box.right <= bounds.right;
+        });
+    }), "at 320px on a coarse pointer, all eight formatting controls fit at 44px without sideways page scroll");
+    const touchColors = toolbar.getByRole("button", { name: translate("wiki.tool.colors"), exact: true });
+    await touchColors.tap();
+    const touchPanel = touchPage.getByRole("group", { name: translate("wiki.tool.colors"), exact: true });
+    await touchPanel.waitFor();
+    const panelBox = await box(touchPanel);
+    check(panelBox.x >= 0 && panelBox.x + panelBox.width <= 320, "the phone colour panel fits and remains reachable");
+    await touchPanel.getByRole("button", { name: `${translate("wiki.insert.color")} ${translate("wiki.color.blue")}`, exact: true }).tap();
+    await touchPage.locator('.ProseMirror span[style*="color: rgb(59, 130, 246)"]')
+      .filter({ hasText: "Filler line 1" }).waitFor({ timeout: 5_000 });
+    if (Bun.env.E2E_SHOTS_DIR) {
+      await touchPage.screenshot({ path: `${Bun.env.E2E_SHOTS_DIR}/selection-toolbar-coarse-320.png` });
+    }
+    console.log("PASS 320px coarse-pointer toolbar and colour panel fit and remain usable");
+  } finally {
+    await phone.close();
+  }
 
   console.log("e2e selection-toolbar: ok");
   await browser.close();

@@ -77,7 +77,8 @@ try {
   check(await modal.isVisible(), "Escape should close the dropdown without closing its dialog");
 
   await statusTrigger.click();
-  await modal.getByLabel(t("modules.name")).click();
+  // The menu may open over the fields above its trigger: click the dialog's own padding, which it never covers.
+  await modal.click({ position: { x: 8, y: 8 } });
   await menu.waitFor({ state: "detached" });
   check(await modal.isVisible(), "outside click should close the dropdown without closing its dialog");
   await modal.getByRole("button", { name: t("modules.cancel") }).click();

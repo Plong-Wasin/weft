@@ -98,7 +98,8 @@ try {
   /** The coder's change on a work item, made inside a Run the server recorded before the Agent acted. */
   const hand = async (itemId: string) => {
     const [run] = await db.insert(runs).values({ workspaceId, projectId: project.id, workItemId: itemId, agentId: coder.id, originatorId: me.user.id, status: "completed" }).returning({ id: runs.id });
-    return work.updateWorkItem.handler({ userId: coder.userId, source: "agent", agent: { agentUserId: coder.userId, runId: run!.id, originatorId: me.user.id, autopilot: true } }, { workItemId: itemId, assigneeIds: [reviewer.userId] });
+    const result = await work.updateWorkItem.handler({ userId: coder.userId, source: "agent", agent: { agentUserId: coder.userId, runId: run!.id, originatorId: me.user.id, autopilot: true } }, { workItemId: itemId, assigneeIds: [reviewer.userId] });
+    return { ...result, wakerRunId: run!.id };
   };
   /** A Run the reviewer works in on an item, as the server records it: it is busy until the flow ends. */
   const busyReviewer = async (itemId: string) => (await db.insert(runs).values({ workspaceId, projectId: project.id, workItemId: itemId, agentId: reviewer.id, originatorId: me.user.id, status: "running" }).returning({ id: runs.id }))[0]!;
@@ -111,12 +112,17 @@ try {
   const panel = page.getByTestId("runs-panel");
   const wokenLink = panel.getByTestId("run-woken-by").getByRole("link", { name: translate("runs.wokenBy").replace("{agent}", coder.name) });
   await wokenLink.waitFor({ timeout: 30_000 });
-  check((await wokenLink.getAttribute("href"))?.startsWith("?run="), "the Runs panel links the woken Run to the Run that woke it");
+  const wokenHref = new URL((await wokenLink.getAttribute("href"))!, page.url());
+  const detailUrl = new URL(page.url());
+  check(wokenHref.origin === detailUrl.origin && wokenHref.pathname === detailUrl.pathname && wokenHref.searchParams.get("run") === woken.wakerRunId, "the Runs panel links to the exact seeded waker Run on the same work item and origin");
   check((await panel.getByTestId("run-woken-by").first().innerText()).includes(translate("runs.wokenByDepth").replace("{depth}", "1")), "the Runs panel shows depth 1 for the woken Run");
   // The default timeline shows Comments only: All shows the Activity entries too.
   await page.getByRole("combobox", { name: translate("timeline.filter", "en"), exact: true }).selectOption("all");
   const startedEntry = page.getByTestId("activity-woken-by").first();
   await startedEntry.waitFor({ timeout: 30_000 });
+  const timelineLink = startedEntry.getByRole("link", { name: translate("runs.wokenBy").replace("{agent}", coder.name) });
+  const timelineHref = new URL((await timelineLink.getAttribute("href"))!, page.url());
+  check(timelineHref.origin === detailUrl.origin && timelineHref.pathname === detailUrl.pathname && timelineHref.searchParams.get("run") === woken.wakerRunId, "the timeline links to the exact seeded waker Run on the same work item and origin");
   check(await page.getByText(translate("workItems.activity.run_started"), { exact: false }).first().isVisible(), "the timeline shows the started entry");
   await capture(page, "wake-chain-login-timeline", startedEntry);
 

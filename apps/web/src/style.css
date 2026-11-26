@@ -164,6 +164,11 @@
   .editor-toolbar .editor-tool, .editor-footer .editor-tool { min-width: 2.75rem; min-height: 2.75rem; }
 }
 .comment-editor .ProseMirror table { border-collapse: collapse; table-layout: auto; width: 100%; margin: .75rem 0; }
+/* Reserve room for the Add row button (including its focus outline) before the next editable block. */
+:is(.wiki-editor, .comment-editor) .ProseMirror[contenteditable="true"] table { margin-block-end: 2rem; }
+@media (pointer: coarse) {
+  :is(.wiki-editor, .comment-editor) .ProseMirror[contenteditable="true"] table { margin-block-end: 3.25rem; }
+}
 .comment-editor .ProseMirror th, .comment-editor .ProseMirror td { border: 1px solid var(--border); min-width: 4rem; padding: .4rem .55rem; vertical-align: top; }
 .comment-editor .ProseMirror th { background: var(--muted); font-weight: 600; }
 .comment-body { min-width: 0; max-width: 100%; overflow-x: auto; }
@@ -248,7 +253,16 @@
 .wiki-bubble-button { display:inline-flex; flex:none; align-items:center; justify-content:center; width:1.75rem; height:1.75rem; margin:0; padding:0; border:0; border-radius:.375rem; background:transparent; color:var(--muted-foreground); cursor:pointer; }
 .wiki-bubble-button:hover { background:var(--accent); color:var(--foreground); }
 .wiki-bubble-button.is-active, .wiki-bubble-button[aria-expanded="true"] { background:var(--accent); color:var(--foreground); }
-.wiki-bubble-menu select.wiki-bubble-select { flex:none; width:auto; max-width:8rem; height:1.75rem; padding-block:0; padding-inline:.25rem 1.5rem; border-radius:.375rem; color:var(--foreground); font-size:.75rem; }
+.wiki-bubble-menu select.wiki-bubble-select { flex:none; width:auto; max-width:8rem; height:1.75rem; min-height:0; padding-block:0; padding-inline:.25rem 1.5rem; border-radius:.375rem; color:var(--foreground); font-size:.75rem; }
+@media (pointer:coarse) {
+  .wiki-bubble-menu { flex-wrap:wrap; max-width:calc(100vw - 1rem); }
+  .wiki-bubble-menu select.wiki-bubble-select { min-height:2.75rem; }
+}
+@media (pointer:coarse) and (max-width: 480px) {
+  /* Panels use the toolbar's width when their trigger lands near the edge of a row. */
+  .wiki-bubble-menu .wiki-bubble-anchor { position:static; }
+  .wiki-bubble-menu .wiki-bubble-popover { inset-inline-start:0; width:min(17rem, 100%); }
+}
 .assist-menu-surface { box-shadow:var(--shadow-md); }
 .wiki-bubble-popover { position:absolute; top:calc(100% + .35rem); z-index:31; display:grid; gap:.35rem; padding:.5rem; border:1px solid var(--border); border-radius:.5rem; background:var(--card); color:var(--foreground); box-shadow:var(--shadow-md); }
 .wiki-bubble-link-popover { left:0; width:17rem; }

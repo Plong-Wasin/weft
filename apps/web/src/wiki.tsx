@@ -568,7 +568,7 @@ function DetailsPanelFrame({ wide, onDismiss, children }: { wide: boolean; onDis
     const opener = openerRef.current instanceof HTMLElement ? openerRef.current : null;
     const trap = (event: KeyboardEvent) => {
       if (event.key !== "Tab" || !frame.current) return;
-      const focusable = Array.from(frame.current.querySelectorAll<HTMLElement>("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")).filter((node) => node.offsetParent !== null);
+      const focusable = Array.from(frame.current.querySelectorAll<HTMLElement>("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")).filter((node) => node.tabIndex >= 0 && !node.matches(":disabled") && !node.closest("[inert]") && node.checkVisibility({ visibilityProperty: true }));
       if (focusable.length === 0) return;
       const first = focusable[0]!; const last = focusable[focusable.length - 1]!;
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }

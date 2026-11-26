@@ -149,27 +149,59 @@ try {
   await menuButton().focus();
   await page.keyboard.press("Enter");
   const focusedLabel = () => page.evaluate(() => document.activeElement?.firstElementChild?.textContent?.trim() ?? ""); // a menu item's first child holds its visible name; the hidden help text is outside it
-  check(await focusedLabel() === translate("wiki.exportMarkdown", "en"), "opening the page menu does not focus its first item");
+  // The menu moves focus a tick after the key press, so each check waits for the expected row before it reads it.
+  const expectFocus = async (key: Parameters<typeof translate>[0], message: string) => {
+    await page.waitForFunction((name) => document.activeElement?.firstElementChild?.textContent?.trim() === name, translate(key, "en"), { timeout: 5_000 }).catch(() => undefined);
+    check(await focusedLabel() === translate(key, "en"), message);
+  };
+  await expectFocus("wiki.exportMarkdown", "opening the page menu does not focus its first item");
   await page.keyboard.press("ArrowDown");
-  check(await focusedLabel() === translate("wiki.importMarkdown", "en"), "ArrowDown does not move to the next item");
+  await expectFocus("wiki.importMarkdown", "ArrowDown does not move to the next item");
   await page.keyboard.press("End");
-  check(await focusedLabel() === translate("wiki.delete", "en"), "End does not jump to the last item");
+  await expectFocus("wiki.delete", "End does not jump to the last item");
   await page.keyboard.press("ArrowDown");
-  check(await focusedLabel() === translate("wiki.exportMarkdown", "en"), "ArrowDown on the last item does not wrap to the first");
+  await expectFocus("wiki.exportMarkdown", "ArrowDown on the last item does not wrap to the first");
   await page.keyboard.press("ArrowUp");
-  check(await focusedLabel() === translate("wiki.delete", "en"), "ArrowUp on the first item does not wrap to the last");
+  await expectFocus("wiki.delete", "ArrowUp on the first item does not wrap to the last");
   await page.keyboard.press("Home");
-  check(await focusedLabel() === translate("wiki.exportMarkdown", "en"), "Home does not jump to the first item");
+  await expectFocus("wiki.exportMarkdown", "Home does not jump to the first item");
   await page.keyboard.press("Escape");
   await menu().waitFor({ state: "detached" });
   check(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")) === translate("wiki.exports", "en"), "Escape does not return focus to the page menu button");
   console.log("PASS page menu keyboard: ArrowUp/Down wrap, Home/End jump, Escape closes and focuses the trigger");
 
-  // Add subpage from the menu opens the new child.
-  await menuButton().click();
-  await item("wiki.newChild").click();
-  await page.waitForURL((url) => url.pathname.startsWith(`/${slug}/wiki/`) && !url.pathname.endsWith(handbook.id), { timeout: 10_000 });
-  console.log("PASS Add subpage from the page menu creates and opens a child page");
+  const children = async () => (await wiki.listWikiPages.handler({ userId: ownerId }, { workspaceId }))
+    .filter((candidate) => candidate.parentId === handbook.id);
+  const expectOneChild = async (activate: () => Promise<void>, name: string) => {
+    const before = new Set((await children()).map(({ id }) => id));
+    const createRequests = new Set<string>();
+    let requestCount = 0;
+    const onRequest = (request: import("playwright").Request) => {
+      if (request.method() !== "POST" || request.url() !== `${api}/actions/create_wiki_page`) return;
+      requestCount += 1;
+      createRequests.add(request.postDataJSON().parentId);
+    };
+    page.on("request", onRequest);
+    try {
+      await menuButton().click();
+      await activate();
+      await page.waitForURL((url) => url.origin === web && url.pathname.startsWith(`/${slug}/wiki/`) && !url.pathname.endsWith(handbook.id), { timeout: 10_000 });
+      await page.getByTestId("wiki-editor").locator(".ProseMirror").waitFor();
+      const added = (await children()).filter(({ id }) => !before.has(id));
+      check(requestCount === 1 && createRequests.has(handbook.id), `${name}: expected one create request with Handbook as parent, saw ${requestCount}`);
+      check(added.length === 1, `${name}: expected one new persisted child under Handbook, saw ${added.length}`);
+      check(page.url() === `${web}/${slug}/wiki/${added[0]!.id}`, `${name}: did not navigate to the persisted child`);
+    } finally {
+      page.off("request", onRequest);
+    }
+  };
+  await expectOneChild(async () => {
+    await item("wiki.newChild").focus();
+    await page.keyboard.press("Enter");
+  }, "Enter on Add subpage");
+  await page.goto(`${web}/${slug}/wiki/${handbook.id}`);
+  await expectOneChild(() => item("wiki.newChild").click(), "Click on Add subpage");
+  console.log("PASS keyboard and click each send one request, persist one Handbook child and navigate to it");
 
   // Archive and restore from the menu.
   await page.goto(`${web}/${slug}/wiki/${handbook.id}`);

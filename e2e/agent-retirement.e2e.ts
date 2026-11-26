@@ -71,7 +71,8 @@ try {
     await page.getByRole("button", { name: translate("agents.newAgent"), exact: true }).click();
     await page.getByLabel(translate("agents.name")).fill(name);
     await page.getByLabel(translate("agents.instructions")).fill("Triage new work.");
-    await page.getByRole("button", { name: translate("agents.save") }).click();
+    // Each Agent already listed has its own (disabled) Save buttons; the creation form's one is the submit.
+    await page.getByRole("button", { name: translate("agents.save") }).and(page.locator('[type="submit"]')).click();
     await page.locator(`[data-agent="${name}"]`).waitFor();
   }
   const retireBot = (await call<Array<{ id: string; userId: string; name: string }>>("list_agents", { workspaceId })).find((agent) => agent.name === "Retire Bot")!;

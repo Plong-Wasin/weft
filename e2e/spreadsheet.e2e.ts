@@ -295,12 +295,15 @@ try {
   const writableRow = page.getByTestId(`row-${longItem.displayId}`);
   await writableRow.waitFor();
   const writableColumns = await writableRow.evaluate((row, displayId) => [row.querySelector(`span[title="${displayId}"]`)!.getBoundingClientRect().x, row.querySelector("a")!.getBoundingClientRect().x], longItem.displayId);
-  await touchPage.setViewportSize({ width: 1440, height: 900 });
-  await touchPage.goto(projectUrl);
-  const readOnlyRow = touchPage.getByTestId(`row-${longItem.displayId}`);
+  // Same pointer type on both sides: a touch screen has its own column widths. So the Guest signs in to a mouse window.
+  const guestDesktop = await browser.newContext({ storageState: await touchContext.storageState(), viewport: { width: 1440, height: 900 } });
+  const guestPage = await guestDesktop.newPage();
+  await guestPage.goto(projectUrl);
+  const readOnlyRow = guestPage.getByTestId(`row-${longItem.displayId}`);
   await readOnlyRow.waitFor();
   const readOnlyColumns = await readOnlyRow.evaluate((row, displayId) => [row.querySelector(`span[title="${displayId}"]`)!.getBoundingClientRect().x, row.querySelector("a")!.getBoundingClientRect().x], longItem.displayId);
   check(writableColumns.every((x, index) => Math.abs(x - readOnlyColumns[index]!) < 1), `read-only list columns shifted: ${writableColumns} vs ${readOnlyColumns}`);
+  await guestDesktop.close();
   await touchContext.close();
   console.log("spreadsheet e2e passed");
   await browser.close();

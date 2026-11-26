@@ -1,6 +1,6 @@
 // Browser end-to-end flow: every route at its Plane-style URL, design tokens in light and dark, Inter and icons, legacy URLs.
 // Run with `bun run e2e` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
-import { chromium, type Page } from "playwright";
+import { chromium, expect, type Page } from "playwright/test";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -57,12 +57,16 @@ try {
   check(page.url() === `${web}/${slug}/projects/MOB/issues`, `work items URL is ${page.url()}`);
 
   // Each route renders its screen when opened directly (full page load), at Plane's URL shape.
+  const expectAlphaDetail = async () => {
+    await page.getByRole("navigation", { name: translate("workItems.breadcrumb") }).getByText("MOB-1", { exact: true }).waitFor();
+    await expect(page.getByRole("textbox", { name: translate("workItems.titleField"), exact: true }), "MOB-1 detail is paired with its seeded title").toHaveValue("Alpha");
+  };
   const screens: Array<[string, () => Promise<unknown>]> = [
     [`/${slug}`, () => page.getByRole("heading", { name: translate("projects.title") }).waitFor()],
     [`/${slug}/projects`, () => page.getByRole("heading", { name: translate("projects.title") }).waitFor()],
     [`/${slug}/projects/MOB`, () => page.getByRole("link", { name: /Alpha/ }).waitFor()],
     [`/${slug}/projects/MOB/issues`, () => page.getByRole("link", { name: /Alpha/ }).waitFor()],
-    [`/${slug}/browse/MOB-1`, () => page.getByRole("heading", { name: "MOB-1" }).waitFor()],
+    [`/${slug}/browse/MOB-1`, expectAlphaDetail],
     [`/${slug}/projects/MOB/cycles`, () => page.getByRole("heading", { name: translate("cycles.title") }).waitFor()],
     [`/${slug}/projects/MOB/modules`, () => page.getByRole("heading", { name: translate("modules.title") }).waitFor()],
     [`/${slug}/projects/MOB/views`, () => page.getByRole("heading", { name: translate("views.title") }).waitFor()],
@@ -91,7 +95,7 @@ try {
 
   // URLs from before the Plane-style routes redirect.
   await page.goto(`${web}/${slug}/work-items/MOB-1`);
-  await page.getByRole("heading", { name: "MOB-1" }).waitFor();
+  await expectAlphaDetail();
   check(page.url() === `${web}/${slug}/browse/MOB-1`, `legacy work item URL went to ${page.url()}`);
   await page.goto(`${web}/${slug}/inbox`);
   await page.getByRole("heading", { name: new RegExp(translate("inbox.title")) }).waitFor();

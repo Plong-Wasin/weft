@@ -1,13 +1,16 @@
 // Browser end-to-end flow: every in-scope screen in tools/visual/routes.json has a Weft route, renders at 1440px and 390px without
 // page-level horizontal scroll, and the 390px shell collapses to a drawer.
 // Run with `bun e2e/responsive.e2e.ts` (needs the shared weft-postgres container; set DATABASE_URL, CHROMIUM_PATH).
-import { chromium } from "playwright";
+import { chromium, expect, type Page } from "playwright/test";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { translate } from "../packages/shared/src";
 import { WeftClient, seedWeft } from "../tools/visual/weft-client";
 import { fillPath, loadRoutes } from "../tools/visual/lib";
 import { reviewShots } from "../tools/visual/paths";
+
+// The AI route is gated by the presence of a provider key. This flow only opens it.
+Bun.env.OPENAI_API_KEY ??= "sk-e2e-placeholder-no-call";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3120);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5220);
@@ -40,6 +43,41 @@ try {
   const missing = routes.filter((r) => !r.weft || !fillPath(r.weft, seed)).map((r) => r.name);
   check(missing.length === 0, `no Weft route or seed value for: ${missing.join(", ")}`);
 
+  const readyOn = (target: Page, route: string) => {
+    const main = target.getByRole("main");
+    const heading = (name: string) => main.getByRole("heading", { name, exact: true });
+    const content: Record<string, () => ReturnType<typeof heading>> = {
+      "auth-sign-in": () => target.getByRole("button", { name: translate("auth.signIn"), exact: true }),
+      "workspace-home": () => heading(translate("projects.title")),
+      "work-items-list": () => main.getByRole("link", { name: /Set up CI pipeline/ }).first(),
+      "work-item-page": () => main.getByRole("textbox", { name: translate("workItems.titleField"), exact: true }),
+      "cycles": () => main.getByRole("link", { name: "Sprint 1", exact: true }),
+      "cycle-detail": () => heading("Sprint 1"),
+      "modules": () => main.getByText("Authentication", { exact: true }).first(),
+      "module-detail": () => main.getByRole("navigation", { name: translate("workItems.breadcrumb") }).getByText("Authentication", { exact: true }),
+      "views": () => main.getByRole("link", { name: "High priority", exact: true }),
+      "view-detail": () => main.getByText("High priority", { exact: true }).filter({ visible: true }).first(),
+      "pages": () => main.getByRole("link", { name: "Getting started", exact: true }),
+      "archives": () => heading(translate("archives.title")),
+      "intake": () => main.getByText("Customer asks for CSV export", { exact: true }),
+      "workspace-views": () => main.getByTestId("workspace-view-header"),
+      "workspace-settings": () => heading(translate("settings.workspaceTitle")),
+      "workspace-members": () => heading(translate("members.title")),
+      "project-settings": () => heading(translate("settings.general")),
+      "project-states": () => heading(translate("states.title")),
+      "project-estimates": () => heading(translate("estimates.title")),
+      "project-labels": () => heading(translate("labels.title")),
+      "project-features": () => heading(translate("settings.features")),
+      "wiki-list": () => heading(translate("wiki.title")),
+      "wiki-page": () => heading("Getting started"),
+      "analytics-overview": () => heading(translate("analytics.projectList")),
+      "analytics-work-items": () => heading(translate("analytics.createdVsResolved")),
+      "ai-chat": () => heading(translate("ai.heading")),
+    };
+    if (!content[route]) throw new Error(`Missing route-specific readiness assertion for ${route}`);
+    return content[route]();
+  };
+
   const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
   const shots = reviewShots("20-responsive-and-final-sweep");
   // The viewports are independent (a context and page each), so they run side by side: this flow was the longest of the suite.
@@ -54,8 +92,12 @@ try {
       const context2 = route.auth === false ? await browser.newContext({ viewport: { width: viewport.width, height: viewport.height } }) : null;
       const target = context2 ? await context2.newPage() : page;
       await target.goto(`${web}${path}`, { waitUntil: "load" });
-      await target.waitForLoadState("networkidle", { timeout: 4_000 }).catch(() => undefined);
-      await target.waitForTimeout(300);
+      await readyOn(target, route.name).waitFor({ timeout: 15_000 }).catch((cause) => {
+        throw new Error(`${route.name} at ${viewport.width}px did not render its route-specific content`, { cause });
+      });
+      if (route.name === "work-item-page") {
+        await expect(readyOn(target, route.name), "the work item page shows its seeded title").toHaveValue("Set up CI pipeline");
+      }
       const body = (await target.locator("body").innerText()).trim();
       check(body.length > 0, `${route.name} at ${viewport.width}px rendered an empty page`);
       check(!/Unexpected Application Error|Cannot read propert|is not a function/.test(body), `${route.name} at ${viewport.width}px shows an error: ${body.slice(0, 120)}`);

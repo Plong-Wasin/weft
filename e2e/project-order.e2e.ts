@@ -85,14 +85,22 @@ try {
   await expectOrder(page, ["Alpha", "Beta", "Gamma"], `default order is not by name: ${await projectOrder(page)}`, false);
   check(await page.getByRole("list", { name: translate("sidebar.starred"), exact: true }).count() === 0, "Starred group shows while empty");
 
-  // Project order is a Workspace link: it sits above the Projects heading and still opens its page.
+  // Project order is a Workspace link: it sits under the Workspace heading, below the project finder, and still opens its page.
   await page.goto(`${web}/${slug}/settings`);
   const projectOrderLink = sidebar().getByRole("link", { name: translate("settings.projectOrder"), exact: true });
   await projectOrderLink.waitFor();
-  check(await projectOrderLink.evaluate((link, projectsHeading) => {
-    const heading = [...link.closest("nav")!.querySelectorAll("p")].find((node) => node.textContent === projectsHeading);
-    return !!heading && (heading.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_PRECEDING) !== 0;
-  }, translate("projects.title")), "Project order is not in the Workspace group above the Projects heading");
+  check(await projectOrderLink.evaluate((link, workspaceHeading) => {
+    const above = [...link.closest("nav")!.querySelectorAll("p")].filter((node) => node.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING);
+    return above.at(-1)?.textContent === workspaceHeading;
+  }, translate("sidebar.workspace")), "Project order is not in the Workspace group");
+  const finder = sidebar().getByRole("searchbox", { name: translate("projects.find"), exact: true });
+  const workspaceHeading = sidebar().getByText(translate("sidebar.workspace"), { exact: true });
+  await finder.waitFor();
+  await workspaceHeading.waitFor();
+  check(await finder.evaluate((input, headingText) => {
+    const heading = [...input.closest("nav")!.querySelectorAll("p")].find((node) => node.textContent === headingText);
+    return !!heading && !!(input.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING);
+  }, translate("sidebar.workspace")), "Workspace group must follow the project finder");
   await projectOrderLink.click();
   await page.waitForURL(`${web}/${slug}/settings/project-order`);
   await page.getByRole("heading", { name: translate("settings.projectOrder"), exact: true }).waitFor();
@@ -260,6 +268,8 @@ try {
   console.log("project order ok: phone settings page");
 
   // A pending reorder, then Reset and Star from a second hook instance, must persist in user-action order.
+  // This scenario drives the sidebar, which a tablet width hides.
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByRole("navigation", { name: translate("shell.rail") }).getByRole("link", { name: translate("rail.work") }).click();
   const preferenceWrites: string[] = [];
   let delayedOrderStarted!: () => void;

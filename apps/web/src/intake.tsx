@@ -55,13 +55,13 @@ const t = (key: string) => translate(key as MessageKey);
 // Plane's Open tab holds undecided items (pending and snoozed); Closed holds every decided one.
 const tabOutcomes: Record<Tab, Outcome[]> = { open: ["pending", "snoozed"], closed: ["accepted", "rejected", "duplicate"] };
 const statusTone: Record<Outcome, string> = {
-  pending: "bg-warning-subtle text-warning-primary", snoozed: "bg-layer-2 text-secondary", accepted: "bg-success-subtle text-success-text",
-  rejected: "bg-danger-subtle text-danger-text", duplicate: "bg-layer-2 text-secondary",
+  pending: "bg-amber-500/10 text-amber-700 dark:text-amber-400", snoozed: "bg-background text-muted-foreground", accepted: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+  rejected: "bg-destructive/10 text-destructive", duplicate: "bg-background text-muted-foreground",
 };
-const primaryButton = "min-h-9 rounded-lg bg-accent-primary px-3 py-1.5 text-13 font-medium text-on-color hover:opacity-90 disabled:opacity-50";
-const quietButton = "min-h-9 rounded-lg border border-subtle bg-surface-1 px-3 py-1.5 text-13 font-medium text-primary hover:bg-layer-transparent-hover disabled:opacity-50";
-const iconButton = "grid size-9 place-items-center rounded-lg border border-subtle bg-surface-1 p-0 text-secondary hover:bg-layer-transparent-hover hover:text-primary disabled:opacity-40";
-const field = "w-full rounded-md border border-subtle bg-surface-1 px-2.5 py-1.5 text-14 text-primary";
+const primaryButton = "min-h-9 rounded-lg bg-primary px-3 py-1.5 text-13 font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50";
+const quietButton = "min-h-9 rounded-lg border border-border bg-card px-3 py-1.5 text-13 font-medium text-foreground hover:bg-accent disabled:opacity-50";
+const iconButton = "grid size-9 place-items-center rounded-lg border border-border bg-card p-0 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40";
+const field = "w-full rounded-md border border-border bg-card px-2.5 py-1.5 text-14 text-foreground";
 
 function StatusBadge({ item }: { item: IntakeItem }) {
   return <span data-testid="intake-status" className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-12 font-medium ${statusTone[item.outcome]}`}>{t(`intake.status.${item.outcome}`)}</span>;
@@ -98,10 +98,10 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
     if (!first || !last) { event.preventDefault(); dialog.focus(); }
     else if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
     else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
-  }} className="fixed left-0 right-0 top-[10dvh] z-50 mx-auto max-h-[80dvh] w-[calc(100vw-1.5rem)] max-w-lg overflow-auto rounded-2xl border border-subtle bg-surface-1 p-6 text-primary shadow-xl backdrop:bg-backdrop">
+  }} className="fixed left-0 right-0 top-[10dvh] z-50 mx-auto max-h-[80dvh] w-[calc(100vw-1.5rem)] max-w-lg overflow-auto rounded-2xl border border-border bg-card p-6 text-foreground shadow-xl backdrop:bg-black/30">
       <div className="mb-4 flex items-center gap-2">
-        <h2 id={titleId} className="m-0 flex-1 text-18 font-semibold text-primary">{title}</h2>
-        <Button type="button" className="rounded-md bg-transparent p-1 text-secondary hover:bg-layer-transparent-hover" aria-label={t("intake.cancel")} onClick={onClose}><X aria-hidden size={16} /></Button>
+        <h2 id={titleId} className="m-0 flex-1 text-18 font-semibold text-foreground">{title}</h2>
+        <Button type="button" className="rounded-md bg-transparent p-1 text-muted-foreground hover:bg-accent" aria-label={t("intake.cancel")} onClick={onClose}><X aria-hidden size={16} /></Button>
       </div>
       {children}
   </dialog>;
@@ -156,19 +156,19 @@ function SubmitModal({ action, workspaceId, projectId, onClose, onSubmitted }: {
       <fieldset disabled={submitting} className="m-0 grid min-w-0 gap-3 border-0 p-0">
       <Input autoFocus required maxLength={500} aria-label={t("intake.titleField")} placeholder={t("intake.titleField")} value={title} className={`${field} text-16`} onChange={(event) => setTitle(event.target.value)} />
       <div aria-label={t("intake.descriptionField")}><DescriptionEditor workspaceId={workspaceId} workItemId={null} initial={description} editable={!submitting} imageUploads={false} onChange={setDescription} /></div>
-      <label className="grid gap-1 text-13 text-secondary">{t("intake.priority")}
-        <select value={priority} className="w-full text-14 text-primary" onChange={(event) => setPriority(event.target.value)}>
+      <label className="grid gap-1 text-13 text-muted-foreground">{t("intake.priority")}
+        <select value={priority} className="w-full text-14 text-foreground" onChange={(event) => setPriority(event.target.value)}>
           {["none", "urgent", "high", "medium", "low"].map((value) => <option key={value} value={value}>{t(`workItems.priority.${value}`)}</option>)}
         </select>
       </label>
-      <label className="grid gap-1 text-13 text-secondary">{t("workItems.assignees")}<select multiple value={assigneeIds} className={`${field} min-h-20`} onChange={(event) => setAssigneeIds([...event.currentTarget.selectedOptions].map((option) => option.value))}>{people.map((person) => <option key={person.userId} value={person.userId} disabled={person.isAgent && person.hasAccess === false}>{person.name}{person.isAgent && person.hasAccess === false ? " (no access)" : ""}</option>)}</select></label>
-      <div className="grid gap-1 text-13 text-secondary"><span>{t("workItems.labels")}</span><MultiSelect label={t("workItems.labels")} searchAlways selected={labelIds} summary={<span>{labelIds.length ? labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ") : t("workItems.noLabels")}</span>} options={labels.map((label) => ({ id: label.id, name: label.name }))} onToggle={(id, on) => setLabelIds(on ? [...labelIds, id] : labelIds.filter((value) => value !== id))} /></div>
-      <label className="grid gap-1 text-13 text-secondary">{t("workItems.dueDate")}<Input type="date" value={dueDate} className={field} onChange={(event) => setDueDate(event.target.value)} /></label>
+      <label className="grid gap-1 text-13 text-muted-foreground">{t("workItems.assignees")}<select multiple value={assigneeIds} className={`${field} min-h-20`} onChange={(event) => setAssigneeIds([...event.currentTarget.selectedOptions].map((option) => option.value))}>{people.map((person) => <option key={person.userId} value={person.userId} disabled={person.isAgent && person.hasAccess === false}>{person.name}{person.isAgent && person.hasAccess === false ? " (no access)" : ""}</option>)}</select></label>
+      <div className="grid gap-1 text-13 text-muted-foreground"><span>{t("workItems.labels")}</span><MultiSelect label={t("workItems.labels")} searchAlways selected={labelIds} summary={<span>{labelIds.length ? labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ") : t("workItems.noLabels")}</span>} options={labels.map((label) => ({ id: label.id, name: label.name }))} onToggle={(id, on) => setLabelIds(on ? [...labelIds, id] : labelIds.filter((value) => value !== id))} /></div>
+      <label className="grid gap-1 text-13 text-muted-foreground">{t("workItems.dueDate")}<Input type="date" value={dueDate} className={field} onChange={(event) => setDueDate(event.target.value)} /></label>
       <input ref={picker} hidden type="file" multiple data-testid="intake-attach-input" onChange={(event) => { const selected = Array.from(event.currentTarget.files ?? []); setFiles((current) => [...current, ...selected]); event.currentTarget.value = ""; }} />
-      <div className="grid gap-1"><Button type="button" className={quietButton} onClick={() => picker.current?.click()}>{t("assets.attach")}</Button>{files.map((file, index) => <span key={`${file.name}-${index}`} className="text-13 text-secondary">{file.name}</span>)}</div>
+      <div className="grid gap-1"><Button type="button" className={quietButton} onClick={() => picker.current?.click()}>{t("assets.attach")}</Button>{files.map((file, index) => <span key={`${file.name}-${index}`} className="text-13 text-muted-foreground">{file.name}</span>)}</div>
       <input ref={imagePicker} hidden type="file" multiple accept="image/png,image/jpeg,image/gif,image/webp" data-testid="intake-inline-image-input" onChange={(event) => { const selected = Array.from(event.currentTarget.files ?? []); setInlineImages((current) => [...current, ...selected]); event.currentTarget.value = ""; }} />
-      <div className="grid gap-1"><Button type="button" className={quietButton} onClick={() => imagePicker.current?.click()}>{t("assets.inlineImage")}</Button>{inlineImages.map((file, index) => <span key={`${file.name}-${index}`} className="text-13 text-secondary">{file.name}</span>)}</div>
-      {note && <p role="alert" className="m-0 text-13 text-danger-text">{note}</p>}
+      <div className="grid gap-1"><Button type="button" className={quietButton} onClick={() => imagePicker.current?.click()}>{t("assets.inlineImage")}</Button>{inlineImages.map((file, index) => <span key={`${file.name}-${index}`} className="text-13 text-muted-foreground">{file.name}</span>)}</div>
+      {note && <p role="alert" className="m-0 text-13 text-destructive">{note}</p>}
       <div className="flex justify-end gap-2">
         <Button type="button" className={quietButton} disabled={submitting} onClick={onClose}>{t("intake.cancel")}</Button>
         <Button className={primaryButton} disabled={submitting}>{t("intake.submit")}</Button>
@@ -182,7 +182,7 @@ function SnoozeModal({ onClose, onSnooze }: { onClose: () => void; onSnooze: (ti
   const [till, setTill] = React.useState("");
   return <Modal title={t("intake.snoozeTitle")} onClose={onClose}>
     <form className="my-0 grid gap-3" onSubmit={(event) => { event.preventDefault(); onSnooze(new Date(till).toISOString()); }}>
-      <label className="grid gap-1 text-13 text-secondary">{t("intake.snoozeTill")}
+      <label className="grid gap-1 text-13 text-muted-foreground">{t("intake.snoozeTill")}
         <Input autoFocus required type="datetime-local" value={till} className={field} onChange={(event) => setTill(event.target.value)} />
       </label>
       <div className="flex justify-end gap-2">
@@ -210,8 +210,8 @@ function AcceptModal({ action, projectId, onClose, onAccept }: { action: Call; p
   }, [action, projectId]);
   return <Modal title={t("intake.acceptIntoState")} onClose={onClose}>
     <form className="my-0 grid gap-3" onSubmit={(event) => { event.preventDefault(); if (stateId) onAccept(stateId); }}>
-      {failed && <p role="alert" className="m-0 text-13 text-danger-text">{t("intake.loadFailed")}</p>}
-      <label className="grid gap-1 text-13 text-secondary">{t("workItems.state")}
+      {failed && <p role="alert" className="m-0 text-13 text-destructive">{t("intake.loadFailed")}</p>}
+      <label className="grid gap-1 text-13 text-muted-foreground">{t("workItems.state")}
         <select autoFocus required aria-label={t("workItems.state")} value={stateId} className={field} onChange={(event) => setStateId(event.target.value)}>
           {states.map((state) => <option key={state.id} value={state.id}>{state.name}</option>)}
         </select>
@@ -237,10 +237,10 @@ function DuplicateModal({ action, workspaceId, item, onClose, onPick }: { action
       setFailed(!match);
       if (match) onPick(match.id);
     }}>
-      <label className="grid gap-1 text-13 text-secondary">{t("intake.duplicateTo")}
+      <label className="grid gap-1 text-13 text-muted-foreground">{t("intake.duplicateTo")}
         <Input autoFocus value={value} placeholder={t("intake.duplicateHint")} className={field} onChange={(event) => setValue(event.target.value)} />
       </label>
-      {failed && <p role="alert" className="m-0 text-13 text-danger-text">{t("intake.failed")}</p>}
+      {failed && <p role="alert" className="m-0 text-13 text-destructive">{t("intake.failed")}</p>}
       <div className="flex justify-end gap-2">
         <Button type="button" className={quietButton} onClick={onClose}>{t("intake.cancel")}</Button>
         <Button className={primaryButton} disabled={!value.trim()}>{t("intake.markDuplicate")}</Button>
@@ -252,10 +252,10 @@ function DuplicateModal({ action, workspaceId, item, onClose, onPick }: { action
 function ListRow({ item, selected, onSelect }: { item: IntakeItem; selected: boolean; onSelect: () => void }) {
   return <li>
     <Button type="button" data-testid={`intake-${item.displayId}`} aria-current={selected ? "true" : undefined} onClick={onSelect}
-      className={`grid w-full gap-2 rounded-lg border-0 bg-transparent px-4 py-3 text-left hover:bg-layer-transparent-hover ${selected ? "bg-layer-transparent-hover outline outline-1 -outline-offset-1 outline-accent-primary" : ""}`}>
-      <span className="text-12 text-tertiary">{item.displayId}</span>
-      <span className="truncate text-14 font-medium text-primary">{item.title}</span>
-      <span className="flex items-center gap-2 text-12 text-secondary">
+      className={`grid w-full gap-2 rounded-lg border-0 bg-transparent px-4 py-3 text-left hover:bg-accent ${selected ? "bg-accent outline outline-1 -outline-offset-1 outline-accent-primary" : ""}`}>
+      <span className="text-12 text-muted-foreground">{item.displayId}</span>
+      <span className="truncate text-14 font-medium text-foreground">{item.title}</span>
+      <span className="flex items-center gap-2 text-12 text-muted-foreground">
         <span>{formatDate(item.createdAt)}</span>
         <PriorityIcon priority={item.priority} />
         <span className="flex-1" />
@@ -350,8 +350,8 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
     finally { setSaving(false); }
   };
   return <section aria-label={t("intake.detail")} className="flex min-w-0 flex-1 flex-col">
-    <header className="flex flex-wrap items-center gap-2 border-b border-subtle px-6 py-4">
-      <span className="text-16 font-medium text-secondary">{item.displayId}</span>
+    <header className="flex flex-wrap items-center gap-2 border-b border-border px-6 py-4">
+      <span className="text-16 font-medium text-muted-foreground">{item.displayId}</span>
       <StatusBadge item={item} />
       <span className="ml-auto flex flex-wrap items-center gap-2">
         <Button type="button" className={iconButton} aria-label={t("intake.previous")} disabled={index <= 0} onClick={() => onMove(-1)}><ChevronUp aria-hidden size={16} /></Button>
@@ -361,7 +361,7 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
           <Button type="button" className={quietButton} onClick={() => void run("reject_intake_item", {})}>{t("intake.reject")}</Button>
         </>}
         {canDecide && unsnoozed && <Button type="button" className={quietButton} onClick={() => void run("unsnooze_intake_item", {})}>{t("intake.unsnooze")}</Button>}
-        <Popover label={t("intake.more")} align="right" className="size-9 justify-center border border-subtle bg-surface-1" trigger={<MoreHorizontal aria-hidden size={16} />}>
+        <Popover label={t("intake.more")} align="right" className="size-9 justify-center border border-border bg-card" trigger={<MoreHorizontal aria-hidden size={16} />}>
           {(close) => <>
             {canDecide && undecided && <>
               <Button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); setDialog("snooze"); }}><Clock aria-hidden size={14} />{t("intake.snooze")}</Button>
@@ -377,35 +377,35 @@ function Detail({ action, workspaceId, workspaceSlug, projectKey, projectId, sel
     </header>
     <div className="grid gap-6 overflow-auto px-6 py-6">
       {editable ? <div className="grid gap-3">
-        <label className="grid gap-1 text-13 text-secondary">{t("intake.titleField")}<Input ref={titleInputRef} name="title" aria-label={t("intake.titleField")} required maxLength={500} value={title} className={`${field} text-18 font-semibold sm:text-24`} onInput={(event) => { titleValueRef.current = event.currentTarget.value; setTitle(event.currentTarget.value); sessionStorage.setItem(titleDraftKey(item.id), event.currentTarget.value); changeDraft({ title: event.currentTarget.value }); }} /></label>
-        <div><p className="mb-1 text-13 text-secondary">{t("intake.descriptionField")}</p><DescriptionEditor key={editorRevision} workspaceId={workspaceId} workItemId={item.workItemId} initial={description} editable onChange={(doc) => changeDraft({ description: doc })} /></div>
-        <label className="grid gap-1 text-13 text-secondary">{t("intake.priority")}<select name="priority" aria-label={t("intake.priority")} value={priority} className={field} onChange={(event) => changeDraft({ priority: event.target.value })}>{["none", "urgent", "high", "medium", "low"].map((value) => <option key={value} value={value}>{t(`workItems.priority.${value}`)}</option>)}</select></label>
-        <label className="grid gap-1 text-13 text-secondary">{t("workItems.assignees")}<select multiple aria-label={t("workItems.assignees")} value={assigneeIds} className={`${field} min-h-20`} onChange={(event) => changeDraft({ assigneeIds: [...event.currentTarget.selectedOptions].map((option) => option.value) })}>{people.map((person) => <option key={person.userId} value={person.userId} disabled={person.isAgent && person.hasAccess === false}>{person.name}{person.isAgent && person.hasAccess === false ? " (no access)" : ""}</option>)}</select></label>
-        <div className="grid gap-1 text-13 text-secondary"><span>{t("workItems.labels")}</span><MultiSelect label={t("workItems.labels")} searchAlways selected={labelIds} summary={<span>{labelIds.length ? labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ") : t("workItems.noLabels")}</span>} options={labels.map((label) => ({ id: label.id, name: label.name }))} onToggle={(id, on) => changeDraft({ labelIds: on ? [...labelIds, id] : labelIds.filter((value) => value !== id) })} /></div>
-        <label className="grid gap-1 text-13 text-secondary">{t("workItems.dueDate")}<Input type="date" aria-label={t("workItems.dueDate")} value={dueDate} className={field} onChange={(event) => changeDraft({ dueDate: event.target.value || null })} /></label>
+        <label className="grid gap-1 text-13 text-muted-foreground">{t("intake.titleField")}<Input ref={titleInputRef} name="title" aria-label={t("intake.titleField")} required maxLength={500} value={title} className={`${field} text-18 font-semibold sm:text-24`} onInput={(event) => { titleValueRef.current = event.currentTarget.value; setTitle(event.currentTarget.value); sessionStorage.setItem(titleDraftKey(item.id), event.currentTarget.value); changeDraft({ title: event.currentTarget.value }); }} /></label>
+        <div><p className="mb-1 text-13 text-muted-foreground">{t("intake.descriptionField")}</p><DescriptionEditor key={editorRevision} workspaceId={workspaceId} workItemId={item.workItemId} initial={description} editable onChange={(doc) => changeDraft({ description: doc })} /></div>
+        <label className="grid gap-1 text-13 text-muted-foreground">{t("intake.priority")}<select name="priority" aria-label={t("intake.priority")} value={priority} className={field} onChange={(event) => changeDraft({ priority: event.target.value })}>{["none", "urgent", "high", "medium", "low"].map((value) => <option key={value} value={value}>{t(`workItems.priority.${value}`)}</option>)}</select></label>
+        <label className="grid gap-1 text-13 text-muted-foreground">{t("workItems.assignees")}<select multiple aria-label={t("workItems.assignees")} value={assigneeIds} className={`${field} min-h-20`} onChange={(event) => changeDraft({ assigneeIds: [...event.currentTarget.selectedOptions].map((option) => option.value) })}>{people.map((person) => <option key={person.userId} value={person.userId} disabled={person.isAgent && person.hasAccess === false}>{person.name}{person.isAgent && person.hasAccess === false ? " (no access)" : ""}</option>)}</select></label>
+        <div className="grid gap-1 text-13 text-muted-foreground"><span>{t("workItems.labels")}</span><MultiSelect label={t("workItems.labels")} searchAlways selected={labelIds} summary={<span>{labelIds.length ? labelIds.map((id) => labels.find((label) => label.id === id)?.name).filter(Boolean).join(", ") : t("workItems.noLabels")}</span>} options={labels.map((label) => ({ id: label.id, name: label.name }))} onToggle={(id, on) => changeDraft({ labelIds: on ? [...labelIds, id] : labelIds.filter((value) => value !== id) })} /></div>
+        <label className="grid gap-1 text-13 text-muted-foreground">{t("workItems.dueDate")}<Input type="date" aria-label={t("workItems.dueDate")} value={dueDate} className={field} onChange={(event) => changeDraft({ dueDate: event.target.value || null })} /></label>
         <div className="flex gap-2"><Button type="button" className={primaryButton} disabled={saving || retryingImages || !title.trim()} onClick={() => void save()}>{saving ? t("intake.saving") : t("intake.save")}</Button></div>
-      </div> : <><h2 className="m-0 text-24 font-semibold text-primary">{item.title}</h2>
-      {item.descriptionMarkdown ? <DescriptionEditor workspaceId={workspaceId} workItemId={item.workItemId} initial={markdownToDoc(item.descriptionMarkdown)} editable={false} onChange={() => undefined} /> : <p className="m-0 text-14 text-tertiary">{t("intake.noDescription")}</p>}</>}
+      </div> : <><h2 className="m-0 text-24 font-semibold text-foreground">{item.title}</h2>
+      {item.descriptionMarkdown ? <DescriptionEditor workspaceId={workspaceId} workItemId={item.workItemId} initial={markdownToDoc(item.descriptionMarkdown)} editable={false} onChange={() => undefined} /> : <p className="m-0 text-14 text-muted-foreground">{t("intake.noDescription")}</p>}</>}
       <dl className="m-0 grid max-w-md grid-cols-[8rem_1fr] items-center gap-x-3 gap-y-3 text-13">
-        <dt className="text-secondary">{t("intake.priority")}</dt>
-        <dd className="m-0 flex items-center gap-1.5 text-primary"><PriorityIcon priority={item.priority} />{t(`workItems.priority.${item.priority}`)}</dd>
-        <dt className="text-secondary">{t("workItems.assignees")}</dt><dd className="m-0 text-primary">{item.assigneeIds.map((id) => people.find((person) => person.userId === id)?.name ?? id).join(", ") || t("workItems.noAssignee")}</dd>
-        <dt className="text-secondary">{t("workItems.labels")}</dt><dd className="m-0 text-primary">{item.labelIds.map((id) => labels.find((label) => label.id === id)?.name ?? id).join(", ") || "—"}</dd>
-        <dt className="text-secondary">{t("workItems.dueDate")}</dt><dd className="m-0 text-primary">{item.dueDate ?? "—"}</dd>
-        <dt className="text-secondary">{t("intake.submittedBy")}</dt>
-        <dd className="m-0 flex items-center gap-1.5 text-primary"><Avatar name={item.createdByName} id={item.createdBy} />{item.createdByName}</dd>
-        <dt className="text-secondary">{t("intake.submittedOn")}</dt>
-        <dd className="m-0 text-primary">{formatDate(item.createdAt)}</dd>
-        {item.outcome === "snoozed" && item.snoozedTill && <><dt className="text-secondary">{t("intake.status.snoozed")}</dt><dd className="m-0 text-primary">{t("intake.snoozedTill").replace("{date}", formatDate(item.snoozedTill))}</dd></>}
-        {item.outcome === "duplicate" && item.duplicateToDisplayId && <><dt className="text-secondary">{t("intake.status.duplicate")}</dt><dd className="m-0 text-primary">{t("intake.duplicateOf").replace("{id}", item.duplicateToDisplayId)}</dd></>}
+        <dt className="text-muted-foreground">{t("intake.priority")}</dt>
+        <dd className="m-0 flex items-center gap-1.5 text-foreground"><PriorityIcon priority={item.priority} />{t(`workItems.priority.${item.priority}`)}</dd>
+        <dt className="text-muted-foreground">{t("workItems.assignees")}</dt><dd className="m-0 text-foreground">{item.assigneeIds.map((id) => people.find((person) => person.userId === id)?.name ?? id).join(", ") || t("workItems.noAssignee")}</dd>
+        <dt className="text-muted-foreground">{t("workItems.labels")}</dt><dd className="m-0 text-foreground">{item.labelIds.map((id) => labels.find((label) => label.id === id)?.name ?? id).join(", ") || "—"}</dd>
+        <dt className="text-muted-foreground">{t("workItems.dueDate")}</dt><dd className="m-0 text-foreground">{item.dueDate ?? "—"}</dd>
+        <dt className="text-muted-foreground">{t("intake.submittedBy")}</dt>
+        <dd className="m-0 flex items-center gap-1.5 text-foreground"><Avatar name={item.createdByName} id={item.createdBy} />{item.createdByName}</dd>
+        <dt className="text-muted-foreground">{t("intake.submittedOn")}</dt>
+        <dd className="m-0 text-foreground">{formatDate(item.createdAt)}</dd>
+        {item.outcome === "snoozed" && item.snoozedTill && <><dt className="text-muted-foreground">{t("intake.status.snoozed")}</dt><dd className="m-0 text-foreground">{t("intake.snoozedTill").replace("{date}", formatDate(item.snoozedTill))}</dd></>}
+        {item.outcome === "duplicate" && item.duplicateToDisplayId && <><dt className="text-muted-foreground">{t("intake.status.duplicate")}</dt><dd className="m-0 text-foreground">{t("intake.duplicateOf").replace("{id}", item.duplicateToDisplayId)}</dd></>}
       </dl>
       <TimelinePanel workspaceId={workspaceId} workItemId={item.workItemId} projectId={projectId} selfId={selfId} canComment={item.outcome === "accepted" ? canDecide : true} linkBase={item.outcome === "accepted" ? paths.workItem(workspaceSlug, item.displayId) : paths.intake(workspaceSlug, projectKey)} action={action as never} actionResult={actionResult} onChange={onChanged} />
-      {note && <p role="alert" className="m-0 text-13 text-danger-text">{note}</p>}
+      {note && <p role="alert" className="m-0 text-13 text-destructive">{note}</p>}
       <AttachmentsPanel workItemId={item.workItemId} canWrite={editable || (item.outcome === "accepted" && canDecide)} action={action} onChange={() => { void loadActivity(); onChanged(); }} showForm={editable} onCount={() => undefined} failedFiles={failedFiles} onFailedFilesChange={onFailedFilesChange} />
-      {editable && (pendingImages.files.length > 0 || pendingImages.assetIds.length > 0) && <div role="alert" className="grid gap-1 text-13 text-danger-text"><p className="m-0">{t("assets.uploadFailed")}</p><ul>{pendingImages.files.map((file, index) => <li key={`${file.name}-${index}`}>{file.name}</li>)}</ul><Button type="button" className={quietButton} disabled={saving || retryingImages} onClick={() => void retryImages()}>{t("assets.retryFailed")}</Button></div>}
-      <section aria-label={t("intake.activity")} className="grid gap-2 border-t border-subtle pt-3">
-        <h3 className="m-0 text-14 font-medium text-primary">{t("intake.activity")}</h3>
-        <ul className="m-0 grid list-none gap-2 !pl-0 text-13 text-secondary">{activity.filter((row) => row.field === "attachment_added" || row.field === "attachment_removed").map((row) => {
+      {editable && (pendingImages.files.length > 0 || pendingImages.assetIds.length > 0) && <div role="alert" className="grid gap-1 text-13 text-destructive"><p className="m-0">{t("assets.uploadFailed")}</p><ul>{pendingImages.files.map((file, index) => <li key={`${file.name}-${index}`}>{file.name}</li>)}</ul><Button type="button" className={quietButton} disabled={saving || retryingImages} onClick={() => void retryImages()}>{t("assets.retryFailed")}</Button></div>}
+      <section aria-label={t("intake.activity")} className="grid gap-2 border-t border-border pt-3">
+        <h3 className="m-0 text-14 font-medium text-foreground">{t("intake.activity")}</h3>
+        <ul className="m-0 grid list-none gap-2 !pl-0 text-13 text-muted-foreground">{activity.filter((row) => row.field === "attachment_added" || row.field === "attachment_removed").map((row) => {
           const values = row.field === "attachment_added" ? row.newValue : row.oldValue;
           const filename = values && typeof values === "object" ? String((values as { filename?: unknown }).filename ?? "") : "";
           const message = row.field === "attachment_added" ? t("intake.attachmentAdded") : t("intake.attachmentRemoved");
@@ -498,22 +498,22 @@ export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, 
   const afterChange = () => { void load(); };
   return <section className="flex min-w-0 flex-col gap-4" aria-label={t("intake.title")}>
     <div className="flex items-center gap-2">
-      <Inbox aria-hidden size={18} className="text-secondary" />
-      <h2 className="m-0 flex-1 text-16 font-semibold text-primary">{t("intake.title")}</h2>
+      <Inbox aria-hidden size={18} className="text-muted-foreground" />
+      <h2 className="m-0 flex-1 text-16 font-semibold text-foreground">{t("intake.title")}</h2>
       {!emptyOpen && <Button type="button" className={`${primaryButton} flex items-center gap-1.5`} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("intake.add")}</Button>}
     </div>
-    <div className="flex min-h-[28rem] min-w-0 flex-col rounded-xl border border-subtle bg-surface-1 xl:h-[calc(100dvh-14rem)] xl:flex-row">
-      <div className="flex w-full shrink-0 flex-col border-b border-subtle p-2 xl:w-[26rem] xl:border-b-0 xl:border-r">
+    <div className="flex min-h-[28rem] min-w-0 flex-col rounded-xl border border-border bg-card xl:h-[calc(100dvh-14rem)] xl:flex-row">
+      <div className="flex w-full shrink-0 flex-col border-b border-border p-2 xl:w-[26rem] xl:border-b-0 xl:border-r">
         <Tabs value={tab} onValueChange={(value) => { if (value !== tab) select(null, value as "open" | "closed"); }}>
-          <TabsList className="flex h-auto gap-2 border-b border-subtle bg-transparent px-2">
+          <TabsList className="flex h-auto gap-2 border-b border-border bg-transparent px-2">
           {(["open", "closed"] as const).map((value) => <TabsTrigger key={value} value={value}
-            className={`flex items-center gap-1.5 rounded-md border-0 px-3 py-2.5 text-14 font-medium ${tab === value ? "bg-layer-1 text-accent-primary" : "bg-transparent text-secondary hover:bg-layer-transparent-hover hover:text-primary"}`}>
+            className={`flex items-center gap-1.5 rounded-md border-0 px-3 py-2.5 text-14 font-medium ${tab === value ? "bg-muted text-foreground" : "bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground"}`}>
             {t(`intake.tab.${value}`)}
-            {value === "open" && tab === "open" && items && <span data-testid="intake-open-count" className="rounded-full bg-accent-primary/20 px-1.5 py-0.5 text-11 font-semibold text-accent-primary">{items.length}</span>}
+            {value === "open" && tab === "open" && items && <span data-testid="intake-open-count" className="rounded-full bg-primary/20 px-1.5 py-0.5 text-11 font-semibold text-foreground">{items.length}</span>}
           </TabsTrigger>)}
           </TabsList>
           <TabsContent value={tab} className="mt-0 flex min-h-0 flex-1 flex-col">
-        {loadFailed && <div role="alert" className="flex flex-wrap items-center gap-2 px-4 py-3 text-13 text-danger-text"><span>{t("intake.loadFailed")}</span><Button type="button" className={quietButton} onClick={() => void load()}>{t("intake.retry")}</Button></div>}
+        {loadFailed && <div role="alert" className="flex flex-wrap items-center gap-2 px-4 py-3 text-13 text-destructive"><span>{t("intake.loadFailed")}</span><Button type="button" className={quietButton} onClick={() => void load()}>{t("intake.retry")}</Button></div>}
         <ul aria-label={t("intake.list")} className="m-0 min-h-0 flex-1 list-none overflow-auto p-0">
           {(items ?? []).map((item) => <ListRow key={item.id} item={item} selected={item.id === selectedId} onSelect={() => select(item.id)} />)}
         </ul>
@@ -526,7 +526,7 @@ export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, 
           ? <div className="grid min-w-0 flex-1 place-items-center">{tab === "open"
             ? <EmptyState title={t("intake.empty")} description={t("intake.emptyHint")} action={<Button type="button" className={`${primaryButton} flex items-center gap-1.5`} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("intake.add")}</Button>} />
             : <EmptyState title={t("intake.emptyClosed")} description={t("intake.emptyClosedHint")} />}</div>
-          : <div className="grid min-w-0 flex-1 place-items-center p-6 text-14 text-secondary">{t("intake.pick")}</div>}
+          : <div className="grid min-w-0 flex-1 place-items-center p-6 text-14 text-muted-foreground">{t("intake.pick")}</div>}
     </div>
     {adding && <SubmitModal action={action} workspaceId={workspaceId} projectId={projectId} onClose={() => setAdding(false)} onSubmitted={(item, failedFiles, images) => { if (failedFiles.length) setFailedUploads((previous) => ({ ...previous, [item.id]: failedFiles })); if (images.files.length || images.assetIds.length) setPendingImages((previous) => ({ ...previous, [item.id]: images })); setAdding(false); justAdded.current = item.id; select(item.id, "open"); void load(); }} />}
   </section>;

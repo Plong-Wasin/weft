@@ -213,29 +213,29 @@ export function AttachmentsPanel({ workItemId, ownerType = "work_item", canWrite
     onDragLeave={(event) => { if (!(event.relatedTarget instanceof Element) || !event.currentTarget.contains(event.relatedTarget)) setDragging(false); }}
     onDrop={(event) => { if (!canWrite) return; event.preventDefault(); setDragging(false); void attach([...event.dataTransfer.files]); }}>
     {/* Active HTML and other unsupported formats remain download-only. */}
-    {loading && <p role="status" className="m-0 py-2 text-13 text-secondary">{translate("assets.loading")}</p>}
-    {!loading && downloadableRows.length === 0 && !error && <p className="m-0 py-2 text-13 text-secondary">{translate("assets.empty")}</p>}
-    <ul className="m-0 grid list-none gap-1.5 !pl-0">{downloadableRows.map((row) => <li key={row.id} className="flex items-center gap-2 rounded-md bg-layer-1 px-2.5 py-1.5 text-13">
-      <Paperclip aria-hidden size={13} className="shrink-0 text-tertiary" />
-      <span className="min-w-0 truncate text-primary" title={row.filename}>{row.filename}</span>
-      {row.unverified && <small role="status" className="shrink-0 text-12 text-warning-text">{translate("assets.unverified")}</small>}
-      <small className="shrink-0 text-12 text-tertiary">{formatSize(row.size)}</small>
+    {loading && <p role="status" className="m-0 py-2 text-13 text-muted-foreground">{translate("assets.loading")}</p>}
+    {!loading && downloadableRows.length === 0 && !error && <p className="m-0 py-2 text-13 text-muted-foreground">{translate("assets.empty")}</p>}
+    <ul className="m-0 grid list-none gap-1.5 !pl-0">{downloadableRows.map((row) => <li key={row.id} className="flex items-center gap-2 rounded-md bg-muted px-2.5 py-1.5 text-13">
+      <Paperclip aria-hidden size={13} className="shrink-0 text-muted-foreground" />
+      <span className="min-w-0 truncate text-foreground" title={row.filename}>{row.filename}</span>
+      {row.unverified && <small role="status" className="shrink-0 text-12 text-amber-700 dark:text-amber-400">{translate("assets.unverified")}</small>}
+      <small className="shrink-0 text-12 text-muted-foreground">{formatSize(row.size)}</small>
       <span className="ml-auto flex shrink-0 gap-0.5">
-        {row.previewable && <Button type="button" className="attachment-action-button grid place-items-center rounded-md !bg-transparent !p-0 text-secondary hover:!bg-layer-transparent-hover hover:text-primary" aria-label={`${translate("assets.preview")} ${row.filename}`} title={translate("assets.preview")} aria-busy={previewingId === row.id} disabled={previewingId === row.id} onClick={() => void openPreview(row)}><Eye aria-hidden size={13} /></Button>}
-        <Button type="button" className="attachment-action-button grid place-items-center rounded-md !bg-transparent !p-0 text-secondary hover:!bg-layer-transparent-hover hover:text-primary" aria-label={`${translate("assets.download")} ${row.filename}`} title={translate("assets.download")} onClick={() => void download(row)}><Download aria-hidden size={13} /></Button>
-        {canWrite && <Button type="button" className="attachment-action-button grid place-items-center rounded-md !bg-transparent !p-0 text-secondary hover:!bg-layer-transparent-hover hover:!text-danger-text" aria-label={`${translate("assets.delete")} ${row.filename}`} title={translate("assets.delete")} onClick={() => void remove(row)}><Trash2 aria-hidden size={13} /></Button>}
+        {row.previewable && <Button type="button" className="attachment-action-button grid place-items-center rounded-md !bg-transparent !p-0 text-muted-foreground hover:!bg-accent hover:text-foreground" aria-label={`${translate("assets.preview")} ${row.filename}`} title={translate("assets.preview")} aria-busy={previewingId === row.id} disabled={previewingId === row.id} onClick={() => void openPreview(row)}><Eye aria-hidden size={13} /></Button>}
+        <Button type="button" className="attachment-action-button grid place-items-center rounded-md !bg-transparent !p-0 text-muted-foreground hover:!bg-accent hover:text-foreground" aria-label={`${translate("assets.download")} ${row.filename}`} title={translate("assets.download")} onClick={() => void download(row)}><Download aria-hidden size={13} /></Button>
+        {canWrite && <Button type="button" className="attachment-action-button grid place-items-center rounded-md !bg-transparent !p-0 text-muted-foreground hover:!bg-accent hover:!text-destructive" aria-label={`${translate("assets.delete")} ${row.filename}`} title={translate("assets.delete")} onClick={() => void remove(row)}><Trash2 aria-hidden size={13} /></Button>}
       </span>
     </li>)}</ul>
     {canWrite && <input ref={filePickerRef} hidden type="file" multiple data-testid="attach-input" onChange={(event) => { void attach([...(event.target.files ?? [])]); event.target.value = ""; }} />}
     {canWrite && showForm && <div data-testid="attachment-dropzone" role="button" tabIndex={0}
       aria-label={translate("assets.dropHint")}
-      className={`my-3 grid min-h-20 cursor-pointer place-items-center rounded border border-dashed p-4 text-center text-13 text-secondary ${dragging ? "border-accent bg-accent/10" : "border-subtle"}`}
+      className={`my-3 grid min-h-20 cursor-pointer place-items-center rounded border border-dashed p-4 text-center text-13 text-muted-foreground ${dragging ? "border-accent bg-accent/10" : "border-border"}`}
       onClick={() => filePickerRef.current?.click()}
       onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); filePickerRef.current?.click(); } }}>
       {translate("assets.dropHint")}
     </div>}
     {busy && <p role="status">{translate("assets.uploading")}</p>}
-    {canWrite && retryFiles.length > 0 && <div role="alert" className="grid gap-1 text-13 text-danger-text"><p className="m-0">{translate("assets.uploadFailed")}</p><ul className="m-0 list-disc pl-5">{retryFiles.map((file, index) => <li key={`${file.name}-${index}`}>{file.name}</li>)}</ul><Button type="button" className="w-fit rounded-md border border-subtle bg-surface-1 px-2 py-1 text-primary" disabled={busy} onClick={() => void attach([])}>{translate("assets.retryFailed")}</Button></div>}
+    {canWrite && retryFiles.length > 0 && <div role="alert" className="grid gap-1 text-13 text-destructive"><p className="m-0">{translate("assets.uploadFailed")}</p><ul className="m-0 list-disc pl-5">{retryFiles.map((file, index) => <li key={`${file.name}-${index}`}>{file.name}</li>)}</ul><Button type="button" className="w-fit rounded-md border border-border bg-card px-2 py-1 text-foreground" disabled={busy} onClick={() => void attach([])}>{translate("assets.retryFailed")}</Button></div>}
     {error && <p role="alert">{error}</p>}
     {preview && <AttachmentPreviewDialog preview={preview} onClose={() => setPreview(null)} />}
   </section>;
@@ -262,16 +262,16 @@ function AttachmentPreviewDialog({ preview, onClose }: { preview: { row: AssetRo
     media = <>
       <div className="asset-preview-pdf-mobile" role="region" aria-label={translate("assets.pdfPreview")}>
         <p>{translate("assets.pdfOpenHint")}</p>
-        <a className="inline-flex w-fit rounded-md border border-subtle bg-surface-1 px-3 py-2 text-primary" href={url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">{translate("assets.openPdf")}</a>
+        <a className="inline-flex w-fit rounded-md border border-border bg-card px-3 py-2 text-foreground" href={url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">{translate("assets.openPdf")}</a>
       </div>
       <iframe className="asset-preview-pdf" src={`${url}#view=FitH`} title={`${translate("assets.pdfPreview")} ${row.filename}`} referrerPolicy="no-referrer" />
     </>;
   }
   return <dialog ref={dialog} className="asset-preview-dialog" aria-labelledby={titleId}
     onClose={() => { if (dialog.current?.returnValue !== "unmount") onClose(); }} onClick={(event) => { if (event.target === event.currentTarget) dialog.current?.close(); }}>
-    <header className="flex items-center gap-3 border-b border-subtle px-4 py-3">
-      <h2 id={titleId} className="m-0 min-w-0 flex-1 truncate text-16 font-semibold text-primary">{row.filename}</h2>
-      <Button type="button" autoFocus className="rounded-md border border-subtle bg-surface-1 px-3 py-2 text-primary" aria-label={translate("assets.closePreview")} onClick={() => dialog.current?.close()}>{translate("assets.closePreview")}</Button>
+    <header className="flex items-center gap-3 border-b border-border px-4 py-3">
+      <h2 id={titleId} className="m-0 min-w-0 flex-1 truncate text-16 font-semibold text-foreground">{row.filename}</h2>
+      <Button type="button" autoFocus className="rounded-md border border-border bg-card px-3 py-2 text-foreground" aria-label={translate("assets.closePreview")} onClick={() => dialog.current?.close()}>{translate("assets.closePreview")}</Button>
     </header>
     <div className="asset-preview-content p-3 sm:p-5">{media}</div>
   </dialog>;

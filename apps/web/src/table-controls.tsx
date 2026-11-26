@@ -243,7 +243,7 @@ export function TableControls({ editor, editable }: { editor: Editor | null; edi
     const place = menuPlace(open, frame, frame.width);
     if (!place) return null;
     const items = menuItems(open);
-    return <div ref={menuRef} role="menu" data-testid="table-menu" aria-label={translate(menuLabelKey(open.axis))} className="pointer-events-auto absolute z-30 grid min-w-44 gap-0.5 rounded-md border border-subtle bg-surface-1 p-1 shadow-lg" style={{ left: place.left, top: place.top }}
+    return <div ref={menuRef} role="menu" data-testid="table-menu" aria-label={translate(menuLabelKey(open.axis))} className="pointer-events-auto absolute z-30 grid min-w-44 gap-0.5 rounded-md border border-border bg-card p-1 shadow-lg" style={{ left: place.left, top: place.top }}
       onKeyDown={(event) => {
         if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
         event.preventDefault();
@@ -251,7 +251,7 @@ export function TableControls({ editor, editable }: { editor: Editor | null; edi
         const at = buttons.indexOf(document.activeElement as HTMLElement);
         buttons[(at + (event.key === "ArrowDown" ? 1 : buttons.length - 1)) % buttons.length]?.focus();
       }}>
-      {items.map((item) => <Button key={item.action} type="button" role="menuitem" aria-disabled={item.disabled || undefined} title={translate(`table.${item.action}.help` as never)} className={`table-control flex items-center gap-2 rounded px-2 py-1.5 text-left text-13 hover:bg-layer-transparent-hover ${item.danger ? "text-danger" : ""} ${item.disabled ? "opacity-40" : ""}`} onMouseDown={(event) => event.preventDefault()} onClick={() => { if (!item.disabled) runMenu(item.action); }}>
+      {items.map((item) => <Button key={item.action} type="button" role="menuitem" aria-disabled={item.disabled || undefined} title={translate(`table.${item.action}.help` as never)} className={`table-control flex items-center gap-2 rounded px-2 py-1.5 text-left text-13 hover:bg-accent ${item.danger ? "text-destructive" : ""} ${item.disabled ? "opacity-40" : ""}`} onMouseDown={(event) => event.preventDefault()} onClick={() => { if (!item.disabled) runMenu(item.action); }}>
         <item.icon aria-hidden size={14} />{translate(`table.${item.action}` as never)}
       </Button>)}
     </div>;
@@ -270,13 +270,13 @@ export function TableControls({ editor, editable }: { editor: Editor | null; edi
 
 function TableGrip({ id, label, left, top, expanded, onOpen, onDragStart, children }: { id: string; label: string; left: number; top: number; expanded: boolean; onOpen: () => void; onDragStart?: (event: React.PointerEvent<HTMLButtonElement>) => void; children: React.ReactNode }) {
   return <Button type="button" data-table-grip={id} aria-label={label} title={label} aria-haspopup="menu" aria-expanded={expanded}
-    className="table-control pointer-events-auto absolute grid size-6 touch-none cursor-grab place-items-center rounded text-tertiary hover:bg-layer-transparent-hover hover:text-primary aria-expanded:bg-layer-transparent-selected aria-expanded:text-primary"
+    className="table-control pointer-events-auto absolute grid size-6 touch-none cursor-grab place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground aria-expanded:bg-accent aria-expanded:text-foreground"
     style={{ left, top }} onMouseDown={(event) => event.preventDefault()} onPointerDown={onDragStart} onClick={onOpen}>{children}</Button>;
 }
 
 function AddButton({ kind, label, left, top, onAdd }: { kind: "row" | "column"; label: string; left: number; top: number; onAdd: () => void }) {
   return <Button type="button" data-table-add={kind} aria-label={label} title={label}
-    className="table-control pointer-events-auto absolute grid size-6 place-items-center rounded-full border border-subtle bg-surface-1 text-secondary shadow-sm hover:bg-layer-transparent-hover hover:text-primary"
+    className="table-control pointer-events-auto absolute grid size-6 place-items-center rounded-full border border-border bg-card text-muted-foreground shadow-sm hover:bg-accent hover:text-foreground"
     style={{ left, top }} onMouseDown={(event) => event.preventDefault()} onClick={onAdd}><Plus aria-hidden size={14} /></Button>;
 }
 

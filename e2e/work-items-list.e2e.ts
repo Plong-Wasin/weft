@@ -58,7 +58,7 @@ try {
     const lane = page.locator('[data-testid^="column-"]').first();
     const colors = await lane.evaluate((element) => {
       const probe = document.createElement("div");
-      probe.className = "bg-surface-1";
+      probe.style.backgroundColor = "var(--card)";
       document.body.append(probe);
       const expected = getComputedStyle(probe).backgroundColor;
       probe.remove();
@@ -69,9 +69,9 @@ try {
       const background = getComputedStyle(element).backgroundColor;
       const foreground = getComputedStyle(heading).color;
       const [light, dark] = [luminance(background), luminance(foreground)].sort((a, b) => b - a);
-      return { background, expected, foreground, contrast: (light! + .05) / (dark! + .05), theme: document.documentElement.getAttribute("data-theme"), token: getComputedStyle(document.documentElement).getPropertyValue("--bg-surface-1"), classes: element.className };
+      return { background, expected, foreground, contrast: (light! + .05) / (dark! + .05), theme: document.documentElement.getAttribute("data-theme"), token: getComputedStyle(document.documentElement).getPropertyValue("--card"), classes: element.className };
     });
-    check(colors.background === colors.expected, `board lane uses the active surface token: ${JSON.stringify(colors)}`);
+    check(colors.background === colors.expected, `board lane uses the active shadcn card token: ${JSON.stringify(colors)}`);
     check(colors.contrast >= 4.5, `board lane title is readable against its surface: ${JSON.stringify(colors)}`);
   };
   const call = async <T>(name: string, body: unknown) => { const response = await context.request.post(`${api}/actions/${name}`, { data: body }); check(response.ok(), `${name} failed: ${response.status()}`); return await response.json() as T; };

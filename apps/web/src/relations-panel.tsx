@@ -29,10 +29,10 @@ export function RelationsPanel({ workspaceSlug, workItemId, candidates, canWrite
       const rows = relations.filter((relation) => relation.type === group);
       if (rows.length === 0) return null;
       return <div key={group} className="grid gap-1">
-        <h4 className="m-0 text-12 font-medium text-tertiary">{translate(`relations.type.${group}`)} <span className="font-normal">{rows.length}</span></h4>
-        <ul className="m-0 grid list-none gap-1 !pl-0">{rows.map((relation) => <li key={relation.id} className="flex items-center gap-2 rounded-md bg-layer-1 px-2.5 py-1.5 text-13">
-          <Link to={paths.workItem(workspaceSlug, relation.workItem.displayId)} className="flex min-w-0 flex-1 gap-2 text-primary hover:underline"><span className="shrink-0 text-tertiary">{relation.workItem.displayId}</span><span className="truncate">{relation.workItem.title}</span></Link>
-          {canWrite && <Button type="button" className="grid size-6 shrink-0 place-items-center rounded-md !bg-transparent !p-0 text-secondary hover:!bg-layer-transparent-hover hover:text-danger-text" aria-label={`${translate("relations.remove")} ${relation.workItem.displayId}`} title={translate("relations.remove")} onClick={async () => done(await action("remove_work_item_relation", { workItemId, relatedWorkItemId: relation.workItem.id }))}><X aria-hidden size={13} /></Button>}
+        <h4 className="m-0 text-12 font-medium text-muted-foreground">{translate(`relations.type.${group}`)} <span className="font-normal">{rows.length}</span></h4>
+        <ul className="m-0 grid list-none gap-1 !pl-0">{rows.map((relation) => <li key={relation.id} className="flex items-center gap-2 rounded-md bg-muted px-2.5 py-1.5 text-13">
+          <Link to={paths.workItem(workspaceSlug, relation.workItem.displayId)} className="flex min-w-0 flex-1 gap-2 text-foreground hover:underline"><span className="shrink-0 text-muted-foreground">{relation.workItem.displayId}</span><span className="truncate">{relation.workItem.title}</span></Link>
+          {canWrite && <Button type="button" className="grid size-6 shrink-0 place-items-center rounded-md !bg-transparent !p-0 text-muted-foreground hover:!bg-accent hover:text-destructive" aria-label={`${translate("relations.remove")} ${relation.workItem.displayId}`} title={translate("relations.remove")} onClick={async () => done(await action("remove_work_item_relation", { workItemId, relatedWorkItemId: relation.workItem.id }))}><X aria-hidden size={13} /></Button>}
         </li>)}</ul>
       </div>;
     })}
@@ -43,10 +43,10 @@ export function RelationsPanel({ workspaceSlug, workItemId, candidates, canWrite
         if (result !== null) { setTarget(""); onClose(); }
         await done(result);
       }}>
-        <label className="grid gap-1 text-13 text-secondary">{translate("relations.typeLabel")}<select value={type} onChange={(event) => setType(event.target.value as RelationType)}>
+        <label className="grid gap-1 text-13 text-muted-foreground">{translate("relations.typeLabel")}<select value={type} onChange={(event) => setType(event.target.value as RelationType)}>
           {types.map((value) => <option key={value} value={value}>{translate(`relations.type.${value}`)}</option>)}
         </select></label>
-        <label className="grid gap-1 text-13 text-secondary">{translate("relations.target")}<select required value={target} onChange={(event) => setTarget(event.target.value)}>
+        <label className="grid gap-1 text-13 text-muted-foreground">{translate("relations.target")}<select required value={target} onChange={(event) => setTarget(event.target.value)}>
           <option value="">{translate("relations.choose")}</option>
           {candidates.filter((candidate) => !linked.has(candidate.id)).map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.displayId} {candidate.title}</option>)}
         </select></label>

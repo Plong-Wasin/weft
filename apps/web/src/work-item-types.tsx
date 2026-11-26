@@ -204,19 +204,19 @@ export function PropertyFields({ properties, values, members, onChange, disabled
     {properties.map((property) => {
       const id = `${idPrefix}-${property.id}`;
       const value = values.get(property.id);
-      const label = <span className="flex items-center gap-2 font-medium text-primary">{property.name}{property.required && <span className="rounded bg-layer-1 px-1.5 py-0.5 text-11 font-medium text-secondary" data-required-marker>{t("types.required")}</span>}</span>;
-      const hint = <span className="text-12 text-tertiary">{t(`types.kindHint.${property.kind}`)}</span>;
+      const label = <span className="flex items-center gap-2 font-medium text-foreground">{property.name}{property.required && <span className="rounded bg-muted px-1.5 py-0.5 text-11 font-medium text-muted-foreground" data-required-marker>{t("types.required")}</span>}</span>;
+      const hint = <span className="text-12 text-muted-foreground">{t(`types.kindHint.${property.kind}`)}</span>;
       if (property.kind === "boolean") {
         return <label key={property.id} htmlFor={id} className="flex items-center gap-2 text-13">
           <Switch id={id} disabled={disabled} checked={value === true} onChange={(event) => onChange(property, event.target.checked ? true : null)} />
-          <span className="font-medium text-primary">{property.name}</span>{property.required && <span className="rounded bg-layer-1 px-1.5 py-0.5 text-11 font-medium text-secondary" data-required-marker>{t("types.required")}</span>}
+          <span className="font-medium text-foreground">{property.name}</span>{property.required && <span className="rounded bg-muted px-1.5 py-0.5 text-11 font-medium text-muted-foreground" data-required-marker>{t("types.required")}</span>}
         </label>;
       }
       if (property.kind === "multi_select") {
         const selected = Array.isArray(value) ? value as string[] : [];
         return <fieldset key={property.id} className={fieldClass} data-property={property.id}>
           <legend className="mb-1">{label}</legend>
-          <div className="flex flex-wrap gap-2">{property.options.map((option) => <label key={option.id} className="flex items-center gap-1.5 rounded-md border border-subtle px-2 py-1 text-13">
+          <div className="flex flex-wrap gap-2">{property.options.map((option) => <label key={option.id} className="flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-13">
             <Checkbox disabled={disabled} checked={selected.includes(option.id)} onChange={(event) => {
               const next = event.target.checked ? [...selected, option.id] : selected.filter((id) => id !== option.id);
               onChange(property, next.length ? next : null);

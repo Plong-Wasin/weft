@@ -87,6 +87,10 @@ try {
     })));
     check(faults.length === 0, [...new Set(faults)].slice(0, 6).join("; "));
   });
+  await step("list priority and state icons keep their size (1440)", async () => {
+    const sizes = await desktop.locator("[data-list-row]").first().locator('button[aria-label^="Priority"] svg, button[aria-label^="State"] svg').evaluateAll((icons) => icons.filter((icon) => icon.getClientRects().length).map((icon) => Math.round(icon.getBoundingClientRect().width)));
+    check(sizes.length === 2 && sizes.every((size) => size >= 14), `icon widths ${sizes.join(",")}`);
+  });
   await step("list dates are shown whole (1440)", async () => {
     const clipped = await desktop.locator('[data-list-property="dates"] button span.truncate').evaluateAll((spans) => spans.filter((span) => span.scrollWidth > span.clientWidth).map((span) => `${span.textContent} ${span.scrollWidth}>${span.clientWidth}`));
     check(clipped.length === 0, clipped.slice(0, 3).join("; "));

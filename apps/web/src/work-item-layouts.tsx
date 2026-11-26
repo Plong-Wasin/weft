@@ -543,9 +543,9 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
           "work-item-row-metadata flex min-h-10 min-w-0 flex-wrap items-center justify-end gap-1 [@media(pointer:coarse)]:gap-2 sm:contents max-sm:flex-wrap max-sm:gap-1 max-sm:justify-start max-sm:overflow-visible [@media(hover:none)]:max-sm:gap-y-4",
           phoneProperties.length > 0 && "max-sm:min-h-13 [@media(hover:none)]:max-sm:py-2.5",
         )}>
-          {leadingProperties.includes("priority") && <span data-list-property="priority" data-empty-property={priorityEmpty ? "true" : undefined} className={cn("flex min-w-7 shrink-0 items-center justify-center sm:order-2 sm:[&>*]:max-w-full sm:[&_button]:max-w-full", priorityEmpty && emptyPropertyClass)}>{cellOf(item, "priority", false, true, true)}</span>}
+          {leadingProperties.includes("priority") && <span data-list-property="priority" data-empty-property={priorityEmpty ? "true" : undefined} className={cn("flex min-w-7 shrink-0 items-center justify-center sm:order-2 sm:[&>*]:max-w-full sm:[&_button]:max-w-full sm:[&_button]:px-1 [&_svg]:shrink-0", priorityEmpty && emptyPropertyClass)}>{cellOf(item, "priority", false, true, true)}</span>}
           {shows("id") ? <span title={item.displayId} className="min-w-0 shrink-0 truncate whitespace-nowrap text-11 tabular-nums text-muted-foreground sm:order-3 sm:text-12">{item.displayId}</span> : <span aria-hidden className="sm:order-3" />}
-          {leadingProperties.includes("state") && <span className="flex min-w-7 shrink-0 items-center justify-center sm:order-4 sm:[&>*]:max-w-full sm:[&_button]:max-w-full">{cellOf(item, "state", false, true, true)}</span>}
+          {leadingProperties.includes("state") && <span className="flex min-w-7 shrink-0 items-center justify-center sm:order-4 sm:[&>*]:max-w-full sm:[&_button]:max-w-full sm:[&_button]:px-1 [&_svg]:shrink-0">{cellOf(item, "state", false, true, true)}</span>}
           <div className="hidden sm:contents">
             {oneLine ? shownProperties.map((property) => propertyCell(item, property))
               : <div data-testid="list-property-wrap" className="flex min-w-0 flex-wrap items-center justify-end gap-x-1 gap-y-1 sm:col-span-full">{shownProperties.map((property) => propertyCell(item, property))}</div>}

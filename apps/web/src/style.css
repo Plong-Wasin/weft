@@ -13,6 +13,13 @@
   unicode-range: U+0E01-0E5B, U+200C-200D, U+25CC;
 }
 
+/* Project work items also use phone controls on short touch screens in landscape. */
+@custom-variant phone-layout {
+  @media (width < 48rem), (height <= 30rem) and (pointer: coarse) {
+    @slot;
+  }
+}
+
 @custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
 
 /* Tailwind consumes the shadcn roles in tokens.css (defined once, light and dark). Radius utilities keep Tailwind's own scale. */
@@ -140,7 +147,7 @@
 .editor-tool[aria-pressed="true"] { background: var(--accent); color: var(--foreground); }
 .editor-tool:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 /* One slim row above the text in the description and comment editors; its status and source switch sit at the end. */
-.editor-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: .125rem; min-height: 2rem; max-width: 100%; min-width: 0; }
+.editor-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: .125rem; min-height: 2rem; max-width: 100%; min-width: 0; background: var(--muted); }
 .editor-tool-sep { width: 1px; height: 1rem; margin: 0 .25rem; background: var(--border); }
 .editor-toolbar-end { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .25rem; margin-left: auto; min-width: 0; }
 .editor-footer { row-gap: .25rem; }
@@ -352,6 +359,93 @@ dialog::backdrop { overflow: hidden; overscroll-behavior: contain; }
       height: 2.75rem;
       content: "";
       transform: translate(-50%, -50%);
+    }
+  }
+}
+
+@layer components {
+  @media (width < 48rem), (height <= 30rem) and (pointer: coarse) {
+    #main-content:has(.project-work-items-fab) {
+      --project-fab-space: calc(3.75rem + env(safe-area-inset-bottom, 0px));
+      margin-block-end: var(--project-fab-space);
+    }
+    .project-work-items-fab {
+      position: fixed;
+      inset-inline-end: max(var(--padding-page-x), env(safe-area-inset-right, 0px));
+      inset-block-end: calc(.5rem + env(safe-area-inset-bottom, 0px));
+      z-index: 20;
+    }
+  }
+
+  .editor-tool-label { display: none; }
+  .phone-editor-status { display: contents; }
+
+  @media (width < 48rem), (height <= 30rem) and (pointer: coarse) {
+    .phone-editor { min-width: 0; }
+    .phone-editor > .editor-toolbar {
+      flex-wrap: nowrap;
+      gap: .25rem;
+      overflow-x: auto;
+      padding: .25rem;
+      overscroll-behavior-inline: contain;
+    }
+    .phone-editor:not(:focus-within) > .editor-toolbar {
+      background: transparent;
+    }
+    /* A keyboard user can focus a tool directly. Focusing the editor or a tool reveals the same reserved row. */
+    .phone-editor:not(:focus-within) > .editor-toolbar :is(.editor-tool, .editor-tool-sep) {
+      opacity: 0;
+      pointer-events: none;
+    }
+    .phone-editor > .editor-toolbar :is(.editor-toolbar-end, .editor-tool-sep) {
+      flex: 0 0 auto;
+      flex-wrap: nowrap;
+    }
+    .phone-editor > .editor-toolbar .editor-tool {
+      display: inline-flex;
+      width: auto !important;
+      min-width: 2.75rem;
+      min-height: 2.75rem;
+      gap: .375rem;
+      padding-inline: .5rem !important;
+      white-space: nowrap;
+      outline-offset: -2px !important;
+    }
+    .phone-editor .editor-tool-label { display: inline; }
+    .phone-description-editor:has(.phone-editor-status) {
+      position: relative;
+      padding-block-end: 1.25rem;
+    }
+    .phone-editor .phone-editor-status {
+      display: block;
+      position: absolute;
+      inset-inline: 0;
+      inset-block-end: 0;
+      text-align: end;
+    }
+    .phone-editor .link-dialog {
+      --editor-link-top: min(var(--editor-link-anchor), max(.5rem, calc(100dvh - 12rem)));
+      max-block-size: calc(100dvh - 1rem);
+      overflow-y: auto;
+    }
+  }
+}
+
+/* Unlayered: the shell's padding utility on <main> beats any rule in the components layer. */
+@media (width < 48rem), (height <= 30rem) and (pointer: coarse) {
+  #main-content:has(.project-work-items) {
+    padding-block-start: .25rem;
+  }
+}
+
+/* In the utilities layer, so the extra specificity beats the `bottom-4` utility on the bulk bar and the toaster. */
+@layer utilities {
+  @media (width < 48rem), (height <= 30rem) and (pointer: coarse) {
+    .project-work-items [data-testid="bulk-bar"] {
+      bottom: calc(var(--project-fab-space, 0px) + .5rem);
+    }
+    body:has(.project-work-items-fab) [data-testid="toaster"] {
+      bottom: calc(4.25rem + env(safe-area-inset-bottom, 0px));
     }
   }
 }

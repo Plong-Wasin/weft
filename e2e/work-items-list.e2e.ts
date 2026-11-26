@@ -557,13 +557,12 @@ try {
   const mobileRow = mobilePage.getByTestId("row-MOB-1");
   await mobileRow.getByRole("link", { name: "Alpha" }).waitFor();
   const rowCheckbox = mobileRow.getByRole("checkbox");
-  const selectShown = mobilePage.getByRole("checkbox", { name: translate("bulk.selectAll") });
-  const checkboxMetrics = await Promise.all([rowCheckbox, selectShown].map(async (checkbox) => {
+  const checkboxMetrics = await Promise.all([rowCheckbox].map(async (checkbox) => {
     const box = await checkbox.boundingBox();
     return box ? { width: box.width, height: box.height } : null;
   }));
   check(checkboxMetrics.every((box) => !!box && box.width <= 24 && box.height <= 24), `390px touch checkboxes stay visually at or below 24px: ${JSON.stringify(checkboxMetrics)}`);
-  const checkboxHitTargets = await Promise.all([rowCheckbox, selectShown].map((checkbox) => checkbox.evaluate((element) => {
+  const checkboxHitTargets = await Promise.all([rowCheckbox].map((checkbox) => checkbox.evaluate((element) => {
     const before = getComputedStyle(element, "::before");
     return { width: parseFloat(before.width), height: parseFloat(before.height) };
   })));
@@ -575,7 +574,7 @@ try {
     return { width: rect.width, height: rect.height, targetWidth: parseFloat(target.width), targetHeight: parseFloat(target.height) };
   });
   check(cycleChipMetrics.height <= 36 && cycleChipMetrics.targetWidth >= 44 && cycleChipMetrics.targetHeight >= 44, `390px property chips stay visually compact with 44px touch targets: ${JSON.stringify(cycleChipMetrics)}`);
-  for (const [name, control] of [["Cycle chip", cycleChip], ["State chip", mobileRow.getByRole("button", { name: /^State:/ })], ["row checkbox", rowCheckbox], ["Select shown", selectShown]] as const) {
+  for (const [name, control] of [["Cycle chip", cycleChip], ["State chip", mobileRow.getByRole("button", { name: /^State:/ })], ["row checkbox", rowCheckbox]] as const) {
     await control.scrollIntoViewIfNeeded();
     const misses = await control.evaluate(missedHitPoints);
     check(misses.length === 0, `390px ${name} answers taps across its whole 44px area (TouchHitArea44): ${JSON.stringify(misses)}`);
@@ -591,15 +590,16 @@ try {
   });
   check(titleEdge.every((hit) => hit === "title"), `390px title left edge answers as the title (TouchTitleEdgeNotStolen): ${JSON.stringify(titleEdge)}`);
   const toolbar = mobilePage.getByTestId("work-items-toolbar");
-  const addWorkItem = toolbar.getByRole("button", { name: translate("workItems.addNew"), exact: true });
-  const saveView = toolbar.getByRole("button", { name: translate("views.saveAs") });
-  const settingsLink = toolbar.getByRole("link", { name: translate("projects.settings"), exact: true });
-  const [addBox, settingsBox, saveViewVisible] = await Promise.all([addWorkItem.boundingBox(), settingsLink.boundingBox(), saveView.isVisible()]);
-  const saveViewBox = await saveView.boundingBox();
-  const sameRow = (a: { y: number; height: number } | null, b: { y: number; height: number } | null) => !!a && !!b && Math.abs(a.y + a.height / 2 - (b.y + b.height / 2)) <= 1;
-  check(saveViewVisible && sameRow(addBox, settingsBox) && sameRow(addBox, saveViewBox), "390px Add work item, Save as view and Settings share one toolbar row, so Save as view stays on phones without an orphan icon (PhoneSaveViewKept): " + JSON.stringify({ add: addBox, settings: settingsBox, saveView: saveViewBox, saveViewVisible }));
-  // Save as view stays a phone feature: one tap opens its form with the current settings.
-  await saveView.tap();
+  const mobileView = toolbar.getByRole("combobox", { name: translate("layout.switch") });
+  const mobileMore = toolbar.getByRole("button", { name: translate("workItems.moreActions") });
+  const addWorkItem = mobilePage.getByRole("button", { name: translate("workItems.addNew"), exact: true });
+  const [addBox, toolbarBox] = await Promise.all([addWorkItem.boundingBox(), toolbar.boundingBox()]);
+  check(!!addBox && !!toolbarBox && addBox.y > toolbarBox.y + toolbarBox.height, "390px Add work item floats below the toolbar");
+  await mobileMore.tap();
+  const mobileSelectShown = mobilePage.getByRole("menuitemcheckbox", { name: translate("bulk.selectShown") });
+  const selectShownBox = await mobileSelectShown.boundingBox();
+  check(!!selectShownBox && selectShownBox.width >= 44 && selectShownBox.height >= 44, "390px Select shown has a full touch target in the overflow menu");
+  await mobilePage.getByRole("menuitem", { name: translate("views.saveAs") }).tap();
   const saveViewDialog = mobilePage.getByRole("dialog", { name: translate("views.form.saveTitle") });
   await saveViewDialog.waitFor();
   const saveViewDialogBox = await saveViewDialog.boundingBox();
@@ -607,7 +607,6 @@ try {
   await mobilePage.keyboard.press("Escape");
   await saveViewDialog.waitFor({ state: "hidden" });
   const filterButton = toolbar.getByRole("button", { name: translate("layout.filters"), exact: true });
-  const queryButton = toolbar.getByRole("button", { name: translate("layout.filterQuery.toggle") });
   const displayButton = toolbar.getByRole("button", { name: translate("layout.display") });
   // Stacked checkboxes (Display > properties): each answers across its own label row, and the midpoint between two belongs to neither neighbour's overlay.
   await displayButton.tap();
@@ -636,13 +635,8 @@ try {
   check(stack.count >= 2 && stack.stolen.length === 0, `390px stacked checkboxes keep their taps to their own row (TouchStackedCheckboxNeighbours): ${JSON.stringify(stack)}`);
   await mobilePage.keyboard.press("Escape");
   await displayFields.waitFor({ state: "hidden" });
-  const selectVisual = mobilePage.locator("label").filter({ hasText: translate("bulk.selectShown") }).locator(":scope > span");
-  const secondaryMetrics = await Promise.all([filterButton, queryButton, displayButton, settingsLink, selectVisual].map(async (control) => control.evaluate((element) => {
-    const style = getComputedStyle(element);
-    const rect = element.getBoundingClientRect();
-    return { height: rect.height, borderWidth: style.borderTopWidth, background: style.backgroundColor };
-  })));
-  check(secondaryMetrics.every((metric) => metric.height <= 36 && metric.borderWidth === "1px" && (metric.background === "rgba(0, 0, 0, 0)" || metric.background === "transparent")), "390px secondary toolbar controls share the outline-sm treatment: " + JSON.stringify(secondaryMetrics));
+  const toolbarControls = await Promise.all([mobileView, filterButton, displayButton, mobileMore].map((control) => control.boundingBox()));
+  check(toolbarControls.every((box) => !!box && box.width >= 44 && box.height >= 44 && box.y === toolbarControls[0]?.y), "390px phone toolbar controls share one row and each has a 44px touch target");
   // Reads each toolbar control as the user sees it: its accessible label, its text colour and the colour behind it, and the WCAG contrast ratio between them.
   const readToolbarContrast = () => mobilePage.evaluate(() => {
     const toolbar = document.querySelector<HTMLElement>('[data-testid="work-items-toolbar"]');
@@ -668,7 +662,7 @@ try {
       }
       return pageBackground;
     };
-    const controls = [...(toolbar?.querySelectorAll<HTMLElement>("button, a[href], label") ?? [])].filter((element) => {
+    const controls = [...(toolbar?.querySelectorAll<HTMLElement>("button, a[href], label, select") ?? [])].filter((element) => {
       const style = getComputedStyle(element);
       return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
     });
@@ -683,7 +677,7 @@ try {
   });
   const assertToolbarReadable = async (label: string) => {
     const controls = await readToolbarContrast();
-    check(controls.length >= 6 && controls.every((control) => control.name.trim() !== ""), `${label}: every toolbar control has an accessible label: ${JSON.stringify(controls.filter((control) => control.name.trim() === ""))}`);
+    check(controls.length === 4 && controls.every((control) => control.name.trim() !== ""), `${label}: every toolbar control has an accessible label: ${JSON.stringify(controls.filter((control) => control.name.trim() === ""))}`);
     check(controls.every((control) => control.ratio >= 4.5), `${label}: toolbar text contrast is at least 4.5:1: ${JSON.stringify(controls.filter((control) => control.ratio < 4.5))}`);
   };
   for (const theme of ["light", "dark"] as const) {
@@ -819,13 +813,10 @@ try {
           signature: (() => { const cells = [...row.querySelectorAll<HTMLElement>("[data-list-property], [data-phone-property]")].filter(shown); return `${cells.length}x${new Set(cells.map((cell) => Math.round(cell.getBoundingClientRect().top))).size}/${cells.filter((cell) => cell.hasAttribute("data-phone-property")).length}`; })() + "/" + (title ? new Set([...(() => { const range = document.createRange(); range.selectNodeContents(title); return range.getClientRects(); })()].map((rect) => Math.round(rect.top))).size : 0),
         };
       });
-      const selectAll = document.querySelector<HTMLElement>('[data-testid="work-items-toolbar"] [role="checkbox"]');
-      const selectAllBefore = selectAll ? getComputedStyle(selectAll, "::before") : null;
       const heights = new Map<string, number[]>();
       for (const row of measured) heights.set(row.signature, [...heights.get(row.signature) ?? [], row.height]);
       return {
         viewportWidth: window.innerWidth, documentWidth: document.documentElement.scrollWidth, rows: measured,
-        selectAll: box(selectAll), selectAllHit: selectAllBefore ? { width: parseFloat(selectAllBefore.width), height: parseFloat(selectAllBefore.height) } : null,
         unequalHeights: [...heights].filter(([, list]) => Math.max(...list) - Math.min(...list) > 1).map(([signature, list]) => ({ signature, list })),
       };
     });
@@ -833,8 +824,8 @@ try {
     check(touch.documentWidth <= touch.viewportWidth, `${label} nothing is wider than the viewport (TouchNoHorizontalOverflow): ${touch.documentWidth} > ${touch.viewportWidth}`);
     check(touch.rows.every((row) => row.shownEmpty.length === 0 && row.dashes === 0), `${label} paints no empty property slot or dash (TouchNoEmptySlots): ${JSON.stringify(touch.rows.filter((row) => row.shownEmpty.length || row.dashes).map((row) => ({ id: row.id, shownEmpty: row.shownEmpty, dashes: row.dashes })))}`);
     const smallBox = (rect: { width: number; height: number } | null) => !!rect && rect.width >= 12 && rect.width <= 24 && rect.height >= 12 && rect.height <= 24;
-    check(touch.rows.every((row) => smallBox(row.checkbox) && row.hitWidth >= 44 && row.hitHeight >= 44) && smallBox(touch.selectAll) && !!touch.selectAllHit && touch.selectAllHit.width >= 44 && touch.selectAllHit.height >= 44,
-      `${label} checkboxes draw a 12-24px box with a 44px hit area (TouchSmallCheckbox): ${JSON.stringify({ rows: touch.rows.map((row) => ({ id: row.id, checkbox: row.checkbox, hit: [row.hitWidth, row.hitHeight] })), selectAll: touch.selectAll, selectAllHit: touch.selectAllHit })}`);
+    check(touch.rows.every((row) => smallBox(row.checkbox) && row.hitWidth >= 44 && row.hitHeight >= 44),
+      `${label} checkboxes draw a 12-24px box with a 44px hit area (TouchSmallCheckbox): ${JSON.stringify(touch.rows.map((row) => ({ id: row.id, checkbox: row.checkbox, hit: [row.hitWidth, row.hitHeight] })))}`);
     check(touch.rows.every((row) => !row.checkboxOverId && !row.checkboxOverTitle), `${label} the checkbox never covers the ID or title (TouchCheckboxNoOverlap): ${JSON.stringify(touch.rows.filter((row) => row.checkboxOverId || row.checkboxOverTitle))}`);
     check(touch.rows.every((row) => row.outside.length === 0), `${label} row content stays inside its row (TouchRowContained): ${JSON.stringify(touch.rows.filter((row) => row.outside.length))}`);
     check(touch.unequalHeights.length === 0, `${label} rows with the same data have equal heights (TouchEqualRowHeights): ${JSON.stringify(touch.unequalHeights)}`);
@@ -913,13 +904,13 @@ try {
   check(await mobileMain.evaluate((element) => element.scrollTop > 0), "phone scrolling should dismiss the picker without restoring its offscreen trigger");
   await mobileContext.close();
   await page.screenshot({ path: `${shots}/list-390-light.png` });
+  const phoneView = page.getByRole("combobox", { name: translate("layout.switch") });
   for (const layout of ["list", "board", "spreadsheet", "calendar", "gantt"] as const) {
-    check(await page.getByRole("button", { name: translate(`layout.${layout}`) }).getByText(translate(`layout.${layout}`)).isVisible(), `${layout} is icon-only on a phone`);
+    check(await phoneView.getByRole("option", { name: translate(`layout.${layout}`) }).count() === 1, `${layout} has a named option on a phone`);
   }
-  check(await page.getByText(translate("bulk.selectShown"), { exact: true }).isVisible(), "select-all has no visible phone label");
   const titleBox = await page.getByRole("heading", { name: /MOB · Mobile/ }).boundingBox();
-  check(!!titleBox && titleBox.x >= 0 && titleBox.x + titleBox.width <= 390, "project title stays within the phone viewport while project actions move to the list toolbar");
-  await page.getByRole("button", { name: translate("layout.board") }).click();
+  check(!!titleBox && titleBox.x >= 0 && titleBox.x + titleBox.width <= 390, "project title stays within the phone viewport beside the breadcrumb");
+  await phoneView.selectOption("board");
   const phoneCard = page.getByTestId("card-MOB-2");
   await phoneCard.getByText(translate("workItems.noAssignee"), { exact: true }).waitFor();
   await phoneCard.getByText(translate("layout.noLabel"), { exact: true }).waitFor();
@@ -930,7 +921,7 @@ try {
   check(await boardPriority.evaluate((element) => getComputedStyle(element).borderTopWidth === "1px"), "board card Priority chip retains its outlined border (BoardCardOutlinedChipStillBordered)");
   await page.screenshot({ path: `${shots}/board-390-light.png` });
   await page.getByRole("button", { name: translate("layout.addToGroup").replace("{group}", translate("workItems.priority.none")) }).getByText(translate("layout.addShort")).waitFor();
-  await page.getByRole("button", { name: translate("layout.gantt") }).click();
+  await phoneView.selectOption("gantt");
   await page.getByTestId("gantt-layout").waitFor();
   await page.getByText(translate("layout.gantt.scrollHint"), { exact: true }).waitFor();
   await page.getByTestId("gantt-bar-MOB-1").waitFor();
@@ -944,7 +935,7 @@ try {
   const resizedItem = await call<{ dueDate: string | null }>("get_work_item", { workspaceId: me.workspaces[0]!.id, displayId: "MOB-1" });
   check(resizedItem.dueDate === day(4), "keyboard resizing the Gantt due date did not save one day later");
   for (const layout of ["board", "spreadsheet", "calendar", "gantt"] as const) {
-    await page.getByRole("button", { name: translate(`layout.${layout}`) }).click();
+    await phoneView.selectOption(layout);
     const surface = layout === "board" ? page.getByTestId("board") : layout === "spreadsheet" ? page.getByTestId("sheet-scroll") : page.getByTestId(`${layout}-layout`);
     await surface.waitFor();
     if (layout === "board") {
@@ -991,18 +982,29 @@ try {
       }
     }
   }
-  await page.getByRole("button", { name: translate("layout.list") }).click();
-  for (const [name, label] of [["filters", translate("layout.filters")], ["query", translate("layout.filterQuery.toggle")], ["display", translate("layout.display")]] as const) {
-    const control = page.getByRole("button", { name: label });
-    await control.click();
-    for (const [width, height] of [[1440, 900], [390, 844]] as const) {
-      await page.setViewportSize({ width, height });
+  await phoneView.selectOption("list");
+  for (const [width, height] of [[1440, 900], [390, 844]] as const) {
+    await page.setViewportSize({ width, height });
+    const toggleQuery = async () => {
+      if (width >= 768) {
+        await page.getByRole("button", { name: translate("layout.filterQuery.toggle") }).click();
+      } else {
+        await page.getByRole("button", { name: translate("workItems.moreActions") }).click();
+        await page.getByRole("menuitemcheckbox", { name: translate("layout.filterQuery.button") }).click();
+      }
+    };
+    for (const [name, toggle] of [
+      ["filters", () => page.getByRole("button", { name: translate("layout.filters") }).click()],
+      ["query", toggleQuery],
+      ["display", () => page.getByRole("button", { name: translate("layout.display") }).click()],
+    ] as const) {
+      await toggle();
       for (const theme of ["light", "dark"] as const) {
         await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
         await page.screenshot({ path: `${evidenceShots}/${name}-${theme}-${width}.png`, fullPage: true });
       }
+      await toggle();
     }
-    await control.click();
   }
   await page.setViewportSize({ width: 1440, height: 900 });
   check(await page.evaluate(() => window.innerWidth === 1440 && window.innerHeight === 900), "Cycles sidebar check runs at the desktop viewport after phone screenshots");
@@ -1057,12 +1059,12 @@ try {
       await edgeTapPage.goto(mobileListUrl);
       await edgeTapPage.waitForFunction((value) => document.documentElement.lang === value, locale);
       const toolbar = edgeTapPage.getByTestId("work-items-toolbar");
-      const switcher = toolbar.getByRole("group", { name: translate("layout.switch", locale) });
+      const switcher = toolbar.getByRole("combobox", { name: translate("layout.switch", locale) });
       await switcher.waitFor();
       await edgeTapPage.evaluate(() => document.fonts.ready);
       const dimensions = await toolbar.evaluate((element) => ({
         documentWidth: document.documentElement.scrollWidth,
-        clippedControls: [...element.querySelectorAll<HTMLElement>('button, a[href], [role="checkbox"]')].flatMap((control) => {
+        clippedControls: [...element.querySelectorAll<HTMLElement>('button, a[href], [role="checkbox"], select')].flatMap((control) => {
           const { left, right } = control.getBoundingClientRect();
           return left < 0 || right > window.innerWidth ? [control.getAttribute("aria-label") ?? control.textContent] : [];
         }),
@@ -1078,16 +1080,13 @@ try {
         check(widths.every(({ clientWidth, scrollWidth }) => clientWidth > 0 && scrollWidth <= clientWidth + 1),
           `${locale} 320px main and list content fit inside their scroll containers: ${JSON.stringify(widths)}`);
       }
+      const switcherBox = await switcher.boundingBox();
+      check(!!switcherBox && switcherBox.width >= 44 && switcherBox.height >= 44, `${locale} ${width}px view dropdown occupies its own 44px target`);
+      check((await switcher.evaluate(missedHitPoints)).length === 0, `${locale} ${width}px view dropdown owns its full 44px target`);
       for (const layout of ["board", "spreadsheet", "calendar", "gantt", "list"] as const) {
-        const control = switcher.getByRole("button", { name: translate(`layout.${layout}`, locale), exact: true });
-        await control.scrollIntoViewIfNeeded();
-        const box = await control.boundingBox();
-        check(!!box && box.width >= 44 && box.height >= 44, `${locale} ${width}px ${layout} occupies its own 44px target: ${JSON.stringify(box)}`);
-        const misses = await control.evaluate(missedHitPoints);
-        check(misses.length === 0, `${locale} ${width}px ${layout} owns its full 44px target: ${JSON.stringify(misses)}`);
-        await edgeTapPage.touchscreen.tap(box!.x + box!.width - 0.5, box!.y + box!.height / 2);
+        await switcher.selectOption({ label: translate(`layout.${layout}`, locale) });
         await edgeTapPage.waitForURL((url) => (url.searchParams.get("layout") ?? "list") === layout, { timeout: 5000 });
-        check(await control.getAttribute("aria-pressed") === "true", `${locale} ${width}px tapping the right edge selects ${layout}`);
+        check(await switcher.inputValue() === layout, `${locale} ${width}px view dropdown displays ${layout}`);
       }
       if (width === 320) {
         const displayName = translate("layout.display", locale);
@@ -1098,20 +1097,20 @@ try {
         await displayDialog.waitFor();
         await edgeTapPage.keyboard.press("Escape");
         await displayDialog.waitFor({ state: "hidden" });
-        await toolbar.getByRole("button", { name: translate("views.saveAs", locale) }).tap();
+        const more = toolbar.getByRole("button", { name: translate("workItems.moreActions", locale) });
+        await more.tap();
+        await edgeTapPage.getByRole("menuitem", { name: translate("views.saveAs", locale) }).tap();
         const saveDialog = edgeTapPage.getByRole("dialog", { name: translate("views.form.saveTitle", locale) });
         await saveDialog.waitFor();
         await edgeTapPage.keyboard.press("Escape");
         await saveDialog.waitFor({ state: "hidden" });
-        const query = toolbar.getByRole("button", { name: translate("layout.filterQuery.toggle", locale) });
-        const background = () => query.evaluate(async (element) => {
-          getComputedStyle(element).backgroundColor;
-          await Promise.all(element.getAnimations().map((animation) => animation.finished));
-          return getComputedStyle(element).backgroundColor;
-        });
-        const closedBackground = await background();
+        await more.tap();
+        const query = edgeTapPage.getByRole("menuitemcheckbox", { name: translate("layout.filterQuery.button", locale) });
+        check(await query.getAttribute("aria-checked") === "false", `${locale} Filter Query starts unchecked`);
         await query.tap();
-        check(await query.getAttribute("aria-pressed") === "true" && await background() !== closedBackground, `${locale} Filter Query shows its pressed state`);
+        await more.tap();
+        check(await query.getAttribute("aria-checked") === "true", `${locale} Filter Query shows its checked state`);
+        await edgeTapPage.keyboard.press("Escape");
       }
     }
   }

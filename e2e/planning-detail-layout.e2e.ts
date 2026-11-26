@@ -127,7 +127,18 @@ try {
       check(!crumbs.startsWith("›"), `detail: the phone breadcrumb starts with a separator: ${crumbs}`);
     }
 
-    await touch("detail actions", page.getByRole("button", { name: new RegExp(`^(${translate("workItems.addSubItemAction")}|${translate("workItems.addRelationAction")}|${translate("workItems.addLinkAction")}|${translate("workItems.attachAction")})$`) }));
+    if (phone) {
+      const actions = [translate("workItems.addSubItemAction"), translate("workItems.addRelationAction"), translate("workItems.addLinkAction"), translate("workItems.attachAction")];
+      const add = page.getByRole("group", { name: translate("workItems.actions") }).getByRole("button", { name: translate("layout.addShort"), exact: true });
+      await touch("detail Add", add);
+      await add.tap();
+      for (const name of actions) {
+        const item = page.getByRole("menuitem", { name, exact: true });
+        await item.waitFor();
+        await touch(`detail Add → ${name}`, item);
+      }
+      await page.keyboard.press("Escape");
+    }
     await touch("detail property sections", page.locator("main [data-props-section] h3 button"));
 
     // Peek.

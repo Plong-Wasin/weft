@@ -23,18 +23,20 @@ export function editorLimitWarnings(value: unknown): string[] {
 }
 
 /** The ghost icon switch in an editor toolbar: pressed while the Markdown (Written form) text is shown. */
-export function SourceModeButton({ active, onClick }: { active: boolean; onClick: () => void }) {
+export function SourceModeButton({ active, onClick, compactOnPhone = false }: { active: boolean; onClick: () => void; compactOnPhone?: boolean }) {
   return <Button type="button" className="editor-tool !size-7 !p-0 focus-visible:!outline-solid focus-visible:!outline-2 focus-visible:!outline-offset-2 focus-visible:!outline-ring" aria-label={translate("editor.sourceMode")} aria-pressed={active} title={translate(active ? "editor.visualMode" : "editor.sourceMode")} onMouseDown={(event) => event.preventDefault()} onClick={onClick}>
     <FileText aria-hidden size={14} />
+    {compactOnPhone && <span className="editor-tool-label">{translate("editor.sourceMode")}</span>}
   </Button>;
 }
 
 /** Toggle an existing editor between its visual document and the exact Written form text. The caller renders the switch (SourceModeButton) and flips the mode through `toggleRef`; `onModeChange` reports the mode back. */
-export function EditorSourceMode({ editor, initialWarnings = [], onSourceDraftChange, toggleRef, onModeChange }: { editor: Editor | null; initialWarnings?: string[]; onSourceDraftChange?: (hasDraft: boolean) => void; toggleRef?: React.MutableRefObject<(() => void) | null>; onModeChange?: (active: boolean) => void }) {
+export function EditorSourceMode({ editor, initialWarnings = [], focusOnToggle = false, onSourceDraftChange, toggleRef, onModeChange }: { editor: Editor | null; initialWarnings?: string[]; focusOnToggle?: boolean; onSourceDraftChange?: (hasDraft: boolean) => void; toggleRef?: React.MutableRefObject<(() => void) | null>; onModeChange?: (active: boolean) => void }) {
   const [source, setSource] = React.useState(false);
   const [text, setText] = React.useState("");
   const [warnings, setWarnings] = React.useState<string[]>([]);
   const [sourceLoss, setSourceLoss] = React.useState(false);
+  const focusSource = React.useRef(false);
   const draft = React.useRef<string | null>(null);
   const sourceRef = React.useRef(false);
   const settingContent = React.useRef(false);
@@ -58,6 +60,7 @@ export function EditorSourceMode({ editor, initialWarnings = [], onSourceDraftCh
 
   const toggle = () => {
     if (!editor) return;
+    focusSource.current = focusOnToggle && window.matchMedia("(width < 48rem), (height <= 30rem) and (pointer: coarse)").matches;
     if (!source) {
       const serialized = richTextMarkdown(editor.getJSON());
       const next = draft.current ?? serialized.markdown;
@@ -94,6 +97,7 @@ export function EditorSourceMode({ editor, initialWarnings = [], onSourceDraftCh
     setWarnings(appliedWarnings);
     setSourceLoss(false);
     showSource(false);
+    if (focusSource.current) editor.commands.focus();
   };
 
   React.useEffect(() => {
@@ -102,7 +106,7 @@ export function EditorSourceMode({ editor, initialWarnings = [], onSourceDraftCh
   React.useEffect(() => () => { if (toggleRef) toggleRef.current = null; }, [toggleRef]);
 
   return <div className="grid w-full min-w-0 max-w-full gap-2" data-testid="editor-source-mode">
-    {source && <Textarea aria-label={translate("editor.sourceText")} data-testid="editor-source-text" rows={Math.min(30, Math.max(6, text.split("\n").length + 1))} className="editor-source-text min-h-40 w-full min-w-0 max-w-full resize-y rounded-md border border-border bg-card p-3 font-mono text-13 text-foreground" value={text} onChange={(event) => { draft.current = event.target.value; setText(event.target.value); setWarnings([]); onSourceDraftChange?.(true); }} />}
+    {source && <Textarea autoFocus={focusSource.current} aria-label={translate("editor.sourceText")} data-testid="editor-source-text" rows={Math.min(30, Math.max(6, text.split("\n").length + 1))} className="editor-source-text min-h-40 w-full min-w-0 max-w-full resize-y rounded-md border border-border bg-card p-3 font-mono text-13 text-foreground" value={text} onChange={(event) => { draft.current = event.target.value; setText(event.target.value); setWarnings([]); onSourceDraftChange?.(true); }} />}
     {source && <p className="m-0 text-12 text-muted-foreground">{translate("editor.sourceReferenceHelp")}</p>}
     {initialWarnings.includes("alignment") && <p role="status" className="m-0 text-13 text-muted-foreground">{translate("editor.removedAlignment")}</p>}
     {initialWarnings.includes("cellBackground") && <p role="status" className="m-0 text-13 text-muted-foreground">{translate("editor.removedCellBackground")}</p>}

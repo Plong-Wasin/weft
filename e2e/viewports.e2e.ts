@@ -119,16 +119,6 @@ try {
         check("work-items-list-page-width-fits", listMetrics.documentWidth <= listMetrics.viewportWidth, `Work items at ${viewport.suffix}: ${JSON.stringify(listMetrics)}`);
         check("work-items-list-content-fits", listMetrics.listRight !== null && listMetrics.listRight <= listMetrics.viewportWidth && listMetrics.listScrollWidth !== null && listMetrics.listClientWidth !== null && listMetrics.listScrollWidth <= listMetrics.listClientWidth + 1 && listMetrics.rowsOverflow.every((overflow) => !overflow) && listMetrics.metadataOverflow.every((overflow) => !overflow), `Work item rows and property chips at ${viewport.suffix}: ${JSON.stringify(listMetrics)}`);
       }
-      if (route.name === "work-items-list" && viewport.suffix === "844x390") {
-        // Save as view stays on landscape phones; it must share a toolbar row with another control rather than wrap alone.
-        const saveViewTop = await target.getByRole("button", { name: translate("views.saveAs") }).evaluate((element) => {
-          const box = element.getBoundingClientRect();
-          const toolbar = element.closest('[data-testid="work-items-toolbar"]');
-          const others = [...(toolbar?.querySelectorAll<HTMLElement>("button, a[href]") ?? [])].filter((other) => other !== element && !other.contains(element) && !element.contains(other) && other.getClientRects().length > 0);
-          return { visible: box.width > 0 && getComputedStyle(element).visibility !== "hidden", sharesRow: others.some((other) => { const r = other.getBoundingClientRect(); return Math.abs(r.top + r.height / 2 - (box.top + box.height / 2)) <= 2; }) };
-        });
-        check("work-items-list-save-view-kept", saveViewTop.visible && saveViewTop.sharesRow, `landscape phone keeps Save as view in a shared toolbar row: ${JSON.stringify(saveViewTop)}`);
-      }
       check("no-sibling-control-overlap", !measurements.siblingControlOverlap, `${route.name} at ${viewport.suffix} has overlapping sibling controls`);
       if (route.auth && measurements.primary) {
         check("primary-control-visible", measurements.primary.x >= 0 && measurements.primary.right <= viewport.width && measurements.primary.y < viewport.height && measurements.primary.bottom > 0,
@@ -187,6 +177,16 @@ try {
     await shortContext.addCookies(client.cookies().map((cookie) => ({ ...cookie, domain: "localhost", path: "/" })));
     const shortPage = await shortContext.newPage();
     await shortPage.goto(`${web}/${slug}/projects/${seed.key}/issues?layout=list`, { waitUntil: "domcontentloaded" });
+    const toolbar = shortPage.getByTestId("work-items-toolbar");
+    await toolbar.getByRole("combobox", { name: translate("layout.switch") }).waitFor();
+    await toolbar.getByRole("button", { name: translate("workItems.moreActions") }).tap();
+    await shortPage.getByRole("menuitem", { name: translate("views.saveAs") }).tap();
+    const saveView = shortPage.getByRole("dialog", { name: translate("views.form.saveTitle") });
+    const saveViewBox = await saveView.boundingBox();
+    check("work-items-list-save-view-kept", !!saveViewBox && saveViewBox.x >= 0 && saveViewBox.y >= 0 && saveViewBox.x + saveViewBox.width <= viewport.width && saveViewBox.y + saveViewBox.height <= viewport.height,
+      `landscape phone opens Save as view from the toolbar overflow: ${JSON.stringify(saveViewBox)}`);
+    await shortPage.keyboard.press("Escape");
+    await saveView.waitFor({ state: "hidden" });
     await shortPage.getByRole("button", { name: translate("layout.display") }).click();
     const displayPanel = shortPage.getByRole("dialog", { name: translate("layout.display") });
     const panelBox = await displayPanel.boundingBox();

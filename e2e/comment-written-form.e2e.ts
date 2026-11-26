@@ -79,6 +79,13 @@ try {
     await page.goto(detailUrl);
     await page.getByText("Reviewed the access check.").waitFor();
   };
+  // Pointer activation of the source switch is a desktop step: on a phone the toolbar only answers while the editor has focus.
+  const clickOnDesktop = async (control: ReturnType<typeof page.getByRole>) => {
+    const size = page.viewportSize()!;
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await control.click();
+    await page.setViewportSize(size);
+  };
   const capture = async (stage: "before" | "after" | "source", width: 1280 | 390, locale: "en" | "th") => {
     await page.setViewportSize({ width, height: width === 390 ? 1000 : 900 });
     await page.locator(`#comment-${legacy.id}`).evaluate((element) => element.scrollIntoView({ block: "center" }));
@@ -138,22 +145,22 @@ try {
     for (const width of [1280, 390] as const) await capture("after", width, locale);
     await converted.getByRole("button", { name: translate("comments.more", locale), exact: true }).first().click(); await page.getByRole("dialog", { name: translate("comments.more", locale) }).getByRole("button", { name: translate("comments.edit", locale), exact: true }).click();
     const editor = converted.getByTestId("comment-editor");
-    await converted.getByRole("button", { name: translate("editor.sourceMode", locale), exact: true }).click();
+    await clickOnDesktop(converted.getByRole("button", { name: translate("editor.sourceMode", locale), exact: true }));
     await editor.getByTestId("editor-source-text").waitFor();
     const sourceText = await editor.getByTestId("editor-source-text").inputValue();
     if (!sourceText.includes("Access") || !sourceText.includes("Reviewer")) throw new Error(`Source mode did not show the stored comment: ${sourceText}`);
     for (const width of [1280, 390] as const) await capture("source", width, locale);
-    await converted.getByRole("button", { name: translate("editor.sourceMode", locale), exact: true }).click();
+    await clickOnDesktop(converted.getByRole("button", { name: translate("editor.sourceMode", locale), exact: true }));
     await page.getByRole("button", { name: translate("comments.cancel", locale) }).last().click();
   }
 
   await page.goto(detailUrl);
   const compactForEditing = page.locator(`#comment-${compactComment.id}`);
   await compactForEditing.getByRole("button", { name: translate("comments.more", "th"), exact: true }).first().click(); await page.getByRole("dialog", { name: translate("comments.more", "th") }).getByRole("button", { name: translate("comments.edit", "th"), exact: true }).click();
-  await compactForEditing.getByRole("button", { name: translate("editor.sourceMode", "th"), exact: true }).click();
+  await clickOnDesktop(compactForEditing.getByRole("button", { name: translate("editor.sourceMode", "th"), exact: true }));
   const compactSource = await compactForEditing.getByTestId("editor-source-text").inputValue();
   if (!compactSource.includes("## ") || !compactSource.includes("### ") || !compactSource.includes("Keep this checklist item") || !compactSource.includes("Reviewer: @{Reviewer|") || !compactSource.includes("---") || !compactSource.includes("const value = 1;\n\nreturn value;")) throw new Error(`Editing did not preserve the original headings, list, mention, atom, or code in source mode: ${JSON.stringify(compactSource)}`);
-  await compactForEditing.getByRole("button", { name: translate("editor.sourceMode", "th"), exact: true }).click();
+  await clickOnDesktop(compactForEditing.getByRole("button", { name: translate("editor.sourceMode", "th"), exact: true }));
   await compactForEditing.getByRole("button", { name: translate("comments.cancel", "th") }).click();
   const timelineAfterEdit = await page.request.post(`${api}/actions/list_timeline`, { data: { workItemId: item.id, filter: "comments", sort: "oldest" } }).then((response) => response.json() as Promise<Array<{ comment: { id: string; markdown: string; replies: Array<{ id: string; markdown: string }> } | null }>>);
   const compactEntryAfterEdit = timelineAfterEdit.find((entry) => entry.comment?.id === compactComment.id)?.comment;

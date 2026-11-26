@@ -3,7 +3,7 @@ import { accessReasonText } from "./access-reason";
 import React from "react";
 import { handleImeSafeEnter } from "./ime";
 import { Link, useNavigate } from "react-router";
-import { ArrowUpRight, CalendarCheck, CalendarClock, ChevronDown, CircleUserRound, Gauge, Layers, Link2, Maximize2, RefreshCw, Package, Tag, Trash2, Users, Archive, ArchiveRestore, X, CircleDot, Sigma, Shapes, MoreHorizontal } from "lucide-react";
+import { ArrowUpRight, CalendarCheck, CalendarClock, ChevronDown, CircleUserRound, Gauge, Layers, Link2, Maximize2, RefreshCw, Package, Tag, Trash2, Users, Plus, Archive, ArchiveRestore, X, CircleDot, Sigma, Shapes, MoreHorizontal } from "lucide-react";
 import { translate, type MessageKey } from "@weft/shared";
 import { action, actionResult, richTextActionError } from "./api";
 import { copyText } from "./toast";
@@ -32,6 +32,7 @@ import { DetailsPanelToggle, useDetailsPanel } from "./details-panel";
 
 import { Input } from "@/ui/input";
 import { Textarea } from "@/ui/textarea";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/ui/dropdown-menu";
 type Named = { id: string; name: string; status?: string };
 const t = (key: string) => translate(key as MessageKey);
 const sectionClass = "grid gap-2 [&_form]:my-0 [&_form]:flex [&_form]:flex-wrap [&_form]:items-center [&_form]:gap-2 [&_select]:w-auto [&_button]:w-auto [&_button]:whitespace-nowrap [&_p]:m-0 [&_h3]:m-0 [&_h3]:text-16 [&_h3]:font-semibold [&_h3]:text-foreground [&_ul]:m-0 [&_ul]:pl-5";
@@ -157,6 +158,10 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged, onLoaded, 
   const [collapsedProps, setCollapsedProps] = React.useState<string[]>(readCollapsedProps);
   const [activeForm, setActiveForm] = React.useState<string | null>(null);
   const attachmentPicker = React.useRef<HTMLInputElement>(null);
+  const [addMenuContainer, setAddMenuContainer] = React.useState<HTMLElement>();
+  const addMenuRef = React.useCallback((node: HTMLDivElement | null) => {
+    if (node) setAddMenuContainer(node.closest<HTMLElement>("[data-peek]") ?? undefined);
+  }, []);
   const [estimate, setEstimate] = React.useState<Estimate | null>(null);
   const [title, setTitle] = React.useState("");
   const [note, setNote] = React.useState<string | null>(null);
@@ -293,6 +298,12 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged, onLoaded, 
     setActiveForm((current) => current === key ? null : key);
     setCollapsed((current) => current.filter((value) => value !== key));
   };
+  const addActions = [
+    { label: t("workItems.addSubItemAction"), run: () => openAction("subItems") },
+    { label: t("workItems.addRelationAction"), run: () => { setActiveForm("relations"); setCollapsed((current) => current.filter((value) => value !== "relations")); } },
+    { label: t("workItems.addLinkAction"), run: () => openAction("links") },
+    { label: t("workItems.attachAction"), run: () => { setActiveForm("attachments"); setCollapsed((current) => current.filter((value) => value !== "attachments")); attachmentPicker.current?.click(); } },
+  ];
   const section = (key: string, label: string, count: number, content: React.ReactNode) => (
     <details className={sectionClass} hidden={count === 0 && activeForm !== key} open={!collapsed.includes(key)} onToggle={(event) => {
       const isOpen = event.currentTarget.open;
@@ -341,7 +352,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged, onLoaded, 
     {mode === "page" && <div className="ml-auto flex items-center gap-2">
       <span className="[&_button]:whitespace-nowrap"><AiOnly><SidecarTrigger context={{ type: "work_item", id: item.displayId, title: item.title }} /></AiOnly></span>
       <span className="hidden lg:block"><DetailsPanelToggle open={propertiesOpen} onToggle={detailsPanel.toggle} panelId={`work-item-details-${item.id}`} testId="work-item-properties-toggle" /></span>
-      <Popover label={t("workItems.more")} align="right" className="!size-10 shrink-0 border border-border bg-card p-0 sm:hidden" trigger={<MoreHorizontal aria-hidden size={18} />}>
+      <Popover label={t("workItems.more")} align="right" className="!size-10 shrink-0 justify-center border border-border bg-card !p-0 sm:hidden" trigger={<MoreHorizontal aria-hidden size={18} />}>
         {(close) => <>
           <Button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void copy(); }}>{t("workItems.copyLink")}</Button>
           {mayArchive && !isArchived && eligible && <Button type="button" role="menuitem" className={menuItemClass} onClick={() => { close(); void archiveOrRestore("archive_work_item"); }}>{t("workItems.archive")}</Button>}
@@ -427,7 +438,7 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged, onLoaded, 
       {keyPickers.state}{keyPickers.priority}{keyPickers.assignees}{keyPickers.due}
     </div>
     <div className="min-h-16 min-w-0 max-w-full">
-      <DescriptionEditor key={`${item.id}:${editorEpoch}`} workspaceId={workspace.id} workItemId={item.id} mentionPeople={people} initial={item.description} editable={canWrite}
+      <DescriptionEditor key={`${item.id}:${editorEpoch}`} workspaceId={workspace.id} workItemId={item.id} mentionPeople={people} initial={item.description} editable={canWrite} compactOnPhone
         status={<p role="status" data-testid="description-save-status" className={`m-0 min-w-0 text-12 ${descriptionSaveState === "notSaved" || descriptionSaveState === "failed" ? "text-destructive" : "text-muted-foreground"}`}>{descriptionSaveState === "failed" ? descriptionSaveError ?? t("workItems.descriptionSave.failed") : t(`workItems.descriptionSave.${descriptionSaveState}`)}</p>}
         onSourceDraftChange={(hasDraft) => { if (hasDraft) setDescriptionSaveState("notSaved"); }}
         onChange={(doc) => { pending.current = { id: item.id, doc }; setDescriptionSaveError(null); setDescriptionSaveState("saving"); if (timer.current) clearTimeout(timer.current); timer.current = setTimeout(flush, 700); }} />
@@ -435,12 +446,19 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged, onLoaded, 
     {lastDescriptionEdit && <Button variant="ghost" data-testid="description-last-edited" type="button" className="justify-self-start bg-transparent p-0 text-muted-foreground hover:bg-transparent hover:text-foreground" onClick={() => void openVersions()}>
       {t("workItems.lastEditedBy").replace("{name}", lastDescriptionEdit.name).replace("{time}", relativeTime(lastDescriptionEdit.at))} ▾
     </Button>}
-    <div role="group" className="flex w-full min-w-0 max-w-full flex-wrap gap-2 max-sm:grid max-sm:grid-cols-[auto_auto] max-sm:justify-items-start max-sm:[&>button]:whitespace-nowrap" aria-label={t("workItems.actions")}>
+    <div role="group" className="flex w-full min-w-0 max-w-full flex-wrap gap-2" aria-label={t("workItems.actions")}>
       {canWrite && <>
-        <Button type="button" className="max-sm:min-h-11 pointer-coarse:min-h-11" onClick={() => openAction("subItems")}>{t("workItems.addSubItemAction")}</Button>
-        <Button type="button" className="max-sm:min-h-11 pointer-coarse:min-h-11" onClick={() => { setActiveForm("relations"); setCollapsed((current) => current.filter((value) => value !== "relations")); }}>{t("workItems.addRelationAction")}</Button>
-        <Button type="button" className="max-sm:min-h-11 pointer-coarse:min-h-11" onClick={() => openAction("links")}>{t("workItems.addLinkAction")}</Button>
-        <Button type="button" className="max-sm:min-h-11 pointer-coarse:min-h-11" onClick={() => { setActiveForm("attachments"); setCollapsed((current) => current.filter((value) => value !== "attachments")); attachmentPicker.current?.click(); }}>{t("workItems.attachAction")}</Button>
+        {addActions.map(({ label, run }) => <Button key={label} type="button" className="pointer-coarse:min-h-11 phone-layout:hidden" onClick={run}>{label}</Button>)}
+        <div ref={addMenuRef} className="hidden phone-layout:block">
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<Button type="button" variant="secondary" />} className="min-h-11">
+              <Plus aria-hidden size={16} />{t("layout.addShort")}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent container={addMenuContainer}>
+              {addActions.map(({ label, run }) => <DropdownMenuItem key={label} className="min-h-11" onClick={run}>{label}</DropdownMenuItem>)}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </>}
     </div>
     {section("subItems", t("workItems.subItems"), subItems.length, <>

@@ -91,16 +91,21 @@ try {
 
       if (route.name === "work-items-list") {
         const rows = await rowsIn(target, `parent of [role="group"][aria-label="${switchLabel}"]`);
-        const limit = viewport.width < 768 ? 2 : 1;
+        const limit = 1;
         check(rows.length <= limit, `work-items-list at ${viewport.width}px: toolbar takes ${rows.length} rows [${rows.join(", ")}] (limit ${limit})`);
-        check(await target.getByRole("button", { name: translate("views.saveAs") }).isVisible(), `work-items-list at ${viewport.width}px hides Save as view`);
+        // Phones keep Save as view inside the toolbar's More actions menu.
+        const more = target.getByRole("button", { name: translate("workItems.moreActions"), exact: true });
+        if (viewport.width < 768) await more.click();
+        if (viewport.width < 768) await target.getByRole("menuitem", { name: translate("views.saveAs") }).waitFor();
+        check(await target.getByRole(viewport.width < 768 ? "menuitem" : "button", { name: translate("views.saveAs") }).isVisible(), `work-items-list at ${viewport.width}px hides Save as view`);
+        if (viewport.width < 768) await target.keyboard.press("Escape");
       }
 
       if (route.name === "work-item-page" && viewport.width < 768) {
         const chipRows = await rowsIn(target, `[data-quick-properties][aria-label="${quickLabel}"]`);
         check(chipRows.length > 0 && chipRows.every((count) => count === 2), `work-item-page at ${viewport.width}px quick properties rows: [${chipRows.join(", ")}] (want two per row)`);
         const actionRows = await rowsIn(target, `[role="group"][aria-label="${actionsLabel}"]`);
-        check(actionRows.length > 0 && actionRows.every((count) => count === 2), `work-item-page at ${viewport.width}px action rows: [${actionRows.join(", ")}] (want two per row)`);
+        check(actionRows.length === 1 && actionRows[0] === 1, `work-item-page at ${viewport.width}px action rows: [${actionRows.join(", ")}] (want one Add menu)`);
       }
       if (signedOut) await signedOut.close();
     }

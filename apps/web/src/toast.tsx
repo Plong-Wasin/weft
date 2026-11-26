@@ -23,7 +23,7 @@ export async function copyText(text: string, done: string, failed: string) {
 
 export function Toaster() {
   const current = React.useSyncExternalStore(subscribe, () => toasts);
-  return <div role="status" aria-live="polite" className="pointer-events-none fixed bottom-4 right-4 z-[100] grid gap-2">
+  return <div role="status" aria-live="polite" data-testid="toaster" className="pointer-events-none fixed bottom-4 right-4 z-[100] grid gap-2">
     {current.map((toast) => <div key={toast.id} className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-[13px] text-foreground shadow-lg">
       {toast.tone === "success" ? <Check aria-hidden size={14} className="text-green-600" /> : <CircleAlert aria-hidden size={14} className="text-destructive" />}
       {toast.message}

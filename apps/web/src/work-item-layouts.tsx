@@ -2,9 +2,9 @@ import { Button, buttonVariants } from "@/ui/button";
 import { accessReasonText } from "./access-reason";
 import React from "react";
 import { Link } from "react-router";
-import { ArrowLeft, ArrowRight, BarChart3, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Columns3, List, Package, Plus, RefreshCw, SlidersHorizontal, Table2, Tag, Users, ChevronsLeft } from "lucide-react";
+import { ArrowLeft, ArrowRight, BarChart3, CalendarDays, ChevronDown, Check, ChevronLeft, ChevronRight, Columns3, Ellipsis, List, Package, Plus, RefreshCw, SlidersHorizontal, Table2, Tag, Users, ChevronsLeft } from "lucide-react";
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
-import { calendarPlacement, completeGroups, displayProperties, effectiveSubGroup, ganttPlacement, groupItems, groupings, moveProperty, parseLayoutParams, serializeLayoutParams, priorityOrder, sortFields, type DisplayProperty, type GanttZoom, type LayoutParams } from "./work-item-layout";
+import { calendarPlacement, completeGroups, displayProperties, effectiveSubGroup, ganttPlacement, groupItems, groupings, layouts, moveProperty, parseLayoutParams, serializeLayoutParams, priorityOrder, sortFields, type DisplayProperty, type GanttZoom, type LayoutParams } from "./work-item-layout";
 import { paths } from "./routes";
 import { Popover } from "./shell/popover";
 import { WorkItemDetail } from "./work-item-detail";
@@ -21,6 +21,7 @@ import { TypeIconMark, type WorkItemType } from "./work-item-types";
 
 import { Checkbox } from "@/ui/checkbox";
 import { Input } from "@/ui/input";
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/ui/dropdown-menu";
 type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 type Run = <T>(name: string, body: unknown) => Promise<{ data: T } | { error: string }>;
 type State = { id: string; name: string; group: StateGroup };
@@ -52,7 +53,7 @@ function useHoverNone() {
   return matches;
 }
 
-export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp, refreshKey, cycleId, moduleId, cyclesEnabled, modulesEnabled, typesEnabled = false, canWrite = true, canCreate = false, onAddItem, rowAction, toolbarExtra }: { projectId: string; workspaceSlug: string; action: Call; run?: Run; refreshKey: number; cycleId?: string; moduleId?: string; cyclesEnabled?: boolean; typesEnabled?: boolean; modulesEnabled?: boolean; canWrite?: boolean; canCreate?: boolean; /** Opens the Create work item dialog. Passed by the project Work items page only: it turns on the empty-project state, whose button needs it. */ onAddItem?: () => void; rowAction?: (item: Item) => React.ReactNode; /** Extra toolbar controls after Display (Save as view, Update view); gets the settings now applied. */ toolbarExtra?: (params: LayoutParams) => React.ReactNode }) {
+export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp, refreshKey, cycleId, moduleId, cyclesEnabled, modulesEnabled, typesEnabled = false, canWrite = true, canCreate = false, onAddItem, rowAction, toolbarExtra, phoneToolbar }: { projectId: string; workspaceSlug: string; action: Call; run?: Run; refreshKey: number; cycleId?: string; moduleId?: string; cyclesEnabled?: boolean; typesEnabled?: boolean; modulesEnabled?: boolean; canWrite?: boolean; canCreate?: boolean; /** Opens the Create work item dialog. Passed by the project Work items page only: it turns on the empty-project state, whose button needs it. */ onAddItem?: () => void; rowAction?: (item: Item) => React.ReactNode; /** Extra toolbar controls after Display (Save as view, Update view); gets the settings now applied. */ toolbarExtra?: (params: LayoutParams) => React.ReactNode; phoneToolbar?: { onSaveView?: (params: LayoutParams) => void; settingsPath: string } }) {
   // Every page passes an error-aware `run` so a filter query error shows; the fallback over `action` drops the server message and is only for callers that have no runner.
   const run: Run = React.useMemo(() => runProp ?? (async <T,>(name: string, body: unknown) => { const data = await action<T>(name, body); return data === null ? { error: "" } : { data }; }), [runProp, action]);
   const [params, setParams] = React.useState<LayoutParams>(() => parseLayoutParams(window.location.search));
@@ -102,6 +103,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     observer.observe(listBox);
     return () => observer.disconnect();
   }, [listBox]);
+  const phoneToolbarMenu = React.useRef<HTMLButtonElement>(null);
   const [filterQueryOpen, setFilterQueryOpen] = React.useState(false);
   const [lookupsLoaded, setLookupsLoaded] = React.useState({ base: false, cycles: false, modules: false, types: false });
   const [typeOptions, setTypeOptions] = React.useState<WorkItemType[]>([]);
@@ -532,21 +534,19 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     const priorityEmpty = isEmptyProperty(item, "priority");
     return <li key={item.id} data-testid={`row-${item.displayId}`} data-list-row className="work-item-list-row group/row border-b border-border px-1 py-0.5 max-sm:py-0">
       <div style={columnStyle} className={cn(
-        "mx-1 grid min-w-0 grid-cols-1 gap-y-0 rounded-lg px-3 py-1 max-sm:py-0.5 sm:grid-cols-[var(--cols)] sm:items-center sm:gap-x-2 sm:gap-y-0 sm:py-0 [@media(hover:none)]:sm:min-h-10",
+        "mx-1 grid min-w-0 grid-cols-1 gap-y-0 rounded-lg px-3 py-1 max-sm:pb-0 max-sm:pt-2.5 sm:grid-cols-[var(--cols)] sm:items-center sm:gap-x-2 sm:gap-y-0 sm:py-0 [@media(hover:none)]:sm:min-h-10",
         selected.includes(item.id) ? "bg-background" : "bg-transparent hover:bg-accent",
-        // Two 40px lines need 4px between them for disjoint 44px tap areas.
-        phoneProperties.length === 0 && "pointer-coarse:max-sm:gap-y-1",
       )}>
-        <div className="flex min-h-10 min-w-0 items-center gap-2 sm:contents [@media(pointer:coarse)]:max-sm:gap-3.5">
+        <div className="flex min-h-10 min-w-0 items-center gap-2 max-sm:min-h-6 sm:contents [@media(pointer:coarse)]:max-sm:gap-3.5">
           <span className="flex size-4 shrink-0 items-center justify-center sm:order-1 sm:justify-self-center">{checkbox ? React.cloneElement(checkbox, { className: cn(checkbox.props.className, "rounded-sm") }) : <span aria-hidden />}</span>
           <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} title={item.title} className="min-w-0 flex-1 thai-room truncate text-14 font-medium text-foreground sm:order-5 sm:[@media(hover:none)]:line-clamp-2 sm:[@media(hover:none)]:whitespace-normal sm:[@media(hover:none)]:[overflow-wrap:anywhere]">{item.title}</Link>
         </div>
         <div data-testid="work-item-row-metadata" className={cn(
-          "work-item-row-metadata flex min-h-10 min-w-0 flex-wrap items-center justify-end gap-1 [@media(pointer:coarse)]:gap-2 sm:contents max-sm:flex-wrap max-sm:gap-1 max-sm:justify-start max-sm:overflow-visible [@media(hover:none)]:max-sm:gap-y-4",
-          phoneProperties.length > 0 && "max-sm:min-h-13 [@media(hover:none)]:max-sm:py-2.5",
+          "work-item-row-metadata flex min-h-10 min-w-0 flex-wrap items-center justify-end gap-1 [@media(pointer:coarse)]:gap-2 sm:contents max-sm:flex-wrap max-sm:gap-1 max-sm:justify-start max-sm:overflow-visible [@media(pointer:coarse)]:max-sm:pr-2 [@media(hover:none)]:max-sm:gap-y-4",
+          "max-sm:min-h-11", phoneProperties.length > 0 && "[@media(hover:none)]:max-sm:py-2.5",
         )}>
-          {leadingProperties.includes("priority") && <span data-list-property="priority" data-empty-property={priorityEmpty ? "true" : undefined} className={cn("flex min-w-7 shrink-0 items-center justify-center sm:order-2 sm:[&>*]:max-w-full sm:[&_button]:max-w-full sm:[&_button]:px-1 [&_svg]:shrink-0", priorityEmpty && emptyPropertyClass)}>{cellOf(item, "priority", false, true, true)}</span>}
-          {shows("id") ? <span title={item.displayId} className="min-w-0 shrink-0 truncate whitespace-nowrap text-11 tabular-nums text-muted-foreground sm:order-3 sm:text-12">{item.displayId}</span> : <span aria-hidden className="sm:order-3" />}
+          {leadingProperties.includes("priority") && <span data-list-property="priority" data-empty-property={priorityEmpty ? "true" : undefined} className={cn("flex min-w-7 shrink-0 items-center justify-center [@media(pointer:coarse)]:max-sm:min-w-11 sm:order-2 sm:[&>*]:max-w-full sm:[&_button]:max-w-full sm:[&_button]:px-1 [&_svg]:shrink-0", priorityEmpty && emptyPropertyClass)}>{cellOf(item, "priority", false, true, true)}</span>}
+          {shows("id") ? <span title={item.displayId} className="min-w-0 shrink-0 truncate whitespace-nowrap text-11 tabular-nums text-muted-foreground max-sm:order-first max-sm:min-w-12 sm:order-3 sm:text-12">{item.displayId}</span> : <span aria-hidden className="max-sm:order-first max-sm:min-w-12 sm:order-3" />}
           {leadingProperties.includes("state") && <span className="flex min-w-7 shrink-0 items-center justify-center sm:order-4 sm:[&>*]:max-w-full sm:[&_button]:max-w-full sm:[&_button]:px-1 [&_svg]:shrink-0">{cellOf(item, "state", false, true, true)}</span>}
           <div className="hidden sm:contents">
             {oneLine ? shownProperties.map((property) => propertyCell(item, property))
@@ -573,7 +573,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   // The project's Work items page (the only caller with onAddItem) shows one empty state in the list, board and spreadsheet layouts, not five empty status groups. Cycles, Modules and Views keep their groups.
   const emptyProject = onAddItem !== undefined && loaded && !filtered && items.length === 0 && (params.layout === "list" || board || sheet);
   const emptyBlock = <div className="rounded-xl border border-border bg-card"><EmptyState title={t("workItems.empty")} description={t("workItems.emptyHint")}
-    action={onAddItem && canCreate && canWrite ? <Button variant="primary" type="button" className="flex items-center gap-1.5" onClick={onAddItem}><Plus aria-hidden size={14} />{t("workItems.addNew")}</Button> : undefined} /></div>;
+    action={onAddItem && canCreate && canWrite ? <Button variant="primary" type="button" className={cn("flex items-center gap-1.5", phoneToolbar?.onSaveView && "phone-layout:hidden")} onClick={onAddItem}><Plus aria-hidden size={14} />{t("workItems.addNew")}</Button> : undefined} /></div>;
 
   const boardStateIds = stateIds.filter((id) => !chips || chips.state.length === 0 || chips.state.includes(id));
   const boardPeople = people.length > 0 ? people.map((person) => person.userId) : [];
@@ -756,18 +756,24 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     <aside aria-label={t("layout.gantt.undated")} className="mt-2 rounded-lg bg-muted p-3"><h3 className="mb-2 text-13 font-medium">{t("layout.gantt.undated")}</h3>{gantt.undated.length ? <ul className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">{gantt.undated.map((item) => <li key={item.id}><Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="block rounded-md px-2 py-1.5 text-13 text-foreground hover:bg-accent">{item.title}</Link></li>)}</ul> : <p className="text-13 text-muted-foreground">{t("layout.gantt.noUndated")}</p>}</aside>
   </section>;
 
-  const toolbar = <div data-testid="work-items-toolbar" className="work-items-toolbar @container/work-items-toolbar flex min-w-0 flex-wrap items-center gap-2 pointer-coarse:gap-y-3 [@media(max-height:480px)]:[&_span:not([data-slot=checkbox]):not([data-slot=checkbox]_*):not(:has([data-slot=checkbox]))]:sr-only">
-    <div role="group" aria-label={t("layout.switch")} className="flex min-w-0 flex-wrap items-center gap-0.5 rounded-lg bg-muted p-0.5">
-      {(["list", "board", "spreadsheet", "calendar", "gantt"] as const).map((layout) => { const Icon = layout === "list" ? List : layout === "board" ? Columns3 : layout === "spreadsheet" ? Table2 : layout === "calendar" ? CalendarDays : BarChart3; return <Button key={layout} variant={params.layout === layout ? "secondary" : "ghost"} type="button" data-layout-switch aria-pressed={params.layout === layout} aria-label={t(`layout.${layout}`)} title={t(`layout.${layout}`)}
+  const toggleSelectShown = () => setSelected(allPicked ? [] : orderedIds.slice(0, 500));
+  const isQueryOpen = filterQueryOpen || queryError !== null;
+  const toggleQuery = () => setFilterQueryOpen(!filterQueryOpen);
+  const toolbar = <div data-testid="work-items-toolbar" className={cn("work-items-toolbar @container/work-items-toolbar flex min-w-0 flex-wrap items-center gap-2 pointer-coarse:gap-y-3 [@media(max-height:480px)]:[&_span:not([data-slot=checkbox]):not([data-slot=checkbox]_*):not(:has([data-slot=checkbox]))]:sr-only", phoneToolbar && "phone-layout:flex-nowrap")}>
+    {phoneToolbar && <select aria-label={t("layout.switch")} className={cn(selectClass, "hidden min-h-11 w-auto flex-1 phone-layout:block")} value={params.layout} onChange={(event) => update({ layout: event.target.value as LayoutParams["layout"] })}>
+      {layouts.map((layout) => <option key={layout} value={layout}>{t(`layout.${layout}`)}</option>)}
+    </select>}
+    <div role="group" aria-label={t("layout.switch")} className={cn("flex min-w-0 flex-wrap items-center gap-0.5 rounded-lg bg-muted p-0.5", phoneToolbar && "phone-layout:hidden")}>
+      {layouts.map((layout) => { const Icon = layout === "list" ? List : layout === "board" ? Columns3 : layout === "spreadsheet" ? Table2 : layout === "calendar" ? CalendarDays : BarChart3; return <Button key={layout} variant={params.layout === layout ? "secondary" : "ghost"} type="button" data-layout-switch aria-pressed={params.layout === layout} aria-label={t(`layout.${layout}`)} title={t(`layout.${layout}`)}
         className={cn(
           "inline-flex items-center rounded-md p-1.5 hover:text-foreground max-sm:min-h-9 max-sm:min-w-9 max-sm:flex-col max-sm:justify-center max-sm:gap-0.5 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:rounded-none",
           params.layout === layout ? "bg-card text-foreground shadow-sm" : "bg-transparent text-muted-foreground hover:bg-accent max-sm:text-foreground",
         )} onClick={() => update({ layout })}><Icon aria-hidden size={16} /><span className="hidden text-11 leading-none max-sm:inline @max-[19rem]/work-items-toolbar:sr-only">{t(`layout.${layout}`)}</span></Button>; })}
     </div>
-    {selectable && <label className="inline-flex min-h-11 cursor-pointer items-center" title={t("bulk.selectAll")}><span className={cn(toolbarSecondarySm, "gap-2")}><Checkbox hitArea="overlay" className="size-4" checked={allPicked} onChange={() => setSelected(allPicked ? [] : orderedIds.slice(0, 500))} /><span className="sr-only">{t("bulk.selectAll")}</span><span aria-hidden>{t("bulk.selectShown")}</span></span></label>}
-    <FilterPicker sections={sections} filters={chips ?? emptyFilters()} count={filterCount} onChange={setFilters} onClear={() => update({ q: "" })} />
-    <FilterQueryToggle open={filterQueryOpen || (queryError !== null)} onToggle={() => setFilterQueryOpen(!filterQueryOpen)} />
-    <Popover label={t("layout.display")} className={toolbarSecondarySm} panelRole="dialog" panelClassName="grid w-72 max-w-[calc(100vw-2rem)] max-h-[70dvh] gap-3 overflow-auto p-3" trigger={<><SlidersHorizontal aria-hidden size={14} /><span className="max-sm:sr-only">{t("layout.display")}</span></>}>
+    {selectable && <label className={cn("inline-flex min-h-11 cursor-pointer items-center", phoneToolbar && "phone-layout:hidden")} title={t("bulk.selectAll")}><span className={cn(toolbarSecondarySm, "gap-2")}><Checkbox hitArea="overlay" className="size-4" checked={allPicked} onChange={toggleSelectShown} /><span className="sr-only">{t("bulk.selectAll")}</span><span aria-hidden>{t("bulk.selectShown")}</span></span></label>}
+    <FilterPicker sections={sections} filters={chips ?? emptyFilters()} count={filterCount} compactOnPhone={!!phoneToolbar} onChange={setFilters} onClear={() => update({ q: "" })} />
+    <FilterQueryToggle className={phoneToolbar ? "phone-layout:hidden" : undefined} open={isQueryOpen} onToggle={toggleQuery} />
+    <Popover label={t("layout.display")} className={cn(toolbarSecondarySm, phoneToolbar && "phone-layout:size-11 phone-layout:shrink-0 phone-layout:justify-center phone-layout:p-0")} panelRole="dialog" panelClassName="grid w-72 max-w-[calc(100vw-2rem)] max-h-[70dvh] gap-3 overflow-auto p-3" trigger={<><SlidersHorizontal aria-hidden size={14} /><span className={cn("max-sm:sr-only", phoneToolbar && "phone-layout:sr-only")}>{t("layout.display")}</span></>}>
       {() => <>
         {!sheet && <label>{t("layout.group")}<select className={selectClass} value={board ? boardGroup : params.group} onChange={(event) => { const group = event.target.value as LayoutParams["group"]; update({ group, subGroup: params.subGroup === group ? "none" : params.subGroup }); }}>
           {(board ? groupings.filter((value) => value !== "none") : groupings).filter((value) => value !== "type" || typesEnabled).map((value) => <option key={value} value={value}>{t(`layout.group.${value}`)}</option>)}
@@ -795,6 +801,26 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
         </fieldset>
       </>}
     </Popover>
+    {phoneToolbar && <div className="hidden shrink-0 phone-layout:block">
+      <DropdownMenu>
+        <DropdownMenuTrigger ref={phoneToolbarMenu} render={<Button type="button" variant="ghost" />} aria-label={t("workItems.moreActions")} className="size-11">
+          <Ellipsis aria-hidden size={18} />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          {selectable && <DropdownMenuCheckboxItem className="min-h-11" checked={allPicked} onCheckedChange={toggleSelectShown} closeOnClick>
+            <span aria-hidden className="absolute start-2.5">{allPicked ? <Check size={14} /> : null}</span>
+            {t("bulk.selectShown")}
+          </DropdownMenuCheckboxItem>}
+          <DropdownMenuCheckboxItem className="min-h-11" checked={isQueryOpen} onCheckedChange={toggleQuery} closeOnClick>
+            <span aria-hidden className="absolute start-2.5">{isQueryOpen ? <Check size={14} /> : null}</span>
+            {t("layout.filterQuery.button")}
+          </DropdownMenuCheckboxItem>
+          {phoneToolbar.onSaveView && <DropdownMenuItem className="min-h-11" onClick={() => { phoneToolbarMenu.current?.focus(); phoneToolbar.onSaveView?.(params); }}>{t("views.saveAs")}</DropdownMenuItem>}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem render={<Link to={phoneToolbar.settingsPath} />} className="min-h-11">{t("projects.settings")}</DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>}
     {toolbarExtra?.(params)}
   </div>;
 
@@ -839,7 +865,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     </aside>
   </>;
 
-  return <div className="grid gap-3">
+  return <div className={cn("grid gap-3", phoneToolbar && "phone-layout:gap-1")}>
     {peekPanel}
     {toolbar}
     <FilterChips filters={chips ?? emptyFilters()} sections={sections} custom={chips === null} onChange={setFilters} onClear={() => update({ q: "" })} />
@@ -859,8 +885,8 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
         const open = empty ? expandedEmpty.includes(group.key) || quick === group.key : !collapsed.includes(group.key);
         const name = params.group === "none" ? "" : groupLabel(group.key);
         return <section key={group.key} aria-label={params.group === "none" ? undefined : name}>
-          {params.group !== "none" && <div className="mx-1 my-1 flex items-center gap-2 border-b border-border bg-muted px-3 py-1.5">
-            <Button variant="ghost" type="button" aria-expanded={open} aria-label={`${t("layout.toggleGroup")}: ${name}`} className="flex flex-1 items-center justify-start gap-2 bg-transparent p-0 text-left font-medium text-foreground hover:bg-transparent max-[360px]:h-auto max-[360px]:min-h-9 max-[360px]:min-w-0 max-[360px]:whitespace-normal max-[360px]:[&_svg]:shrink-0"
+          {params.group !== "none" && <div className={cn("mx-1 my-1 flex items-center gap-2 border-b border-border bg-muted px-3 py-1.5", phoneToolbar && "phone-layout:my-0 phone-layout:py-0")}>
+            <Button variant="ghost" type="button" aria-expanded={open} aria-label={`${t("layout.toggleGroup")}: ${name}`} className="flex flex-1 items-center justify-start gap-2 bg-transparent p-0 text-left font-medium text-foreground hover:bg-transparent max-[360px]:h-auto max-[360px]:min-h-9 max-[360px]:min-w-0 max-[360px]:whitespace-normal max-[360px]:[&_svg]:shrink-0 phone-layout:min-h-11"
               onClick={() => empty ? (open ? (setExpandedEmpty(expandedEmpty.filter((key) => key !== group.key)), quick === group.key && setQuick(null)) : setExpandedEmpty([...expandedEmpty, group.key])) : setCollapsed(open ? [...collapsed, group.key] : collapsed.filter((key) => key !== group.key))}>
               {open ? <ChevronDown aria-hidden size={14} className="text-muted-foreground" /> : <ChevronRight aria-hidden size={14} className="text-muted-foreground" />}
               {groupIcon(group.key)}<span className="max-[360px]:[overflow-wrap:anywhere]">{name}</span><span className="text-13 font-normal text-muted-foreground max-[360px]:shrink-0">{formatNumber(group.items.length)}</span>

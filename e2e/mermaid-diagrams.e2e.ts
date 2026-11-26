@@ -168,7 +168,8 @@ try {
           return { viewport: window.innerWidth, box: rect(box), image: rect(image), editor: rect(editor), pageWidth: document.documentElement.scrollWidth, ancestors };
         });
         check(!diagramBounds.box || (diagramBounds.box.right <= diagramBounds.viewport + 1 && (!diagramBounds.image || diagramBounds.image.right <= diagramBounds.box.right + 1)), `${kind} diagram image is clipped at phone width: ${JSON.stringify(diagramBounds)}`);
-        check(await page.evaluate(() => { const toolbar = document.querySelector('[data-testid="description-toolbar"]'); return !toolbar || [...toolbar.children].every((button) => button.getBoundingClientRect().right <= toolbar.getBoundingClientRect().right + 1); }), `${kind} diagram toolbar is clipped at phone width`);
+        // The phone toolbar is one row that scrolls inside itself, so it stays within the viewport while its tools may not.
+        check(await page.evaluate(() => { const toolbar = document.querySelector('[data-testid="description-toolbar"]'); return !toolbar || (toolbar.getBoundingClientRect().right <= window.innerWidth && getComputedStyle(toolbar).overflowX === "auto"); }), `${kind} diagram toolbar is clipped at phone width`);
         await page.screenshot({ path: `${captureDir}/08-${kind}-390-${locale}-${theme}.png`, fullPage: true });
       }
     }

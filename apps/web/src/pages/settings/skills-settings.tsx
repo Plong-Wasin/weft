@@ -17,7 +17,7 @@ function SkillEditor({ draft, onChange, onSubmit, onCancel }: { draft: SkillDraf
   const set = (key: keyof SkillDraft) => (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => onChange({ ...draft, [key]: event.target.value });
   return <form className="grid gap-3" onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
     <label>{translate("skills.name")}<Input maxLength={64} value={draft.name} onChange={set("name")} aria-describedby="skill-name-hint" /></label>
-    <p id="skill-name-hint" className="text-13 text-secondary">{translate("skills.nameHint")}</p>
+    <p id="skill-name-hint" className="text-13 text-muted-foreground">{translate("skills.nameHint")}</p>
     <label>{translate("skills.descriptionField")}<Textarea maxLength={1024} rows={2} value={draft.description} onChange={set("description")} /></label>
     <label>{translate("skills.instructions")}<Textarea maxLength={8000} rows={5} value={draft.instructions} onChange={set("instructions")} /></label>
     <div className="flex gap-2"><Button type="submit">{translate("skills.save")}</Button>{onCancel && <Button type="button" className="secondary" onClick={onCancel}>{translate("agents.cancel")}</Button>}</div>
@@ -81,8 +81,8 @@ export function WorkspaceSkills() {
         {(["personal", "workspace"] as const).map((scope) => <TabsTrigger value={scope} key={scope}>{translate(`skills.${scope}`)}</TabsTrigger>)}
       </TabsList>
       <TabsContent value={tab} className="grid gap-3">
-    {tab === "workspace" && !isAdmin && <p className="mb-3 text-13 text-secondary">{translate("skills.readOnly")}</p>}
-    {role === "Guest" && tab === "personal" && <p className="mb-3 text-13 text-secondary">{translate("skills.guestReadOnly")}</p>}
+    {tab === "workspace" && !isAdmin && <p className="mb-3 text-13 text-muted-foreground">{translate("skills.readOnly")}</p>}
+    {role === "Guest" && tab === "personal" && <p className="mb-3 text-13 text-muted-foreground">{translate("skills.guestReadOnly")}</p>}
     {!editor && ((tab === "personal" && canPersonal) || (tab === "workspace" && isAdmin)) && <SettingsBlock title={translate("skills.create")}>
       <Button type="button" onClick={() => { setNote(null); setEditor({ draft: blank }); }}>{translate("skills.create")}</Button>
     </SettingsBlock>}
@@ -90,8 +90,8 @@ export function WorkspaceSkills() {
       <SkillEditor draft={editor.draft} onChange={(draft) => setEditor({ ...editor, draft })} onSubmit={() => void save()} onCancel={() => setEditor(null)} />
     </SettingsBlock>}
     <SettingsBlock>
-      {visible.length === 0 ? <p className="text-secondary">{translate("skills.none")}</p> : <RowList>{visible.map((skill) => <Row key={skill.id}>
-        <div className="grid min-w-0 flex-1 gap-1"><span className="font-medium">{skill.name}</span><span className="text-13 text-secondary">{skill.description}</span></div>
+      {visible.length === 0 ? <p className="text-muted-foreground">{translate("skills.none")}</p> : <RowList>{visible.map((skill) => <Row key={skill.id}>
+        <div className="grid min-w-0 flex-1 gap-1"><span className="font-medium">{skill.name}</span><span className="text-13 text-muted-foreground">{skill.description}</span></div>
         {(tab === "personal" || isAdmin) && <div className="flex gap-2"><Button type="button" className="secondary" onClick={() => void edit(skill)}>{translate("skills.edit")}</Button><Button type="button" className="secondary" onClick={() => void remove(skill)}>{translate("skills.delete")}</Button></div>}
       </Row>)}</RowList>}
     </SettingsBlock>

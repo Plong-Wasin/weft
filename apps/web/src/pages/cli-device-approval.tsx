@@ -48,21 +48,21 @@ export function CliDeviceApprovalPage() {
 
   return <AuthShell>
       <h1 className="text-20 font-semibold">{translate("cliDevice.title")}</h1>
-    {message && <p role="status" className="mt-4 text-14 text-secondary">{message}</p>}
-    {error && <p role="alert" className="mt-4 text-14 text-danger-text">{error}</p>}
-    {!info && !message && !error && <p role="status" className="mt-4 text-14 text-secondary">{translate("cliDevice.loading")}</p>}
+    {message && <p role="status" className="mt-4 text-14 text-muted-foreground">{message}</p>}
+    {error && <p role="alert" className="mt-4 text-14 text-destructive">{error}</p>}
+    {!info && !message && !error && <p role="status" className="mt-4 text-14 text-muted-foreground">{translate("cliDevice.loading")}</p>}
     {info && <>
-      <p className="mt-4 text-14 text-secondary">{translate("cliDevice.request")}</p>
-      <dl className="mt-5 grid gap-3 rounded-lg border border-subtle p-4 text-14">
-        <div><dt className="text-secondary">{translate("cliDevice.code")}</dt><dd className="mt-1 font-mono font-semibold tracking-[0.2em] text-primary">{code.slice(0, 4)} {code.slice(4)}</dd></div>
-        <div><dt className="text-secondary">{translate("cliDevice.machine")}</dt><dd className="mt-1 break-all font-medium text-primary">{info.hostname}</dd></div>
-        <div><dt className="text-secondary">{translate("cliDevice.account")}</dt><dd className="mt-1 font-medium text-primary"><span className="block">{info.account.name}</span><span className="block break-all">{info.account.email}</span></dd></div>
-        <div><dt className="text-secondary">{translate("cliDevice.accessLabel")}</dt><dd className="mt-1 font-medium text-primary">{translate("cliDevice.access")}</dd></div>
+      <p className="mt-4 text-14 text-muted-foreground">{translate("cliDevice.request")}</p>
+      <dl className="mt-5 grid gap-3 rounded-lg border border-border p-4 text-14">
+        <div><dt className="text-muted-foreground">{translate("cliDevice.code")}</dt><dd className="mt-1 font-mono font-semibold tracking-[0.2em] text-foreground">{code.slice(0, 4)} {code.slice(4)}</dd></div>
+        <div><dt className="text-muted-foreground">{translate("cliDevice.machine")}</dt><dd className="mt-1 break-all font-medium text-foreground">{info.hostname}</dd></div>
+        <div><dt className="text-muted-foreground">{translate("cliDevice.account")}</dt><dd className="mt-1 font-medium text-foreground"><span className="block">{info.account.name}</span><span className="block break-all">{info.account.email}</span></dd></div>
+        <div><dt className="text-muted-foreground">{translate("cliDevice.accessLabel")}</dt><dd className="mt-1 font-medium text-foreground">{translate("cliDevice.access")}</dd></div>
       </dl>
-      <p className="mt-4 text-14 text-secondary">{translate("cliDevice.warning")}</p>
+      <p className="mt-4 text-14 text-muted-foreground">{translate("cliDevice.warning")}</p>
       <div className="mt-6 grid gap-3">
         <Button className={primaryButton} disabled={submitting} onClick={() => void decide("approve")}>{translate("cliDevice.approve")}</Button>
-        <Button type="button" className="min-h-11 rounded-md border border-subtle bg-transparent px-3 text-14 font-medium text-primary hover:bg-layer-1-hover focus-visible:outline focus-visible:outline-2" disabled={submitting} onClick={() => void decide("deny")}>{translate("cliDevice.deny")}</Button>
+        <Button type="button" className="min-h-11 rounded-md border border-border bg-transparent px-3 text-14 font-medium text-foreground hover:bg-accent focus-visible:outline focus-visible:outline-2" disabled={submitting} onClick={() => void decide("deny")}>{translate("cliDevice.deny")}</Button>
       </div>
     </>}
   </AuthShell>;

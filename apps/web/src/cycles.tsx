@@ -29,7 +29,7 @@ const tabs: Status[] = ["upcoming", "active", "completed"];
 /** Which tab opens first when the user has not picked one: the first with Cycles in it. */
 const tabPriority: Status[] = ["active", "upcoming", "completed"];
 const primaryButton = "flex items-center gap-1.5";
-const groupColor: Record<StateGroup, string> = { backlog: "bg-accent", unstarted: "bg-primary", started: "bg-amber-500 dark:bg-amber-400", completed: "bg-emerald-600 dark:bg-emerald-500", cancelled: "bg-destructive" };
+const groupColor: Record<StateGroup, string> = { backlog: "bg-accent", unstarted: "bg-[var(--primary)]", started: "bg-amber-500 dark:bg-amber-400", completed: "bg-emerald-600 dark:bg-emerald-500", cancelled: "bg-destructive" };
 
 const count = (n: number) => formatNumber(n);
 const range = (cycle: Cycle) => `${formatDay(cycle.startDate)} – ${formatDay(cycle.endDate)}`;

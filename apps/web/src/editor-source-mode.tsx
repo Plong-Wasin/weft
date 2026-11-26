@@ -102,11 +102,11 @@ export function EditorSourceMode({ editor, initialWarnings = [], onSourceDraftCh
   React.useEffect(() => () => { if (toggleRef) toggleRef.current = null; }, [toggleRef]);
 
   return <div className="grid w-full min-w-0 max-w-full gap-2" data-testid="editor-source-mode">
-    {source && <Textarea aria-label={translate("editor.sourceText")} data-testid="editor-source-text" rows={Math.min(30, Math.max(6, text.split("\n").length + 1))} className="editor-source-text min-h-40 w-full min-w-0 max-w-full resize-y rounded-md border border-subtle bg-surface-1 p-3 font-mono text-13 text-primary" value={text} onChange={(event) => { draft.current = event.target.value; setText(event.target.value); setWarnings([]); onSourceDraftChange?.(true); }} />}
-    {source && <p className="m-0 text-12 text-secondary">{translate("editor.sourceReferenceHelp")}</p>}
-    {initialWarnings.includes("alignment") && <p role="status" className="m-0 text-13 text-warning-primary">{translate("editor.removedAlignment")}</p>}
-    {initialWarnings.includes("cellBackground") && <p role="status" className="m-0 text-13 text-warning-primary">{translate("editor.removedCellBackground")}</p>}
-    {sourceLoss && <div role="status" className="flex min-w-0 items-start gap-2 rounded-r-md border-l-4 border-danger-strong bg-danger-subtle px-3 py-2 text-13 text-danger-text"><CircleAlert aria-hidden size={16} className="mt-0.5 shrink-0" /><p className="m-0 min-w-0">{translate("editor.sourceLoss")}</p></div>}
-    {warnings.length > 0 && <div role="alert" className="flex min-w-0 items-start gap-2 rounded-r-md border-l-4 border-warning-strong bg-warning-subtle px-3 py-2 text-13 text-warning-text"><CircleAlert aria-hidden size={16} className="mt-0.5 shrink-0" /><p className="m-0 min-w-0">{warnings.join(" ")}</p></div>}
+    {source && <Textarea aria-label={translate("editor.sourceText")} data-testid="editor-source-text" rows={Math.min(30, Math.max(6, text.split("\n").length + 1))} className="editor-source-text min-h-40 w-full min-w-0 max-w-full resize-y rounded-md border border-border bg-card p-3 font-mono text-13 text-foreground" value={text} onChange={(event) => { draft.current = event.target.value; setText(event.target.value); setWarnings([]); onSourceDraftChange?.(true); }} />}
+    {source && <p className="m-0 text-12 text-muted-foreground">{translate("editor.sourceReferenceHelp")}</p>}
+    {initialWarnings.includes("alignment") && <p role="status" className="m-0 text-13 text-muted-foreground">{translate("editor.removedAlignment")}</p>}
+    {initialWarnings.includes("cellBackground") && <p role="status" className="m-0 text-13 text-muted-foreground">{translate("editor.removedCellBackground")}</p>}
+    {sourceLoss && <div role="status" className="flex min-w-0 items-start gap-2 rounded-r-md border-l-4 border-destructive bg-destructive/10 px-3 py-2 text-13 text-destructive"><CircleAlert aria-hidden size={16} className="mt-0.5 shrink-0" /><p className="m-0 min-w-0">{translate("editor.sourceLoss")}</p></div>}
+    {warnings.length > 0 && <div role="alert" className="flex min-w-0 items-start gap-2 rounded-r-md border-l-4 border-warning-strong bg-muted px-3 py-2 text-13 text-warning-text"><CircleAlert aria-hidden size={16} className="mt-0.5 shrink-0" /><p className="m-0 min-w-0">{warnings.join(" ")}</p></div>}
   </div>;
 }

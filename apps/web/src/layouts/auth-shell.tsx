@@ -39,4 +39,4 @@ export function OnboardingShell({ action, children }: { action?: React.ReactNode
 
 /** Full-width Plane-style field: label above, 40px input. */
 export const fieldClass = "h-10 w-full rounded-md border border-border bg-card px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none";
-export const primaryButton = "h-10 w-full rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50";
+export const primaryButton = "h-10 w-full rounded-md bg-[var(--primary)] px-3 text-sm font-medium text-primary-foreground hover:bg-[var(--primary)]/90 disabled:cursor-not-allowed disabled:opacity-50";

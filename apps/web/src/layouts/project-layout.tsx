@@ -40,8 +40,8 @@ export function ProjectLayout() {
   if (onPage) return <section className="grid min-w-0 gap-4"><Outlet context={{ project, reload } satisfies ProjectContext} /></section>;
   return <section className="grid min-w-0 gap-4">
     <header className="flex flex-wrap items-center gap-x-3 gap-y-1">
-      <Link to={paths.home(workspace.slug)} className="text-13 text-secondary hover:text-primary max-sm:w-full">{translate("projects.back")}</Link>
-      <span aria-hidden className="text-secondary max-sm:hidden">›</span>
+      <Link to={paths.home(workspace.slug)} className="text-13 text-muted-foreground hover:text-foreground max-sm:w-full">{translate("projects.back")}</Link>
+      <span aria-hidden className="text-muted-foreground max-sm:hidden">›</span>
       <h1 className="min-w-0 truncate text-20 font-semibold max-sm:flex-1">{project.key} · {project.name}</h1>
       <Link to={paths.projectSettings(workspace.slug, project.key)} className="secondary ml-auto no-underline max-sm:ml-0">{translate("projects.settings")}</Link>
     </header>

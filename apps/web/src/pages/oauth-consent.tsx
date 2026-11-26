@@ -33,11 +33,11 @@ export function OAuthConsentPage() {
 
   return <AuthShell>
     <h1 className="text-20 font-semibold">{translate("oauth.title")}</h1>
-    {error ? <p role="alert" className="mt-4 text-14 text-danger-text">{error}</p> : !info ? <p role="status" className="mt-4 text-14 text-secondary">{translate("oauth.loading")}</p> : <>
-      <p className="mt-4 text-14 text-secondary">{translate("oauth.request").replace("{app}", info.clientName).replace("{host}", info.redirectHost)}</p>
+    {error ? <p role="alert" className="mt-4 text-14 text-destructive">{error}</p> : !info ? <p role="status" className="mt-4 text-14 text-muted-foreground">{translate("oauth.loading")}</p> : <>
+      <p className="mt-4 text-14 text-muted-foreground">{translate("oauth.request").replace("{app}", info.clientName).replace("{host}", info.redirectHost)}</p>
       <div className="mt-6 grid gap-3">
         <Button className={primaryButton} disabled={submitting} onClick={() => void respond(true)}>{translate("oauth.allow")}</Button>
-        <Button type="button" className="!h-10 rounded-md border border-subtle bg-transparent px-3 text-14 font-medium text-primary hover:bg-layer-1-hover" disabled={submitting} onClick={() => void respond(false)}>{translate("oauth.deny")}</Button>
+        <Button type="button" className="!h-10 rounded-md border border-border bg-transparent px-3 text-14 font-medium text-foreground hover:bg-accent" disabled={submitting} onClick={() => void respond(false)}>{translate("oauth.deny")}</Button>
       </div>
     </>}
   </AuthShell>;

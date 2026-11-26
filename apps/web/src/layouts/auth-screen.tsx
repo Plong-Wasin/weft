@@ -111,9 +111,8 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch, minPa
   if (mode === "forgot") return <ForgotPasswordForm api={api} emailEnabled={emailEnabled} languageSwitch={languageSwitch} onBack={() => setMode("sign-in")} />;
 
   return <AuthShell footer={<>{languageSwitch}<ThemeSwitch /></>}>
-    <h1 className="text-balance text-xl font-semibold leading-tight text-foreground">{translate("app.welcome")}
-      <span className="block text-muted-foreground">{translate(mode === "sign-up" ? "auth.createYourAccount" : "auth.welcomeBack")}</span>
-    </h1>
+    <h1 className="text-balance text-2xl font-semibold leading-snug text-foreground">{translate("app.welcome")}</h1>
+    <p className="mt-1 text-sm text-muted-foreground">{translate(mode === "sign-up" ? "auth.createYourAccount" : "auth.welcomeBack")}</p>
     {contextualNotice && <p role="note" className="mt-4 rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">{contextualNotice}</p>}
     {inviteToken && <p role="status" className="mt-4 rounded-md bg-accent px-3 py-2 text-sm text-foreground">{translate("invite.signInToJoin")}</p>}
     {authSettings === null ? <p role="status" className="mt-8 text-sm text-muted-foreground">{translate("auth.loading")}</p> : <>
@@ -128,7 +127,7 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch, minPa
       {passwordIssue && <p role="alert" className="-mt-3 text-sm text-destructive">{passwordIssue}</p>}
       {mode === "sign-up" && <PasswordField label={translate("auth.confirmPassword")} value={confirmPassword} onChange={setConfirmPassword} visible={showPassword} onToggle={() => setShowPassword(!showPassword)} autoComplete="new-password" invalid={mismatch} describedBy="password-mismatch" />}
       {mismatch && <p id="password-mismatch" role="status" className="-mt-2 text-sm text-destructive">{translate("auth.passwordMismatch")}</p>}
-      {mode === "sign-in" && <Button type="button" disabled={pending} className="-mt-2 justify-self-end text-sm font-medium text-foreground hover:underline" onClick={() => { if (pendingRef.current) return; setError(null); setMode("forgot"); }}>{translate("auth.forgotPassword")}</Button>}
+      {mode === "sign-in" && <Button variant="ghost" size="sm" type="button" disabled={pending} className="-mr-3 -mt-2 justify-self-end text-muted-foreground underline underline-offset-4 pointer-coarse:min-h-11" onClick={() => { if (pendingRef.current) return; setError(null); setMode("forgot"); }}>{translate("auth.forgotPassword")}</Button>}
       <Button disabled={pending} className={primaryButton}>{translate(mode === "sign-up" ? "auth.signUp" : "auth.signIn")}</Button>
     </form>}
     {error && <p role="alert" className="mt-4 text-sm text-destructive">{error}</p>}
@@ -189,7 +188,7 @@ function ForgotPasswordForm({ api, emailEnabled, languageSwitch, onBack }: { api
   }
 
   return <AuthShell footer={<>{languageSwitch}<ThemeSwitch /></>}>
-    <h1 className="text-balance text-xl font-semibold leading-tight text-foreground">{translate("auth.forgotTitle")}</h1>
+    <h1 className="text-balance text-2xl font-semibold leading-snug text-foreground">{translate("auth.forgotTitle")}</h1>
     {!emailEnabled
       ? <p role="status" className="mt-4 text-sm text-muted-foreground">{translate("auth.forgotEmailOff")}</p>
       : sent

@@ -31,7 +31,7 @@ export function ResetPasswordScreen({ api, languageSwitch, minPasswordLength }: 
   }
 
   return <AuthShell footer={<>{languageSwitch}</>}>
-    <h1 className="text-balance text-xl font-semibold leading-tight text-foreground">{translate("auth.resetTitle")}</h1>
+    <h1 className="text-balance text-2xl font-semibold leading-snug text-foreground">{translate("auth.resetTitle")}</h1>
     {state === "invalid" && <p role="alert" className="mt-4 text-sm text-destructive">{translate("auth.resetLinkInvalid")}</p>}
     {state === "done" && <p role="status" className="mt-4 text-sm text-muted-foreground">{translate("auth.resetDone")}</p>}
     {state === "form" && <form onSubmit={submit} className="mt-8 grid gap-4">

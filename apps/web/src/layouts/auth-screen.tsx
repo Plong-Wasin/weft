@@ -34,7 +34,7 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch, minPa
 
   React.useEffect(() => {
     let active = true;
-    void fetch(`${api}/api/auth/settings`, { credentials: "include" }).then(async (response) => {
+    void fetch(`${api}/api/auth/settings`, { credentials: "include", signal: AbortSignal.timeout(10_000) }).then(async (response) => {
       if (!response.ok) throw new Error("Auth settings unavailable");
       return response.json() as Promise<{ microsoftSignInEnabled: boolean; passwordSignInEnabled: boolean }>;
     }).then((settings) => { if (active) setAuthSettings(settings); }).catch(() => { if (active) setAuthSettings({ microsoftSignInEnabled: false, passwordSignInEnabled: true }); });
@@ -110,17 +110,21 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch, minPa
 
   if (mode === "forgot") return <ForgotPasswordForm api={api} emailEnabled={emailEnabled} languageSwitch={languageSwitch} onBack={() => setMode("sign-in")} />;
 
+  const methods = authSettings ?? { microsoftSignInEnabled: false, passwordSignInEnabled: true };
+
   return <AuthShell footer={<>{languageSwitch}<ThemeSwitch /></>}>
     <h1 className="text-balance text-2xl font-semibold leading-snug text-foreground">{translate("app.welcome")}</h1>
     <p className="mt-1 text-sm text-muted-foreground">{translate(mode === "sign-up" ? "auth.createYourAccount" : "auth.welcomeBack")}</p>
     {contextualNotice && <p role="note" className="mt-4 rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">{contextualNotice}</p>}
     {inviteToken && <p role="status" className="mt-4 rounded-md bg-accent px-3 py-2 text-sm text-foreground">{translate("invite.signInToJoin")}</p>}
-    {authSettings === null ? <p role="status" className="mt-8 text-sm text-muted-foreground">{translate("auth.loading")}</p> : <>
-    {authSettings.microsoftSignInEnabled && <div className="mt-8 grid gap-2">
+    {/* Until the allowed methods arrive, the usual form holds its place unseen, so the card keeps its size. */}
+    {authSettings === null && <p role="status" className="sr-only">{translate("auth.loading")}</p>}
+    <div className={authSettings === null ? "invisible" : undefined}>
+    {methods.microsoftSignInEnabled && <div className="mt-8 grid gap-2">
       <Button variant="ghost" type="button" className="w-full rounded-md border border-border bg-transparent text-sm font-medium text-foreground hover:bg-accent" onClick={() => void signInWithMicrosoft()}>{translate("auth.microsoftButton")}</Button>
       <p className="m-0 text-xs text-muted-foreground">{translate("auth.microsoftHelp")}</p>
     </div>}
-    {authSettings.passwordSignInEnabled && <form onSubmit={authenticate} aria-busy={pending} className={`${authSettings.microsoftSignInEnabled ? "mt-5 border-t border-border pt-5" : "mt-8"} grid gap-4`}>
+    {methods.passwordSignInEnabled && <form onSubmit={authenticate} aria-busy={pending} className={`${methods.microsoftSignInEnabled ? "mt-5 border-t border-border pt-5" : "mt-8"} grid gap-4`}>
       {mode === "sign-up" && <label className="grid gap-1.5 text-sm font-medium text-muted-foreground">{translate("auth.name")}<Input className={fieldClass} required autoComplete="name" placeholder={translate("auth.namePlaceholder")} value={name} onChange={(event) => setName(event.target.value)} /></label>}
       <label className="grid gap-1.5 text-sm font-medium text-muted-foreground">{translate("auth.email")}<Input className={fieldClass} required type="email" autoComplete="email" placeholder={translate("auth.emailPlaceholder")} value={email} onChange={(event) => setEmail(event.target.value)} /></label>
       <PasswordField label={translate("auth.password")} value={password} onChange={setPassword} visible={showPassword} onToggle={() => setShowPassword(!showPassword)} autoComplete={mode === "sign-up" ? "new-password" : "current-password"} minLength={passwordFieldMinLength(mode, minPasswordLength)} hint={mode === "sign-up" ? translate("auth.passwordHint").replace("{min}", String(minPasswordLength)) : undefined} />
@@ -132,14 +136,14 @@ export function AuthScreen({ api, inviteToken, onSignedIn, languageSwitch, minPa
     </form>}
     {error && <p role="alert" className="mt-4 text-sm text-destructive">{error}</p>}
     {/* The other mode is a full-width secondary button under the form (not small text), so a first-run admin who lands on Sign in finds "Create account". */}
-    {authSettings.passwordSignInEnabled && <div className="mt-6 grid gap-2 border-t border-border pt-6 text-center">
+    {methods.passwordSignInEnabled && <div className="mt-6 grid gap-2 border-t border-border pt-6 text-center">
       <p className="m-0 text-sm text-muted-foreground">{translate(mode === "sign-up" ? "auth.haveAccountShort" : "auth.needAccountShort")}</p>
       <Button variant="ghost" type="button" disabled={pending} className="w-full rounded-md border border-border bg-transparent text-sm font-medium text-foreground hover:bg-accent" onClick={() => { if (pendingRef.current) return; setError(null); setConfirmPassword(""); setShowPassword(false); setMode(mode === "sign-up" ? "sign-in" : "sign-up"); }}>
         {translate(mode === "sign-up" ? "auth.signIn" : "auth.signUp")}
       </Button>
     </div>}
-    {!authSettings.microsoftSignInEnabled && !authSettings.passwordSignInEnabled && <p role="alert" className="mt-6 text-sm text-destructive">{translate("auth.noSignInMethods")}</p>}
-    </>}
+    {!methods.microsoftSignInEnabled && !methods.passwordSignInEnabled && <p role="alert" className="mt-6 text-sm text-destructive">{translate("auth.noSignInMethods")}</p>}
+    </div>
   </AuthShell>;
 }
 

@@ -5,7 +5,7 @@ import { translate } from "@weft/shared";
 /** The Weft mark with "weft" as live text, like Plane's logo and name; the text follows the theme colour. */
 export function Logo({ className = "" }: { className?: string }) {
   return <span className={`inline-flex items-center gap-2 text-foreground ${className}`}>
-    <img src="/brand/weft-mark.png" alt="" aria-hidden className="h-6 w-auto" />
+    <img src="/brand/weft-mark.png" alt="" aria-hidden width={906} height={472} className="h-6 w-auto" />
     <span className="text-xl font-semibold lowercase leading-none tracking-tight">{translate("app.title")}</span>
   </span>;
 }

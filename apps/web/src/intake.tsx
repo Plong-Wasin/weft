@@ -1,4 +1,5 @@
 import { Button } from "@/ui/button";
+import { cn } from "@/lib/utils";
 import React from "react";
 import { ChevronDown, ChevronUp, Clock, Copy, CopyCheck, Inbox, MoreHorizontal, Plus, X } from "lucide-react";
 import { formatDate, getLocale, translate, type MessageKey } from "@weft/shared";
@@ -265,10 +266,10 @@ function DuplicateModal({ action, workspaceId, item, onClose, onPick }: { action
 function ListRow({ item, selected, onSelect }: { item: IntakeItem; selected: boolean; onSelect: () => void }) {
   return <li>
     <Button type="button" data-testid={`intake-${item.displayId}`} aria-current={selected ? "true" : undefined} onClick={onSelect}
-      variant="ghost" className={`h-auto min-h-28 w-full items-stretch whitespace-normal [overflow-wrap:anywhere] border-0 bg-transparent px-4 py-3 text-left hover:bg-accent ${selected ? "bg-accent outline outline-1 -outline-offset-1 outline-ring" : ""}`}>
+      variant="ghost" className={`h-28 w-full items-stretch pointer-coarse:min-h-28 whitespace-normal [overflow-wrap:anywhere] border-0 bg-transparent px-4 py-3 text-left hover:bg-accent ${selected ? "bg-accent outline outline-1 -outline-offset-1 outline-ring" : ""}`}>
       <span className="flex min-w-0 flex-1 flex-col items-stretch justify-center gap-1.5">
         <span className="text-12 leading-4 text-muted-foreground">{item.displayId}</span>
-        <span title={item.title} className="thai-room line-clamp-2 min-w-0 text-left text-14 leading-5 font-medium text-foreground">{item.title}</span>
+        <span title={item.title} className="thai-room line-clamp-2 h-10 min-w-0 shrink-0 text-left text-14 leading-5 font-medium text-foreground">{item.title}</span>
         <span className="flex min-w-0 items-center gap-2 text-12 leading-4 text-muted-foreground">
           <span className="min-w-0 flex-1 thai-room truncate">{formatDate(item.createdAt)}</span>
           <PriorityIcon priority={item.priority} />
@@ -530,7 +531,7 @@ export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, 
           {(["open", "closed"] as const).map((value) => <TabsTrigger key={value} value={value}
             className={`flex items-center gap-1.5 rounded-md border-0 px-3 py-2.5 text-14 font-medium ${tab === value ? "bg-muted text-foreground" : "bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground"}`}>
             {t(`intake.tab.${value}`)}
-            {value === "open" && tab === "open" && items && <span data-testid="intake-open-count" className="rounded-full bg-[var(--primary)]/20 px-1.5 py-0.5 text-11 font-semibold text-foreground">{items.length}</span>}
+            {value === "open" && tab === "open" && <span data-testid={items ? "intake-open-count" : undefined} className={cn("rounded-full bg-[var(--primary)]/20 px-1.5 py-0.5 text-11 font-semibold tabular-nums text-foreground", !items && "invisible")}>{items?.length ?? 0}</span>}
           </TabsTrigger>)}
           </TabsList>
           <TabsContent value={tab} className="mt-0 flex min-h-0 flex-1 flex-col">
@@ -547,7 +548,7 @@ export function IntakePage({ workspaceId, workspaceSlug, projectKey, projectId, 
           ? <div className="grid min-w-0 flex-1 place-items-center">{tab === "open"
             ? <EmptyState title={t("intake.empty")} description={t("intake.emptyHint")} action={<Button type="button" className={`${primaryButton} flex items-center gap-1.5`} onClick={() => setAdding(true)}><Plus aria-hidden size={14} />{t("intake.add")}</Button>} />
             : <EmptyState title={t("intake.emptyClosed")} description={t("intake.emptyClosedHint")} />}</div>
-          : <div className="grid min-w-0 flex-1 place-items-center p-6 text-14 text-muted-foreground">{t("intake.pick")}</div>}
+          : items && <div className="grid min-w-0 flex-1 place-items-center p-6 text-14 text-muted-foreground">{t("intake.pick")}</div>}
     </div>
     {adding && <SubmitModal action={action} workspaceId={workspaceId} projectId={projectId} onClose={() => setAdding(false)} onSubmitted={(item, failedFiles, images) => { if (failedFiles.length) setFailedUploads((previous) => ({ ...previous, [item.id]: failedFiles })); if (images.files.length || images.assetIds.length) setPendingImages((previous) => ({ ...previous, [item.id]: images })); setAdding(false); justAdded.current = item.id; select(item.id, "open"); void load(); }} />}
   </section>;

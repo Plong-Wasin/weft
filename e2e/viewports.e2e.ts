@@ -55,6 +55,14 @@ try {
   ];
   const captures = [...routes.filter((route) => route.weft && fillPath(route.weft, seed)).map((route) => ({ name: route.name, auth: route.auth !== false, weft: fillPath(route.weft!, seed)! })), ...layoutRoutes, ...extraRoutes];
 
+  const routeReady: Record<string, string> = {
+    "work-items-list": '[data-testid="work-items-list-container"] [data-list-row]',
+    "work-items-board": '[data-card-id]',
+    "work-items-spreadsheet": '[data-testid="sheet-scroll"] tbody tr',
+    "work-items-calendar": '[data-testid="calendar-layout"]',
+    "work-items-gantt": '[data-testid="gantt-layout"]',
+    "work-item-peek": '[data-peek] h1, [data-peek] h2',
+  };
   for (const viewport of viewports) {
     const context = await newContext(browser, { viewport: { width: viewport.width, height: viewport.height }, colorScheme: "light", reducedMotion: "reduce" });
     await context.addCookies(client.cookies().map((cookie) => ({ ...cookie, domain: "localhost", path: "/" })));
@@ -65,6 +73,10 @@ try {
       await target.goto(`${web}${route.weft}`, { waitUntil: "domcontentloaded" });
       await target.locator("body").waitFor();
       if (route.name === "auth-sign-up") await target.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
+      // Measure the screen with its data, not the placeholder that holds its place while loading.
+      const ready = routeReady[route.name];
+      if (ready) await target.locator(ready).first().waitFor();
+      await target.waitForFunction(() => !document.querySelector('[data-testid="work-items-skeleton"], [data-testid="sidebar-skeleton"], [data-peek] [class*="animate-pulse"]'));
       await target.waitForTimeout(100);
       const measurements = await target.evaluate(() => {
         const main = document.querySelector("main");

@@ -1,6 +1,7 @@
 // Browser end-to-end flow: Modules pages (list and grid, create, edit, properties sidebar, add and remove work items, archive, delete).
 // Run with `bun run e2e` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
-import { chromium, type Locator, type Page } from "playwright";
+import { check, createSignedInContext, launchBrowser, startApi, startWeb, waitFor, waitUntil } from "./harness";
+import { type Locator, type Page } from "playwright";
 import { mkdir } from "node:fs/promises";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
@@ -14,48 +15,29 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const auditAfter = "/tmp/weft-ui-audit/after/cycles";
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, CHOKIDAR_USEPOLLING: "true", VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api, env: { ...Bun.env, CHOKIDAR_USEPOLLING: "true" } }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 let failed = false;
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1080 }, hasTouch: true });
-  const page = await context.newPage();
+  const browser = await launchBrowser();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
+  const context = await createSignedInContext(browser, { viewport: { width: 1440, height: 1080 }, hasTouch: true }, api, web, {
+    account: { name: "Modules Tester", email: `${slug}@example.test` },
+    workspace: { name: "E2E team", slug },
+    project: { name: "Mobile", key: "MOB", visibility: "public", shape: "full" },
+  });
+  const page = await context.newPage();
   const call = async <T>(name: string, body: unknown) => { const response = await context.request.post(`${api}/actions/${name}`, { data: body }); if (!response.ok()) throw new Error(`${name} failed: ${response.status()}`); return await response.json() as T; };
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const setDate = (scope: Page | Locator, label: string, value: string) => chooseDate(scope.getByRole("button", { name: new RegExp(`^${label}:`) }), value);
   const chooseSelect = async (label: string, option: string) => {
     await page.getByRole("combobox", { name: label }).click();
     await page.getByRole("option", { name: option, exact: true }).click();
   };
-  await page.goto(web);
-  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
-  await page.getByLabel(translate("auth.name")).fill("Modules Tester");
-  await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
-  await page.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
-  await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
-  await page.getByRole("button", { name: translate("auth.signUp") }).click();
-  await page.getByLabel(translate("workspace.name")).fill("E2E team");
-  await page.getByLabel(translate("workspace.slug")).fill(slug);
-  await page.getByRole("button", { name: translate("workspace.create") }).click();
-  await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
-  await page.getByLabel(translate("projects.name")).fill("Mobile");
-  await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOB");
-  await page.getByText(translate("projects.shapeFull"), { exact: true }).click(); // a new project starts Simple; this flow needs Cycles, Modules and Intake
-  await page.getByRole("button", { name: translate("projects.create") }).click();
+  await page.goto(`${web}/${slug}`);
   await page.getByRole("link", { name: /MOB · Mobile/ }).waitFor();
   const me = await (await context.request.get(`${api}/api/me`)).json() as { workspaces: Array<{ id: string }> };
   const [project] = await call<Array<{ id: string }>>("list_projects", { workspaceId: me.workspaces[0]!.id, archived: false });
@@ -83,6 +65,11 @@ try {
     await statusTrigger.click();
     const menu = page.getByRole("menu").last();
     await menu.waitFor({ state: "visible" });
+    // The popover is visible one frame before it is positioned.
+    await waitUntil(() => menu.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.left >= 0 && rect.right <= window.innerWidth && rect.top >= 0 && rect.bottom <= window.innerHeight;
+    }), `Module popover should fit the ${viewport.width}px viewport`);
     const geometry = await menu.evaluate((element) => {
       const rect = element.getBoundingClientRect();
       const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + Math.min(rect.height / 2, 16));
@@ -98,6 +85,7 @@ try {
     check(geometry.left >= 0 && geometry.right <= geometry.width && geometry.top >= 0 && geometry.bottom <= geometry.height, `Module popover should fit the ${viewport.width}px viewport`);
     check(geometry.visible && geometry.receivesPointer, "Module popover should not be clipped by the scrollable dialog");
     await page.keyboard.press("Escape");
+    await menu.waitFor({ state: "detached" });
     check(await page.getByRole("dialog", { name: t("modules.addTitleModal") }).count() === 1, "Escape should close the popover without closing the Module dialog");
     check(await page.getByRole("menu").count() === 0, "Escape should dismiss the open Module popover");
     check(await statusTrigger.evaluate((element) => document.activeElement === element), "Escape should return focus to the Module popover trigger");

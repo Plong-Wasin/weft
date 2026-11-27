@@ -1,7 +1,8 @@
 // Browser end-to-end flow: restyled auth and onboarding screens keep their flows. Runs with open signup OFF so the
 // first-user rule and the invite exception are exercised. Needs an empty instance (set DATABASE_URL to your own database).
 // Screenshots at 1440px and 390px land in .local/visual/review/04-auth-onboarding/.
-import { chromium, type Browser, type Page } from "playwright";
+import { check, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
+import { type Browser, type Page } from "playwright";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -13,24 +14,15 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const shots = reviewShots("04-auth-onboarding");
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api, ALLOW_SIGNUP: "false" }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web, { env: { ...Bun.env, ALLOW_SIGNUP: "false" } }),
+  startWeb(webPort, { api }),
 ];
 
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
-
-const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
 const sizes = { "1440": { width: 1440, height: 900 }, "390": { width: 390, height: 844 } } as const;
 const noHorizontalScroll = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
 
 async function freshPage(browser: Browser, size: keyof typeof sizes = "1440") {
-  const context = await browser.newContext({ viewport: sizes[size], locale: "en-US", colorScheme: "light" });
+  const context = await newContext(browser, { viewport: sizes[size], locale: "en-US", colorScheme: "light" });
   return { context, page: await context.newPage() };
 }
 
@@ -49,7 +41,7 @@ let failed = false;
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
+  const browser = await launchBrowser();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
 
   // Auth layout: logo + live "weft" text top left, link to the other mode top right, centred column; at both widths.

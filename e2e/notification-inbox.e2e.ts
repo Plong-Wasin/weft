@@ -1,6 +1,7 @@
 // The Inbox opens a reading pane on wide layouts and the full destination on narrow ones.
 // Assert work item titles (the current heading) and seed via the API so unrelated onboarding chrome can change.
-import { chromium, type Browser, type Page } from "playwright";
+import { check, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
+import { type Browser, type Page } from "playwright";
 import { eq, like } from "drizzle-orm";
 import { createDatabase, notifications, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -13,20 +14,11 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const shots = ".local/shots/shadcn-finish-12";
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
 
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* starting */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
-
 const goto = (page: Page, url: string) => page.goto(url, { waitUntil: "domcontentloaded" });
-const check = (ok: boolean, message: string) => { if (!ok) throw new Error(message); };
 const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
 const inboxUrl = `${web}/${slug}/notifications`;
 const longEnglish = "Review the notification preferences and verify the schedule for all workspace members before publishing the rollout plan";
@@ -66,7 +58,7 @@ let browser: Browser | undefined;
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
   await Bun.$`mkdir -p ${shots}`;
-  browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH, args: ["--renderer-process-limit=3"] });
+  browser = await launchBrowser({ args: ["--renderer-process-limit=3"] });
   const operator = new WeftClient(api, web);
   const member = new WeftClient(api, web);
   const password = "a-secure-password";
@@ -124,7 +116,7 @@ try {
     check(Boolean(row) && (row?.readAt === null) === expected, `${label}: notification should be ${expected ? "unread" : "read"}`);
   };
   const cookies = operator.cookies().map((cookie) => ({ ...cookie, domain: "localhost", path: "/" }));
-  const context = await browser.newContext({ viewport: viewports[0], locale: "en-US", reducedMotion: "reduce" });
+  const context = await newContext(browser, { viewport: viewports[0], locale: "en-US", reducedMotion: "reduce" });
   await context.addCookies(cookies);
   const page = await context.newPage();
   const primaryLink = (inbox: Page = page, title = primaryTitle) => inbox.getByRole("link", { name: new RegExp(title) }).first();
@@ -370,7 +362,7 @@ try {
   await expectSelected(page, primaryTitle);
   console.log("Inbox checks passed: row click, selection URL, keyboard and wiki summary");
 
-  const touch = await browser.newContext({ viewport: viewports[2], hasTouch: true, isMobile: true, locale: "en-US", storageState: await context.storageState() });
+  const touch = await newContext(browser, { viewport: viewports[2], hasTouch: true, isMobile: true, locale: "en-US", storageState: await context.storageState() });
   const phone = await touch.newPage();
   await goto(phone, `${web}/${slug}/projects`);
   await phone.getByRole("button", { name: translate("shell.openMenu") }).tap();
@@ -406,7 +398,7 @@ try {
     for (const theme of ["light", "dark"] as const) {
       for (const { width, height } of viewports) {
         // Only the tablet and phone sizes are touch screens.
-        const capture = await browser.newContext({ viewport: { width, height }, locale: locale === "th" ? "th-TH" : "en-US", colorScheme: theme, reducedMotion: "reduce", hasTouch: width < 1440, storageState: await context.storageState() });
+        const capture = await newContext(browser, { viewport: { width, height }, locale: locale === "th" ? "th-TH" : "en-US", colorScheme: theme, reducedMotion: "reduce", hasTouch: width < 1440, storageState: await context.storageState() });
         await capture.addInitScript(({ locale, theme }) => {
           localStorage.setItem("weft.locale", locale);
           localStorage.setItem("weft.theme", theme);

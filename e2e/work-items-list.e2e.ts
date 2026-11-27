@@ -1,6 +1,7 @@
 // Browser end-to-end flow for the work items list layout: groups, inline property dropdowns, display options, quick create.
 // Run with `bun e2e/work-items-list.e2e.ts` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
-import { chromium, type Locator } from "playwright";
+import { check, createSignedInContext, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
+import type { Locator } from "playwright";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { like } from "drizzle-orm";
@@ -20,26 +21,21 @@ const screenshotViewports = [
   { width: 768, height: 1024 }, { width: 844, height: 390 }, { width: 667, height: 375 }, { width: 390, height: 844 },
 ] as const;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 let failed = false;
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  const page = await context.newPage();
+  const browser = await launchBrowser();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
+  const context = await createSignedInContext(browser, { viewport: { width: 1440, height: 900 } }, api, web, {
+    account: { name: "Lists Tester", email: `${slug}@example.test` },
+    workspace: { name: "E2E team", slug },
+    project: { name: "Mobile", key: "MOB", visibility: "public", shape: "full" },
+  });
+  const page = await context.newPage();
   const assertStableBounds = async (control: Locator, name: string) => {
     const measure = async () => {
       const bounds = await control.boundingBox();
@@ -150,22 +146,7 @@ try {
     check(colors.contrast >= 4.5, `board lane title is readable against its surface: ${JSON.stringify(colors)}`);
   };
   const call = async <T>(name: string, body: unknown) => { const response = await context.request.post(`${api}/actions/${name}`, { data: body }); check(response.ok(), `${name} failed: ${response.status()}`); return await response.json() as T; };
-  await page.goto(web);
-  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
-  await page.getByLabel(translate("auth.name")).fill("Lists Tester");
-  await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
-  await page.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
-  await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
-  await page.getByRole("button", { name: translate("auth.signUp") }).click();
-  await page.getByLabel(translate("workspace.name")).fill("E2E team");
-  await page.getByLabel(translate("workspace.slug")).fill(slug);
-  await page.getByRole("button", { name: translate("workspace.create") }).click();
-  await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
-  await page.getByLabel(translate("projects.name")).fill("Mobile");
-  await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOB");
-  await page.getByText(translate("projects.shapeFull"), { exact: true }).click(); // a new project starts Simple; this flow needs Cycles, Modules and Intake
-  await page.getByRole("button", { name: translate("projects.create") }).click();
-
+  await page.goto(`${web}/${slug}`);
   await page.getByRole("link", { name: /MOB · Mobile/ }).waitFor();
   // Seed what the dropdowns offer: a label, a Cycle, a Module (through the same Actions the UI uses).
   const me = await (await context.request.get(`${api}/api/me`)).json() as { user: { id: string }; workspaces: Array<{ id: string }> };
@@ -534,7 +515,7 @@ try {
 
   await page.setViewportSize({ width: 390, height: 844 });
   const mobileListUrl = page.url();
-  const mobileContext = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, isMobile: true, hasTouch: true, storageState: await context.storageState() });
+  const mobileContext = await newContext(browser, { viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, isMobile: true, hasTouch: true, storageState: await context.storageState() });
   const mobilePage = await mobileContext.newPage();
   await mobilePage.goto(mobileListUrl);
   await mobilePage.getByTestId("row-MOB-1").waitFor();
@@ -862,7 +843,7 @@ try {
       check(misses.length === 0, `${label} ${await control.getAttribute("aria-label")} answers taps across its whole 44px area (TouchHitArea44): ${JSON.stringify(misses)}`);
     }
   };
-  const desktopSiteContext = await browser.newContext({ viewport: { width: 980, height: 1800 }, deviceScaleFactor: 2.3, isMobile: false, hasTouch: true, storageState: await context.storageState() });
+  const desktopSiteContext = await newContext(browser, { viewport: { width: 980, height: 1800 }, deviceScaleFactor: 2.3, isMobile: false, hasTouch: true, storageState: await context.storageState() });
   const desktopSitePage = await desktopSiteContext.newPage();
   for (const theme of ["light", "dark"] as const) {
     await desktopSitePage.addInitScript((value) => localStorage.setItem("weft.theme", value), theme);
@@ -1021,7 +1002,7 @@ try {
   await assertStableBounds(page.getByRole("tab", { name: new RegExp(translate("cycles.status.active")) }), "Tabs");
   await assertStableBounds(activeCyclesTab, "Tabs");
 
-  const edgeTapContext = await browser.newContext({ hasTouch: true, isMobile: true, storageState: await context.storageState() });
+  const edgeTapContext = await newContext(browser, { hasTouch: true, isMobile: true, storageState: await context.storageState() });
   const edgeTapPage = await edgeTapContext.newPage();
   const compactItem = await call<{ displayId: string }>("create_work_item", { projectId: project!.id, title: "Priority only", priority: "high" });
   await edgeTapPage.setViewportSize({ width: 390, height: 844 });

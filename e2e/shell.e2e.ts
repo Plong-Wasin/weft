@@ -1,6 +1,7 @@
 // Browser end-to-end flow: the app shell (rail, sidebar, top bar), workspace switcher, search, notifications, theme, feature toggles, phone drawer.
 // Run with `bun e2e/shell.e2e.ts` (needs the shared weft-postgres container; set DATABASE_URL to use your own database). Screenshots go to .local/visual/review/03-app-shell.
-import { chromium, type Page } from "playwright";
+import { check, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
+import type { Page } from "playwright";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -14,29 +15,20 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const shots = reviewShots("03-app-shell");
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 let failed = false;
 let failurePage: Page | undefined;
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const browser = await launchBrowser();
+  const context = await newContext(browser, { viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   failurePage = page;
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const call = async <T>(name: string, body: unknown) => await (await page.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
   // Project menu state is saved on the server, so a reload right after a click must wait for the save.
   const clickAndSave = async (locator: ReturnType<typeof page.getByRole>) => {
@@ -324,7 +316,9 @@ try {
   await page.getByRole("menuitem", { name: translate("workspace.new") }).click();
   const phoneCreateDialog = page.getByRole("dialog", { name: translate("workspace.new") });
   await phoneCreateDialog.waitFor();
-  check(await page.getByLabel(translate("workspace.name")).evaluate((element) => element === document.activeElement), "phone workspace name input is not focused when the create form opens");
+  const phoneWorkspaceName = phoneCreateDialog.getByLabel(translate("workspace.name"));
+  await phoneWorkspaceName.and(page.locator(":focus")).waitFor();
+  check(await phoneWorkspaceName.evaluate((element) => element === document.activeElement), "phone workspace name input is not focused when the create form opens");
   await phoneCreateDialog.getByRole("button", { name: translate("workspace.close") }).click();
   const phoneNewWorkspaceItem = page.getByRole("menuitem", { name: translate("workspace.new") });
   await phoneNewWorkspaceItem.waitFor();

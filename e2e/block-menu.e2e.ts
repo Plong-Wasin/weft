@@ -1,5 +1,6 @@
 // Browser cases for Wiki block handles, menus, persistence, and collaboration.
-import { chromium, type Browser } from "playwright";
+import { check, createSignedInContext, launchBrowser, startApi, startLive, startWeb, waitFor, waitUntil } from "./harness";
+import type { Browser } from "playwright";
 import { eq } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -11,53 +12,35 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const liveHttp = `http://localhost:${livePort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bun", "apps/live/src/index.ts"], { env: { ...Bun.env, LIVE_PORT: String(livePort), WEB_ORIGIN: web }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api, VITE_LIVE_URL: `ws://localhost:${livePort}` }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startLive(livePort, web),
+  startWeb(webPort, { api, live: `ws://localhost:${livePort}` }),
 ];
 let slug = "";
 let browser: Browser | null = null;
 
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
-
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web), waitFor(liveHttp)]);
-  browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  browser = await launchBrowser();
+  slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
+  const context = await createSignedInContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" }, api, web, {
+    account: { name: "Block Menu Tester", email: `${slug}@example.test` },
+    workspace: { name: "Block menu team", slug },
+    project: { name: "Blocks", key: "BLK", visibility: "public", shape: "simple" },
+  });
   const page = await context.newPage();
   page.setDefaultTimeout(30_000);
   page.setDefaultNavigationTimeout(15_000);
   const browserErrors = new Set<string>();
   page.on("console", (message) => { if (message.type() === "error" && !browserErrors.has(message.text())) { browserErrors.add(message.text()); console.log(`[browser console] ${message.text()}`); } });
   page.on("pageerror", (error) => { if (!browserErrors.has(error.message)) { browserErrors.add(error.message); console.log(`[browser pageerror] ${error.stack ?? error.message}`); } });
-  slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const call = async <T>(name: string, body: unknown) => {
     const response = await context.request.post(`${api}/actions/${name}`, { data: body });
     check(response.ok(), `${name} failed: ${response.status()}`);
     return await response.json() as T;
   };
 
-  await page.goto(web);
-  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
-  await page.getByLabel(translate("auth.name")).fill("Block Menu Tester");
-  await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
-  await page.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
-  await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
-  await page.getByRole("button", { name: translate("auth.signUp") }).click();
-  await page.getByLabel(translate("workspace.name")).fill("Block menu team");
-  await page.getByLabel(translate("workspace.slug")).fill(slug);
-  await page.getByRole("button", { name: translate("workspace.create") }).click();
-  await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
-  await page.getByLabel(translate("projects.name")).fill("Blocks");
-  await page.getByLabel(translate("projects.key"), { exact: true }).fill("BLK");
-  await page.getByRole("button", { name: translate("projects.create") }).click();
+  await page.goto(`${web}/${slug}`);
 
   const me = await (await context.request.get(`${api}/api/me`)).json() as { workspaces: Array<{ id: string }> };
   const content = { type: "doc", content: [
@@ -136,7 +119,11 @@ try {
   check(firstOrder.indexOf("Movable block") < firstOrder.indexOf("Anchor block"), "dragging did not move the block to the drop position");
   check(JSON.stringify(secondOrder) === JSON.stringify(firstOrder), "collaborators did not converge on the same block order");
   console.log("PASS dragging reorders a block and collaborators converge");
-  await page.waitForTimeout(2_000);
+  await waitUntil(async () => {
+    const saved = await call<{ content: unknown }>("get_wiki_page", { pageId: wiki.id });
+    const body = JSON.stringify(saved.content);
+    return body.includes("Movable block") && body.indexOf("Movable block") < body.indexOf("Anchor block");
+  }, "dragged Wiki block order did not reach storage", 10_000);
   await page.reload();
   const reloadedEditor = page.getByTestId("wiki-editor").locator(".ProseMirror");
   await reloadedEditor.getByText("Movable block", { exact: true }).waitFor();
@@ -182,8 +169,7 @@ try {
   await editor.getByText("Aligned heading", { exact: true }).hover();
   const topBeforeScroll = await headingTop();
   await page.evaluate(() => document.querySelector("main")?.scrollBy(0, -120));
-  await page.waitForTimeout(300);
-  check(Math.abs((await headingTop()) - topBeforeScroll) > 20, "scrolling the Wiki did not move the heading");
+  await waitUntil(async () => Math.abs((await headingTop()) - topBeforeScroll) > 20, "scrolling the Wiki did not move the heading");
   await checkGripOnFirstLine("Aligned heading", "grip drifted off the heading after scrolling");
   console.log("PASS grip stays on the heading after scrolling");
 
@@ -191,8 +177,7 @@ try {
   await editor.getByText("Aligned heading", { exact: true }).hover({ position: { x: 4, y: 4 } });
   const topBeforeResize = await headingTop();
   await page.setViewportSize({ width: 640, height: 360 });
-  await page.waitForTimeout(300);
-  check(Math.abs((await headingTop()) - topBeforeResize) > 4, "resizing did not move the heading; the resize check needs the paragraph above it to re-wrap");
+  await waitUntil(async () => Math.abs((await headingTop()) - topBeforeResize) > 4, "resizing did not move the heading; the resize check needs the paragraph above it to re-wrap");
   check(await blockHandle.isVisible(), "grip disappeared after resizing");
   const gripAfterResize = await gripCenter();
   const lineAfterResize = await firstLineCenter("Aligned heading");
@@ -350,14 +335,14 @@ try {
     await page.mouse.down();
     await page.mouse.move(top.x + top.width / 2, top.y + 2, { steps: 8 });
     await page.mouse.up();
-    await page.waitForTimeout(1_500);
+    await waitUntil(async () => (await order()).slice(0, 2).join("|") === latePair.join("|"), "multi-block move did not reach the drop position");
     const after = await order();
     check(after.length === before.length && after[0] === latePair[0] && after[1] === latePair[1] && new Set(after.filter(Boolean)).size === after.filter(Boolean).length, `a multi-block move after a remote edit lost or duplicated a block: before ${JSON.stringify(before.map((t) => t.slice(0, 14)))}, after ${JSON.stringify(after.map((t) => t.slice(0, 14)))}`);
     console.log("PASS a multi-block move after a collaborator's edit keeps every block once");
     // One undo puts the whole run back (Yjs merges the per-block transactions made within its capture window).
     await lateBlocks.nth(0).click();
     await page.keyboard.press("Control+z");
-    await page.waitForTimeout(1_500);
+    await waitUntil(async () => (await order()).slice(0, 7).join("|") === before.slice(0, 7).join("|"), "undo did not restore the block order");
     const undone = await order();
     check(undone.slice(0, 7).join("|") === before.slice(0, 7).join("|"), `one undo did not restore the order of the moved run: before ${JSON.stringify(before.map((t) => t.slice(0, 14)))}, after undo ${JSON.stringify(undone.map((t) => t.slice(0, 14)))}`);
     console.log("PASS one undo restores a moved run of blocks");

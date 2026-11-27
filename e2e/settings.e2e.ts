@@ -1,6 +1,7 @@
 // Browser end-to-end flow: workspace settings (general, members, invites) and project settings (general, members, labels, states, features).
 // Run with `bun e2e/settings.e2e.ts` (needs the shared weft-postgres container; set DATABASE_URL to use your own database). Screenshots go to .local/visual/review/16-settings-screens.
-import { chromium, type Page } from "playwright";
+import { check, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
+import type { Page } from "playwright";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { and, eq, like } from "drizzle-orm";
@@ -14,26 +15,17 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const shots = reviewShots("16-settings-screens");
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
 
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
-
-const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
 const noSideScroll = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
 let failed = false;
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US", colorScheme: "light" });
+  const browser = await launchBrowser();
+  const context = await newContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US", colorScheme: "light" });
   const page = await context.newPage();
   page.on("pageerror", (error) => console.error("pageerror:", error.message));
   page.on("console", (message) => { if (message.type() === "error" || message.type() === "warning") console.error("console:", message.text().slice(0, 400)); });
@@ -118,7 +110,7 @@ try {
   await page.getByRole("status").getByText(translate("settings.revoked")).waitFor();
   check(await page.getByRole("button", { name: /^Revoke Guest invite created by Settings Admin on/ }).count() === 1, "revoking one duplicate did not leave exactly one invite");
   check(await page.getByRole("button", { name: /^Revoke / }).count() === 2, "revoke did not remove only the selected invite");
-  const invitee = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  const invitee = await newContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" });
   const inviteePage = await invitee.newPage();
   await inviteePage.goto(link);
   await inviteePage.getByLabel(translate("auth.name")).fill("Invited Person");

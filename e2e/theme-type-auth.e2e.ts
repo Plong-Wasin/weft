@@ -1,7 +1,8 @@
 // Browser end-to-end flow for the theme, Thai type and auth defects: surfaces separate in dark, the bundled Thai face is
 // applied and nothing clips it, utilities that once produced no CSS paint, and the sign-in card reads as one unit.
 // Screenshots land in .local/visual/review/theme-type-auth/.
-import { chromium, type Browser, type Page } from "playwright";
+import { check, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
+import { type Browser, type Page } from "playwright";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -14,24 +15,15 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const shots = reviewShots("theme-type-auth");
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
 
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
-
-const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
 const sizes = { "1440": { width: 1440, height: 900 }, "390": { width: 390, height: 844 } } as const;
 type Size = keyof typeof sizes;
 
 async function open(browser: Browser, size: Size, theme: "light" | "dark", locale: "en" | "th", client?: WeftClient) {
-  const context = await browser.newContext({ viewport: sizes[size], colorScheme: theme, reducedMotion: "reduce", locale: locale === "th" ? "th-TH" : "en-US", hasTouch: size === "390" });
+  const context = await newContext(browser, { viewport: sizes[size], colorScheme: theme, reducedMotion: "reduce", locale: locale === "th" ? "th-TH" : "en-US", hasTouch: size === "390" });
   await context.addInitScript(`localStorage.setItem("weft.locale","${locale}");localStorage.setItem("weft.theme","${theme}")`);
   if (client) await context.addCookies(client.cookies().map((cookie) => ({ ...cookie, domain: "localhost", path: "/" })));
   const page = await context.newPage();
@@ -81,7 +73,7 @@ const reviewCheck = (condition: boolean, message: string) => { if (!condition) r
 let failed = false;
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
+  const browser = await launchBrowser();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const client = new WeftClient(api, web);
   const seed = await seedWeft(client, slug);

@@ -1,5 +1,5 @@
+import { check, launchBrowser, newPage, startApi, startLive, startWeb, waitFor } from "./harness";
 import { mkdirSync } from "node:fs";
-import { chromium } from "playwright";
 import { createDatabase } from "../packages/db/src";
 import { createProjectActions, createWikiActions, createWorkItemActions } from "../packages/actions/src";
 import { translate, type Locale } from "../packages/shared/src";
@@ -11,25 +11,19 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const captures = `${process.cwd()}/.scratch-captures`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bun", "apps/live/src/index.ts"], { env: { ...Bun.env, LIVE_PORT: String(livePort), WEB_ORIGIN: web }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, CHOKIDAR_USEPOLLING: "true", VITE_API_URL: api, VITE_LIVE_URL: `ws://localhost:${livePort}` }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startLive(livePort, web),
+  startWeb(webPort, { api, live: `ws://localhost:${livePort}`, env: { ...Bun.env, CHOKIDAR_USEPOLLING: "true" } }),
 ];
 const { client, db } = createDatabase();
 let failed = false;
 
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) { try { if ((await fetch(url)).status < 500) return; } catch { /* starting */ } await Bun.sleep(200); }
-  throw new Error(`${url} did not start`);
-}
-
 try {
   mkdirSync(captures, { recursive: true });
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web), waitFor(`http://localhost:${livePort}`)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, locale: "en-US", acceptDownloads: true });
+  const browser = await launchBrowser();
+  const page = await newPage(browser, { viewport: { width: 1280, height: 900 }, locale: "en-US", acceptDownloads: true });
   const slug = `markdown-${crypto.randomUUID().slice(0, 8)}`;
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const call = async <T>(name: string, body: unknown) => {
     const response = await page.request.post(`${api}/actions/${name}`, { data: body });
     if (!response.ok()) throw new Error(`${name} failed (${response.status()}): ${await response.text()}`);

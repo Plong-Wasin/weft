@@ -1,5 +1,6 @@
 // Browser flow for Skills settings. Run with `bun e2e/skills.e2e.ts`.
-import { chromium, type Page } from "playwright";
+import { check, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
+import type { Page } from "playwright";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { like } from "drizzle-orm";
 import { translate } from "../packages/shared/src";
@@ -9,11 +10,9 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52167);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["node", "node_modules/vite/bin/vite.js", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-async function waitFor(url: string) { for (let i = 0; i < 100; i++) { try { if ((await fetch(url)).status < 500) return; } catch { /* startup */ } await Bun.sleep(200); } throw new Error(`${url} did not start`); }
-const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
 async function signup(page: Page, slug: string, name: string, email: string, invite?: string) {
   await page.goto(invite ?? web);
   if (!invite) await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
@@ -31,8 +30,8 @@ async function signup(page: Page, slug: string, name: string, email: string, inv
 }
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const adminContext = await browser.newContext({ locale: "en-US" });
+  const browser = await launchBrowser();
+  const adminContext = await newContext(browser, { locale: "en-US" });
   const admin = await adminContext.newPage();
   const slug = `skills-${crypto.randomUUID().slice(0, 8)}`;
   await signup(admin, slug, "Skills Admin", `${slug}@example.test`);
@@ -42,7 +41,7 @@ try {
   const request = async <T>(name: string, body: unknown) => await (await admin.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
   const inviteAndJoin = async (role: "Member" | "Guest", suffix: string) => {
     const invite = await request<{ token: string }>("create_invite", { workspaceId: workspace!.id, role });
-    const context = await browser.newContext({ locale: "en-US" });
+    const context = await newContext(browser, { locale: "en-US" });
     const page = await context.newPage();
     await signup(page, slug, `Skills ${role}`, `${slug}-${suffix}@example.test`, `${web}/invite/${invite.token}`);
     return { page, context };

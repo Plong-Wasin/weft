@@ -5,7 +5,8 @@
 // - work-item-page at 390px: the quick property chips and the action buttons form two-column rows, so no row holds a lone chip.
 // - every route of this area at both widths: no page-level horizontal scroll, and no toolbar, chip or action control clips its own text.
 // Run with `bun e2e/run-all.ts design-entry` (needs DATABASE_URL, CHROMIUM_PATH, E2E_API_PORT, E2E_WEB_PORT).
-import { chromium, type Page } from "playwright";
+import { check, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
+import type { Page } from "playwright";
 import { translate } from "../packages/shared/src";
 import { WeftClient, seedWeft } from "../tools/visual/weft-client";
 import { fillPath, loadRoutes } from "../tools/visual/lib";
@@ -15,17 +16,9 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5220);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 /**
  * Counts the children of a container per visual row. A child joins the first row whose vertical band it overlaps,
@@ -54,7 +47,6 @@ let failed = false;
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const client = new WeftClient(api, web);
   const seed = await seedWeft(client, slug);
@@ -62,20 +54,20 @@ try {
   const areaRoutes = routes.filter((r) => ["auth-sign-in", "workspace-home", "work-items-list", "work-item-page", "archives", "workspace-views"].includes(r.name));
   check(areaRoutes.length === 6, "the area's six routes are missing from the manifest");
 
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
+  const browser = await launchBrowser();
   const switchLabel = translate("layout.switch");
   const actionsLabel = translate("workItems.actions");
   const quickLabel = translate("workItems.quickProperties");
 
   await Promise.all(viewports.map(async (viewport) => {
-    const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height }, colorScheme: "light", reducedMotion: "reduce" });
+    const context = await newContext(browser, { viewport: { width: viewport.width, height: viewport.height }, colorScheme: "light", reducedMotion: "reduce" });
     await context.addCookies(client.cookies().map((c) => ({ ...c, domain: "localhost", path: "/" })));
     const page = await context.newPage();
     const errors: string[] = [];
     page.on("pageerror", (e) => errors.push(e.message));
     for (const route of areaRoutes) {
       const path = fillPath(route.weft!, seed)!;
-      const signedOut = route.auth === false ? await browser.newContext({ viewport: { width: viewport.width, height: viewport.height } }) : null;
+      const signedOut = route.auth === false ? await newContext(browser, { viewport: { width: viewport.width, height: viewport.height } }) : null;
       const target = signedOut ? await signedOut.newPage() : page;
       await target.goto(`${web}${path}`, { waitUntil: "load" });
       await target.waitForLoadState("networkidle", { timeout: 4_000 }).catch(() => undefined);
@@ -114,7 +106,7 @@ try {
   }));
 
   // Work item comments: Reply is the one visible action, the rest sit in More, Delete asks first, and a reply opens its editor with the name above it.
-  const commentContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "light", reducedMotion: "reduce" });
+  const commentContext = await newContext(browser, { viewport: { width: 1440, height: 900 }, colorScheme: "light", reducedMotion: "reduce" });
   await commentContext.addCookies(client.cookies().map((c) => ({ ...c, domain: "localhost", path: "/" })));
   const commentPage = await commentContext.newPage();
   await commentPage.goto(`${web}${fillPath("/{slug}/browse/{workItem}", seed)!}`, { waitUntil: "load" });

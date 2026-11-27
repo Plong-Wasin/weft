@@ -1,5 +1,5 @@
 // Browser acceptance cases: PDF dialog choices, image switch, downloadable PDF page size, rich blocks, and Markdown compatibility.
-import { chromium } from "playwright";
+import { check, launchBrowser, newContext, startApi, startLive, startWeb, waitFor } from "./harness";
 import { eq } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -10,30 +10,21 @@ const livePort = Number(Bun.env.E2E_LIVE_PORT ?? 31182);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bun", "apps/live/src/index.ts"], { env: { ...Bun.env, LIVE_PORT: String(livePort), WEB_ORIGIN: web }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api, VITE_LIVE_URL: `ws://localhost:${livePort}` }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startLive(livePort, web),
+  startWeb(webPort, { api, live: `ws://localhost:${livePort}` }),
 ];
 const { client, db } = createDatabase();
 let slug = "";
-let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null;
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* starting */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
+let browser: Awaited<ReturnType<typeof launchBrowser>> | null = null;
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web), waitFor(`http://localhost:${livePort}`)]);
-  browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+  browser = await launchBrowser();
+  const context = await newContext(browser, { viewport: { width: 1440, height: 900 }, acceptDownloads: true });
   const page = await context.newPage();
   const renderLoops: string[] = [];
   page.on("console", (message) => { if (message.type() === "error") { console.error(`browser console: ${message.text()}`); if (message.text().includes("Maximum update depth exceeded")) renderLoops.push(message.text()); } });
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const call = async <T>(name: string, body: unknown) => {
     const response = await context.request.post(`${api}/actions/${name}`, { data: body });
     check(response.ok(), `${name} failed: ${response.status()} ${await response.text()}`);
@@ -51,6 +42,7 @@ try {
   await page.getByLabel(translate("workspace.name")).fill("PDF team");
   await page.getByLabel(translate("workspace.slug")).fill(slug);
   await page.getByRole("button", { name: translate("workspace.create") }).click();
+  await page.waitForURL(new RegExp(`/${slug}(/|$)`));
   const me = await (await context.request.get(`${api}/api/me`)).json() as { workspaces: Array<{ id: string; slug: string }> };
   const workspaceId = me.workspaces.find((workspace) => workspace.slug === slug)!.id;
   const content = { type: "doc", content: [

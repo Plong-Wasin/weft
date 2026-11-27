@@ -2,7 +2,8 @@
 // an explanation, and its Session folders (behind a disclosure, with the path pattern). Offline Runtimes are listed by how long they were offline. The page is checked
 // at desktop and phone width. The Runs are driven through the same actions the Daemon calls, so no CLI is started. Screenshots go to RUNTIME_USAGE_SCREENSHOTS
 // (default /tmp/weft-runtime-usage-e2e). Run with `bun e2e/run-all.ts runtime-usage`.
-import { chromium, type Page } from "playwright";
+import { check, createSignedInContext, launchBrowser, startApi, startWeb, waitFor } from "./harness";
+import type { Page } from "playwright";
 import { eq } from "drizzle-orm";
 import { createDatabase, runtimes, workspaces } from "../packages/db/src";
 import { createAgentActions, createApiTokenActions, createProjectActions, createRuntimeActions, createRuntimeDispatchActions, createWorkItemActions } from "../packages/actions/src";
@@ -14,19 +15,9 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const screenshots = Bun.env.RUNTIME_USAGE_SCREENSHOTS ?? "/tmp/weft-runtime-usage-e2e";
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
-
-const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
 
 let failed = false;
 const { client, db } = createDatabase();
@@ -34,26 +25,17 @@ const { client, db } = createDatabase();
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
   await Bun.$`mkdir -p ${screenshots}`;
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
-  const page: Page = await context.newPage();
+  const browser = await launchBrowser();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const email = `${slug}@example.test`;
+  const context = await createSignedInContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" }, api, web, {
+    account: { name: "Usage Tester", email },
+    workspace: { name: "E2E usage", slug },
+    project: { name: "Mobile", key: "MOB", visibility: "public", shape: "simple" },
+  });
+  const page: Page = await context.newPage();
 
-  await page.goto(web);
-  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
-  await page.getByLabel(translate("auth.name")).fill("Usage Tester");
-  await page.getByLabel(translate("auth.email")).fill(email);
-  await page.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
-  await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
-  await page.getByRole("button", { name: translate("auth.signUp") }).click();
-  await page.getByLabel(translate("workspace.name")).fill("E2E usage");
-  await page.getByLabel(translate("workspace.slug")).fill(slug);
-  await page.getByRole("button", { name: translate("workspace.create") }).click();
-  await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
-  await page.getByLabel(translate("projects.name")).fill("Mobile");
-  await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOB");
-  await page.getByRole("button", { name: translate("projects.create") }).click();
+  await page.goto(`${web}/${slug}`);
   await page.getByRole("link", { name: /MOB · Mobile/ }).waitFor();
   const me = await (await page.request.get(`${api}/api/me`)).json() as { user: { id: string }; workspaces: Array<{ id: string; slug: string }> };
   const workspaceId = me.workspaces.find((item) => item.slug === slug)!.id;

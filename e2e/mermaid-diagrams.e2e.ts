@@ -1,7 +1,7 @@
 // Browser acceptance flow for Mermaid diagrams in a work item description.
-import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { chromium, type Locator } from "playwright";
+import { check, launchBrowser, newPage, productionWeb, serveWeb, startApi, startLive, waitFor } from "./harness";
+import { mkdirSync, readFileSync } from "node:fs";
+import type { Locator } from "playwright";
 import { createDatabase } from "../packages/db/src";
 import { createProjectActions } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
@@ -14,26 +14,22 @@ const web = `http://localhost:${webPort}`;
 const live = `ws://localhost:${livePort}`;
 const servers: ReturnType<typeof Bun.spawn>[] = [];
 const { client, db } = createDatabase();
-const check = (condition: unknown, message: string) => { if (!condition) throw new Error(message); };
 const imageSource = async (image: Locator) => image.evaluate((element) => {
   const image = element as HTMLImageElement;
   return decodeURIComponent(image.src.slice(image.src.indexOf(",") + 1));
 });
-async function waitFor(url: string) { for (let i = 0; i < 100; i += 1) { try { if ((await fetch(url)).status < 500) return; } catch { /* server starting */ } await Bun.sleep(200); } throw new Error(`${url} did not start`); }
-let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+let browser: Awaited<ReturnType<typeof launchBrowser>> | undefined;
+// Keep Vite's asset hashes and the precache manifest from the same build.
+const webBuild = await productionWeb(api, live, { unmodified: true });
 try {
-  servers.push(Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }));
-  servers.push(Bun.spawn(["bun", "apps/live/src/index.ts"], { env: { ...Bun.env, LIVE_PORT: String(livePort), WEB_ORIGIN: web }, stdout: "inherit", stderr: "inherit" }));
-  // The build goes to a folder of its own: apps/web/dist is shared with every flow running side by side.
-  const webDist = mkdtempSync(`${tmpdir()}/weft-e2e-web-`);
-  const build = Bun.spawnSync(["node", "node_modules/vite/bin/vite.js", "build", "--outDir", webDist, "--emptyOutDir"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api, VITE_LIVE_URL: live }, stdout: "inherit", stderr: "inherit" });
-  check(build.exitCode === 0, "web build failed");
-  const serviceWorker = readFileSync(`${webDist}/sw.js`, "utf8");
+  servers.push(startApi(apiPort, web));
+  servers.push(startLive(livePort, web));
+  const serviceWorker = readFileSync(`${webBuild.directory}/sw.js`, "utf8");
   check(!/mermaid\.core-|(?:flow|sequence|class|state|er|gantt|mindmap|pie|sankey|xychart|block|architecture|journey|timeline|kanban|requirement|quadrant|radar|c4)Diagram-/i.test(serviceWorker), "service worker precaches Mermaid renderer code for pages without diagrams");
-  servers.push(Bun.spawn(["node", "node_modules/vite/bin/vite.js", "preview", "--outDir", webDist, "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: Bun.env, stdout: "ignore", stderr: "inherit" }));
+  servers.push(serveWeb(webPort, webBuild.directory));
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web), waitFor(`http://localhost:${livePort}`)]);
-  browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  browser = await launchBrowser();
+  const page = await newPage(browser, { viewport: { width: 1280, height: 900 }, serviceWorkers: "allow" });
   const waitForDiagramImage = async (image: Locator) => {
     const handle = await image.elementHandle();
     if (!handle) throw new Error("diagram image is missing");
@@ -56,6 +52,8 @@ try {
   page.on("dialog", (dialog) => { void dialog.dismiss(); });
   const slug = `mermaid-${crypto.randomUUID().slice(0, 7)}`;
   await page.goto(web);
+  await page.waitForFunction(() => navigator.serviceWorker.controller?.scriptURL === new URL("/sw.js", location.origin).href, undefined, { timeout: 15_000 })
+    .catch((error) => { throw new Error("the production service worker did not take control", { cause: error }); });
   await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
   await page.getByLabel(translate("auth.name")).fill("Diagram reviewer");
   await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
@@ -248,5 +246,6 @@ try {
 } finally {
   await browser?.close();
   servers.forEach((server) => server.kill());
+  await webBuild.clean();
   await client.end();
 }

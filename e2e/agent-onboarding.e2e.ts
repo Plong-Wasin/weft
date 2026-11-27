@@ -1,7 +1,9 @@
 // UI-only browser flow: a new workspace member signs in a Daemon, shares a Runtime,
 // creates a Code-capable Agent, grants a second member access, and runs it from a work item.
 // A scratch-only fake `codex` executable keeps the real Daemon path deterministic and offline.
-import { chromium, type Locator } from "playwright";
+import { check, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
+import { flowOwnerKey } from "./shutdown";
+import type { Locator } from "playwright";
 import { rm } from "node:fs/promises";
 import { eq, like } from "drizzle-orm";
 import { agents, createDatabase, daemons, users, workspaces } from "../packages/db/src";
@@ -16,8 +18,8 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const evidence = Bun.env.AGENT_ONBOARDING_SCREENSHOTS ?? "/tmp/claude-1000/-home-plong-orca-workspaces-weft-spurdog/4ede5172-06b6-4421-a1f0-57b9ca12a25c/scratchpad/ship-agent-safety-and-comment-ux/ticket-14-evidence";
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api, WEFT_DAEMON_TRACE: "1" }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--host", "127.0.0.1", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api, CHOKIDAR_USEPOLLING: "true" }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web, { env: { ...Bun.env, WEFT_DAEMON_TRACE: "1" } }),
+  startWeb(webPort, { api, host: "127.0.0.1", env: { ...Bun.env, CHOKIDAR_USEPOLLING: "true" } }),
 ];
 const { client, db } = createDatabase();
 const scratchHost = "ticket-14-scratch-runtime";
@@ -31,10 +33,6 @@ let browser: import("playwright").Browser | undefined;
 let daemon: Bun.Subprocess | undefined;
 let failed = false;
 
-async function waitFor(url: string) {
-  for (let n = 0; n < 120; n += 1) { try { if ((await fetch(url)).status < 500) return; } catch { /* starting */ } await Bun.sleep(250); }
-  throw new Error(`${url} did not start`);
-}
 async function screenshotMatrix(page: import("playwright").Page, name: string, focus?: import("playwright").Locator, opener?: Locator) {
   for (const width of [1440, 768, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
@@ -49,7 +47,6 @@ async function screenshotMatrix(page: import("playwright").Page, name: string, f
     }
   }
 }
-function check(ok: boolean, message: string) { if (!ok) throw new Error(message); }
 /** Polls until the condition holds; the Daemon's own timing (registration, its first heartbeat) has no UI signal to wait on. */
 async function waitUntil(condition: () => Promise<boolean>, what: string, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
@@ -76,8 +73,8 @@ try {
   await Bun.write(openStub, `#!/bin/sh\nprintf '%s\\n' "$1" > "$ORCA_LOGIN_CAPTURE"\n`);
   await Bun.$`chmod 700 ${openStub}`;
   await waitFor(`${api}/api/me`); await waitFor(web);
-  browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const adminContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  browser = await launchBrowser();
+  const adminContext = await newContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" });
   const admin = await adminContext.newPage();
   admin.on("pageerror", (error) => console.error("browser pageerror:", error.message));
   admin.on("response", async (response) => { if (response.status() >= 400 && response.url().includes("/actions/")) console.error(`browser action ${response.status()}: ${response.url()} ${(await response.text()).slice(0, 500)}`); if (["set_agent_project_access", "set_agent_access"].some((name) => response.url().endsWith(`/actions/${name}`))) console.log(`${response.url().split("/").pop()} ${response.status()}: ${(await response.text()).slice(0, 300)}`); });
@@ -117,7 +114,7 @@ try {
   await Bun.$`chmod 700 ${loginDir}/xdg-open`;
   const bunPath = Bun.which("bun")!;
   const cliPath = `${process.cwd()}/apps/cli/src/index.ts`;
-  const loginEnv = { PATH: `${loginDir}:/usr/bin:/bin`, HOME: scratchHome, XDG_CONFIG_HOME: configHome, ORCA_LOGIN_CAPTURE: capturePath, WEFT_API_URL: api, LANG: "C.UTF-8" };
+  const loginEnv = { PATH: `${loginDir}:/usr/bin:/bin`, HOME: scratchHome, XDG_CONFIG_HOME: configHome, ORCA_LOGIN_CAPTURE: capturePath, WEFT_API_URL: api, LANG: "C.UTF-8", [flowOwnerKey]: Bun.env[flowOwnerKey] };
   const login = Bun.spawn([bunPath, cliPath, "login"], { cwd: scratchHome, env: loginEnv, stdout: "pipe", stderr: "pipe" });
   for (let n = 0; n < 100 && !(await Bun.file(capturePath).exists()); n += 1) await Bun.sleep(100);
   check(await Bun.file(capturePath).exists(), "weft login did not open its browser sign-in page");
@@ -134,7 +131,7 @@ try {
   // Start the actual Daemon from the disposable scratch directory; its only detected CLI is the fake Codex shim.
   daemon = Bun.spawn([bunPath, cliPath, "daemon", "start", "--foreground"], {
     cwd: scratchHome,
-    env: { PATH: `${fakeBin}:/usr/bin:/bin`, HOME: scratchHome, XDG_CONFIG_HOME: configHome, TMPDIR: `${sandbox}/tmp`, LANG: "C.UTF-8", WEFT_API_URL: api, WEFT_DAEMON_CHILD: "1", WEFT_HOSTNAME: scratchHost },
+    env: { PATH: `${fakeBin}:/usr/bin:/bin`, HOME: scratchHome, XDG_CONFIG_HOME: configHome, TMPDIR: `${sandbox}/tmp`, LANG: "C.UTF-8", WEFT_API_URL: api, WEFT_DAEMON_CHILD: "1", WEFT_HOSTNAME: scratchHost, [flowOwnerKey]: Bun.env[flowOwnerKey] },
     stdout: Bun.file(daemonLog), stderr: Bun.file(daemonLog),
   });
   // The Runtimes page lists the Daemon only once its registration has written the daemons row.
@@ -158,7 +155,7 @@ try {
   const developerInvite = await makeInvite();
   const pmInvite = await makeInvite();
   const join = async (name: string, email: string, url: string) => {
-    const context = await browser!.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+    const context = await newContext(browser!, { viewport: { width: 1440, height: 900 }, locale: "en-US" });
     const page = await context.newPage();
     await page.goto(url);
     await page.getByLabel(translate("auth.name")).fill(name);

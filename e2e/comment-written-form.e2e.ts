@@ -1,6 +1,6 @@
+import { launchBrowser, newPage, startApi, startWeb, waitFor } from "./harness";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { chromium } from "playwright";
 import { createAgentActions, createCommentActions, createProjectActions } from "../packages/actions/src";
 import { comments, createDatabase, users } from "../packages/db/src";
 import { backfillCommentWrittenForms } from "../packages/actions/src/migrations/comment-written-form";
@@ -13,19 +13,15 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const captureDir = Bun.env.COMMENT_SCREENSHOT_DIR ?? `${process.cwd()}/.scratch-captures`;
 const servers: ReturnType<typeof Bun.spawn>[] = [];
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) { try { if ((await fetch(url)).status < 500) return; } catch { /* starting */ } await Bun.sleep(200); }
-  throw new Error(`${url} did not start`);
-}
 const { client, db } = createDatabase();
 let failed = false;
 try {
-  servers.push(Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }));
+  servers.push(startApi(apiPort, web));
   // The dev server, not a build served by `vite preview`: a build writes apps/web/dist, which flows running side by side would overwrite under each other.
-  servers.push(Bun.spawn(["node", "node_modules/vite/bin/vite.js", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }));
+  servers.push(startWeb(webPort, { api }));
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 }, locale: "en-US" });
+  const browser = await launchBrowser();
+  const page = await newPage(browser, { viewport: { width: 1280, height: 900 }, locale: "en-US" });
   const slug = `written-${crypto.randomUUID().slice(0, 7)}`;
   await page.goto(web);
   await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();

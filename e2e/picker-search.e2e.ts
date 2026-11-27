@@ -1,7 +1,7 @@
 // Browser check for the searchable pickers: the search field appears only above six options, it is focused on open,
 // it filters by name, a message shows when nothing matches, and ArrowUp, ArrowDown, Enter and Escape work without the mouse.
 // Small pickers (Priority) keep no search field; the Assignee picker (eight People and Agents) searches, labels its groups and keeps a disabled Agent's reason. Run with `bun e2e/picker-search.e2e.ts`.
-import { chromium } from "playwright";
+import { check, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { like } from "drizzle-orm";
@@ -17,27 +17,18 @@ const acceptanceShotPhase = Bun.env.SHADCN_SCREENSHOT_PHASE ?? "after";
 const acceptanceShots = join(Bun.env.SHADCN_SCREENSHOT_ROOT ?? process.cwd(), ".local/shots/shadcn-05", acceptanceShotPhase);
 mkdirSync(acceptanceShots, { recursive: true });
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 let failed = false;
 const { client, db } = createDatabase();
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const browser = await launchBrowser();
+  const context = await newContext(browser, { viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const t = (key: string) => translate(key as never);
   const call = async <T>(name: string, body: unknown) => await (await page.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
 
@@ -235,7 +226,7 @@ try {
   await page.screenshot({ path: "/home/plong/workspace/weft/.local/continuous-improvements/labels-keyboard/labels-390.png", fullPage: false });
   await page.keyboard.press("Escape");
 
-  const touchContext = await browser.newContext({ viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
+  const touchContext = await newContext(browser, { viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
   const touchPage = await touchContext.newPage();
   await touchPage.goto(`${web}/${slug}/browse/POP-1`);
   const touchSidebar = touchPage.getByRole("complementary", { name: t("workItems.properties") });

@@ -1,28 +1,18 @@
+import { launchBrowser, newPage, startWeb, waitFor } from "./harness";
 import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { chromium, type Browser, type Page } from "playwright";
+import { type Browser, type Page } from "playwright";
 import { translate } from "../packages/shared/src";
 
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5217);
-const api = "http://localhost:3217";
+const api = `http://localhost:${Bun.env.E2E_API_PORT ?? 3217}`;
 const web = `http://localhost:${webPort}`;
 const screenshotDir = Bun.env.E2E_SCREENSHOTS ?? `${tmpdir()}/weft-e2e-microsoft-sign-in`;
 mkdirSync(screenshotDir, { recursive: true });
-// The dev server, not a build served by `vite preview`: a build writes apps/web/dist, which flows running side by side would overwrite under each other.
-const server = Bun.spawn(["bunx", "vite", "--host", "127.0.0.1", "--port", String(webPort), "--strictPort"], {
-  cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit",
-});
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* server is starting */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
+const server = startWeb(webPort, { api, host: "127.0.0.1" });
 
 async function makePage(browser: Browser, options: { microsoftSignInEnabled: boolean; passwordSignInEnabled: boolean }, viewport: { width: number; height: number } = { width: 1440, height: 900 }) {
-  const page = await browser.newPage({ viewport, locale: "en-US" });
+  const page = await newPage(browser, { viewport, locale: "en-US" });
   await page.route(`${api}/api/auth/settings`, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(options) }));
   await page.route(`${api}/api/me`, (route) => route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: "Unauthenticated" }) }));
   return page;
@@ -32,7 +22,7 @@ let browser: Browser | undefined;
 let failed = false;
 try {
   await waitFor(web);
-  browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
+  browser = await launchBrowser();
 
   const unchanged = await makePage(browser, { microsoftSignInEnabled: false, passwordSignInEnabled: true });
   await unchanged.goto(web);

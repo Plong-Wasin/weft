@@ -1,6 +1,7 @@
 // Browser flow for Exports settings: request a CSV Export of one project, watch the worker finish it, and download it. Run with `bun e2e/exports.e2e.ts`.
 // The Asset storage is a tiny in-process S3 stand-in, so the flow needs only the database named by DATABASE_URL (use your own, never a shared one).
-import { chromium, type Page } from "playwright";
+import { check, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
+import type { Page } from "playwright";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { like } from "drizzle-orm";
 import { translate } from "../packages/shared/src";
@@ -29,12 +30,10 @@ const s3 = Bun.serve({
 });
 const storageEnv = { S3_ENDPOINT: `http://localhost:${s3Port}`, S3_PUBLIC_ENDPOINT: `http://localhost:${s3Port}`, S3_BUCKET: "e2e-bucket" };
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, ...storageEnv, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
+  startApi(apiPort, web, { env: { ...Bun.env, ...storageEnv } }),
   Bun.spawn(["bun", "apps/worker/src/index.ts"], { env: { ...Bun.env, ...storageEnv, WORKER_POLL_MS: "200" }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["node", "node_modules/vite/bin/vite.js", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startWeb(webPort, { api }),
 ];
-async function waitFor(url: string) { for (let i = 0; i < 100; i++) { try { if ((await fetch(url)).status < 500) return; } catch { /* startup */ } await Bun.sleep(200); } throw new Error(`${url} did not start`); }
-const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
 async function signup(page: Page, slug: string, name: string, email: string, invite?: string) {
   await page.goto(invite ?? web);
   if (!invite) await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
@@ -52,8 +51,8 @@ async function signup(page: Page, slug: string, name: string, email: string, inv
 }
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const adminContext = await browser.newContext({ locale: "en-US", viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+  const browser = await launchBrowser();
+  const adminContext = await newContext(browser, { locale: "en-US", viewport: { width: 1440, height: 900 }, acceptDownloads: true });
   const admin = await adminContext.newPage();
   const slug = `exports-${crypto.randomUUID().slice(0, 8)}`;
   await signup(admin, slug, "Exports Admin", `${slug}@example.test`);

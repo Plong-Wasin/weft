@@ -12,6 +12,12 @@ describe("E2E_PORT_BASE", () => {
     expect(() => resolvePortBase("60000", "weft")).toThrow("refused");
   });
 
+  test("the last worker's web port must stay below 65535", () => {
+    expect(resolvePortBase("45532", "weft", 2)).toBe(45532);
+    expect(workerPorts(45532, 1).web).toBe(65534);
+    expect(() => resolvePortBase("45534", "weft", 2)).toThrow("E2E_PORT_BASE=45534 refused");
+  });
+
   test("a value that is not a whole number in range is refused", () => {
     for (const value of ["abc", "1.5", "1000", "-3"]) expect(() => resolvePortBase(value, "weft")).toThrow("refused");
   });

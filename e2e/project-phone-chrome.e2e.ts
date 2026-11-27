@@ -1,7 +1,8 @@
+import { launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { chromium, type Locator, type Page } from "playwright";
+import { type Locator, type Page } from "playwright";
 import { translate, type Locale } from "../packages/shared/src";
 import { WeftClient } from "../tools/visual/weft-client";
 
@@ -10,17 +11,9 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 49000);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "ignore", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "inherit", stderr: "inherit" }),
+  startApi(apiPort, web, { stdout: "ignore" }),
+  startWeb(webPort, { api, stdout: "inherit" }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt++) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* starting */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
@@ -40,7 +33,7 @@ try {
     "ตรวจสอบคู่มือการเริ่มต้นและอัปเดตข้อมูลสำหรับทีมสนับสนุน",
     "Follow up on customer feedback from the pilot release",
   ]) items.push(await client.action("create_work_item", { projectId: project.id, title, priority: items.length % 2 ? "high" : "medium" }));
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
+  const browser = await launchBrowser();
   try {
     const path = `/${slug}/projects/PHONE/issues?layout=list`;
     const detailPath = `/${slug}/browse/${items[0]!.displayId}`;
@@ -56,7 +49,7 @@ try {
       return box;
     };
     const open = async (width: number, height: number, locale: Locale = "en", colorScheme: "light" | "dark" = "light") => {
-      const context = await browser.newContext({ viewport: { width, height }, hasTouch: width < 900, isMobile: width < 900, locale, colorScheme, reducedMotion: "reduce" });
+      const context = await newContext(browser, { viewport: { width, height }, hasTouch: width < 900, isMobile: width < 900, locale, colorScheme, reducedMotion: "reduce" });
       await context.addCookies(client.cookies().map((cookie) => ({ ...cookie, domain: "localhost", path: "/" })));
       await context.addInitScript(({ locale, colorScheme }) => {
         localStorage.setItem("weft.locale", locale);

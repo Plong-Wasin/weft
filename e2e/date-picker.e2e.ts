@@ -1,6 +1,6 @@
 // Browser end-to-end flow for the Start and Due calendar popover on a Work item: quick picks, No date, a range picked in one calendar, overdue colouring and the keyboard.
 // Run with `bun e2e/date-picker.e2e.ts` (set CHROMIUM_PATH as for the other flows; run-all.ts starts its own servers).
-import { chromium } from "playwright";
+import { check, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { translate } from "../packages/shared/src";
@@ -13,28 +13,19 @@ const acceptanceShotPhase = Bun.env.SHADCN_SCREENSHOT_PHASE ?? "after";
 const acceptanceShots = join(process.cwd(), ".local/shots/shadcn-05", acceptanceShotPhase);
 mkdirSync(acceptanceShots, { recursive: true });
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 type Item = { id: string; displayId: string; stateId: string; startDate: string | null; dueDate: string | null };
 type State = { id: string; name: string; group: string };
 let failed = false;
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  const browser = await launchBrowser();
+  const context = await newContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" });
   const page = await context.newPage();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const call = async <T>(name: string, body: unknown) => { const response = await context.request.post(`${api}/actions/${name}`, { data: body }); check(response.ok(), `${name} failed: ${response.status()}`); return await response.json() as T; };
   const t = (key: string) => translate(key as never);
 
@@ -44,9 +35,9 @@ try {
   await page.getByLabel(t("auth.email")).fill(`${slug}@example.test`);
   await page.getByLabel(t("auth.password"), { exact: true }).fill("a-secure-password");
   await page.getByLabel(t("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
-  const signedUp = page.waitForResponse((response) => response.url().includes("/api/auth/") && response.request().method() === "POST" && response.ok());
+  const createSignedInContext = page.waitForResponse((response) => response.url().includes("/api/auth/") && response.request().method() === "POST" && response.ok());
   await page.getByRole("button", { name: t("auth.signUp") }).click();
-  await signedUp; // the session cookie must exist before the workspace is created
+  await createSignedInContext; // the session cookie must exist before the workspace is created
   await page.getByLabel(t("workspace.name")).fill("Date team");
   await page.getByLabel(t("workspace.slug")).fill(slug);
   await page.getByRole("button", { name: t("workspace.create") }).click();
@@ -204,7 +195,7 @@ try {
 
   // 6. Time zones far from UTC: the chip shows the stored calendar day, and a picked day is stored as that same day.
   for (const [timezoneId, picked] of [["America/Los_Angeles", "2031-05-09"], ["Pacific/Kiritimati", "2031-05-11"]] as const) {
-    const zoned = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US", timezoneId, storageState: await context.storageState() });
+    const zoned = await newContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US", timezoneId, storageState: await context.storageState() });
     const zonedPage = await zoned.newPage();
     await zonedPage.goto(`${web}/${slug}/browse/${thaiItem.displayId}`);
     const zonedDue = zonedPage.getByRole("complementary", { name: t("workItems.properties") }).getByRole("button", { name: new RegExp(`^${t("workItems.dueDate")}:`) });
@@ -247,7 +238,7 @@ try {
   await page.keyboard.press("Escape");
   console.log("date-picker: overdue Due field keeps its accessible context when read-only");
 
-  const touchContext = await browser.newContext({ viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
+  const touchContext = await newContext(browser, { viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
   const touchPage = await touchContext.newPage();
   await touchPage.goto(`${web}/${slug}/browse/DTE-1`);
   const touchSidebar = touchPage.getByRole("complementary", { name: t("workItems.properties") });

@@ -1,7 +1,7 @@
 // Browser end-to-end flow for the work item timeline: the Comments / Activity / All filter (default Comments, remembered per viewer
 // across work items and reloads) and the comment composer pinned at the bottom of the feed.
 // Run with `CHROMIUM_PATH=... bun e2e/run-all.ts timeline-filter`, or `bun e2e/timeline-filter.e2e.ts` against a database made with --keep.
-import { chromium } from "playwright";
+import { check, createSignedInContext, launchBrowser, startApi, startWeb, waitFor } from "./harness";
 import { translate } from "../packages/shared/src";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3117);
@@ -9,44 +9,26 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5217);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 type Item = { id: string; displayId: string; title: string };
 let failed = false;
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
-  const page = await context.newPage();
+  const browser = await launchBrowser();
   const slug = `tl-${crypto.randomUUID().slice(0, 8)}`;
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
+  const context = await createSignedInContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" }, api, web, {
+    account: { name: "Timeline Tester", email: `${slug}@example.test` },
+    workspace: { name: "Timeline team", slug },
+    project: { name: "Timeline", key: "TLN", visibility: "public", shape: "simple" },
+  });
+  const page = await context.newPage();
   const call = async <T>(name: string, body: unknown) => { const response = await context.request.post(`${api}/actions/${name}`, { data: body }); check(response.ok(), `${name} failed: ${response.status()}`); return await response.json() as T; };
 
   // Sign up, create a workspace and a project through the UI, as a person would.
-  await page.goto(web);
-  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
-  await page.getByLabel(translate("auth.name")).fill("Timeline Tester");
-  await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
-  await page.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
-  await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
-  await page.getByRole("button", { name: translate("auth.signUp") }).click();
-  await page.getByLabel(translate("workspace.name")).fill("Timeline team");
-  await page.getByLabel(translate("workspace.slug")).fill(slug);
-  await page.getByRole("button", { name: translate("workspace.create") }).click();
-  await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
-  await page.getByLabel(translate("projects.name")).fill("Timeline");
-  await page.getByLabel(translate("projects.key"), { exact: true }).fill("TLN");
-  await page.getByRole("button", { name: translate("projects.create") }).click();
+  await page.goto(`${web}/${slug}`);
   await page.getByRole("link", { name: /TLN · Timeline/ }).waitFor();
 
   const me = await (await context.request.get(`${api}/api/me`)).json() as { user: { id: string }; workspaces: Array<{ id: string }> };

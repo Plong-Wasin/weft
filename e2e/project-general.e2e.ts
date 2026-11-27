@@ -1,8 +1,9 @@
 // Browser end-to-end flow: Project General saves name and Visibility together with one Save; a Member without admin rights sees read-only values and no action buttons.
 // Run with `bun e2e/project-general.e2e.ts` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
 // Captures of the General page (admin and read-only member, 1440 and 390 px) go to .local/captures/02/ in this worktree.
+import { check, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
 import { mkdirSync } from "node:fs";
-import { chromium, type Page } from "playwright";
+import type { Page } from "playwright";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -13,27 +14,18 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const captures = `${import.meta.dir}/../.local/captures/02`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
 
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
-
-const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
 const noSideScroll = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
 let failed = false;
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
   mkdirSync(captures, { recursive: true });
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  const browser = await launchBrowser();
+  const context = await newContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" });
   const page = await context.newPage();
   page.on("pageerror", (error) => console.error("pageerror:", error.message));
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
@@ -56,7 +48,7 @@ try {
 
   // A second person joins the workspace by invite and is added to the project as a Member.
   const invite = await call<{ token: string }>(page, "create_invite", { workspaceId, role: "Member" });
-  const memberContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  const memberContext = await newContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" });
   const member = await memberContext.newPage();
   await member.goto(`${web}/invite/${invite.token}`);
   await member.getByLabel(translate("auth.name")).fill("General Member");

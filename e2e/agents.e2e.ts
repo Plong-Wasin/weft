@@ -1,7 +1,7 @@
 // Browser end-to-end flow: an admin creates an Agent and opens it to projects, a member assigns it a work item, the Run waits for the Originator's Confirmation,
 // approval resumes it and its comment (with the Agent marker and Run link) appears; a second Run is cancelled and rerun.
 // The model is a scripted fake driven by an in-process job loop, so no provider is called. Run with `bun e2e/agents.e2e.ts`.
-import { chromium } from "playwright";
+import { check, createSignedInContext, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
 import { mkdir } from "node:fs/promises";
 import { eq, inArray, like } from "drizzle-orm";
 import { agents, createDatabase, jobs, runtimes, users, workspaces } from "../packages/db/src";
@@ -13,17 +13,9 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52181);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 let failed = false;
 let stopWorker = false;
@@ -45,23 +37,17 @@ const worker = (async () => { while (!stopWorker) { const result = await runNext
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
-  const page = await context.newPage();
+  const browser = await launchBrowser();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const email = `${slug}@example.test`;
+  const context = await createSignedInContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" }, api, web, {
+    account: { name: "Agent Tester", email },
+    workspace: { name: "E2E team", slug },
+  });
+  const page = await context.newPage();
   const call = async <T>(name: string, body: unknown) => await (await page.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
 
-  await page.goto(web);
-  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
-  await page.getByLabel(translate("auth.name")).fill("Agent Tester");
-  await page.getByLabel(translate("auth.email")).fill(email);
-  await page.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
-  await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
-  await page.getByRole("button", { name: translate("auth.signUp") }).click();
-  await page.getByLabel(translate("workspace.name")).fill("E2E team");
-  await page.getByLabel(translate("workspace.slug")).fill(slug);
-  await page.getByRole("button", { name: translate("workspace.create") }).click();
+  await page.goto(`${web}/${slug}`);
   await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
   await page.getByLabel(translate("projects.name")).fill("Mobile");
   await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOB");
@@ -69,7 +55,8 @@ try {
   await page.getByRole("link", { name: /MOB · Mobile/ }).waitFor();
   const me = await (await page.request.get(`${api}/api/me`)).json() as { user: { id: string }; workspaces: Array<{ id: string; slug: string }> };
   const workspaceId = me.workspaces.find((item) => item.slug === slug)!.id;
-  const project = await call<{ id: string }>("get_project", { workspaceId, key: "MOB" });
+  const project = await call<{ id: string; visibility: string }>("get_project", { workspaceId, key: "MOB" });
+  check(project.visibility === "public", "UI project creation did not persist public visibility by default");
 
   // An admin creates an Agent and opens every project to it.
   await page.goto(`${web}/${slug}/settings/agents`);
@@ -128,7 +115,7 @@ try {
 
   // A real workspace Member joins by invite, then creates an Agent on a Runtime owned by that Member.
   const invite = await call<{ token: string }>("create_invite", { workspaceId, role: "Member" });
-  const memberContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  const memberContext = await newContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" });
   const memberPage = await memberContext.newPage();
   await memberPage.goto(`${web}/invite/${invite.token}`);
   await memberPage.getByLabel(translate("auth.name")).fill("Runtime Member");
@@ -189,7 +176,7 @@ try {
 
   // Guests may own a shared Runtime through a migrated or administratively prepared setup, but never get the Member create form.
   const guestInvite = await call<{ token: string }>("create_invite", { workspaceId, role: "Guest" });
-  const guestContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  const guestContext = await newContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" });
   const guestPage = await guestContext.newPage();
   await guestPage.goto(`${web}/invite/${guestInvite.token}`);
   await guestPage.getByLabel(translate("auth.name")).fill("Runtime Guest");

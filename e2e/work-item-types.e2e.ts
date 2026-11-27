@@ -2,7 +2,8 @@
 // required custom property, a member creates a work item of that type (required value enforced), and changing the type asks before
 // dropping values. Screenshots of the settings page, the create modal and the peek panel go to the review folder.
 // Run with `bun e2e/run-all.ts work-item-types` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
-import { chromium, type Page } from "playwright";
+import { check, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
+import type { Page } from "playwright";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
 import { paths } from "../apps/web/src/routes";
@@ -13,17 +14,9 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52141);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 let failed = false;
 const bugRowOn = (page: Page) => page.locator("li").filter({ has: page.getByRole("button", { name: translate("types.editNamed" as never).replace("{name}", "Bug"), exact: true }) });
@@ -32,11 +25,10 @@ mkdirSync(shots, { recursive: true });
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const browser = await launchBrowser();
+  const context = await newContext(browser, { viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const t = (key: string) => translate(key as never);
 
   await page.goto(web);

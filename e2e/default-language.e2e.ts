@@ -1,5 +1,5 @@
 // Signed-out language follows the optional instance default and remains changeable.
-import { chromium } from "playwright";
+import { launchBrowser, newContext, newPage, startApi, startWeb, waitFor, waitUntil } from "./harness";
 import { mkdir } from "node:fs/promises";
 import { reviewShots } from "../tools/visual/paths";
 
@@ -10,23 +10,15 @@ const web = `http://localhost:${webPort}`;
 const shots = reviewShots("18-default-language");
 // The dev server, not a build served by `vite preview`: a build writes apps/web/dist, which flows running side by side would overwrite under each other.
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api, DEFAULT_LANGUAGE: "th" }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web, { env: { ...Bun.env, DEFAULT_LANGUAGE: "th" } }),
+  startWeb(webPort, { api }),
 ];
 
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* waiting for the local app */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
-
-let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+let browser: Awaited<ReturnType<typeof launchBrowser>> | undefined;
 try {
   await Promise.all([waitFor(`${api}/api/config`), waitFor(web)]);
-  browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const page = await browser.newPage({ locale: "en-US" });
+  browser = await launchBrowser();
+  const page = await newPage(browser, { locale: "en-US" });
   await page.goto(web);
   // The language control is a shadcn Select (combobox trigger + listbox), not a native select.
   const language = page.getByRole("combobox", { name: "Language" }).or(page.getByRole("combobox", { name: "ภาษา" }));
@@ -47,7 +39,7 @@ try {
       await page.screenshot({ path: `${evidence}/language-${width}x${height}-${theme}.png`, fullPage: true });
     }
   }
-  const touchContext = await browser.newContext({ locale: "en-US", viewport: { width: 667, height: 375 }, isMobile: true, hasTouch: true });
+  const touchContext = await newContext(browser, { locale: "en-US", viewport: { width: 667, height: 375 }, isMobile: true, hasTouch: true });
   const touchPage = await touchContext.newPage();
   await touchPage.goto(web);
   const touchLanguage = touchPage.getByRole("combobox").first();
@@ -61,18 +53,24 @@ try {
   const focusRing = await language.evaluate((element) => getComputedStyle(element).boxShadow);
   if (focusRing === "none") throw new Error("Keyboard focus should draw a ring around the Language Select");
   await page.keyboard.press("Enter");
-  if (await language.getAttribute("aria-expanded") !== "true") throw new Error("Enter should open the Language Select");
+  await waitUntil(async () => await language.getAttribute("aria-expanded") === "true", "Enter should open the Language Select");
   const popup = page.getByRole("listbox");
+  // The list takes focus after it opens; keys sent before that are lost.
+  await page.locator('[role="option"]:focus').waitFor();
   const popupBox = await popup.boundingBox();
   if (!popupBox || popupBox.top < 0 || popupBox.bottom > 375) throw new Error(`Language options should fit the short landscape viewport: ${JSON.stringify(popupBox)}`);
   await page.keyboard.press("Escape");
-  if (await language.getAttribute("aria-expanded") !== "false" || !(await language.evaluate((element) => document.activeElement === element))) throw new Error("Escape should close the Language Select and restore trigger focus");
+  await waitUntil(async () => await language.getAttribute("aria-expanded") === "false" && await language.evaluate((element) => document.activeElement === element), "Escape should close the Language Select and restore trigger focus");
   await page.keyboard.press("Enter");
+  // The list takes focus after it opens; keys sent before that are lost.
+  await page.locator('[role="option"]:focus').waitFor();
   await page.keyboard.press("ArrowUp");
+  await page.getByRole("option", { name: "English" }).and(page.locator(":focus")).waitFor();
   await page.keyboard.press("Enter");
   const englishLanguage = page.getByRole("combobox", { name: "Language" });
   if (!(await englishLanguage.textContent())?.includes("English")) throw new Error("ArrowUp and Enter should select English from the Language Select");
   await page.keyboard.press("Tab");
+  await englishLanguage.and(page.locator(":not(:focus)")).waitFor();
   if (await englishLanguage.evaluate((element) => document.activeElement === element)) throw new Error("Tab should move focus away from the Language Select");
   await englishLanguage.click();
   await page.getByRole("option", { name: "ไทย" }).click();

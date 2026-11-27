@@ -3,7 +3,7 @@
 // Escape closes it; a resolved thread offers no Reply. Phone width: a long Wiki page title wraps instead of clipping, the Analytics
 // project name is not cut off, the Wiki tabs keep "Shared with me" on one line, and no route scrolls the page sideways.
 // Run with `bun e2e/design-fixes-wiki-analytics.e2e.ts` (set DATABASE_URL to an isolated test database).
-import { chromium } from "playwright";
+import { check, launchBrowser, newContext, startApi, startLive, startWeb, waitFor } from "./harness";
 import { translate } from "../packages/shared/src";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31420);
@@ -12,29 +12,20 @@ const livePort = Number(Bun.env.E2E_LIVE_PORT ?? 31422);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bun", "apps/live/src/index.ts"], { env: { ...Bun.env, LIVE_PORT: String(livePort), WEB_ORIGIN: web }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api, VITE_LIVE_URL: `ws://localhost:${livePort}` }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startLive(livePort, web),
+  startWeb(webPort, { api, live: `ws://localhost:${livePort}` }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 let failed = false;
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const browser = await launchBrowser();
+  const context = await newContext(browser, { viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const userName = "Design Tester";
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const call = async <T>(name: string, body: unknown) => await (await page.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
   const replyLabel = (name: string) => `${translate("wiki.comments.replyTo")} ${name}`;
   // Anchor is an opaque string the editor reads back; any non-empty value stores a thread.

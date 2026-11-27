@@ -1,6 +1,7 @@
 // Browser end-to-end flow: live Wiki updates, Wiki and Pages list controls, and the page editor.
 // Run with `bun e2e/wiki-pages.e2e.ts` (set DATABASE_URL to an isolated test database). Screenshots go to .local/visual/review/15-wiki-and-pages.
-import { chromium, type Locator } from "playwright";
+import { check, createSignedInContext, launchBrowser, newContext, startApi, startLive, startWeb, waitFor, waitUntil } from "./harness";
+import type { Locator } from "playwright";
 import { eq, like } from "drizzle-orm";
 import { createDatabase, users, workspaceMembers, workspaces } from "../packages/db/src";
 import { createWikiActions } from "../packages/actions/src";
@@ -16,40 +17,48 @@ const web = `http://localhost:${webPort}`;
 const liveHttp = `http://localhost:${livePort}`;
 const shots = reviewShots("15-wiki-and-pages");
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bun", "apps/live/src/index.ts"], { env: { ...Bun.env, LIVE_PORT: String(livePort), WEB_ORIGIN: web }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, CHOKIDAR_USEPOLLING: "true", VITE_API_URL: api, VITE_LIVE_URL: `ws://localhost:${livePort}` }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startLive(livePort, web),
+  startWeb(webPort, { api, live: `ws://localhost:${livePort}`, env: { ...Bun.env, CHOKIDAR_USEPOLLING: "true" } }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 let failed = false;
 const { client, db } = createDatabase();
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web), waitFor(`http://localhost:${livePort}`)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const browser = await launchBrowser();
+  const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
+  const context = await createSignedInContext(browser, { viewport: { width: 1440, height: 900 } }, api, web, {
+    account: { name: "Wiki Tester", email: `${slug}@example.test` },
+    workspace: { name: "E2E team", slug },
+    project: { name: "Mobile", key: "MOB", visibility: "public", shape: "simple" },
+  });
   const page = await context.newPage();
   // Suppress transitions for the duration of the capture, including any that a theme change would start after the next frame.
   const themeShot = (path: string) => page.screenshot({ path, fullPage: true, style: "*, *::before, *::after { transition: none !important; }" });
   const renderLoops: string[] = [];
-  page.on("console", (message) => { if (message.type() === "error") { console.error(`browser console: ${message.text()}`); if (message.text().includes("Maximum update depth exceeded")) renderLoops.push(message.text()); } });
-  const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
+  const detectRenderLoop = (message: string) => {
+    if (/Maximum update depth exceeded|Minified React error #185\b/.test(message)) renderLoops.push(message);
+  };
+  page.on("console", (message) => {
+    if (message.type() !== "error") return;
+    console.error(`browser console: ${message.text()}`);
+    detectRenderLoop(message.text());
+  });
+  page.on("pageerror", (error) => detectRenderLoop(error.message));
   // The Details panel starts hidden; open it (a drawer below 1024px) unless it is already open.
   const openDetails = async () => {
     const panel = page.getByRole("complementary", { name: translate("wiki.details"), exact: true });
     const toggle = page.getByTestId("wiki-details-toggle");
     await toggle.waitFor();
-    if (await toggle.getAttribute("aria-pressed") !== "true") await toggle.click();
-    await panel.waitFor();
+    // After a viewport resize the previous layout's toggle state and panel survive one render, so wait for the panel that fits this width (only the drawer has a close button).
+    await waitUntil(async () => {
+      const drawer = !(await page.evaluate(() => matchMedia("(min-width: 1024px)").matches));
+      if (await panel.isVisible() && (await panel.locator("[data-drawer-close]").count() > 0) === drawer) return true;
+      if (await toggle.getAttribute("aria-pressed") !== "true") await toggle.click();
+      return false;
+    }, "the Details panel did not open", 30_000);
   };
   const chooseWikiSelect = async (label: string, option: string) => {
     await page.getByRole("combobox", { name: label, exact: true }).click();
@@ -68,20 +77,7 @@ try {
     throw new Error(`page content did not persist: ${text}`);
   }
 
-  await page.goto(web);
-  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
-  await page.getByLabel(translate("auth.name")).fill("Wiki Tester");
-  await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
-  await page.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
-  await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
-  await page.getByRole("button", { name: translate("auth.signUp") }).click();
-  await page.getByLabel(translate("workspace.name")).fill("E2E team");
-  await page.getByLabel(translate("workspace.slug")).fill(slug);
-  await page.getByRole("button", { name: translate("workspace.create") }).click();
-  await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
-  await page.getByLabel(translate("projects.name")).fill("Mobile");
-  await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOB");
-  await page.getByRole("button", { name: translate("projects.create") }).click();
+  await page.goto(`${web}/${slug}`);
   await page.getByRole("link", { name: /MOB · Mobile/ }).waitFor();
   const me = await (await page.request.get(`${api}/api/me`)).json() as { workspaces: Array<{ id: string; slug: string }> };
   const workspaceId = me.workspaces.find((workspace) => workspace.slug === slug)!.id;
@@ -158,10 +154,11 @@ try {
   await page.goto(`${web}/${slug}/projects/MOB/pages/${moveRoot.id}`);
   await openDetails();
   const moveScope = page.getByRole("combobox", { name: translate("wiki.linkProject") });
-  let moveWarning = "";
-  page.once("dialog", async (dialog) => { moveWarning = dialog.message(); await dialog.dismiss(); });
-  await moveScope.selectOption(`collection:${moveCollection.id}`);
-  await page.waitForTimeout(250);
+  const dismissMoveWarning = page.waitForEvent("dialog").then(async (dialog) => {
+    await dialog.dismiss();
+    return dialog.message();
+  });
+  const [moveWarning] = await Promise.all([dismissMoveWarning, moveScope.selectOption(`collection:${moveCollection.id}`)]);
   check(moveWarning.includes("Move 2 pages") && moveWarning.includes("0 page shares") && moveWarning.includes("0 work-item links"), `move warning must state exact impact counts: ${moveWarning}`);
   check((await call<{ projectId: string | null }>("get_wiki_page", { pageId: moveRoot.id }))?.projectId === project.id, "dismissing the warning must leave the page in its source project");
   page.once("dialog", async (dialog) => { check(dialog.message() === moveWarning, "confirmation must repeat the move warning"); await dialog.accept(); });
@@ -252,10 +249,11 @@ try {
   console.log("wiki-pages ok: order persists after reload");
 
   // A move into another Collection needs confirmation: dismissing leaves the page where it is, accepting moves it.
-  let collectionWarning = "";
-  page.once("dialog", async (dialog) => { collectionWarning = dialog.message(); await dialog.dismiss(); });
-  await dragTo(alpha.id, `collection:${elsewhere.id}`, "middle", null);
-  await page.waitForTimeout(300);
+  const dismissCollectionWarning = page.waitForEvent("dialog").then(async (dialog) => {
+    await dialog.dismiss();
+    return dialog.message();
+  });
+  const [collectionWarning] = await Promise.all([dismissCollectionWarning, dragTo(alpha.id, `collection:${elsewhere.id}`, "middle", null)]);
   check(collectionWarning.includes("Move 1 page"), `cross-Collection drop must ask before moving: ${collectionWarning}`);
   check((await call<{ collectionId: string | null }>("get_wiki_page", { pageId: alpha.id }))?.collectionId !== elsewhere.id, "dismissing the Collection confirmation must keep the page in place");
   page.once("dialog", async (dialog) => { await dialog.accept(); });
@@ -274,7 +272,7 @@ try {
 
   // A different workspace member creates a Wiki page; the open list refreshes from its SSE signal.
   const secondaryEmail = `e2e-collab-${slug}@example.test`;
-  const secondaryContext = await browser.newContext();
+  const secondaryContext = await newContext(browser);
   const secondary = await secondaryContext.newPage();
   const secondarySlug = `${slug}-collab`;
   await secondary.goto(web);
@@ -289,9 +287,9 @@ try {
   await secondary.getByRole("button", { name: translate("workspace.create") }).click();
   const [collaborator] = await db.select().from(users).where(eq(users.email, secondaryEmail));
   await db.insert(workspaceMembers).values({ workspaceId, userId: collaborator!.id, role: "Admin" });
-  await secondary.waitForTimeout(1_200);
+  await secondary.waitForURL(new RegExp(`/${secondarySlug}(/|$)`));
   const createResponse = await secondary.request.post(`${api}/actions/create_wiki_page`, { data: { workspaceId, title: "Created by collaborator" } });
-  check(createResponse.ok, "a second workspace member must be able to create a Wiki page");
+  check(createResponse.ok(), "a second workspace member must be able to create a Wiki page");
   await page.getByRole("main").getByRole("link", { name: "Created by collaborator" }).waitFor({ timeout: 10_000 });
   await chooseWikiSelect(translate("pages.filter.owner"), "Wiki Collaborator");
   await page.getByRole("main").getByRole("link", { name: "Created by collaborator" }).waitFor();
@@ -642,7 +640,7 @@ try {
   const publicApiUrl = `${api}/published/${publishedUrl!.split("/").at(-1)}`;
   const publicApi = await (await page.request.get(publicApiUrl)).json() as { content: unknown };
   check(JSON.stringify(publicApi.content).includes("Public words for logged out readers"), "public API should include the saved Wiki page content");
-  const loggedOutContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const loggedOutContext = await newContext(browser, { viewport: { width: 1440, height: 900 } });
   const publishedPage = await loggedOutContext.newPage();
   await publishedPage.goto(publishedUrl!);
   await publishedPage.getByTestId("published-wiki-page").getByText("Public words for logged out readers").waitFor();
@@ -659,7 +657,7 @@ try {
   }
 
   // The mobile Wiki tree lives in the sidebar drawer; verify its real touch targets and row spacing.
-  const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
+  const mobile = await newContext(browser, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
   const mobilePage = await mobile.newPage();
   await mobilePage.goto(`${web}/${slug}/wiki`);
   await mobilePage.getByRole("button", { name: translate("shell.openMenu") }).tap();

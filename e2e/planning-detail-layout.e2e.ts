@@ -3,7 +3,8 @@
 // content pushed off screen, values spilling out of their control, picker options drawn over each other, controls under 44px
 // on touch, oversized checkboxes, row menus dropped to their own line, and names cut to one narrow line.
 // Run with `bun e2e/run-all.ts planning-detail-layout` (needs DATABASE_URL, CHROMIUM_PATH).
-import { chromium, type Locator, type Page } from "playwright";
+import { launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
+import { type Locator, type Page } from "playwright";
 import { translate } from "../packages/shared/src";
 import { WeftClient, seedWeft } from "../tools/visual/weft-client";
 
@@ -12,17 +13,9 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5231);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 const failures: string[] = [];
 const check = (condition: boolean, message: string) => { if (!condition) failures.push(message); };
@@ -84,11 +77,11 @@ try {
   await client.action("update_work_item", { workItemId: seed.workItemId, labelIds: labels.map((label) => label.id) });
   await client.action("create_web_link", { workItemId: seed.workItemId, url: "https://example.com/spec", title: longName });
 
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
+  const browser = await launchBrowser();
   const root = `/${slug}/projects/REF`;
   for (const width of [390, 1440]) {
     const phone = width === 390;
-    const context = await browser.newContext({ viewport: { width, height: phone ? 844 : 900 }, reducedMotion: "reduce", hasTouch: phone, isMobile: phone });
+    const context = await newContext(browser, { viewport: { width, height: phone ? 844 : 900 }, reducedMotion: "reduce", hasTouch: phone, isMobile: phone });
     await context.addCookies(client.cookies().map((c) => ({ ...c, domain: "localhost", path: "/" })));
     const page = await context.newPage();
     const open = async (path: string) => {

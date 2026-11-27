@@ -1,7 +1,8 @@
 // Browser end-to-end flow: project stars and order in the sidebar (Starred group, Move up/down, arrow keys, drag handle), reset,
 // the same order in a second session, and the phone settings page that orders without dragging.
 // Run with `bun e2e/project-order.e2e.ts` (needs the shared weft-postgres container; set DATABASE_URL to use your own database). Screenshots go to .local/visual/review/40-project-order.
-import { chromium, type Page } from "playwright";
+import { check, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
+import type { Page } from "playwright";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -13,17 +14,9 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const shots = reviewShots("40-project-order");
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 let failed = false;
 let failurePage: Page | undefined;
@@ -31,12 +24,11 @@ let releaseDelayedOrder: (() => void) | null = null;
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const browser = await launchBrowser();
+  const context = await newContext(browser, { viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   failurePage = page;
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const call = async <T>(name: string, body: unknown) => await (await page.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
   const sidebar = () => page.getByRole("navigation", { name: translate("shell.sidebar") });
   const projectOrder = async (target: Page) => await target.getByRole("navigation", { name: translate("shell.sidebar") }).getByRole("list", { name: translate("projects.title"), exact: true })
@@ -215,7 +207,7 @@ try {
   check(await reloadedBeta.getAttribute("aria-expanded") === "true", "expanded menu did not survive reload");
 
   // A second session (same person, other browser) shows the same order, stars and expanded menu.
-  const second = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const second = await newContext(browser, { viewport: { width: 1440, height: 900 } });
   await second.addCookies(await context.cookies());
   const secondPage = await second.newPage();
   await secondPage.goto(web);

@@ -1,4 +1,4 @@
-import { chromium } from "playwright";
+import { launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
 import { inArray, like } from "drizzle-orm";
 import { agents, createDatabase, jobs, users, workspaces } from "../packages/db/src";
 import { createAgentActions, createApiTokenActions, createProjectActions, createRuntimeActions } from "../packages/actions/src";
@@ -11,13 +11,9 @@ const web = `http://localhost:${webPort}`;
 const evidenceDir = Bun.env.AGENT_ACCESS_SCREENSHOTS ?? "/home/plong/workspace/weft/.local/ai-ux-reliability/11";
 // The dev server, not a build served by `vite preview`: a build writes apps/web/dist, which flows running side by side would overwrite under each other.
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["node", "node_modules/vite/bin/vite.js", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) { try { if ((await fetch(url)).status < 500) return; } catch { /* starting */ } await Bun.sleep(200); }
-  throw new Error(`${url} did not start`);
-}
 async function signup(page: import("playwright").Page, name: string, email: string, invite?: string, slug?: string) {
   await page.goto(invite ?? web);
   if (!invite) await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
@@ -36,8 +32,8 @@ let failed = false;
 const { client, db } = createDatabase();
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const adminContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  const browser = await launchBrowser();
+  const adminContext = await newContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" });
   const admin = await adminContext.newPage();
   const slug = `agacc-${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 12)}`;
   const adminEmail = `${slug}-admin@example.test`;
@@ -56,7 +52,7 @@ try {
   const project = await projects.createProject.handler({ userId: me.user.id }, { workspaceId, name: "Mobile", key: "MOB", visibility: "public" });
   const invite = async (name: string, suffix: string) => {
     const created = await request<{ token: string }>(admin, "create_invite", { workspaceId, role: "Member" });
-    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+    const context = await newContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" });
     const page = await context.newPage();
     await signup(page, name, `${slug}-${suffix}@example.test`, `${web}/invite/${created.token}`);
     await page.waitForURL(`${web}/${slug}`, { waitUntil: "domcontentloaded" });

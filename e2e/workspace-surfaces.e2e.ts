@@ -1,6 +1,7 @@
 // Layout rules for the workspace surfaces (shadcn-finish ticket 08), on a phone with touch and on desktop, with long Thai and English data.
 // One named assertion per class of defect; all are collected so one run lists every failure.
-import { chromium, type Page } from "playwright";
+import { launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
+import type { Page } from "playwright";
 import { aiChats, aiMessages, createDatabase, notifications } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { WeftClient, seedWeft } from "../tools/visual/weft-client";
@@ -11,13 +12,9 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const env = { ...Bun.env, WEFT_AI_ENABLED: "true", AI_PROVIDER: "openai", AI_MODEL: "gpt-6-luna", OPENAI_API_KEY: "sk-fake" };
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...env, VITE_API_URL: api, CHOKIDAR_USEPOLLING: "true" }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web, { env: { ...env } }),
+  startWeb(webPort, { api, env: { ...env, CHOKIDAR_USEPOLLING: "true" } }),
 ];
-async function waitFor(url: string) {
-  for (let i = 0; i < 150; i += 1) { try { if ((await fetch(url)).status < 500) return; } catch { /* starting */ } await Bun.sleep(200); }
-  throw new Error(`${url} did not start`);
-}
 
 const failures: string[] = [];
 let checks = 0;
@@ -80,11 +77,11 @@ try {
     projectOrder: `${base}/settings/project-order`, general: `${base}/settings`, automation: `${base}/settings/projects/REF/automation`,
     accountNotifications: "/account/notifications", accountSessions: "/account/sessions", accountTokens: "/account/api-tokens",
   };
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
+  const browser = await launchBrowser();
   const open = async (page: Page, path: string) => { await page.goto(`${web}${path}`); await page.locator("main h1, main h2, main li").first().waitFor(); await page.waitForTimeout(700); };
 
   for (const viewport of [{ width: 390, height: 844, touch: true }, { width: 1440, height: 900, touch: false }]) {
-    const context = await browser.newContext({ viewport, hasTouch: viewport.touch, isMobile: viewport.touch, reducedMotion: "reduce" });
+    const context = await newContext(browser, { viewport, hasTouch: viewport.touch, isMobile: viewport.touch, reducedMotion: "reduce" });
     await context.addCookies(client.cookies().map((entry) => ({ ...entry, domain: "localhost", path: "/" })));
     const page = await context.newPage();
     for (const [name, path] of Object.entries(routes)) {

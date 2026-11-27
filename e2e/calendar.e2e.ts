@@ -1,5 +1,5 @@
 // Browser end-to-end flow for Calendar placement, rescheduling, quick-create, peek, saved Views and the mobile agenda.
-import { chromium } from "playwright";
+import { check, createSignedInContext, launchBrowser, startApi, startWeb, waitFor } from "./harness";
 import { eq } from "drizzle-orm";
 import { createDatabase, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -9,43 +9,29 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5227);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api, CHOKIDAR_USEPOLLING: "true" }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api, env: { ...Bun.env, CHOKIDAR_USEPOLLING: "true" } }),
 ];
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt++) { try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ } await Bun.sleep(200); }
-  throw new Error(`${url} did not start`);
-}
 type Item = { id: string; displayId: string; dueDate: string | null; startDate: string | null };
 let failed = false;
 let testWorkspaceSlug: string | null = null;
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  const browser = await launchBrowser();
+  const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
+  const context = await createSignedInContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" }, api, web, {
+    account: { name: "Calendar Tester", email: `${slug}@example.test` },
+    workspace: { name: "E2E team", slug },
+    project: { name: "Mobile", key: "MOB", visibility: "public", shape: "simple" },
+  });
   const page = await context.newPage();
   // Keep the three-day pill in one calendar week, including when the suite runs at month end.
   const today = new Date(2026, 0, 5, 12);
   await page.clock.setFixedTime(today);
-  const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   testWorkspaceSlug = slug;
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const call = async <T>(name: string, body: unknown) => { const response = await context.request.post(`${api}/actions/${name}`, { data: body }); check(response.ok(), `${name} failed: ${response.status()} ${await response.text()}`); return await response.json() as T; };
   const day = (offset: number) => { const date = new Date(today); date.setDate(date.getDate() + offset); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; };
-  await page.goto(web);
-  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
-  await page.getByLabel(translate("auth.name")).fill("Calendar Tester");
-  await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
-  await page.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
-  await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
-  await page.getByRole("button", { name: translate("auth.signUp") }).click();
-  await page.getByLabel(translate("workspace.name")).fill("E2E team");
-  await page.getByLabel(translate("workspace.slug")).fill(slug);
-  await page.getByRole("button", { name: translate("workspace.create") }).click();
-  await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
-  await page.getByLabel(translate("projects.name")).fill("Mobile");
-  await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOB");
-  await page.getByRole("button", { name: translate("projects.create") }).click();
+  await page.goto(`${web}/${slug}`);
   await page.getByRole("link", { name: /MOB · Mobile/ }).waitFor();
   const me = await (await context.request.get(`${api}/api/me`)).json() as { workspaces: Array<{ id: string }> };
   const [project] = await call<Array<{ id: string }>>("list_projects", { workspaceId: me.workspaces[0]!.id, archived: false });

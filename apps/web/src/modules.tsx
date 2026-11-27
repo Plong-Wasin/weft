@@ -92,7 +92,8 @@ function ModuleFormModal({ action, projectId, workspaceId, module, onClose, onSa
   const [startDate, setStartDate] = React.useState(module?.startDate ?? "");
   const [endDate, setEndDate] = React.useState(module?.endDate ?? "");
   const [description, setDescription] = React.useState<unknown>(module?.description ?? null);
-  const [people, setPeople] = React.useState<Person[]>([]);
+  const [loadedPeople, setPeople] = React.useState<Person[] | null>(null);
+  const people = loadedPeople ?? [];
   const [note, setNote] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   React.useEffect(() => { void action<Person[]>("list_project_members", { projectId }).then((rows) => setPeople(rows ?? [])); }, [action, projectId]);
@@ -115,7 +116,7 @@ function ModuleFormModal({ action, projectId, workspaceId, module, onClose, onSa
         <Button variant="ghost" type="button" className={iconButton} aria-label={t("modules.close")} onClick={onClose}><X aria-hidden size={16} /></Button>
       </div>
       <Input autoFocus required aria-label={t("modules.name")} placeholder={t("modules.name")} value={name} maxLength={255} className="w-full text-base" onChange={(event) => setName(event.target.value)} />
-      <div className="grid gap-1 text-sm text-muted-foreground"><span>{t("workItems.description")}</span><DescriptionEditor workspaceId={workspaceId} owner={module ? { ownerType: "module", ownerId: module.id } : undefined} mentionPeople={people} initial={description} editable onChange={setDescription} /></div>
+      <div className="grid gap-1 text-sm text-muted-foreground"><span>{t("workItems.description")}</span><DescriptionEditor workspaceId={workspaceId} owner={module ? { ownerType: "module", ownerId: module.id } : undefined} mentionPeople={loadedPeople} initial={description} editable onChange={setDescription} /></div>
       <div className="flex flex-wrap items-center gap-2">
         <SingleSelect label={t("modules.status")} summary={t(`modules.status.${status}`)} value={status} options={statuses.map((value) => ({ id: value, name: t(`modules.status.${value}`) }))} onSelect={(value) => setStatus(value as Status)} />
         <SingleSelect label={t("modules.lead")} summary={leadId ? nameOf(leadId) : t("modules.noLead")} value={leadId} icon={<CircleUserRound aria-hidden size={14} className="text-muted-foreground" />}
@@ -279,7 +280,8 @@ export function ModuleDetailPage({ workspaceId, workspaceSlug, projectKey, proje
   const navigate = useNavigate();
   const [module, setModule] = React.useState<ModuleDetail | null | undefined>(undefined);
   const [candidates, setCandidates] = React.useState<Item[]>([]);
-  const [people, setPeople] = React.useState<Person[]>([]);
+  const [loadedPeople, setPeople] = React.useState<Person[] | null>(null);
+  const people = loadedPeople ?? [];
   const [note, setNote] = React.useState<string | null>(null);
   const [refreshKey, setRefreshKey] = React.useState(0);
   const [insights, setInsights] = React.useState<Insights | null>(null);
@@ -368,7 +370,7 @@ export function ModuleDetailPage({ workspaceId, workspaceSlug, projectKey, proje
           <div className="flex items-center justify-between text-sm"><span className="font-medium text-foreground">{t("modules.progress")}</span><span className="text-muted-foreground">{t("modules.percent").replace("{percent}", formatNumber(percent))}</span></div>
           <progress max={100} value={percent} aria-label={t("modules.progress")} className="h-1.5 w-full" />
         </div>
-        <section className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 [overflow-wrap:anywhere]" aria-label={t("workItems.description")}><h3 className="m-0 text-sm font-semibold">{t("workItems.description")}</h3><EntityDescription key={module.id} action={action} workspaceId={workspaceId} owner={{ ownerType: "module", ownerId: module.id }} mentionPeople={people} initial={module.description ?? null} editable={editable} /></section>
+        <section className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 [overflow-wrap:anywhere]" aria-label={t("workItems.description")}><h3 className="m-0 text-sm font-semibold">{t("workItems.description")}</h3><EntityDescription key={module.id} action={action} workspaceId={workspaceId} owner={{ ownerType: "module", ownerId: module.id }} mentionPeople={loadedPeople} initial={module.description ?? null} editable={editable} /></section>
         <BurndownChart action={action} name="get_module_burndown" body={{ moduleId }} projectId={projectId} refreshKey={refreshKey} testId="module-burndown" />
         {insights && <section aria-label={t("modules.risks")} className="grid gap-2 border-t border-border pt-3">
           <h3 className="m-0 text-sm font-semibold text-foreground">{t("modules.risks")}</h3>

@@ -68,7 +68,7 @@ try {
 
   // Wiki editor: "[[" opens the picker; narrowing by key and by title; groups; keyboard and mouse picks; empty and failed states.
   await page.goto(`${web}/${slug}/wiki/${source.id}`);
-  const wikiEditor = page.getByTestId("wiki-editor").locator(".ProseMirror");
+  const wikiEditor = page.getByTestId("wiki-editor").locator('.ProseMirror[contenteditable="true"]');
   await wikiEditor.click();
   await page.keyboard.type("[[");
   const list = picker(page);

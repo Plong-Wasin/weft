@@ -11,6 +11,7 @@ import * as Y from "yjs";
 import { Mention } from "../../../packages/actions/src/wiki-editor-extensions";
 import { OutlinksPanel } from "./outlinks-panel";
 import { mentionRender } from "./suggest-list";
+import { useMentionPeople, type MentionPeople } from "./mention-people";
 import { formatDate, getLocale, translate, translateDynamic, type MessageKey } from "@weft/shared";
 import { AttachmentsPanel, useAssetImages } from "./asset-images";
 import { AssistMenu } from "./assist-menu";
@@ -98,7 +99,7 @@ async function call<T>(name: string, body: unknown): Promise<T | null> {
 }
 
 
-function pageMentions(people: React.RefObject<Member[]>) {
+function pageMentions(people: MentionPeople<Member>) {
   // The key is shared with the list, so an outside pointer-down can exit this suggestion.
   const pluginKey = new PluginKey("mentionSuggestion");
   return Mention.configure({
@@ -106,7 +107,11 @@ function pageMentions(people: React.RefObject<Member[]>) {
     suggestion: {
       char: "@",
       pluginKey,
-      items: ({ query }: { query: string }) => (people.current ?? []).filter((person) => person.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())).sort((a, b) => Number(!!a.isAgent) - Number(!!b.isAgent) || a.name.localeCompare(b.name)).slice(0, 8).map(({ userId, name, isAgent, codeCapable }) => ({ id: userId, label: name, isAgent, codeCapable })),
+      items: ({ query }: { query: string }) => {
+        const pick = (list: Member[]) => list.filter((person) => person.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())).sort((a, b) => Number(!!a.isAgent) - Number(!!b.isAgent) || a.name.localeCompare(b.name)).slice(0, 8).map(({ userId, name, isAgent, codeCapable }) => ({ id: userId, label: name, isAgent, codeCapable }));
+        const list = people.get();
+        return list instanceof Promise ? list.then(pick) : pick(list);
+      },
       render: mentionRender("wiki.mentionMembers", pluginKey),
     },
   });
@@ -197,15 +202,14 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
     return () => document.removeEventListener("keydown", onKey);
   }, [drawerOpen]);
   const [headings, setHeadings] = React.useState<Array<{ text: string; level: number; pos: number }>>([]);
-  const [people, setPeople] = React.useState<Member[]>([]);
+  const [people, setPeople] = React.useState<Member[] | null>(null);
   const [threads, setThreads] = React.useState<Array<{ id: string; bodyText: string; authorId: string; authorName: string; anchor: string | null; resolved: boolean; replies: Array<{ id: string; bodyText: string; authorName: string }> }>>([]);
   const [commentText, setCommentText] = React.useState("");
   const [replyTo, setReplyTo] = React.useState<string | null>(null);
   const [replyText, setReplyText] = React.useState("");
   const [editingComment, setEditingComment] = React.useState<{ id: string; text: string } | null>(null);
   const [showResolved, setShowResolved] = React.useState(false);
-  const peopleRef = React.useRef(people);
-  peopleRef.current = people;
+  const mentionPeople = useMentionPeople(people);
   const [exporting, setExporting] = React.useState(false);
   const [exportFeedback, setExportFeedback] = React.useState<{ state: "started" | "failed"; filename: string } | null>(null);
   const [importFailed, setImportFailed] = React.useState(false);
@@ -243,17 +247,33 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
     });
     return { doc, provider };
   }, [page.id, self]);
+  // Text typed before the first sync would land at a random end of the stored text, so the editor takes none until then.
+  const [synced, setSynced] = React.useState(false);
+  const [connectionFailed, setConnectionFailed] = React.useState(false);
+  const [writable, setWritable] = React.useState(page.canEdit);
+  const editable = synced && writable;
+  React.useEffect(() => {
+    const { provider } = collaboration;
+    const onSynced = () => { setSynced(true); setConnectionFailed(false); };
+    const onAuthFailed = () => setConnectionFailed(true);
+    if (provider.isSynced) onSynced();
+    provider.on("synced", onSynced);
+    provider.on("authenticationFailed", onAuthFailed);
+    // A server that is down, slow or blocked never syncs: after a few seconds say so instead of "connecting".
+    const giveUp = setTimeout(() => { if (!provider.isSynced) setConnectionFailed(true); }, 8_000);
+    return () => { clearTimeout(giveUp); provider.off("synced", onSynced); provider.off("authenticationFailed", onAuthFailed); };
+  }, [collaboration]);
   const { extension: images, error: imageError, uploadFile } = useAssetImages({ ownerType: "wiki_page", ownerId: page.id });
-  React.useEffect(() => { void call<Member[]>("list_wiki_page_mentionable_members", { pageId: page.id }).then((result) => setPeople(result ?? [])); }, [page.id]);
+  React.useEffect(() => { void call<Member[]>("list_wiki_page_mentionable_members", { pageId: page.id }).then((result) => setPeople(result ?? []), () => setPeople([])); }, [page.id]);
   const loadThreads = React.useCallback(async (includeResolved = showResolved) => { setThreads(await call<typeof threads>("list_wiki_page_comments", { pageId: page.id, includeResolved }) ?? []); }, [page.id, showResolved]);
   React.useEffect(() => { void loadThreads(); }, [loadThreads]);
   const editor = useEditor({
     // The shared schema carries a display-less assetImage for server-side conversion; the browser registers its own (upload + rendering) via `images`, so drop the duplicate.
-    extensions: [AiAssist, ...surfaceEditorExtensions({ surface: "full", mention: pageMentions(peopleRef), image: images, collaborative: true }), ListIndent, BlockKeyboardShortcuts, MarkdownPaste, CodeBlockCopy, EmojiSuggestions, ReferencePicker.configure({ workspaceId }), SafeLinkClick, EditorPlaceholder,
+    extensions: [AiAssist, ...surfaceEditorExtensions({ surface: "full", mention: pageMentions(mentionPeople), image: images, collaborative: true }), ListIndent, BlockKeyboardShortcuts, MarkdownPaste, CodeBlockCopy, EmojiSuggestions, ReferencePicker.configure({ workspaceId }), SafeLinkClick, EditorPlaceholder,
       SlashMenu.configure({ commands: wikiCommands, onImage: () => imageInput.current?.click() }),
       Collaboration.configure({ document: collaboration.doc }),
       CollaborationCaret.configure({ provider: collaboration.provider, user: { name: self, color: "#7c3aed" } })],
-    editable: page.canEdit,
+    editable: false,
     editorProps: { handleKeyDown: (view, event) => {
       if (event.key !== "Tab") return false;
       const selection = window.getSelection();
@@ -276,10 +296,16 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
   });
   React.useEffect(() => {
     if (!editor) return;
+    editor.setEditable(editable, false);
+    // The placeholder decorations rebuild only on a transaction, and becoming editable dispatches none.
+    if (editor.isEmpty) editor.view.dispatch(editor.state.tr.setSelection(editor.state.selection));
+  }, [editor, editable]);
+  React.useEffect(() => {
+    if (!editor) return;
     const timer = setInterval(() => {
       void call<{ canWrite: boolean; locked: boolean }>("get_wiki_page_access", { pageId: page.id }).then((access) => {
         if (!access) return;
-        editor.setEditable(access.canWrite);
+        setWritable(access.canWrite);
         if (access.locked !== Boolean(page.locked)) onChanged();
       });
     }, 5_000);
@@ -431,7 +457,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
             ],
             [
               <MenuItem key="full-width" role="menuitemcheckbox" checked={fullWidth} icon={Maximize2} onClick={() => { close(); toggleFullWidth(); }}>{translate("wiki.fullWidth")}</MenuItem>,
-              editor?.isEditable && <MenuItem key="source" role="menuitemcheckbox" checked={sourceActive} icon={Code} onClick={() => { close(); sourceToggle.current?.(); }}>{translate("editor.sourceMode")}</MenuItem>,
+              editable && <MenuItem key="source" role="menuitemcheckbox" checked={sourceActive} icon={Code} onClick={() => { close(); sourceToggle.current?.(); }}>{translate("editor.sourceMode")}</MenuItem>,
             ],
             [
               <MenuItem key="history" icon={Clock} onClick={() => { close(); setPane("activity"); openPanel(); }}>{translate("wiki.history")}</MenuItem>,
@@ -479,11 +505,11 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
         <DialogActions onClose={() => setPdfDialog(false)} submit={pdfExporting ? translate("wiki.pdfExporting") : translate("wiki.exportPdf")} />
       </form>
     </Dialog>}
-    <small role="status" className={`mt-2 text-12 ${status === "not-saved" ? "text-destructive" : "text-muted-foreground"}`}>{translate(status === "saved" ? "wiki.saved" : status === "saving" ? "wiki.saving" : status === "not-saved" ? "wiki.notSaved" : "wiki.saveFailed")}</small>
+    <small role="status" data-testid="wiki-status" className={`mt-2 block min-h-4 text-12 ${status === "not-saved" || (!synced && connectionFailed) ? "text-destructive" : "text-muted-foreground"}`}>{translate(!synced && page.canEdit ? (connectionFailed ? "wiki.cannotConnect" : "wiki.connecting") : status === "saved" ? "wiki.saved" : status === "saving" ? "wiki.saving" : status === "not-saved" ? "wiki.notSaved" : "wiki.saveFailed")}</small>
     <div data-testid="wiki-editor-shell" className="wiki-editor-shell grid gap-4">
     <div className="relative">
       <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-testid="inline-image-input" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !editor) return; const assetId = await uploadFile(file); if (assetId) { const { selection } = editor.state; const at = "node" in selection ? selection.to : selection.from; editor.chain().focus().insertContentAt(at, { type: "assetImage", attrs: { assetId } }).run(); } }} />
-    <div className="wiki-editor relative min-h-24" data-testid="wiki-editor"><EditorSourceMode editor={page.canEdit ? editor : null} initialWarnings={limitWarnings} onSourceDraftChange={(hasDraft) => { if (hasDraft) setStatus("not-saved"); }} toggleRef={sourceToggle} onModeChange={setSourceActive} /><CalloutControls editor={editor} editable={page.canEdit} /><CodeBlockControls editor={editor} editable={page.canEdit} /><TableControls editor={editor} editable={page.canEdit} /><EditorContent editor={editor} /><WikiBlockControls editor={editor} editable={page.canEdit} /><WikiBubbleMenu editor={page.canEdit ? editor : null} />{page.canEdit && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>
+    <div className="wiki-editor relative min-h-24" data-testid="wiki-editor"><EditorSourceMode editor={editable ? editor : null} initialWarnings={limitWarnings} onSourceDraftChange={(hasDraft) => { if (hasDraft) setStatus("not-saved"); }} toggleRef={sourceToggle} onModeChange={setSourceActive} /><CalloutControls editor={editor} editable={editable} /><CodeBlockControls editor={editor} editable={editable} /><TableControls editor={editor} editable={editable} /><EditorContent editor={editor} /><WikiBlockControls editor={editor} editable={editable} />{/* The bubble menu checks editor.isEditable itself; changing its editor prop re-dispatches a transaction (see wiki-bubble-menu.tsx), so it stays on canEdit. */}<WikiBubbleMenu editor={page.canEdit ? editor : null} />{editable && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>
     </div>
     </div>
     <details data-testid="wiki-attachments-disclosure" className="mt-2 rounded-xl border border-border bg-card p-4 [&_[data-testid=attachment-dropzone]]:rounded-lg">
@@ -542,7 +568,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
         <Activity pageId={page.id} refresh={status} />
         <section aria-label={translate("wiki.history")} className="grid gap-2 border-t border-border pt-3">
           <h3 className="m-0 text-13 font-semibold text-foreground">{translate("wiki.history")}</h3>
-          <ul className="m-0 grid list-none gap-2 p-0">{versions.map((version) => <li key={version.id} className="flex items-center justify-between gap-2 text-muted-foreground"><span className="min-w-0 thai-room truncate">{formatDate(version.createdAt)} — {version.title}</span><Button className="!px-2 !py-0.5 !text-12" disabled={!page.canEdit} onClick={() => void restore(version.id)}>{translate("wiki.restore")}</Button></li>)}</ul>
+          <ul className="m-0 grid list-none gap-2 p-0">{versions.map((version) => <li key={version.id} className="flex items-center justify-between gap-2 text-muted-foreground"><span className="min-w-0 thai-room truncate">{formatDate(version.createdAt)} — {version.title}</span><Button className="!px-2 !py-0.5 !text-12" disabled={!editable} onClick={() => void restore(version.id)}>{translate("wiki.restore")}</Button></li>)}</ul>
         </section>
       </div>}
         </TabsContent>

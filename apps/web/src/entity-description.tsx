@@ -8,7 +8,7 @@ type Call = <T>(name: string, body: unknown) => Promise<T | null>;
 type Status = "saved" | "saving" | "failed" | "notSaved";
 
 /** Description editor for Cycle and Module records, using their shared Action as the persistence boundary. */
-export function EntityDescription({ action, workspaceId, owner, mentionPeople = [], initial, editable }: { action: Call; workspaceId: string; owner: OwnerRef; mentionPeople?: DescriptionMentionPerson[]; initial: unknown; editable: boolean }) {
+export function EntityDescription({ action, workspaceId, owner, mentionPeople = [], initial, editable }: { action: Call; workspaceId: string; owner: OwnerRef; mentionPeople?: DescriptionMentionPerson[] | null; initial: unknown; editable: boolean }) {
   const [status, setStatus] = React.useState<Status>("saved");
   const pending = React.useRef<unknown>(null);
   const revision = React.useRef(0);

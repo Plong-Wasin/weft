@@ -58,10 +58,7 @@ The run is 7m 51s (34%) shorter. `editor-parity` takes about 310s of it on one p
 
 ### Waits that a flow needs
 
-- **Wiki editor.** It takes input before its first sync with the live server, and the sync then moves the cursor. After opening a Wiki page, wait for a line that the page already stores before you click or type.
-- **"@" mentions.** An "@" typed before the member list arrives opens a hidden popup that stays empty until the next keystroke. Open the page with `openWithAction` from `e2e/harness.ts`.
-
-Both are product behaviour that a fast person can also hit.
+- **Wiki editor.** It is read-only until its first sync with the live server, and keys sent to it before then are dropped. Playwright's `click` and `focus` do not wait for that, so locate the editor as `.ProseMirror[contenteditable="true"]` before you click or type.
 
 ## Real Runtime acceptance
 

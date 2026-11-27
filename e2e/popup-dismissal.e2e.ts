@@ -114,7 +114,7 @@ try {
   step = '3';
   // 3. Editor suggestion boxes in the Wiki editor: "@", ":", "/" and "[[".
   await page.goto(`${web}/${slug}/wiki/${editorPage.id}`);
-  const editor = page.getByTestId("wiki-editor").locator(".ProseMirror");
+  const editor = page.getByTestId("wiki-editor").locator('.ProseMirror[contenteditable="true"]');
   const suggestion = (name: string) => page.getByRole("listbox", { name: t(name), exact: true });
   const openAt = async (text: string) => { await editor.click(); await page.keyboard.press("Control+End"); await page.keyboard.press("Enter"); await page.keyboard.type(text); };
   const popupCases: Array<{ label: string; name: string; trigger: string; choose: () => Promise<void> }> = [
@@ -175,7 +175,7 @@ try {
   step = '5';
   // 5. Table menu: a click in the page content closes it; Escape closes it before focus moves to the table corner.
   await page.goto(`${web}/${slug}/wiki/${tablePage.id}`);
-  const tableEditor = page.getByTestId("wiki-editor").locator(".ProseMirror");
+  const tableEditor = page.getByTestId("wiki-editor").locator('.ProseMirror[contenteditable="true"]');
   const menu = page.getByTestId("table-menu");
   const openRowMenu = async () => {
     await tableEditor.locator("p", { hasText: /^C$/ }).click({ position: { x: 1, y: 4 } });

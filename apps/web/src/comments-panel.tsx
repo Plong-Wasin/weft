@@ -8,6 +8,7 @@ import Mention from "@tiptap/extension-mention";
 import { Avatar } from "./avatar";
 import { runFocusHref } from "./routes";
 import { mentionExtension } from "./mention-extension";
+import { useMentionPeople } from "./mention-people";
 import { readOnlyImages, useAssetImages } from "./asset-images";
 import { AssistMenu } from "./assist-menu";
 import { AiAssist } from "./editor-assist";
@@ -50,9 +51,8 @@ const CommentKeys = Extension.create<{ submit: React.RefObject<() => Promise<voi
   },
 });
 
-function CommentEditor({ workspaceId, workItemId, people, initial, submitLabel, onSubmit, onCancel, focusOnMount = false }: { workspaceId: string; workItemId: string; people: Person[]; initial?: unknown; submitLabel: string; onSubmit: (body: unknown) => Promise<void>; onCancel?: () => void; focusOnMount?: boolean }) {
-  const peopleRef = React.useRef(people);
-  peopleRef.current = people;
+function CommentEditor({ workspaceId, workItemId, people, initial, submitLabel, onSubmit, onCancel, focusOnMount = false }: { workspaceId: string; workItemId: string; people: Person[] | null; initial?: unknown; submitLabel: string; onSubmit: (body: unknown) => Promise<void>; onCancel?: () => void; focusOnMount?: boolean }) {
+  const mentionPeople = useMentionPeople(people);
   // The editor is created once, so its keys reach the latest submit and cancel through these refs.
   const submitRef = React.useRef<() => Promise<void>>(async () => undefined);
   const cancelRef = React.useRef(onCancel);
@@ -61,7 +61,7 @@ function CommentEditor({ workspaceId, workItemId, people, initial, submitLabel, 
   const { extension: images, error, uploadFile } = useAssetImages({ ownerType: "work_item", ownerId: workItemId });
   const picker = React.useRef<HTMLInputElement>(null);
   const limitWarnings = React.useMemo(() => editorLimitWarnings(initial), [initial]);
-  const editor = useEditor({ extensions: [...surfaceEditorExtensions({ surface: "full", mention: mentionExtension(peopleRef), image: images }), ListIndent, MarkdownPaste, EmojiSuggestions, ReferencePicker.configure({ workspaceId }), AiAssist, SlashMenu.configure({ commands: [...blockCommands, ...wikiCommands.filter((command) => ["todo", "table", "callout", "emoji", "color", "image"].includes(command.id))], onImage: () => picker.current?.click() }), SafeLinkClick, EditorPlaceholder, CommentKeys.configure({ submit: submitRef, cancel: cancelRef })], content: normalizeAssetImages((initial as object | undefined) ?? "") });
+  const editor = useEditor({ extensions: [...surfaceEditorExtensions({ surface: "full", mention: mentionExtension(mentionPeople), image: images }), ListIndent, MarkdownPaste, EmojiSuggestions, ReferencePicker.configure({ workspaceId }), AiAssist, SlashMenu.configure({ commands: [...blockCommands, ...wikiCommands.filter((command) => ["todo", "table", "callout", "emoji", "color", "image"].includes(command.id))], onImage: () => picker.current?.click() }), SafeLinkClick, EditorPlaceholder, CommentKeys.configure({ submit: submitRef, cancel: cancelRef })], content: normalizeAssetImages((initial as object | undefined) ?? "") });
   const submit = async () => { if (!editor || editor.isEmpty) return; await onSubmit(editor.getJSON()); if (!initial) editor.commands.clearContent(); };
   // A reply opened from a comment takes focus and scrolls its editor into view, so the person types where they clicked.
   React.useEffect(() => { if (focusOnMount && editor) { editor.commands.focus("end"); editor.view.dom.scrollIntoView({ block: "center" }); } }, [editor, focusOnMount]);
@@ -122,7 +122,7 @@ export function TimelinePanel({ workspaceId, workItemId, projectId, selfId, canC
   const [showAllChanges, setShowAllChanges] = React.useState(false);
   const [versions, setVersions] = React.useState<{ commentId: string; rows: Version[]; more: boolean; failed: boolean; loading: boolean } | null>(null);
   const rows = React.useMemo(() => entries.flatMap((entry) => entry.comment ? [entry.comment, ...entry.comment.replies] : []), [entries]);
-  const [people, setPeople] = React.useState<Person[]>([]);
+  const [people, setPeople] = React.useState<Person[] | null>(null);
   const [editing, setEditing] = React.useState<string | null>(null);
   const [replying, setReplying] = React.useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = React.useState<string | null>(null);

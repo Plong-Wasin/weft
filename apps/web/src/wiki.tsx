@@ -11,6 +11,7 @@ import * as Y from "yjs";
 import { Mention } from "../../../packages/actions/src/wiki-editor-extensions";
 import { OutlinksPanel } from "./outlinks-panel";
 import { mentionRender } from "./suggest-list";
+import { useMentionPeople, type MentionPeople } from "./mention-people";
 import { formatDate, getLocale, translate, translateDynamic, type MessageKey } from "@weft/shared";
 import { AttachmentsPanel, useAssetImages } from "./asset-images";
 import { AssistMenu } from "./assist-menu";
@@ -98,7 +99,7 @@ async function call<T>(name: string, body: unknown): Promise<T | null> {
 }
 
 
-function pageMentions(people: React.RefObject<Member[]>) {
+function pageMentions(people: MentionPeople<Member>) {
   // The key is shared with the list, so an outside pointer-down can exit this suggestion.
   const pluginKey = new PluginKey("mentionSuggestion");
   return Mention.configure({
@@ -106,7 +107,11 @@ function pageMentions(people: React.RefObject<Member[]>) {
     suggestion: {
       char: "@",
       pluginKey,
-      items: ({ query }: { query: string }) => (people.current ?? []).filter((person) => person.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())).sort((a, b) => Number(!!a.isAgent) - Number(!!b.isAgent) || a.name.localeCompare(b.name)).slice(0, 8).map(({ userId, name, isAgent, codeCapable }) => ({ id: userId, label: name, isAgent, codeCapable })),
+      items: ({ query }: { query: string }) => {
+        const pick = (list: Member[]) => list.filter((person) => person.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())).sort((a, b) => Number(!!a.isAgent) - Number(!!b.isAgent) || a.name.localeCompare(b.name)).slice(0, 8).map(({ userId, name, isAgent, codeCapable }) => ({ id: userId, label: name, isAgent, codeCapable }));
+        const list = people.get();
+        return list instanceof Promise ? list.then(pick) : pick(list);
+      },
       render: mentionRender("wiki.mentionMembers", pluginKey),
     },
   });
@@ -197,15 +202,14 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
     return () => document.removeEventListener("keydown", onKey);
   }, [drawerOpen]);
   const [headings, setHeadings] = React.useState<Array<{ text: string; level: number; pos: number }>>([]);
-  const [people, setPeople] = React.useState<Member[]>([]);
+  const [people, setPeople] = React.useState<Member[] | null>(null);
   const [threads, setThreads] = React.useState<Array<{ id: string; bodyText: string; authorId: string; authorName: string; anchor: string | null; resolved: boolean; replies: Array<{ id: string; bodyText: string; authorName: string }> }>>([]);
   const [commentText, setCommentText] = React.useState("");
   const [replyTo, setReplyTo] = React.useState<string | null>(null);
   const [replyText, setReplyText] = React.useState("");
   const [editingComment, setEditingComment] = React.useState<{ id: string; text: string } | null>(null);
   const [showResolved, setShowResolved] = React.useState(false);
-  const peopleRef = React.useRef(people);
-  peopleRef.current = people;
+  const mentionPeople = useMentionPeople(people);
   const [exporting, setExporting] = React.useState(false);
   const [exportFeedback, setExportFeedback] = React.useState<{ state: "started" | "failed"; filename: string } | null>(null);
   const [importFailed, setImportFailed] = React.useState(false);
@@ -243,17 +247,28 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
     });
     return { doc, provider };
   }, [page.id, self]);
+  // Text typed before the first sync would land at a random end of the stored text, so the editor takes none until then.
+  const [synced, setSynced] = React.useState(false);
+  const [writable, setWritable] = React.useState(page.canEdit);
+  const editable = synced && writable;
+  React.useEffect(() => {
+    const { provider } = collaboration;
+    const onSynced = () => setSynced(true);
+    if (provider.isSynced) onSynced();
+    provider.on("synced", onSynced);
+    return () => { provider.off("synced", onSynced); };
+  }, [collaboration]);
   const { extension: images, error: imageError, uploadFile } = useAssetImages({ ownerType: "wiki_page", ownerId: page.id });
   React.useEffect(() => { void call<Member[]>("list_wiki_page_mentionable_members", { pageId: page.id }).then((result) => setPeople(result ?? [])); }, [page.id]);
   const loadThreads = React.useCallback(async (includeResolved = showResolved) => { setThreads(await call<typeof threads>("list_wiki_page_comments", { pageId: page.id, includeResolved }) ?? []); }, [page.id, showResolved]);
   React.useEffect(() => { void loadThreads(); }, [loadThreads]);
   const editor = useEditor({
     // The shared schema carries a display-less assetImage for server-side conversion; the browser registers its own (upload + rendering) via `images`, so drop the duplicate.
-    extensions: [AiAssist, ...surfaceEditorExtensions({ surface: "full", mention: pageMentions(peopleRef), image: images, collaborative: true }), ListIndent, BlockKeyboardShortcuts, MarkdownPaste, CodeBlockCopy, EmojiSuggestions, ReferencePicker.configure({ workspaceId }), SafeLinkClick, EditorPlaceholder,
+    extensions: [AiAssist, ...surfaceEditorExtensions({ surface: "full", mention: pageMentions(mentionPeople), image: images, collaborative: true }), ListIndent, BlockKeyboardShortcuts, MarkdownPaste, CodeBlockCopy, EmojiSuggestions, ReferencePicker.configure({ workspaceId }), SafeLinkClick, EditorPlaceholder,
       SlashMenu.configure({ commands: wikiCommands, onImage: () => imageInput.current?.click() }),
       Collaboration.configure({ document: collaboration.doc }),
       CollaborationCaret.configure({ provider: collaboration.provider, user: { name: self, color: "#7c3aed" } })],
-    editable: page.canEdit,
+    editable: false,
     editorProps: { handleKeyDown: (view, event) => {
       if (event.key !== "Tab") return false;
       const selection = window.getSelection();
@@ -274,12 +289,13 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
     } },
     onUpdate: () => { setStatus("saved"); },
   });
+  React.useEffect(() => { editor?.setEditable(editable, false); }, [editor, editable]);
   React.useEffect(() => {
     if (!editor) return;
     const timer = setInterval(() => {
       void call<{ canWrite: boolean; locked: boolean }>("get_wiki_page_access", { pageId: page.id }).then((access) => {
         if (!access) return;
-        editor.setEditable(access.canWrite);
+        setWritable(access.canWrite);
         if (access.locked !== Boolean(page.locked)) onChanged();
       });
     }, 5_000);
@@ -431,7 +447,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
             ],
             [
               <MenuItem key="full-width" role="menuitemcheckbox" checked={fullWidth} icon={Maximize2} onClick={() => { close(); toggleFullWidth(); }}>{translate("wiki.fullWidth")}</MenuItem>,
-              editor?.isEditable && <MenuItem key="source" role="menuitemcheckbox" checked={sourceActive} icon={Code} onClick={() => { close(); sourceToggle.current?.(); }}>{translate("editor.sourceMode")}</MenuItem>,
+              editable && <MenuItem key="source" role="menuitemcheckbox" checked={sourceActive} icon={Code} onClick={() => { close(); sourceToggle.current?.(); }}>{translate("editor.sourceMode")}</MenuItem>,
             ],
             [
               <MenuItem key="history" icon={Clock} onClick={() => { close(); setPane("activity"); openPanel(); }}>{translate("wiki.history")}</MenuItem>,

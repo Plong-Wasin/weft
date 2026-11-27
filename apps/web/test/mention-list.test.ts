@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Editor } from "@tiptap/core";
 import { translate } from "@weft/shared";
-import { mentionExtension } from "../src/mention-extension";
+import { mentionExtension, type MentionPerson } from "../src/mention-extension";
+import { mentionPeopleSource } from "../src/mention-people";
 import { mentionGroup, mentionNotes, nextSelection } from "../src/suggest-list";
 
 const src = (name: string) => readFileSync(join(import.meta.dir, "..", "src", name), "utf8");
@@ -34,12 +35,13 @@ test("people and Agents fall under the People and Agents headings", () => {
 });
 
 test("the shared rich-text mention extension filters, groups and marks inaccessible Agents", async () => {
-  const people = { current: [
+  const people = mentionPeopleSource<MentionPerson>();
+  people.set([
     { userId: "agent-z", name: "Atlas", isAgent: true, codeCapable: true, hasAccess: false, accessReason: "Ask the owner" },
     { userId: "person-z", name: "Alex" },
     { userId: "agent-a", name: "Albert", isAgent: true, codeCapable: false, hasAccess: true },
     { userId: "person-a", name: "Bob" },
-  ] };
+  ]);
   const extension = mentionExtension(people);
   const suggestion = extension.options.suggestion;
   const items = await suggestion.items?.({ query: "a", editor: {} as Editor, signal: new AbortController().signal }) ?? [];
@@ -49,7 +51,7 @@ test("the shared rich-text mention extension filters, groups and marks inaccessi
 });
 
 test("structured mentions render with an at sign and shared styling while plain at text stays ordinary", () => {
-  const extension = mentionExtension({ current: [] });
+  const extension = mentionExtension(mentionPeopleSource());
   const html = extension.options.renderHTML({
     options: extension.options,
     node: { attrs: { id: "person-1", label: "Ada" } } as never,
@@ -70,8 +72,17 @@ test("Wiki and rich-text editors use the shared mention popup behavior", () => {
   for (const name of ["comments-panel.tsx", "description-editor.tsx"]) {
     const text = src(name);
     expect(text).toContain('from "./mention-extension"');
-    expect(text).toContain("mention: mentionExtension(peopleRef)");
+    expect(text).toMatch(/mention: mentionExtension\((people|mentionPeople)\)/);
   }
   expect(src("mention-extension.ts")).toContain("render: mentionRender(\"wiki.mentionMembers\", pluginKey)");
   expect(src("editor-extensions.ts")).toContain("suggestRender<");
+});
+
+test("an \"@\" typed before the member list arrives gets the people once it does", async () => {
+  const people = mentionPeopleSource<MentionPerson>();
+  people.set(null);
+  const suggestion = mentionExtension(people).options.suggestion;
+  const pending = suggestion.items!({ query: "a", editor: {} as Editor, signal: new AbortController().signal });
+  people.set([{ userId: "person-a", name: "Ada" }]);
+  expect((await pending).map((item) => item.id)).toEqual(["person-a"]);
 });

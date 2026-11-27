@@ -75,10 +75,10 @@ try {
     await page.keyboard.type(text);
     await page.keyboard.press("Shift+Home");
   }
-  /** Opens the Wiki page and waits for a stored line: the editor takes input before its first sync, and the sync then moves the cursor. */
+  /** Opens the Wiki page and waits until the editor holds the stored line and takes input (it takes none before its first sync). */
   async function openWiki(stored: string) {
     await page.goto(`${web}/${slug}/wiki/${wikiPage.id}`);
-    await page.getByTestId("wiki-editor").locator(".ProseMirror").getByText(stored).waitFor();
+    await page.getByTestId("wiki-editor").locator('.ProseMirror[contenteditable="true"]').getByText(stored).waitFor();
   }
   /** Sets the account switch on the preferences page and waits until the server has saved it. */
   async function setPreference(on: boolean) {

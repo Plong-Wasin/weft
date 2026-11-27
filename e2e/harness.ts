@@ -116,18 +116,6 @@ export async function newPage(browser: Browser, options?: BrowserContextOptions)
   return page;
 }
 
-/**
- * Runs `open` and returns once the page has the action's answer and has rendered it.
- * An "@" typed before the member list is in the editor opens an empty, hidden popup that never refreshes.
- */
-export async function openWithAction(page: Page, action: string, open: () => Promise<unknown>) {
-  const answered = page.waitForResponse((response) => response.url().endsWith(`/actions/${action}`) && response.request().method() === "POST");
-  await open();
-  await (await answered).finished();
-  // React commits the answer before the second frame.
-  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-}
-
 /** Sets up a browser session for flows whose assertions start after onboarding. */
 export async function createSignedInContext(browser: Browser, options: BrowserContextOptions, api: string, web: string, fixture: {
   account: { name: string; email: string; password?: string };

@@ -11,6 +11,7 @@ import { translate, type MessageKey } from "@weft/shared";
 import { action } from "../api";
 import { ProjectNav } from "../project-nav";
 import { InboxNavLink } from "../inbox";
+import { itemClass } from "./nav-item";
 import { paths } from "../routes";
 import { MenuItem, Popover } from "./popover";
 import type { Member, Project, Workspace } from "../types";
@@ -25,7 +26,6 @@ import { Input } from "@/ui/input";
 export const projectsKey = (workspaceId: string) => ["projects", workspaceId] as const;
 const favoritesKey = (workspaceId: string) => ["favorite-wiki-pages", workspaceId] as const;
 
-const itemClass = ({ isActive }: { isActive: boolean }) => `transition-colors flex min-h-9 max-md:min-h-11 pointer-coarse:min-h-11 items-center gap-2 rounded-lg px-3 py-1.5 text-[14px] font-medium ${isActive ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent"}`;
 const heading = "px-3 pb-1 pt-4 text-[12px] font-medium text-muted-foreground";
 
 /** What a project row can do to the order. The list owns the state; a row only reports the gesture. */
@@ -139,7 +139,7 @@ function ProjectGroups({ workspace, projects, prefs, projectKey, reorder, drag, 
       <ul aria-label={translate("sidebar.starred")} className="grid gap-0.5">{starred.map((project) => entry(project, true))}</ul>
     </>}
     <div className="flex items-center justify-between"><p className={heading}>{translate("projects.title")}</p>
-      <NavLink to={paths.projects(workspace.slug)} end aria-label={translate("sidebar.allProjects")} title={translate("sidebar.allProjects")} className="mt-2 inline-flex items-center justify-center rounded-md p-1 text-muted-foreground hover:bg-accent pointer-coarse:min-h-11 pointer-coarse:min-w-11"><Plus aria-hidden size={14} /></NavLink></div>
+      <NavLink to={paths.projects(workspace.slug)} end aria-label={translate("sidebar.allProjects")} title={translate("sidebar.allProjects")} className="mt-2 inline-flex items-center justify-center rounded-md p-1 text-muted-foreground hover:bg-accent aria-[current=page]:bg-accent aria-[current=page]:text-foreground pointer-coarse:min-h-11 pointer-coarse:min-w-11"><Plus aria-hidden size={14} /></NavLink></div>
     <ul aria-label={translate("projects.title")} className="grid gap-0.5">{others.map((project) => entry(project, false))}</ul>
     {query.trim() && starred.length + others.length === 0 && <p role="status" className="m-0 px-2.5 py-2 text-[12px] text-muted-foreground">{translate("projects.noSearchResults")}</p>}
     {prefs.some((pref) => pref.position !== null) && <Button variant="ghost" type="button" title={translate("sidebar.resetOrderTip")} onClick={() => void reorder.reset()} className="mx-2.5 mt-1 justify-self-start bg-transparent px-0 text-[12px] font-medium text-muted-foreground hover:bg-transparent hover:text-foreground">{translate("sidebar.resetOrder")}</Button>}
@@ -237,7 +237,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
     </>}
     {section === "ai" && <AiOnly><AiSidebar workspace={workspace} activeId={aiChatId} /></AiOnly>}
     {inProjectSettings && projectKey && <>
-      <NavLink to={paths.workspaceSettings(workspace.slug)} aria-label={translate("sidebar.backToWorkspace")} title={translate("sidebar.backToWorkspace")} className={(state) => `${itemClass(state)} mb-2`}><ArrowLeft aria-hidden size={14} className="shrink-0" /><span className="min-w-0 thai-room truncate">{translate("settings.workspaceTitle")}</span></NavLink>
+      <NavLink end to={paths.workspaceSettings(workspace.slug)} aria-label={translate("sidebar.backToWorkspace")} title={translate("sidebar.backToWorkspace")} className={(state) => `${itemClass(state)} mb-2`}><ArrowLeft aria-hidden size={14} className="shrink-0" /><span className="min-w-0 thai-room truncate">{translate("settings.workspaceTitle")}</span></NavLink>
       <SettingsProjectNav workspace={workspace} projects={[...projectSort.starred, ...projectSort.others]} projectKey={projectKey} />
     </>}
     {section === "settings" && !inProjectSettings && <>

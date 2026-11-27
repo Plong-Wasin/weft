@@ -7,7 +7,7 @@ import { DefaultChatTransport, type UIMessage } from "ai";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, Check, ChevronRight, Copy, FilePlus, Globe, Pencil, RefreshCw, ThumbsDown, ThumbsUp, Trash2 } from "lucide-react";
 import { formatDate, formatNumber, translate, translateDynamic } from "@weft/shared";
-import { Link, useNavigate } from "react-router";
+import { Link, NavLink, useNavigate } from "react-router";
 import { paths } from "./routes";
 import { Markdown } from "./markdown";
 import { DocPreview } from "./doc-preview";
@@ -438,7 +438,7 @@ export function AiSidebar({ workspace, activeId }: { workspace: Workspace; activ
   }
   return <div className="flex min-h-0 flex-col gap-2">
     <div className="flex items-center gap-2">
-      <Link to={paths.ai(workspace.slug)} className="flex flex-1 items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-14 text-foreground hover:bg-accent"><Pencil aria-hidden size={14} />{translate("ai.new")}</Link>
+      <NavLink end to={paths.ai(workspace.slug)} className="flex flex-1 items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-14 text-foreground hover:bg-accent aria-[current=page]:bg-accent"><Pencil aria-hidden size={14} />{translate("ai.new")}</NavLink>
       <Button type="button" aria-label={translate("ai.search")} title={translate("ai.search")} aria-pressed={searching} onClick={() => { setSearching(!searching); setQuery(""); }} className="inline-flex size-8 items-center justify-center rounded-md border border-border bg-card p-0 text-muted-foreground hover:bg-accent"><SearchIcon /></Button>
     </div>
     {searching && <Input type="search" autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder={translate("ai.searchPlaceholder")} aria-label={translate("ai.search")} className="rounded-md border border-border bg-card px-2.5 py-1.5 text-14 text-foreground" />}

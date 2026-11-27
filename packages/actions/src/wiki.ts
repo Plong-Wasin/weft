@@ -163,7 +163,11 @@ async function placeBeside(database: Database, page: { id: string; parentId: str
   return insertAt + 1;
 }
 
-export function createWikiActions(db: Database, now: () => Date = () => new Date(), storage: AssetStorage = createS3Storage()) {
+export function createWikiActions(db: Database, now: () => Date = () => new Date(), storage?: AssetStorage) {
+  // Built on first use: listing Actions (the MCP service) must not need the S3 secret.
+  let lazyStorage = storage;
+  const store = () => (lazyStorage ??= createS3Storage());
+
   const summary = (page: PageRow, ownerName: string | null = null) => ({
     id: page.id, projectId: page.projectId, collectionId: page.collectionId, parentId: page.parentId, title: page.title, access: page.access as WikiAccess, archived: page.archivedAt !== null, locked: page.lockedAt !== null, ownerId: page.ownerId, ownerName, sortOrder: page.sortOrder,
     createdAt: page.createdAt.toISOString(), updatedAt: page.updatedAt.toISOString(),
@@ -799,7 +803,7 @@ export function createWikiActions(db: Database, now: () => Date = () => new Date
         for (const asset of sourceAssets) {
           const id = assetIds.get(asset.id)!;
           const storageKey = `${page.workspaceId}/${id}`;
-          await storage.copy(asset.storageKey, storageKey);
+          await store().copy(asset.storageKey, storageKey);
           await database.insert(assets).values({
             id, workspaceId: page.workspaceId, projectId: page.projectId, ownerType: "wiki_page", ownerId: copy!.id,
             uploaderId: context.userId, storageKey, filename: asset.filename, contentType: asset.contentType,

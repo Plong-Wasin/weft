@@ -484,7 +484,7 @@ try {
   await press("ArrowLeft", firstStop!);
   await press("PageDown", keyMonth(firstStop!, 1));
   await press("PageUp", firstStop!);
-  const weekday = (new Date(`${firstStop}T00:00:00Z`).getUTCDay() + 6) % 7;
+  const weekday = new Date(`${firstStop}T00:00:00Z`).getUTCDay();
   await press("Home", keyDay(firstStop!, -weekday));
   await press("End", keyDay(firstStop!, 6 - weekday));
   const keyboardDue = keyDay(firstStop!, 6 - weekday);

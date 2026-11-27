@@ -1,5 +1,6 @@
 import { getLocale, type MessageKey } from "@weft/shared";
 import type { StateGroup } from "./types";
+import type { WeekStart } from "./week-start";
 
 /** A calendar day as YYYY-MM-DD. Start and Due are calendar days, so comparing the strings orders them. */
 export type DayKey = string;
@@ -97,12 +98,29 @@ export function addMonths(day: DayKey, count: number): DayKey {
   return `${month}-${String(Math.min(Number(day.slice(8)), monthLength(month))).padStart(2, "0")}`;
 }
 
+/** The weekdays (0 = Sunday) in the order a calendar shows them. */
+export function weekdayOrder(weekStart: WeekStart): number[] {
+  const first = weekStart === "monday" ? 1 : 0;
+  return Array.from({ length: 7 }, (_, index) => (first + index) % 7);
+}
+
+/** The column, 0 to 6, of a weekday (0 = Sunday) in a week that starts on `weekStart`. */
+export function weekColumn(weekday: number, weekStart: WeekStart): number {
+  return weekdayOrder(weekStart).indexOf(weekday);
+}
+
+/** The days of one month (YYYY-MM) as grid cells; null pads the first week. */
+export function monthCells(month: string, weekStart: WeekStart = "sunday"): Array<DayKey | null> {
+  const lead = weekColumn(new Date(`${month}-01T00:00:00Z`).getUTCDay(), weekStart);
+  return [...Array.from({ length: lead }, () => null), ...Array.from({ length: monthLength(month) }, (_, day) => `${month}-${String(day + 1).padStart(2, "0")}`)];
+}
+
 /**
  * The day a calendar key moves focus to (WAI-ARIA date picker grid): arrows by day and week, PageUp/PageDown by month
- * (with Shift by year), Home/End to the start/end of the Monday-first week. Null for any other key.
+ * (with Shift by year), Home/End to the start/end of the week. Null for any other key.
  */
-export function gridKeyTarget(from: DayKey, key: string, shift = false): DayKey | null {
-  const weekday = (new Date(`${from}T00:00:00Z`).getUTCDay() + 6) % 7;
+export function gridKeyTarget(from: DayKey, key: string, shift = false, weekStart: WeekStart = "sunday"): DayKey | null {
+  const weekday = weekColumn(new Date(`${from}T00:00:00Z`).getUTCDay(), weekStart);
   switch (key) {
     case "ArrowLeft": return addDays(from, -1);
     case "ArrowRight": return addDays(from, 1);

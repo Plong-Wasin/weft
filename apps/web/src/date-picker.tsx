@@ -3,7 +3,8 @@ import { Input } from "@/ui/input";
 import React from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { getLocale, translate, type MessageKey } from "@weft/shared";
-import { applyQuickPick, calendarTabStop, displayYear, gridKeyTarget, longDay, monthTitle, pickDay, quickPickKeys, shortDay, storedYear, todayKey, type DateField, type DateRange, type DayKey, type QuickPick } from "./date-picker-logic";
+import { applyQuickPick, calendarTabStop, displayYear, gridKeyTarget, longDay, monthCells, monthTitle, pickDay, quickPickKeys, shortDay, storedYear, todayKey, weekdayOrder, type DateField, type DateRange, type DayKey, type QuickPick } from "./date-picker-logic";
+import { useWeekStart } from "./week-start";
 
 const t = (key: string) => translate(key as MessageKey);
 // The shared catalogue has no "Year" key yet; the label follows the app locale like the rest of the panel.
@@ -17,14 +18,6 @@ function shiftMonth(month: string, count: number) {
   return new Date(Date.UTC(year!, index! - 1 + count, 1)).toISOString().slice(0, 7);
 }
 
-/** The days of one month in weeks that start on Monday; null pads the first week. */
-function monthCells(month: string): Array<DayKey | null> {
-  const [year, index] = month.split("-").map(Number);
-  const lead = (new Date(Date.UTC(year!, index! - 1, 1)).getUTCDay() + 6) % 7;
-  const count = new Date(Date.UTC(year!, index!, 0)).getUTCDate();
-  return [...Array.from({ length: lead }, () => null), ...Array.from({ length: count }, (_, day) => `${month}-${String(day + 1).padStart(2, "0")}`)];
-}
-
 /**
  * Start and Due in one calendar. The active field (Start or Due) takes the next day clicked; after Start the Due takes over.
  * Each change is sent as the changed fields only; a quick pick sets the active field and "No date" clears both.
@@ -33,6 +26,7 @@ export function DatePanel({ range, field: initialField, onChange, today = todayK
   const [draft, setDraft] = React.useState(range);
   const [field, setField] = React.useState<DateField>(initialField);
   const [focusDay, setFocusDay] = React.useState<DayKey | null>(null);
+  const [weekStart] = useWeekStart();
   const [month, setMonth] = React.useState(() => (range[initialField === "start" ? "startDate" : "dueDate"] ?? today).slice(0, 7));
   // The year box holds what the person is typing; it shows the locale's year (Buddhist era in Thai) and stores Gregorian.
   const [yearDraft, setYearDraft] = React.useState<string | null>(null);
@@ -60,14 +54,15 @@ export function DatePanel({ range, field: initialField, onChange, today = todayK
     setFocusDay(day);
     if (field === "start") setField("due");
   };
-  const cells = monthCells(month);
+  const cells = monthCells(month, weekStart);
   const tabStop = calendarTabStop(month, { focusDay, selected: draft[field === "start" ? "startDate" : "dueDate"], today, min, max });
-  const weekdays = Array.from({ length: 7 }, (_, index) => new Intl.DateTimeFormat(locale(), { weekday: "narrow", timeZone: "UTC" }).format(new Date(Date.UTC(2024, 0, 1 + index))));
+  // 2024-01-07 is a Sunday, so adding a weekday number gives a date on that weekday.
+  const weekdays = weekdayOrder(weekStart).map((weekday) => new Intl.DateTimeFormat(locale(), { weekday: "narrow", timeZone: "UTC" }).format(new Date(Date.UTC(2024, 0, 7 + weekday))));
   const monthName = new Intl.DateTimeFormat(locale(), { month: "long", timeZone: "UTC" }).format(new Date(`${month}-01T00:00:00Z`));
   const title = monthTitle(month);
   const onGridKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const from = (event.target as HTMLElement).dataset.date;
-    const next = from ? gridKeyTarget(from, event.key, event.shiftKey) : null;
+    const next = from ? gridKeyTarget(from, event.key, event.shiftKey, weekStart) : null;
     if (!next) return;
     event.preventDefault();
     if (next.slice(0, 7) !== month) setMonth(next.slice(0, 7));

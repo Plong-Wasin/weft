@@ -7,20 +7,25 @@ export const webPortOffset = 20_000;
 export const livePortOffset = 10_000;
 /** Lowest base accepted: ports below 1024 need root. */
 export const minPortBase = 1024;
-/** Highest base accepted: the web port (base + 20000) must stay below 65535, so the base is at most 45534. */
-export const maxPortBase = 65_534 - webPortOffset;
+/** Lowest port of the Linux ephemeral range (`net.ipv4.ip_local_port_range`, 32768-60999). The kernel hands these to outbound connections (Chromium, fetch, database clients), so a server bound there can lose the port before it starts and fail with EADDRINUSE. Every derived port stays below this. */
+export const ephemeralPortFloor = 32_768;
 
-/** The default base comes from the checkout's directory name, so two checkouts on one machine rarely share ports. The range is 30000 to 39999. */
-export function defaultPortBase(directoryName: string): number {
-  return 30_000 + Number(Bun.hash(directoryName) % 10_000n);
+/** Highest base accepted for a run with this many workers: the last worker's web port (the highest of the three) must stay below the ephemeral range. */
+export function maxPortBase(workers = 1): number {
+  return ephemeralPortFloor - 1 - webPortOffset - (workers - 1) * 2;
 }
 
-/** `E2E_PORT_BASE` when set, otherwise the directory's default. A base that would push a web port to 65535 or more is refused with a message, before any flow starts. */
+/** The default base comes from the checkout's directory name, so two checkouts on one machine rarely share ports. The range is 2000 to 9999, which keeps every port below the ephemeral range for up to 100 workers. */
+export function defaultPortBase(directoryName: string): number {
+  return 2_000 + Number(Bun.hash(directoryName) % 8_000n);
+}
+
+/** `E2E_PORT_BASE` when set, otherwise the directory's default. A base that would put any port of any worker into the ephemeral range is refused with a message, before any flow starts. */
 export function resolvePortBase(value: string | undefined, directoryName: string, workers = 1): number {
   const base = value?.trim() ? Number(value) : defaultPortBase(directoryName);
-  const limit = maxPortBase - (workers - 1) * 2;
+  const limit = maxPortBase(workers);
   if (!Number.isInteger(base) || base < minPortBase || base > limit) {
-    throw new Error(`E2E_PORT_BASE=${value?.trim() || base} refused: use a whole number from ${minPortBase} to ${limit} with ${workers} worker(s) to keep every web port below 65535`);
+    throw new Error(`E2E_PORT_BASE=${value?.trim() || base} refused: use a whole number from ${minPortBase} to ${limit} with ${workers} worker(s). The web port (base + ${webPortOffset}) must stay below ${ephemeralPortFloor}, the ephemeral range, where the OS hands out ports to outbound connections and a flow's server can lose its port (EADDRINUSE)`);
   }
   return base;
 }

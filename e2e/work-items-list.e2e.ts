@@ -8,7 +8,7 @@ import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
-import { saveShot } from "./shots";
+import { saveShot, shotsOn } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3107);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5207);
@@ -368,7 +368,7 @@ try {
   await page.evaluate(() => { (window as unknown as { __noReload: boolean }).__noReload = true; });
   await page.getByTestId("row-MOB-1").waitFor();
   await page.mouse.move(0, 0);
-  await mkdir(evidenceShots, { recursive: true });
+  if (shotsOn) await mkdir(evidenceShots, { recursive: true });
   for (const { width, height } of screenshotViewports) {
     await page.setViewportSize({ width, height });
     const columnHeader = page.getByTestId("list-column-header");
@@ -420,7 +420,7 @@ try {
     }
     for (const theme of ["light", "dark"] as const) {
       await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
-      await mkdir(evidenceShots, { recursive: true });
+      if (shotsOn) await mkdir(evidenceShots, { recursive: true });
       await saveShot(page, { path: `${evidenceShots}/work-items-list-${width}-${theme}.png`, fullPage: true });
     }
   }

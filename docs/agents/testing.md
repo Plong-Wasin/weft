@@ -58,6 +58,36 @@ Measured on 2026-11-27 with `bun e2e/run-all.ts --slow --workers=2`, Bun 1.4.2, 
 
 The run is 7m 51s (34%) shorter. `editor-parity` takes about 310s of it on one page. A flow can still miss a wait on its first attempt, which the retry absorbs.
 
+### Coverage after the second round of speed changes
+
+| Removed or replaced | What still covers it |
+| --- | --- |
+| `design-entry-work-items`: no page-level horizontal scroll | `layout-stability` for sign-in, home, the work item list and the work item page (page and `main` width); `viewports` for archives and workspace views. Both include 1440 and 390 px. The flow keeps its toolbar-row and clipped-control checks. |
+| `viewports`: `rendered-screen` on the 19 screens that `layout-stability` opens (sign-in, home, projects, inbox, the five layouts, peek, work item page, cycles, modules, views, intake, workspace settings, Wiki page, analytics overview, AI) | `layout-stability` waits for data of each screen |
+| `viewports`: `no-horizontal-page-scroll` on those screens | `layout-stability`'s page and `main` width checks |
+| `viewports`: `top-controls-not-clipped`, `primary-control-visible`, `no-sibling-control-overlap` on those screens | Moved to `e2e/screen-checks.ts`, run by `layout-stability` on each of its screens |
+| `layout-stability`: dark mode at 1024, 820, 768, 844 and 667 px wide | Light mode at those sizes and dark mode at 1440 and 390 px |
+| `work-item-type-icons`: the click that reopened the peek after a reload | The URL reopens the peek; the same assertion on its type icon follows |
+
+Two things are no longer swept. On those 19 screens the checks below 1440 px now run with touch emulation only (`viewports` also opened them with a mouse at those widths). The AI screen is checked with AI switched on, not off. `viewports` still sweeps the other 15 routes at all seven sizes with a mouse, and keeps the phone list-fit, touch-target, blank-tap and short-height checks.
+
+With a stylesheet that pushed the `main` buttons off screen and overlapped grouped ones, `layout-stability` failed with 426 defects and `viewports` with 93, `top-controls-not-clipped`, `primary-control-visible` and `no-sibling-control-overlap` among them in both.
+
+### Benchmark of the second round
+
+Measured on 2026-11-27 with `bun e2e/run-all.ts --slow --workers=3`, Bun 1.4.2, Chromium 1255, the shared local Postgres and S3 services, on one host with 12 CPUs and 27 GiB, the two runs back to back. Other agent sessions shared the host.
+
+| Runner | Wall time | Flows passed | Load average (mean / peak) | `MemAvailable` (start / lowest) |
+| --- | ---: | ---: | ---: | ---: |
+| Before (`e53e9bb7`) | 12m 07s | 119/119 | 5.8 / 11.6 | 16498 / 12413 MiB |
+| After | 10m 36s | 119/119 (`agent-access` needed the retry) | 6.8 / 15.7 | 16527 / 12648 MiB |
+
+Flow times, before and after: `layout-stability` 125s and 81s, `planning-detail-layout` 83s and 9s, `viewports` 76s and 36s, `planning-phone-layout` 60s and 8s, `design-entry-work-items` 27s and 7s.
+
+Load changes these numbers a lot: an earlier run of the changed suite under a mean load of 13.7 (peak 24.5) took 13m 26s.
+
+**Memory headroom for three workers.** Over four full runs at three workers, `MemAvailable` fell by 3.9 to 6.6 GiB from its starting value (lowest seen: 7929 MiB, from 14519 MiB). The 10 GiB threshold for three workers leaves at least 3 GiB.
+
 ### Waits that a flow needs
 
 - **A screen to measure.** `settle(page, ...ready)` from `e2e/settle.ts` waits for something the screen draws from its data, no loading placeholder, `document.fonts.ready` and two animation frames. Do not wait for `networkidle`: the live connection and polling make it run to its timeout.

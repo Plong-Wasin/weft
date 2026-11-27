@@ -249,17 +249,22 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
   }, [page.id, self]);
   // Text typed before the first sync would land at a random end of the stored text, so the editor takes none until then.
   const [synced, setSynced] = React.useState(false);
+  const [connectionFailed, setConnectionFailed] = React.useState(false);
   const [writable, setWritable] = React.useState(page.canEdit);
   const editable = synced && writable;
   React.useEffect(() => {
     const { provider } = collaboration;
-    const onSynced = () => setSynced(true);
+    const onSynced = () => { setSynced(true); setConnectionFailed(false); };
+    const onAuthFailed = () => setConnectionFailed(true);
     if (provider.isSynced) onSynced();
     provider.on("synced", onSynced);
-    return () => { provider.off("synced", onSynced); };
+    provider.on("authenticationFailed", onAuthFailed);
+    // A server that is down, slow or blocked never syncs: after a few seconds say so instead of "connecting".
+    const giveUp = setTimeout(() => { if (!provider.isSynced) setConnectionFailed(true); }, 8_000);
+    return () => { clearTimeout(giveUp); provider.off("synced", onSynced); provider.off("authenticationFailed", onAuthFailed); };
   }, [collaboration]);
   const { extension: images, error: imageError, uploadFile } = useAssetImages({ ownerType: "wiki_page", ownerId: page.id });
-  React.useEffect(() => { void call<Member[]>("list_wiki_page_mentionable_members", { pageId: page.id }).then((result) => setPeople(result ?? [])); }, [page.id]);
+  React.useEffect(() => { void call<Member[]>("list_wiki_page_mentionable_members", { pageId: page.id }).then((result) => setPeople(result ?? []), () => setPeople([])); }, [page.id]);
   const loadThreads = React.useCallback(async (includeResolved = showResolved) => { setThreads(await call<typeof threads>("list_wiki_page_comments", { pageId: page.id, includeResolved }) ?? []); }, [page.id, showResolved]);
   React.useEffect(() => { void loadThreads(); }, [loadThreads]);
   const editor = useEditor({
@@ -289,7 +294,12 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
     } },
     onUpdate: () => { setStatus("saved"); },
   });
-  React.useEffect(() => { editor?.setEditable(editable, false); }, [editor, editable]);
+  React.useEffect(() => {
+    if (!editor) return;
+    editor.setEditable(editable, false);
+    // The placeholder decorations rebuild only on a transaction, and becoming editable dispatches none.
+    if (editor.isEmpty) editor.view.dispatch(editor.state.tr.setSelection(editor.state.selection));
+  }, [editor, editable]);
   React.useEffect(() => {
     if (!editor) return;
     const timer = setInterval(() => {
@@ -495,11 +505,11 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
         <DialogActions onClose={() => setPdfDialog(false)} submit={pdfExporting ? translate("wiki.pdfExporting") : translate("wiki.exportPdf")} />
       </form>
     </Dialog>}
-    <small role="status" className={`mt-2 text-12 ${status === "not-saved" ? "text-destructive" : "text-muted-foreground"}`}>{translate(status === "saved" ? "wiki.saved" : status === "saving" ? "wiki.saving" : status === "not-saved" ? "wiki.notSaved" : "wiki.saveFailed")}</small>
+    <small role="status" data-testid="wiki-status" className={`mt-2 block min-h-4 text-12 ${status === "not-saved" || (!synced && connectionFailed) ? "text-destructive" : "text-muted-foreground"}`}>{translate(!synced && page.canEdit ? (connectionFailed ? "wiki.cannotConnect" : "wiki.connecting") : status === "saved" ? "wiki.saved" : status === "saving" ? "wiki.saving" : status === "not-saved" ? "wiki.notSaved" : "wiki.saveFailed")}</small>
     <div data-testid="wiki-editor-shell" className="wiki-editor-shell grid gap-4">
     <div className="relative">
       <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden data-testid="inline-image-input" onChange={async (event) => { const file = event.target.files?.[0]; event.target.value = ""; if (!file || !editor) return; const assetId = await uploadFile(file); if (assetId) { const { selection } = editor.state; const at = "node" in selection ? selection.to : selection.from; editor.chain().focus().insertContentAt(at, { type: "assetImage", attrs: { assetId } }).run(); } }} />
-    <div className="wiki-editor relative min-h-24" data-testid="wiki-editor"><EditorSourceMode editor={page.canEdit ? editor : null} initialWarnings={limitWarnings} onSourceDraftChange={(hasDraft) => { if (hasDraft) setStatus("not-saved"); }} toggleRef={sourceToggle} onModeChange={setSourceActive} /><CalloutControls editor={editor} editable={page.canEdit} /><CodeBlockControls editor={editor} editable={page.canEdit} /><TableControls editor={editor} editable={page.canEdit} /><EditorContent editor={editor} /><WikiBlockControls editor={editor} editable={page.canEdit} /><WikiBubbleMenu editor={page.canEdit ? editor : null} />{page.canEdit && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>
+    <div className="wiki-editor relative min-h-24" data-testid="wiki-editor"><EditorSourceMode editor={editable ? editor : null} initialWarnings={limitWarnings} onSourceDraftChange={(hasDraft) => { if (hasDraft) setStatus("not-saved"); }} toggleRef={sourceToggle} onModeChange={setSourceActive} /><CalloutControls editor={editor} editable={editable} /><CodeBlockControls editor={editor} editable={editable} /><TableControls editor={editor} editable={editable} /><EditorContent editor={editor} /><WikiBlockControls editor={editor} editable={editable} />{/* The bubble menu checks editor.isEditable itself; changing its editor prop re-dispatches a transaction (see wiki-bubble-menu.tsx), so it stays on canEdit. */}<WikiBubbleMenu editor={page.canEdit ? editor : null} />{editable && <AssistMenu editor={editor} workspaceId={workspaceId} />}</div>
     </div>
     </div>
     <details data-testid="wiki-attachments-disclosure" className="mt-2 rounded-xl border border-border bg-card p-4 [&_[data-testid=attachment-dropzone]]:rounded-lg">
@@ -558,7 +568,7 @@ function Editor({ workspaceId, page, self, onChanged, onResync, info, onImported
         <Activity pageId={page.id} refresh={status} />
         <section aria-label={translate("wiki.history")} className="grid gap-2 border-t border-border pt-3">
           <h3 className="m-0 text-13 font-semibold text-foreground">{translate("wiki.history")}</h3>
-          <ul className="m-0 grid list-none gap-2 p-0">{versions.map((version) => <li key={version.id} className="flex items-center justify-between gap-2 text-muted-foreground"><span className="min-w-0 thai-room truncate">{formatDate(version.createdAt)} — {version.title}</span><Button className="!px-2 !py-0.5 !text-12" disabled={!page.canEdit} onClick={() => void restore(version.id)}>{translate("wiki.restore")}</Button></li>)}</ul>
+          <ul className="m-0 grid list-none gap-2 p-0">{versions.map((version) => <li key={version.id} className="flex items-center justify-between gap-2 text-muted-foreground"><span className="min-w-0 thai-room truncate">{formatDate(version.createdAt)} — {version.title}</span><Button className="!px-2 !py-0.5 !text-12" disabled={!editable} onClick={() => void restore(version.id)}>{translate("wiki.restore")}</Button></li>)}</ul>
         </section>
       </div>}
         </TabsContent>

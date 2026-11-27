@@ -60,18 +60,64 @@ try {
     await page.keyboard.type("Early words");
     const before = await editor.innerText();
     const editable = await editor.getAttribute("contenteditable");
+    // Finding 1: before the sync the page says it is connecting, not "Saved", and the line does not move when the sync lands.
+    const status = page.getByTestId("wiki-status");
+    check((await status.innerText()) === translate("wiki.connecting"), "wiki: the status line must say it is connecting before the first sync");
+    check((await status.getAttribute("role")) === "status", "wiki: the connecting message must be a role=status");
+    check(!(await page.getByText(translate("wiki.saved"), { exact: true }).count()), "wiki: must not say Saved before the first sync");
+    const connectingBox = (await status.boundingBox())!;
+    const editorTop = (await editor.boundingBox())!.y;
+    // Finding 3: nothing writes into the unsynced document: no block grip, and History Restore is off.
+    check((await page.getByTestId("wiki-block-handle").count()) === 0, "wiki: the block grip must not be offered before the first sync");
+    await page.getByRole("button", { name: translate("wiki.exports"), exact: true }).click();
+    await page.getByRole("menuitem", { name: translate("wiki.history"), exact: true }).click();
+    const restores = page.getByRole("button", { name: translate("wiki.restore"), exact: true });
+    if (await restores.count()) check(await restores.first().isDisabled(), "wiki: History Restore must be off before the first sync");
     release!();
     await editor.getByText("Last stored line").waitFor();
     if (Bun.env.PROBE) console.log("probe", JSON.stringify({ editable, before, after: await editor.locator("p").allTextContents() }));
     check(editable === "false", "wiki: the editor must not be editable before its first sync");
     check(!before.includes("Early words"), "wiki: the editor took text before its first sync");
     await editor.and(page.locator('[contenteditable="true"]')).waitFor();
+    await status.getByText(translate("wiki.saved"), { exact: true }).waitFor();
+    const syncedBox = (await status.boundingBox())!;
+    check(Math.abs(syncedBox.y - connectingBox.y) < 1 && Math.abs(syncedBox.height - connectingBox.height) < 1 && Math.abs((await editor.boundingBox())!.y - editorTop) < 1, "wiki: the status change must not shift the layout");
     await editor.getByText("Last stored line").click();
     await page.keyboard.press("End");
     await page.keyboard.type(" and more");
     check(JSON.stringify(await editor.locator("p").allTextContents()) === JSON.stringify(["First stored line", "Last stored line and more"]), "wiki: typing after the sync must land at the caret");
     await page.close();
     console.log("case passed: the Wiki editor takes no input before its first sync");
+  }
+
+  // Finding 1: a live server that never answers ends in a visible "cannot connect", with editing off.
+  {
+    const page = await context.newPage();
+    await page.routeWebSocket(new RegExp(`localhost:${livePort}`), () => {});
+    await page.goto(`${web}/${slug}/wiki/${pageId}`);
+    const status = page.getByTestId("wiki-status");
+    await status.getByText(translate("wiki.connecting"), { exact: true }).waitFor();
+    if (Bun.env.SHOTS) await page.screenshot({ path: `${Bun.env.SHOTS}/connecting.png` });
+    const box = (await status.boundingBox())!;
+    await status.getByText(translate("wiki.cannotConnect"), { exact: true }).waitFor({ timeout: 15_000 });
+    check((await status.getAttribute("role")) === "status", "wiki: the cannot-connect message must be a role=status");
+    check((await page.getByTestId("wiki-editor").locator(".ProseMirror").getAttribute("contenteditable")) === "false", "wiki: the editor stays off when the live server cannot be reached");
+    check(Math.abs((await status.boundingBox())!.y - box.y) < 1, "wiki: the cannot-connect message must not shift the layout");
+    if (Bun.env.SHOTS) await page.screenshot({ path: `${Bun.env.SHOTS}/cannot-connect.png` });
+    await page.close();
+    console.log("case passed: an unreachable live server says it cannot connect");
+  }
+
+  // Finding 2: an empty page shows the "/" hint once the editor becomes editable.
+  {
+    const { id: emptyId } = await call<{ id: string }>("create_wiki_page", { workspaceId, title: "Blank page" });
+    const page = await context.newPage();
+    await page.goto(`${web}/${slug}/wiki/${emptyId}`);
+    const editor = page.getByTestId("wiki-editor").locator(".ProseMirror");
+    await editor.and(page.locator('[contenteditable="true"]')).waitFor();
+    await page.waitForFunction(() => document.querySelector(".ProseMirror p")?.getAttribute("data-placeholder") === "Press '/' for commands…", null, { timeout: 5_000 });
+    await page.close();
+    console.log("case passed: an empty page shows the slash hint after the sync");
   }
 
   // "@" typed before the member list arrives.

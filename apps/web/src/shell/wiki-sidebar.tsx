@@ -1,6 +1,6 @@
 import { Button } from "@/ui/button";
 import React from "react";
-import { NavLink, useLocation } from "react-router";
+import { Link, NavLink, useLocation } from "react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, ChevronRight, FileText, Folder, GripVertical, Lock, Users } from "lucide-react";
 import { translate } from "@weft/shared";
@@ -62,9 +62,12 @@ function Group({ label, icon, count, defaultOpen, holdsActive = false, dropHint,
 
 /** The Wiki sidebar: Collection pages as a tree, then Shared, Private and Archives. */
 export function WikiSidebar({ workspace, selfId }: { workspace: Workspace; selfId: string }) {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const client = useQueryClient();
   const activeId = pathname.split("/")[3] ?? "";
+  // All pages and Archives are the same path apart from `?tab=archived`, which NavLink does not compare.
+  const onList = pathname === paths.wiki(workspace.slug);
+  const onArchived = onList && new URLSearchParams(search).get("tab") === "archived";
   const { data: pages = [] } = useQuery({ queryKey: ["wiki-pages", workspace.id, "sidebar"], queryFn: async () => await action<PageRow[]>("list_wiki_pages", { workspaceId: workspace.id, archived: false }) ?? [] });
   const { data: shared = [] } = useQuery({ queryKey: ["wiki-pages", workspace.id, "shared"], queryFn: async () => await action<PageRow[]>("list_shared_wiki_pages", { workspaceId: workspace.id }) ?? [] });
   const { data: collections = [] } = useQuery({ queryKey: ["wiki-collections", workspace.id], queryFn: async () => await action<Collection[]>("list_collections", { workspaceId: workspace.id }) ?? [] });
@@ -162,7 +165,7 @@ export function WikiSidebar({ workspace, selfId }: { workspace: Workspace; selfI
     return () => { window.removeEventListener("keydown", onEscape); window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", end); window.removeEventListener("pointercancel", end); };
   }, [dragging, over, pages]);
   return <>
-    <NavLink end to={paths.wiki(workspace.slug)} className={({ isActive }) => row(isActive)}>{translate("sidebar.allPages")}</NavLink>
+    <Link to={paths.wiki(workspace.slug)} aria-current={onList && !onArchived ? "page" : undefined} className={row(onList && !onArchived)}>{translate("sidebar.allPages")}</Link>
     <p className="px-3 pb-1 pt-4 text-[12px] font-medium text-muted-foreground">{translate("wikiSidebar.collections")}</p>
     <p role="status" className="sr-only">{announcement}</p>
     {dropMessage && <p role="alert" className="px-2 text-[12px] text-destructive">{dropMessage}</p>}
@@ -174,6 +177,6 @@ export function WikiSidebar({ workspace, selfId }: { workspace: Workspace; selfI
     })}
     {shared.length > 0 && <Group label={translate("pages.tab.shared")} icon={<Users aria-hidden size={12} />} count={shared.length} defaultOpen={false} holdsActive={shared.some((page) => page.id === activeId)}>{tree(shared)}</Group>}
     {mine.length > 0 && <Group label={translate("pages.tab.private")} icon={<Lock aria-hidden size={12} />} count={mine.length} defaultOpen={false} holdsActive={isMine.has(activeId)}>{tree(mine)}</Group>}
-    <NavLink to={`${paths.wiki(workspace.slug)}?tab=archived`} className={() => `${row(false)} mt-1`}><Archive aria-hidden size={13} />{translate("pages.tab.archived")}</NavLink>
+    <Link to={`${paths.wiki(workspace.slug)}?tab=archived`} aria-current={onArchived ? "page" : undefined} className={`${row(onArchived)} mt-1`}><Archive aria-hidden size={13} />{translate("pages.tab.archived")}</Link>
   </>;
 }

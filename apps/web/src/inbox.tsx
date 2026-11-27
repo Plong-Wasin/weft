@@ -3,7 +3,8 @@ import { api } from "./api";
 import React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDate, formatNumber, translate } from "@weft/shared";
-import { Link, useLocation, useNavigate } from "react-router";
+import { Link, NavLink, useLocation, useNavigate } from "react-router";
+import { itemClass } from "./shell/nav-item";
 import { Bell, Mail, MailOpen } from "lucide-react";
 import { paths } from "./routes";
 import { notificationTarget, notificationTargetWithInboxId } from "./notification-target";
@@ -41,20 +42,20 @@ export function InboxLink({ workspace }: { workspace: Workspace }) {
   const { data } = useQuery({ queryKey: inboxKey(workspace.id), queryFn: () => fetchInbox(workspace.id) });
   const unread = data?.unreadCount ?? 0;
   const label = translate("topbar.notifications");
-  return <Tooltip><TooltipTrigger render={<Link to={paths.notifications(workspace.slug)} aria-label={label}
-    className="relative inline-flex items-center justify-center rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-foreground pointer-coarse:min-h-11 pointer-coarse:min-w-11"><Bell aria-hidden size={18} />
+  return <Tooltip><TooltipTrigger render={<NavLink to={paths.notifications(workspace.slug)} aria-label={label}
+    className="relative inline-flex items-center justify-center rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-foreground aria-[current=page]:bg-accent aria-[current=page]:text-foreground pointer-coarse:min-h-11 pointer-coarse:min-w-11"><Bell aria-hidden size={18} />
     {unread > 0 && <span aria-label={translate("inbox.unread").replace("{count}", formatNumber(unread))} className="absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-[var(--primary)] px-1 text-[12px] font-semibold text-primary-foreground">{formatNumber(unread)}</span>}
-  </Link>} /><TooltipContent>{label}</TooltipContent></Tooltip>;
+  </NavLink>} /><TooltipContent>{label}</TooltipContent></Tooltip>;
 }
 
 /** A named destination in workspace navigation; the bell remains available as a shortcut. */
 export function InboxNavLink({ workspace }: { workspace: Workspace }) {
   const { data } = useQuery({ queryKey: inboxKey(workspace.id), queryFn: () => fetchInbox(workspace.id) });
   const unread = data?.unreadCount ?? 0;
-  return <Link to={paths.notifications(workspace.slug)} aria-label={`${translate("inbox.navLabel")}${unread ? `, ${translate("inbox.unread").replace("{count}", formatNumber(unread))}` : ""}`}
-    className="flex items-center justify-between gap-2 transition-colors min-h-9 max-md:min-h-11 rounded-lg px-3 py-1.5 text-[14px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground">
+  return <NavLink to={paths.notifications(workspace.slug)} aria-label={`${translate("inbox.navLabel")}${unread ? `, ${translate("inbox.unread").replace("{count}", formatNumber(unread))}` : ""}`}
+    className={(state) => `${itemClass(state)} justify-between`}>
     <span>{translate("inbox.navLabel")}</span>{unread > 0 && <span className="rounded-full bg-[var(--primary)] px-1.5 text-[12px] font-semibold text-primary-foreground">{formatNumber(unread)}</span>}
-  </Link>;
+  </NavLink>;
 }
 
 function hasIntakeTarget(item: Notification) {

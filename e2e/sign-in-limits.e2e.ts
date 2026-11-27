@@ -7,6 +7,7 @@ import { like } from "drizzle-orm";
 import { createDatabase, users } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3132);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5232);
@@ -90,7 +91,7 @@ try {
       const waitText = (await waitAlert.innerText()).trim();
       check(/^Wait [12] seconds, then try again\.$/.test(waitText), `wait message wrong at ${size}/${theme}: ${waitText}`);
       check(await noHorizontalScroll(waiting.page), `sign-in scrolls sideways with the wait message at ${size}/${theme}`);
-      await waiting.page.screenshot({ path: `${shots}/wait-${size}-${theme}.png` });
+      await saveShot(waiting.page, { path: `${shots}/wait-${size}-${theme}.png` });
       await waiting.context.close();
 
       // Lock: the locked account gets the right password and is still refused, with the same plain wording.
@@ -98,7 +99,7 @@ try {
       const lockAlertText = await submitSignIn(locking.page, lockedEmail, password);
       check(lockAlertText === lockText, `lock message wrong at ${size}/${theme}: ${lockAlertText}`);
       check(await noHorizontalScroll(locking.page), `sign-in scrolls sideways with the lock message at ${size}/${theme}`);
-      await locking.page.screenshot({ path: `${shots}/lock-${size}-${theme}.png` });
+      await saveShot(locking.page, { path: `${shots}/lock-${size}-${theme}.png` });
       await locking.context.close();
     }
   }

@@ -2,6 +2,7 @@
 import { launchBrowser, newContext, newPage, startApi, startWeb, waitFor, waitUntil } from "./harness";
 import { mkdir } from "node:fs/promises";
 import { reviewShots } from "../tools/visual/paths";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3118);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5218);
@@ -26,7 +27,7 @@ try {
   const initialLanguage = (await language.textContent())?.trim();
   if (!initialLanguage?.includes("ไทย")) throw new Error(`the signed-out language must start with the configured Thai default; got ${JSON.stringify(initialLanguage)}`);
   await page.getByText("ภาษาเริ่มต้นขณะนี้: ไทย คุณเปลี่ยนได้").waitFor();
-  await page.screenshot({ path: `${shots}/signed-out-thai-default.png` });
+  await saveShot(page, { path: `${shots}/signed-out-thai-default.png` });
   const evidence = `${process.cwd()}/.local/shots/shadcn-02/after`;
   await mkdir(evidence, { recursive: true });
   for (const [width, height] of [[1440, 900], [1024, 768], [820, 1180], [768, 1024], [844, 390], [667, 375], [390, 844]] as const) {
@@ -36,7 +37,7 @@ try {
       const box = await language.boundingBox();
       if (!box || box.left < 0 || box.right > width || box.top < 0 || box.bottom > height) throw new Error(`Language Select is clipped at ${width}x${height} (${theme}): ${JSON.stringify(box)}`);
       if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)) throw new Error(`The signed-out language screen scrolls horizontally at ${width}x${height} (${theme})`);
-      await page.screenshot({ path: `${evidence}/language-${width}x${height}-${theme}.png`, fullPage: true });
+      await saveShot(page, { path: `${evidence}/language-${width}x${height}-${theme}.png`, fullPage: true });
     }
   }
   const touchContext = await newContext(browser, { locale: "en-US", viewport: { width: 667, height: 375 }, isMobile: true, hasTouch: true });

@@ -6,6 +6,7 @@ import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31168);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52168);
@@ -47,7 +48,7 @@ try {
   check(await simpleRadio.isChecked(), "Simple is not preselected");
   check(await page.getByText(translate("projects.shapeSimpleDesc")).isVisible(), "Simple explanation missing");
   check(await page.getByText(translate("projects.shapeFullDesc")).isVisible(), "Full explanation missing");
-  await page.screenshot({ path: `${shots}/create-project-1440.png` });
+  await saveShot(page, { path: `${shots}/create-project-1440.png` });
   await page.getByLabel(translate("projects.name")).fill("Simple app");
   await page.getByLabel(translate("projects.key"), { exact: true }).fill("SIMP");
   await page.getByRole("button", { name: translate("projects.create") }).click();
@@ -80,7 +81,7 @@ try {
   await page.getByRole("switch", { name: translate("features.cycles") }).click();
   await page.getByRole("link", { name: /SIMP · Simple app/ }).click();
   await sidebar.getByRole("navigation", { name: new RegExp(translate("projectNav.label")) }).getByRole("link", { name: translate("cycles.title") }).waitFor();
-  await page.screenshot({ path: `${shots}/features-1440.png` });
+  await saveShot(page, { path: `${shots}/features-1440.png` });
   console.log("features ok: the Features page explains each switch and turning Cycles on shows its menu item");
 
   // Pages off with a page in use: a confirmation names the page first; Keep on changes nothing.
@@ -89,7 +90,7 @@ try {
   const confirm = page.getByRole("group", { name: translate("features.confirmOffHeading") });
   await confirm.waitFor();
   check(await confirm.getByText("Launch plan").isVisible(), "confirmation does not name the page in use");
-  await page.screenshot({ path: `${shots}/pages-confirm-1440.png` });
+  await saveShot(page, { path: `${shots}/pages-confirm-1440.png` });
   await confirm.getByRole("button", { name: translate("features.confirmKeep") }).click();
   check(await page.getByRole("switch", { name: translate("features.pages") }).getAttribute("aria-checked") === "true", "Keep on still turned Pages off");
   await page.getByRole("switch", { name: translate("features.pages") }).click();
@@ -111,7 +112,7 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${web}/${slug}/settings/projects/SIMP/features`);
   await page.getByRole("switch", { name: translate("features.views") }).waitFor();
-  await page.screenshot({ path: `${shots}/features-390.png` });
+  await saveShot(page, { path: `${shots}/features-390.png` });
 
   console.log("e2e project-features: ok");
   await browser.close();

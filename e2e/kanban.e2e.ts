@@ -6,6 +6,7 @@ import { and, eq, like } from "drizzle-orm";
 import { createDatabase, projectMembers, projects, users, workItemAssignees, workItems, workspaceMembers, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3107);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5207);
@@ -258,7 +259,7 @@ try {
   await moveAnnouncement.filter({ hasText: "MOB-4 moved to High" }).waitFor({ state: "attached" });
   const priorityAnnouncement = await moveAnnouncement.textContent();
   check(priorityAnnouncement?.includes("MOB-4 moved to High") && !priorityAnnouncement.includes("position"), "priority announcement claimed an unsupported position");
-  await page.screenshot({ path: `${shots}/board-priority-1440.png` });
+  await saveShot(page, { path: `${shots}/board-priority-1440.png` });
 
   // Assignee grouping also orders cards by the board's existing manual sort, independently of the drop index.
   for (const id of ["MOB-1", "MOB-2"]) {
@@ -331,7 +332,7 @@ try {
   await page.unroute(`${api}/actions/move_work_item`);
   await page.goto(page.url().replace(/[?].*/, "?layout=board"));
   await page.getByTestId("card-MOB-2").waitFor();
-  await page.screenshot({ path: `${shots}/board-state-1440.png` });
+  await saveShot(page, { path: `${shots}/board-state-1440.png` });
 
   // Touch at 390px: a long-press picks the card up, the board scrolls at its edge, lifting drops it in that column.
   await page.setViewportSize({ width: 390, height: 844 });
@@ -340,7 +341,7 @@ try {
   const cdp = await context.newCDPSession(page);
   const touch = (type: string, x?: number, y?: number) => cdp.send("Input.dispatchTouchEvent", { type, touchPoints: type === "touchEnd" ? [] : [{ x: x!, y: y! }] });
   const centre = async (testId: string) => { const box = (await page.getByTestId(testId).boundingBox())!; return { x: box.x + box.width / 2, y: box.y + 14 }; };
-  await page.screenshot({ path: `${shots}/board-state-390.png` });
+  await saveShot(page, { path: `${shots}/board-state-390.png` });
   const from = await centre("card-MOB-2");
   await touch("touchStart", from.x, from.y);
   await Bun.sleep(450);
@@ -350,7 +351,7 @@ try {
   const todo = (await page.getByTestId("column-Todo").boundingBox())!;
   await touch("touchMove", Math.min(todo.x + 60, 340), todo.y + 30);
   await Bun.sleep(100);
-  await page.screenshot({ path: `${shots}/board-touch-drag-390.png` });
+  await saveShot(page, { path: `${shots}/board-touch-drag-390.png` });
   await touch("touchEnd");
   await page.waitForFunction(() => document.querySelector('[data-testid="column-Todo"] [data-testid="card-MOB-2"]'));
   await page.reload();

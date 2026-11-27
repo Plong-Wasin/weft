@@ -6,6 +6,7 @@ import { mkdir } from "node:fs/promises";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3108);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5208);
@@ -184,20 +185,20 @@ try {
   const photoRow = attachments.locator("li").filter({ hasText: "photo.png" });
   await page.setViewportSize({ width: 1440, height: 900 });
   await checkAttachmentActionTargets(page, photoRow, 1440, "desktop");
-  await page.screenshot({ path: `${screenshotDir}/attachment-actions-desktop-1440.png`, fullPage: true });
+  await saveShot(page, { path: `${screenshotDir}/attachment-actions-desktop-1440.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await checkAttachmentActionTargets(page, photoRow, 390, "mobile");
   await photoRow.scrollIntoViewIfNeeded();
-  await page.screenshot({ path: `${screenshotDir}/attachment-actions-mobile-390.png` });
+  await saveShot(page, { path: `${screenshotDir}/attachment-actions-mobile-390.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
   await photoRow.getByRole("button", { name: `${translate("assets.preview")} photo.png` }).click();
   const photoDialog = page.locator("dialog.asset-preview-dialog");
   await photoDialog.waitFor();
   await page.waitForFunction(() => (document.querySelector("dialog.asset-preview-dialog img") as HTMLImageElement | null)?.naturalWidth === 640);
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.screenshot({ path: `${screenshotDir}/attachments-desktop-1440.png`, fullPage: true });
+  await saveShot(page, { path: `${screenshotDir}/attachments-desktop-1440.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: `${screenshotDir}/attachments-mobile-390.png`, fullPage: true });
+  await saveShot(page, { path: `${screenshotDir}/attachments-mobile-390.png`, fullPage: true });
   await page.setViewportSize({ width: 1440, height: 900 });
   check(await photoDialog.getByRole("button", { name: translate("assets.closePreview") }).isVisible(), "image preview has no visible close action");
   await photoDialog.getByRole("button", { name: translate("assets.closePreview") }).click();
@@ -222,9 +223,9 @@ try {
   await videoDialog.locator("video[controls]").waitFor();
   await page.waitForFunction(() => { const video = document.querySelector("dialog.asset-preview-dialog video") as HTMLVideoElement | null; return !!video && video.readyState >= 1; });
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.screenshot({ path: `${screenshotDir}/video-desktop-1440.png`, fullPage: true });
+  await saveShot(page, { path: `${screenshotDir}/video-desktop-1440.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: `${screenshotDir}/video-mobile-390.png`, fullPage: true });
+  await saveShot(page, { path: `${screenshotDir}/video-mobile-390.png`, fullPage: true });
   await page.setViewportSize({ width: 1440, height: 900 });
   await videoDialog.getByRole("button", { name: translate("assets.closePreview") }).click();
   await videoDialog.waitFor({ state: "detached" });
@@ -241,7 +242,7 @@ try {
   check(pdfResponse.ok() && (pdfResponse.headers()["content-type"] ?? "").startsWith("application/pdf"), "PDF preview did not receive an inline PDF response");
   await page.waitForTimeout(800);
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.screenshot({ path: `${screenshotDir}/pdf-desktop-1440.png`, fullPage: true });
+  await saveShot(page, { path: `${screenshotDir}/pdf-desktop-1440.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   const mobilePdfLink = pdfDialog.getByRole("link", { name: translate("assets.openPdf") });
   check(await pdfFrame.isHidden(), "embedded PDF viewer must be replaced on narrow screens to avoid its clipped document viewport");
@@ -251,7 +252,7 @@ try {
   check((await mobilePdfLink.getAttribute("href")) === pdfUrl?.split("#")[0], "mobile PDF alternative must use the same authorized signed URL");
   const mobileLinkBox = await mobilePdfLink.boundingBox();
   check(Boolean(mobileLinkBox && mobileLinkBox.x >= 0 && mobileLinkBox.x + mobileLinkBox.width <= 390), "mobile PDF alternative extends beyond the viewport");
-  await page.screenshot({ path: `${screenshotDir}/pdf-mobile-390.png`, fullPage: true });
+  await saveShot(page, { path: `${screenshotDir}/pdf-mobile-390.png`, fullPage: true });
   if (browserName === "chromium") {
     const pdfTabPromise = page.context().waitForEvent("page");
     await mobilePdfLink.click();
@@ -390,9 +391,9 @@ try {
   const wikiScreenshotDir = "/home/plong/workspace/weft/.local/ai-ux-follow-up/06";
   await mkdir(wikiScreenshotDir, { recursive: true });
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.screenshot({ path: `${wikiScreenshotDir}/wiki-inline-unverified-desktop-1440.png`, fullPage: true });
+  await saveShot(page, { path: `${wikiScreenshotDir}/wiki-inline-unverified-desktop-1440.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: `${wikiScreenshotDir}/wiki-inline-unverified-mobile-390.png`, fullPage: true });
+  await saveShot(page, { path: `${wikiScreenshotDir}/wiki-inline-unverified-mobile-390.png`, fullPage: true });
   check(await page.locator('.ProseMirror .asset-image-unverified').isVisible(), "Wiki inline image warning is not visible at mobile width");
   await page.setViewportSize({ width: 1440, height: 900 });
   const wikiAttachments = page.getByTestId("wiki-attachments");

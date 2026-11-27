@@ -8,6 +8,7 @@ import { eq, inArray, like } from "drizzle-orm";
 import { agents, createDatabase, jobs, users, workspaces } from "../packages/db/src";
 import { createAgentActions, createAgentRuntimeEnvironmentActions, createApiTokenActions, createRuntimeActions, createRuntimeDispatchActions, queueRunsForAssignees } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31191);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52191);
@@ -118,12 +119,12 @@ try {
   });
   const desktop = await fits(1440);
   await panel.scrollIntoViewIfNeeded();
-  await Bun.write(`${screenshots}/runs-panel-1440.png`, await page.screenshot({ fullPage: true }));
+  await saveShot(page, { path: `${screenshots}/runs-panel-1440.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
   await panel.scrollIntoViewIfNeeded();
   const phone = await fits(390);
-  await Bun.write(`${screenshots}/runs-panel-390.png`, await page.screenshot({ fullPage: true }));
+  await saveShot(page, { path: `${screenshots}/runs-panel-390.png`, fullPage: true });
   if (!desktop.noOverflow || !desktop.inside || !phone.noOverflow || !phone.inside) throw new Error(`session line overflows: desktop ${JSON.stringify(desktop)} phone ${JSON.stringify(phone)}`);
   console.log(`run-sessions: screenshots in ${screenshots}`);
 

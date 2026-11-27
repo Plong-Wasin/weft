@@ -1,5 +1,6 @@
 import { launchBrowser, newPage, startApi, startLive, startWeb, waitFor } from "./harness";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31420);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52420);
@@ -38,12 +39,12 @@ try {
   if (!(await recoveryLink.evaluate((node) => node.getBoundingClientRect().height >= 36))) throw new Error("Wiki recovery link is not rendered as an accessible button-size action");
   const desktopPath = `${Bun.env.TMPDIR ?? "/tmp"}/wiki-not-found-desktop.png`;
   const mobilePath = `${Bun.env.TMPDIR ?? "/tmp"}/wiki-not-found-mobile.png`;
-  await page.screenshot({ path: desktopPath, fullPage: true });
+  await saveShot(page, { path: desktopPath, fullPage: true });
   console.log(`Wiki missing-page desktop render: ${desktopPath}`);
   console.log(`Desktop alert text: ${(await page.getByRole("alert").innerText()).replaceAll("\n", " | ")}`);
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: mobilePath, fullPage: true });
+  await saveShot(page, { path: mobilePath, fullPage: true });
   const fits = await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
   if (!fits) throw new Error("Wiki missing-page screen scrolls horizontally on phone width");
   console.log(`Wiki missing-page mobile render: ${mobilePath}`);

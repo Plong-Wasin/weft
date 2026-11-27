@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { createDatabase } from "../packages/db/src";
 import { createProjectActions, createWikiActions } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31268);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52268);
@@ -88,9 +89,9 @@ try {
     check(bounds.scrollWidth <= width, `page scrolls horizontally at ${name}`);
     const touchTargets = await menu().locator("[role^=menuitem]").evaluateAll((items) => items.every((element) => { const box = element.getBoundingClientRect(); return box.width >= 44 && box.height >= 44; }));
     check(touchTargets, `a menu item is smaller than 44px at ${name}`);
-    await page.screenshot({ path: join(shots, `light-${name}.png`) });
+    await saveShot(page, { path: join(shots, `light-${name}.png`) });
     await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
-    await page.screenshot({ path: join(shots, `dark-${name}.png`) });
+    await saveShot(page, { path: join(shots, `dark-${name}.png`) });
     await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
   }
   await page.setViewportSize({ width: 1440, height: 900 });

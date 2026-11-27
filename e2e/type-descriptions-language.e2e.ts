@@ -6,6 +6,7 @@ import { translate, type MessageKey } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
 import { paths } from "../apps/web/src/routes";
 import { mkdirSync } from "node:fs";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31150);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52150);
@@ -83,7 +84,7 @@ try {
   const suggestions = page.locator("[data-suggestions]");
   await suggestions.getByText(BUG_TH, { exact: true }).waitFor();
   check(await suggestions.getByText(BUG_EN, { exact: true }).count() === 0, "the suggested Bug type shows its Thai description in Thai");
-  await page.screenshot({ path: `${shots}/settings-thai-1440.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/settings-thai-1440.png`, fullPage: true });
 
   // Saving the untouched default keeps the stored English text, so it keeps following the language.
   const editTask = named(th("types.editNamed"), "Task");

@@ -5,6 +5,7 @@ import { asc, eq, like } from "drizzle-orm";
 import { createDatabase, labels, projects, workItemLabels, workItemStates, workItems, users, workspaces, workspaceMembers } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { mkdir } from "node:fs/promises";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3129);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5229);
@@ -123,9 +124,9 @@ try {
   const directory = page.locator("#main-content").getByRole("list", { name: translate("projects.title") });
   await directory.getByRole("link", { name: "SCL249 · Scale Project 249" }).waitFor();
   check(await directory.getByRole("listitem").count() === 1, "Projects directory search did not narrow results to one Project");
-  await page.screenshot({ path: `${shots}/project-search-1440.png`, fullPage: false });
+  await saveShot(page, { path: `${shots}/project-search-1440.png`, fullPage: false });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: `${shots}/project-search-390.png`, fullPage: false });
+  await saveShot(page, { path: `${shots}/project-search-390.png`, fullPage: false });
   check(await page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth), "Projects directory search widened the page on mobile");
   await page.setViewportSize({ width: 1440, height: 900 });
   await directorySearch.fill("no-such-project");
@@ -206,11 +207,11 @@ try {
   const firstRow = page.getByTestId("row-SCL000-1");
   await firstRow.getByText("Scale Label 0", { exact: true }).waitFor();
   await firstRow.getByText("Backlog", { exact: true }).waitFor();
-  await page.screenshot({ path: `${shots}/workspace-view-1440.png`, fullPage: false });
+  await saveShot(page, { path: `${shots}/workspace-view-1440.png`, fullPage: false });
   console.log(`browser observation desktop: rows=${renderedRows}, navigationToRowsMs=${navigationToRowsMs}, screenshot=${shots}/workspace-view-1440.png`);
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: `${shots}/workspace-view-390.png`, fullPage: false });
+  await saveShot(page, { path: `${shots}/workspace-view-390.png`, fullPage: false });
   const overflow = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, page: document.documentElement.scrollWidth, table: document.querySelector('[data-testid="sheet-scroll"]')?.scrollWidth ?? 0 }));
   console.log(`browser observation mobile: viewport=${overflow.viewport}, page=${overflow.page}, sheetScrollWidth=${overflow.table}, screenshot=${shots}/workspace-view-390.png`);
   await browser.close();

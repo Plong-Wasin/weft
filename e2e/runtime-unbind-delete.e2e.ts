@@ -8,6 +8,7 @@ import { eq } from "drizzle-orm";
 import { agents, createDatabase, runtimes, workspaces } from "../packages/db/src";
 import { createAgentActions, createApiTokenActions, createRuntimeActions } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31193);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52193);
@@ -71,7 +72,7 @@ try {
     const panel = document.querySelector("[role=dialog]")?.getBoundingClientRect();
     return { noOverflow: document.documentElement.scrollWidth <= window.innerWidth, inside: !!panel && panel.left >= 0 && panel.right <= window.innerWidth };
   });
-  await Bun.write(`${screenshots}/runtime-unbind-refused-390.png`, await page.screenshot());
+  await saveShot(page, { path: `${screenshots}/runtime-unbind-refused-390.png` });
   check(fits.noOverflow && fits.inside, `dialog at 390 px: ${JSON.stringify(fits)}`);
   console.log("runtime-unbind-delete: the refusal dialog with the Admin choices fits at 390 px with no sideways scroll");
 

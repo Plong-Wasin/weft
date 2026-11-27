@@ -7,6 +7,7 @@ import { createDatabase, notifications, users, workspaces } from "../packages/db
 import { translate } from "../packages/shared/src";
 import { createJobHandlers, runNextJob } from "../packages/actions/src";
 import { WeftClient } from "../tools/visual/weft-client";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3118);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5218);
@@ -413,7 +414,7 @@ try {
         else check(await peekHeading.count() === 0, `unexpected reading pane at ${width}px`);
         await shot.evaluate(() => document.fonts.ready);
         await checkLayout(shot);
-        await shot.screenshot({ path: `${shots}/inbox-${width}x${height}-${theme}-${locale}.png`, animations: "disabled" });
+        await saveShot(shot, { path: `${shots}/inbox-${width}x${height}-${theme}-${locale}.png`, animations: "disabled" });
         await capture.close();
       }
     }

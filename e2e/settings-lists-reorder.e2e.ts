@@ -8,6 +8,7 @@ import { mkdirSync } from "node:fs";
 import { translate } from "../packages/shared/src";
 import { paths } from "../apps/web/src/routes";
 import { reviewShots } from "../tools/visual/paths";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31168);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52168);
@@ -84,7 +85,7 @@ try {
   await page.reload();
   await gripOf(page, "Charlie").waitFor();
   check(JSON.stringify(await rowNames(labelRows(page))) === JSON.stringify(["Charlie", "Alpha", "Bravo"]), "label order did not persist across reload");
-  await page.screenshot({ path: `${shots}/labels-reordered-1440.png` });
+  await saveShot(page, { path: `${shots}/labels-reordered-1440.png` });
   console.log("PASS labels: keyboard reorder persists after reload");
 
   // Labels: Move down from the row's Actions menu.
@@ -122,7 +123,7 @@ try {
   check(JSON.stringify(await typeNames()) === JSON.stringify(["Request", "Task", "Bug"]), "type order did not persist across reload");
   // The first type is the default for new items, so the list says which row that is.
   check(await typeRows.first().getByText(t("types.defaultForNew")).count() === 1 && await typeRows.nth(1).getByText(t("types.defaultForNew")).count() === 0, "the default tag must sit on the first type only");
-  await page.screenshot({ path: `${shots}/types-reordered-1440.png` });
+  await saveShot(page, { path: `${shots}/types-reordered-1440.png` });
   console.log("PASS work item types: Move up persists after reload");
 
   const propertyRows = page.locator("ul:has([data-grip])").filter({ has: page.getByRole("button", { name: `${t("sortable.reorder")}: Area`, exact: true }) }).first().locator("li");
@@ -156,7 +157,7 @@ try {
   await page.getByText("Owner team", { exact: true }).first().waitFor();
   const bodyText = await page.locator("body").innerText();
   check(bodyText.indexOf("Owner team") >= 0 && bodyText.indexOf("Area") > bodyText.indexOf("Owner team"), "work item panel does not show Owner team before Area");
-  await page.screenshot({ path: `${shots}/work-item-panel-1440.png` });
+  await saveShot(page, { path: `${shots}/work-item-panel-1440.png` });
   console.log("PASS work item panel shows the stored custom property order");
 
   console.log("settings-lists-reorder: all checks passed");

@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { comments, createDatabase, users, workspaces, workItemDescriptionVersions } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { cleanUp, stopProcess, withDeadline } from "./shutdown";
+import { saveShot } from "./shots";
 
 // AI is off when the server has no provider key, so the AI assist menu this flow checks needs a placeholder key (no call is made).
 Bun.env.OPENAI_API_KEY ??= "sk-e2e-placeholder-no-call";
@@ -45,7 +46,7 @@ try {
     await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
-      await page.screenshot({ path: `${directory}/01-${name}-${width}-en.png`, fullPage: true });
+      await saveShot(page, { path: `${directory}/01-${name}-${width}-en.png`, fullPage: true });
     }
     await page.setViewportSize({ width: 1440, height: 900 });
   };
@@ -57,7 +58,7 @@ try {
     await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
-      await page.screenshot({ path: `${directory}/02-${name}-${mode}-${width}-${lang}.png`, fullPage: true });
+      await saveShot(page, { path: `${directory}/02-${name}-${mode}-${width}-${lang}.png`, fullPage: true });
     }
     await page.setViewportSize({ width: 1440, height: 900 });
   };
@@ -109,7 +110,7 @@ try {
           const dimensions = await block.evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth, codeScroll: el.querySelector("code")?.scrollWidth, codeClient: el.querySelector("code")?.clientWidth, overflow: getComputedStyle(el).overflowX, whiteSpace: getComputedStyle(el.querySelector("code")!).whiteSpace }));
           check(dimensions.scroll > dimensions.client, `${name} long diff did not scroll inside its code block on a phone: ${JSON.stringify(dimensions)}`);
         }
-        await page.screenshot({ path: `${directory}/07-diff-${name}-${width}-${theme}.png`, fullPage: true });
+        await saveShot(page, { path: `${directory}/07-diff-${name}-${width}-${theme}.png`, fullPage: true });
       }
     }
     await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
@@ -146,7 +147,7 @@ try {
         check(dimensions.preRight <= 390 && dimensions.overflowX === "auto" && dimensions.preScrollWidth > dimensions.preClientWidth, "long diff is not contained by its horizontally scrollable code block");
       }
       check(width <= 390 && viewport.scrollX === 0 && viewport.innerWidth === 390, `${name} work item has horizontal page scrolling at 390px in ${language}/${theme}: document=${width}px scrollX=${viewport.scrollX} viewport=${viewport.innerWidth}px`);
-      await page.screenshot({ path: `${directory}/07-work-item-${name}-390-${language}-${theme}.png`, fullPage: true });
+      await saveShot(page, { path: `${directory}/07-work-item-${name}-390-${language}-${theme}.png`, fullPage: true });
     }
     await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -953,7 +954,7 @@ try {
     mkdirSync(directory, { recursive: true });
     for (const width of [1280, 390]) {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
-      await page.screenshot({ path: `${directory}/04-description-history-restore-${width}-${lang}.png`, fullPage: true });
+      await saveShot(page, { path: `${directory}/04-description-history-restore-${width}-${lang}.png`, fullPage: true });
     }
     await page.setViewportSize({ width: 1440, height: 900 });
   };

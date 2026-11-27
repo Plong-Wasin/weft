@@ -6,6 +6,7 @@ import { inArray, like } from "drizzle-orm";
 import { agents, createDatabase, jobs, users, workspaces } from "../packages/db/src";
 import { createAgentActions, createJobHandlers, runNextJob, type RunModel } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31181);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52181);
@@ -93,10 +94,10 @@ try {
   await panel.getByText(translate("runs.status.follow_up"), { exact: true }).waitFor({ timeout: 30_000 });
   await page.getByText(translate("workItems.activity.run_waiting"), { exact: false }).first().waitFor({ timeout: 30_000 });
   if (await page.getByText(translate("runs.status.skipped"), { exact: true }).count() > 0) throw new Error("a skipped Run is shown for a request that waits");
-  await Bun.write(`${shots}/follow-up-waiting-1440.png`, await page.screenshot({ fullPage: true }));
+  await saveShot(page, { path: `${shots}/follow-up-waiting-1440.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await panel.getByText(translate("runs.status.follow_up"), { exact: true }).waitFor();
-  await Bun.write(`${shots}/follow-up-waiting-390.png`, await page.screenshot({ fullPage: true }));
+  await saveShot(page, { path: `${shots}/follow-up-waiting-390.png`, fullPage: true });
   await page.setViewportSize({ width: 1440, height: 900 });
   console.log("follow-up: the Run page shows the waiting Follow-up Run and the Activity says waiting");
 
@@ -106,9 +107,9 @@ try {
   await page.reload();
   await page.getByTestId("runs-panel").getByText(translate("runs.status.completed"), { exact: true }).nth(1).waitFor({ timeout: 60_000 });
   if (await page.getByTestId("runs-panel").getByText(translate("runs.status.follow_up"), { exact: true }).count() > 0) throw new Error("the Follow-up Run still waits after the active Run completed");
-  await Bun.write(`${shots}/follow-up-started-1440.png`, await page.screenshot({ fullPage: true }));
+  await saveShot(page, { path: `${shots}/follow-up-started-1440.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
-  await Bun.write(`${shots}/follow-up-started-390.png`, await page.screenshot({ fullPage: true }));
+  await saveShot(page, { path: `${shots}/follow-up-started-390.png`, fullPage: true });
   console.log("follow-up: after the active Run completes, the Follow-up Run starts and completes");
 } catch (error) {
   failed = true;

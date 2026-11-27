@@ -6,6 +6,7 @@ import { createDatabase, notifications, users, workspaces } from "../packages/db
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
 import { WeftClient } from "../tools/visual/weft-client";
+import { saveShot } from "./shots";
 // AI is on only with a provider key: a placeholder keeps the AI entries shown, and no model is called.
 Bun.env.OPENAI_API_KEY ??= "sk-e2e-placeholder-no-call";
 
@@ -30,7 +31,7 @@ async function waitFor(url: string) {
 /** The phone drawer slides in: a screenshot taken before it stops shows it half off screen. */
 async function shot(page: Page, name: string) {
   await page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished)));
-  await page.screenshot({ path: `${shots}/${name}.png` });
+  await saveShot(page, { path: `${shots}/${name}.png` }, { failed: failures.length > 0 });
 }
 
 const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;

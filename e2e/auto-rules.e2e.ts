@@ -7,6 +7,7 @@ import { activities, createDatabase, workItems } from "../packages/db/src";
 import { applyAutoRules } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31151);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52151);
@@ -73,7 +74,7 @@ try {
   await page.getByRole("switch", { name: t("autoRules.closeOn"), checked: true }).waitFor({ timeout: 15_000 });
   check(await page.getByRole("switch", { name: t("autoRules.closeOn") }).getAttribute("aria-checked") === "true", "the saved rule did not come back after a reload");
   check((await page.getByLabel(t("autoRules.closeAfter")).inputValue()) === "30", "the saved number of days did not come back");
-  await page.screenshot({ path: reviewShots("auto-rules-settings.png"), fullPage: true });
+  await saveShot(page, { path: reviewShots("auto-rules-settings.png"), fullPage: true });
 
   // The item goes idle: its last change, and its activity, are 31 days old.
   const old = new Date(Date.now() - 31 * 86_400_000);
@@ -89,7 +90,7 @@ try {
   await page.getByText(t("autoRules.systemActor")).first().waitFor();
   check(await page.getByText("No activity for 30 days in In Progress, so it moved to Done").count() === 1, "the timeline does not give the rule's reason");
   check(await page.getByRole("button", { name: t("autoRules.undo") }).count() >= 1, "the automatic change has no Undo");
-  await page.screenshot({ path: reviewShots("auto-rules-timeline.png"), fullPage: true });
+  await saveShot(page, { path: reviewShots("auto-rules-timeline.png"), fullPage: true });
   await Promise.all([
     page.waitForResponse((response) => response.url().includes("undo_auto_rule_change") && response.ok()),
     page.getByRole("button", { name: t("autoRules.undo") }).first().click(),

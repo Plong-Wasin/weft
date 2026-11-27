@@ -3,7 +3,8 @@
 // Remove from Cycle sits on the row's property line, Accept and Reject share a line, and the Intake title fits its field. Every screen also
 // has no page-level horizontal scroll. Run with `bun e2e/run-all.ts planning-phone-layout` (needs DATABASE_URL, CHROMIUM_PATH).
 import { check, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
-import type { Page } from "playwright";
+import { settle } from "./settle";
+import type { Locator, Page } from "playwright";
 import { translate } from "../packages/shared/src";
 import { WeftClient, seedWeft } from "../tools/visual/weft-client";
 
@@ -34,16 +35,17 @@ try {
   check(Boolean(seed.cycleId && seed.moduleId && seed.viewId), "seed lacks a cycle, module or view");
 
   const browser = await launchBrowser();
-  const screens = [
-    { name: "cycles", path: `/${slug}/projects/REF/cycles` },
-    { name: "cycle-detail", path: `/${slug}/projects/REF/cycles/${seed.cycleId}` },
-    { name: "modules", path: `/${slug}/projects/REF/modules` },
-    { name: "module-detail", path: `/${slug}/projects/REF/modules/${seed.moduleId}` },
-    { name: "views", path: `/${slug}/projects/REF/views` },
-    { name: "view-detail", path: `/${slug}/projects/REF/views/${seed.viewId}` },
-    { name: "archives", path: `/${slug}/projects/REF/archives` },
-    { name: "intake", path: `/${slug}/projects/REF/intake` },
-    { name: "workspace-views", path: `/${slug}/workspace-views/all-issues` },
+  // `ready` is something the screen draws from its data.
+  const screens: Array<{ name: string; path: string; ready: (page: Page) => Locator }> = [
+    { name: "cycles", path: `/${slug}/projects/REF/cycles`, ready: (page) => page.getByTestId("cycle-row") },
+    { name: "cycle-detail", path: `/${slug}/projects/REF/cycles/${seed.cycleId}`, ready: (page) => page.getByTestId("row-REF-1") },
+    { name: "modules", path: `/${slug}/projects/REF/modules`, ready: (page) => page.getByTestId("module-row-Authentication") },
+    { name: "module-detail", path: `/${slug}/projects/REF/modules/${seed.moduleId}`, ready: (page) => page.getByTestId("module-items-count") },
+    { name: "views", path: `/${slug}/projects/REF/views`, ready: (page) => page.getByTestId("view-row-High priority") },
+    { name: "view-detail", path: `/${slug}/projects/REF/views/${seed.viewId}`, ready: (page) => page.getByTestId("row-REF-1") },
+    { name: "archives", path: `/${slug}/projects/REF/archives`, ready: (page) => page.getByText(translate("archives.empty")) },
+    { name: "intake", path: `/${slug}/projects/REF/intake`, ready: (page) => page.getByRole("button", { name: translate("intake.accept"), exact: true }) },
+    { name: "workspace-views", path: `/${slug}/workspace-views/all-issues`, ready: (page) => page.getByTestId("row-REF-1") },
   ];
   const widths = [1440, 390];
 
@@ -54,10 +56,10 @@ try {
     const errors: string[] = [];
     // React recovers from this one-off concurrent-render error on the Intake detail (it re-renders synchronously and the page is complete); it is recorded in the report, not hidden here.
     page.on("pageerror", (e) => { if (!e.message.startsWith("There was an error during concurrent rendering")) errors.push(`${page.url()} ${e.message}`); });
-    const open = async (path: string) => {
-      await page.goto(`${web}${path}`, { waitUntil: "load" });
-      await page.waitForLoadState("networkidle", { timeout: 4_000 }).catch(() => undefined);
-      await page.waitForTimeout(300);
+    const open = async (name: string) => {
+      const screen = screens.find((candidate) => candidate.name === name)!;
+      await page.goto(`${web}${screen.path}`, { waitUntil: "load" });
+      await settle(page, screen.ready(page));
     };
     const noSideScroll = async (name: string) => {
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
@@ -65,28 +67,28 @@ try {
     };
 
     for (const screen of screens) {
-      await open(screen.path);
+      await open(screen.name);
       const body = (await page.locator("body").innerText()).trim();
       check(body.length > 0, `${screen.name} at ${width}px rendered an empty page`);
       await noSideScroll(screen.name);
     }
 
     // Views: the heading and the search field do not cover each other at phone width.
-    await open(`/${slug}/projects/REF/views`);
+    await open("views");
     const heading = await box(page, page.getByRole("heading", { name: translate("views.title"), exact: true }), "Views heading");
     const search = await box(page, page.getByRole("searchbox", { name: translate("views.search") }), "Views search");
     check(!overlaps(heading, search), `Views heading overlaps the search field at ${width}px`);
     check(heading.width >= 40, `Views heading is clipped to ${heading.width}px at ${width}px`);
 
     // Modules: the module name is shown whole, not cut to its first letters.
-    await open(`/${slug}/projects/REF/modules`);
+    await open("modules");
     const moduleName = page.getByTestId("module-row-Authentication").getByRole("link", { name: "Authentication" });
     await moduleName.waitFor();
     const nameFits = await moduleName.evaluate((el) => el.scrollWidth <= el.clientWidth);
     check(nameFits, `module name is truncated at ${width}px`);
 
     // Cycle detail: the row menu that holds Remove from Cycle follows the row's properties.
-    await open(`/${slug}/projects/REF/cycles/${seed.cycleId}`);
+    await open("cycle-detail");
     const row = page.getByTestId("row-REF-1");
     await row.waitFor();
     const rowMenu = row.getByRole("button", { name: `${translate("cycles.menu")}: REF-1` });
@@ -98,7 +100,7 @@ try {
     await page.keyboard.press("Escape");
 
     // Intake: Accept and Reject share a line; the title shows whole in its field.
-    await open(`/${slug}/projects/REF/intake`);
+    await open("intake");
     const accept = await box(page, page.getByRole("button", { name: translate("intake.accept"), exact: true }), "Accept");
     const reject = await box(page, page.getByRole("button", { name: translate("intake.reject"), exact: true }), "Reject");
     check(Math.abs(accept.y - reject.y) < 6, `Accept and Reject are on different lines at ${width}px`);

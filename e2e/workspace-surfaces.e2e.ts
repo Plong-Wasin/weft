@@ -5,6 +5,7 @@ import type { Page } from "playwright";
 import { aiChats, aiMessages, createDatabase, notifications } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { WeftClient, seedWeft } from "../tools/visual/weft-client";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 33180);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 35180);
@@ -130,12 +131,12 @@ try {
       const drawer = page.getByRole("dialog");
       await drawer.waitFor();
       await page.waitForTimeout(400);
-      await page.screenshot({ path: `${shots}/drawer-390.png` });
+      await saveShot(page, { path: `${shots}/drawer-390.png` }, { failed: failures.length > 0 });
       const names = await drawer.locator("[data-project-toggle] span[title]").evaluateAll((spans) => spans.map((span) => span.getBoundingClientRect().width));
       check("drawer project names keep room to be read", names.length > 0 && names.every((width) => width >= 90), names);
       if (await drawer.locator('[data-project-toggle][aria-expanded="true"]').count() === 0) await drawer.locator("[data-project-toggle]").first().click();
       await drawer.getByRole("link", { name: translate("intake.title"), exact: true }).waitFor();
-      await page.screenshot({ path: `${shots}/drawer-390.png` });
+      await saveShot(page, { path: `${shots}/drawer-390.png` }, { failed: failures.length > 0 });
       const short = await drawer.locator("button, a[href]").evaluateAll((buttons) => buttons.map((button) => button.getBoundingClientRect()).filter((box) => box.width > 1 && (box.height < 43.5 || box.width < 43.5)).map((box) => `${box.width}x${box.height}`));
       check("drawer controls are at least 44px", short.length === 0, short);
     }

@@ -8,6 +8,7 @@ import { eq } from "drizzle-orm";
 import { createDatabase, runtimes, workspaces } from "../packages/db/src";
 import { createAgentActions, createApiTokenActions, createProjectActions, createRuntimeActions, createRuntimeDispatchActions, createWorkItemActions } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31192);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52192);
@@ -101,14 +102,14 @@ try {
     return { noOverflow: document.documentElement.scrollWidth <= window.innerWidth, inside: !!box && box.left >= 0 && box.right <= window.innerWidth };
   }), width });
   const desktop = await fits(1440);
-  await Bun.write(`${screenshots}/runtimes-1440.png`, await page.screenshot({ fullPage: true }));
+  await saveShot(page, { path: `${screenshots}/runtimes-1440.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
   await page.locator("li", { hasText: "usage-mint" }).first().waitFor();
   await page.locator("li", { hasText: "usage-mint" }).first().getByText(translate("runtimes.sessionFolders").replace("{count}", "1")).click();
   await page.locator("li", { hasText: "usage-mint" }).first().getByText(folder, { exact: true }).waitFor();
   const phone = await fits(390);
-  await Bun.write(`${screenshots}/runtimes-390.png`, await page.screenshot({ fullPage: true }));
+  await saveShot(page, { path: `${screenshots}/runtimes-390.png`, fullPage: true });
   check(desktop.noOverflow && desktop.inside, `layout at 1440 px: ${JSON.stringify(desktop)}`);
   check(phone.noOverflow && phone.inside, `layout at 390 px: ${JSON.stringify(phone)}`);
   console.log("runtime-usage: no sideways scroll, and the card fits, at 1440 and 390 px");

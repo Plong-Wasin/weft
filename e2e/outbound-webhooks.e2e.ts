@@ -6,6 +6,7 @@ import { check, launchBrowser, newContext, startApi, startWeb, waitFor } from ".
 import type { Page } from "playwright";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { saveShot } from "./shots";
 
 Bun.env.WEFT_OUTBOUND_WEBHOOKS_ENABLED = "true";
 Bun.env.WEFT_OUTBOUND_WEBHOOKS_ALLOW_PRIVATE_NETWORKS = "true";
@@ -50,7 +51,7 @@ try {
   await page.goto(`${web}/${slug}/settings/webhooks`);
   await page.getByRole("heading", { name: translate("outboundWebhooks.title"), level: 1 }).waitFor();
   await page.getByText(translate("outboundWebhooks.howItWorks")).waitFor();
-  await page.screenshot({ path: `${shots}/webhooks-empty-1440.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/webhooks-empty-1440.png`, fullPage: true });
 
   await page.getByLabel(translate("outboundWebhooks.name"), { exact: true }).fill("Local receiver");
   await page.getByLabel(translate("outboundWebhooks.url"), { exact: true }).fill(`http://127.0.0.1:${receiver.port}/hook`);
@@ -66,7 +67,7 @@ try {
   const request = received[0]!;
   check(request.headers.get("x-weft-event") === "webhook.test", "event header missing");
   check(typeof request.headers.get("x-weft-delivery") === "string", "delivery id header missing");
-  await page.screenshot({ path: `${shots}/webhooks-tested-1440.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/webhooks-tested-1440.png`, fullPage: true });
 
   // Reloading shows the webhook and its log, but never the secret again.
   await page.reload();
@@ -80,7 +81,7 @@ try {
   await page.goto(`${web}/${slug}/settings/webhooks`);
   await page.getByRole("heading", { name: translate("outboundWebhooks.title"), level: 1 }).waitFor();
   await page.getByRole("heading", { name: "Local receiver", level: 2 }).waitFor();
-  await page.screenshot({ path: `${shots}/webhooks-390.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/webhooks-390.png`, fullPage: true });
   // The table scrolls inside its own box; the page itself must not scroll sideways.
   const pageWidth = await page.evaluate(() => {
     const wide = [...document.querySelectorAll("body *")].filter((element) => element.getBoundingClientRect().right > window.innerWidth + 1)

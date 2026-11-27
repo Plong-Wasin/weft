@@ -6,6 +6,7 @@ import { comments, createDatabase, users } from "../packages/db/src";
 import { backfillCommentWrittenForms } from "../packages/actions/src/migrations/comment-written-form";
 import { createMemberFactory } from "../packages/db/src/test-helpers";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31227);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52227);
@@ -86,7 +87,7 @@ try {
     await page.setViewportSize({ width, height: width === 390 ? 1000 : 900 });
     await page.locator(`#comment-${legacy.id}`).evaluate((element) => element.scrollIntoView({ block: "center" }));
     const path = `${captureDir}/03-comments-${stage}-${width}-${locale}.png`;
-    await page.screenshot({ path });
+    await saveShot(page, { path });
     console.log(path);
   };
 

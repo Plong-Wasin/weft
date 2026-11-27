@@ -8,6 +8,7 @@ import { inArray, like } from "drizzle-orm";
 import { agents, createDatabase, jobs, runs, users, workspaces } from "../packages/db/src";
 import { createAgentActions, createCommentActions, createJobHandlers, createWorkItemActions, runNextJob } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31182);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52182);
@@ -37,12 +38,12 @@ function check(condition: unknown, message: string) {
 async function capture(page: import("playwright").Page, name: string, entry: import("playwright").Locator) {
   await page.setViewportSize({ width: 1440, height: 900 });
   await entry.scrollIntoViewIfNeeded();
-  await Bun.write(`${shots}/${name}-1440.png`, await page.screenshot());
+  await saveShot(page, { path: `${shots}/${name}-1440.png` });
   await page.setViewportSize({ width: 390, height: 844 });
   await entry.scrollIntoViewIfNeeded();
   const overflows = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
   check(!overflows, `${name} at 390 px has no sideways scroll`);
-  await Bun.write(`${shots}/${name}-390.png`, await page.screenshot());
+  await saveShot(page, { path: `${shots}/${name}-390.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
 }
 

@@ -5,6 +5,7 @@ import { and, eq, like } from "drizzle-orm";
 import { createDatabase, jobs, projectMembers, runs, users, workspaceMembers, workspaces } from "../packages/db/src";
 import { createAgentActions, createAgentRuntimeEnvironmentActions, createApiTokenActions, createJobHandlers, createNotificationActions, createProjectActions, createRuntimeActions, createRuntimeDispatchActions } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31240);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52240);
@@ -104,7 +105,7 @@ try {
   const openRun = page.getByRole("link", { name: translate("inbox.openScheduledRun") });
   await openRun.waitFor();
   await noHorizontalOverflow(page, "desktop Inbox");
-  await page.screenshot({ path: `${shots}/scheduled-inbox-1440.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/scheduled-inbox-1440.png`, fullPage: true });
   // On a wide screen the row selects a summary; its Open link leads to the Run.
   await openRun.click();
   await page.getByRole("link", { name: translate("inbox.open"), exact: true }).click();
@@ -113,19 +114,19 @@ try {
   await page.getByText(translate("runs.failure.runtime_capability_missing"), { exact: true }).waitFor();
   await page.waitForURL((url) => !url.searchParams.has("inboxNotificationId"));
   await noHorizontalOverflow(page, "desktop scheduled Run detail");
-  await page.screenshot({ path: `${shots}/scheduled-run-1440.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/scheduled-run-1440.png`, fullPage: true });
 
   await page.request.post(`${api}/actions/mark_notification_unread`, { data: { notificationId } });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${web}/${slug}/notifications`);
   await openRun.waitFor();
   await noHorizontalOverflow(page, "mobile Inbox");
-  await page.screenshot({ path: `${shots}/scheduled-inbox-390.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/scheduled-inbox-390.png`, fullPage: true });
   await openRun.click();
   await page.waitForURL(`${web}/${slug}/runs/${run!.id}`);
   await page.getByText(translate("runs.failure.runtime_capability_missing"), { exact: true }).waitFor();
   await noHorizontalOverflow(page, "mobile scheduled Run detail");
-  await page.screenshot({ path: `${shots}/scheduled-run-390.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/scheduled-run-390.png`, fullPage: true });
 
   // Losing private Project access hides the notification and makes the direct destination fail closed.
   await db.delete(projectMembers).where(and(eq(projectMembers.projectId, project.id), eq(projectMembers.userId, memberIdentity.user.id)));

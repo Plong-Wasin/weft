@@ -7,6 +7,7 @@ import { inArray, like } from "drizzle-orm";
 import { agents, createDatabase, jobs, runs, users, workspaces } from "../packages/db/src";
 import { createAgentActions, createJobHandlers, createTriggerActions, createWorkItemActions, runNextJob } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31181);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52181);
@@ -84,11 +85,11 @@ try {
   await page.getByRole("combobox", { name: translate("timeline.filter", "en"), exact: true }).selectOption("all");
   const skipped = page.getByText(translate("workItems.activity.wake_skipped.no_agent_access"), { exact: false }).first();
   await skipped.waitFor({ timeout: 30_000 });
-  await Bun.write(`${shots}/trigger-timeline-1440.png`, await page.screenshot({ fullPage: true }));
+  await saveShot(page, { path: `${shots}/trigger-timeline-1440.png`, fullPage: true });
   // The app scrolls inside its own container, so a full-page capture would stop above the Activity: scroll it into view first.
   await page.setViewportSize({ width: 390, height: 844 });
   await skipped.scrollIntoViewIfNeeded();
-  await Bun.write(`${shots}/trigger-timeline-390.png`, await page.screenshot());
+  await saveShot(page, { path: `${shots}/trigger-timeline-390.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
   console.log("trigger: the work item's timeline says why the Trigger's wake did not happen");
 
@@ -96,9 +97,9 @@ try {
   const notice = translate("inbox.wakeSkipped.no_agent_access").replace("{actor}", coder.name);
   await page.goto(`${web}/${slug}/notifications`);
   await page.getByText(notice, { exact: false }).first().waitFor({ timeout: 30_000 });
-  await Bun.write(`${shots}/trigger-inbox-1440.png`, await page.screenshot({ fullPage: true }));
+  await saveShot(page, { path: `${shots}/trigger-inbox-1440.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
-  await Bun.write(`${shots}/trigger-inbox-390.png`, await page.screenshot({ fullPage: true }));
+  await saveShot(page, { path: `${shots}/trigger-inbox-390.png`, fullPage: true });
   console.log("trigger: the Originator's inbox carries the notice");
 } catch (error) {
   failed = true;

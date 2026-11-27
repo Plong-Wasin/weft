@@ -4,6 +4,7 @@ import { check, launchBrowser, newContext, startApi, startWeb, waitFor } from ".
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3111);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5211);
@@ -97,7 +98,7 @@ try {
       await dialog.waitFor();
       const pageWidth = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth }));
       check(pageWidth.scrollWidth <= pageWidth.innerWidth, `horizontal page scroll at ${width}x${height} ${theme}: ${JSON.stringify(pageWidth)}`);
-      await page.screenshot({ path: join(acceptanceShots, `date-picker-${width}x${height}-${theme}.png`) });
+      await saveShot(page, { path: join(acceptanceShots, `date-picker-${width}x${height}-${theme}.png`) });
       await page.keyboard.press("Escape");
       await dialog.waitFor({ state: "detached" });
     }
@@ -266,7 +267,7 @@ try {
   const targetSizes = [touchTargets.trigger, touchTargets.quickPick, touchTargets.day, touchTargets.nextMonth];
   check(targetSizes.every((target) => target !== null && target.width >= 44 && target.height >= 44), `a date picker touch target is under 44px: ${JSON.stringify(touchTargets)}`);
   check(touchTargets.scrollWidth <= touchTargets.innerWidth, `horizontal page scroll in touch date picker: ${JSON.stringify(touchTargets)}`);
-  await touchPage.screenshot({ path: join(acceptanceShots, "date-picker-844x390-touch-light.png") });
+  await saveShot(touchPage, { path: join(acceptanceShots, "date-picker-844x390-touch-light.png") });
   await touchPage.keyboard.press("Escape");
   await touchContext.close();
 

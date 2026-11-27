@@ -8,6 +8,7 @@ import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
 import { paths } from "../apps/web/src/routes";
 import { mkdirSync } from "node:fs";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31142);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52142);
@@ -109,13 +110,13 @@ try {
   // Dark theme, search typed, at 1440 and then 390 px: the open picker with a search in it.
   await page.emulateMedia({ colorScheme: "dark" });
   await search.fill("ship");
-  await editor.screenshot({ path: `${shots}/icon-picker-dark-search-1440.png` });
+  await saveShot(editor, { path: `${shots}/icon-picker-dark-search-1440.png` });
   await search.fill("");
   await search.fill("rocket");
   await page.setViewportSize({ width: 390, height: 844 });
   await editor.waitFor();
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "the settings page does not scroll sideways at 390 px");
-  await editor.screenshot({ path: `${shots}/icon-picker-dark-search-390.png` });
+  await saveShot(editor, { path: `${shots}/icon-picker-dark-search-390.png` });
   await search.fill("");
   await page.setViewportSize({ width: 1440, height: 900 });
 
@@ -153,8 +154,8 @@ try {
   const peek = page.getByRole("complementary", { name: t("workItems.properties") });
   await peek.locator('[data-type-icon="rocket"]').first().waitFor();
   check(await peek.locator('[data-type-icon="rocket"]').count() >= 1, "the work item detail shows the saved icon on its type");
+  // The URL keeps the peek open across the reload: a click on the row behind it would be intercepted.
   await page.reload();
-  await page.getByText("Rocket launch").first().click();
   const reloaded = page.getByRole("complementary", { name: t("workItems.properties") });
   await reloaded.locator('[data-type-icon="rocket"]').first().waitFor();
   check(await reloaded.locator('[data-type-icon="rocket"]').count() >= 1, "the work item detail keeps the icon after a reload");

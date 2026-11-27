@@ -6,6 +6,7 @@ import { inArray, like } from "drizzle-orm";
 import { agents, createDatabase, jobs, users, workspaces } from "../packages/db/src";
 import { createAgentActions, createJobHandlers, runNextJob, type RunModel } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31181);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52181);
@@ -92,7 +93,7 @@ try {
   if (await page.getByTestId("runs-panel").getByText(translate("runs.status.follow_up"), { exact: true }).count() > 0) throw new Error("a Follow-up Run exists for a steered mention");
   if (await page.getByTestId("runs-panel").getByText(translate("runs.status.completed"), { exact: true }).count() !== 1) throw new Error("the steered comment made a second Run");
   await panel.scrollIntoViewIfNeeded();
-  await Bun.write(`${shots}/steer-run-desktop-1440.png`, await page.screenshot({ fullPage: true }));
+  await saveShot(page, { path: `${shots}/steer-run-desktop-1440.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await message.waitFor();
   await panel.scrollIntoViewIfNeeded();
@@ -102,7 +103,7 @@ try {
     return Boolean(transcript && card && document.documentElement.scrollWidth <= window.innerWidth && card.getBoundingClientRect().right <= window.innerWidth);
   });
   if (!phoneFits) throw new Error("long transcript content overflows the phone viewport");
-  await Bun.write(`${shots}/steer-run-phone-390.png`, await page.screenshot({ fullPage: true }));
+  await saveShot(page, { path: `${shots}/steer-run-phone-390.png`, fullPage: true });
   await page.setViewportSize({ width: 1440, height: 900 });
   console.log("steer: the Run page shows the steered comment as a message from the person, and no Follow-up Run exists");
 } catch (error) {

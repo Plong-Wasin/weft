@@ -10,6 +10,7 @@ import { translate } from "../packages/shared/src";
 import { WeftClient, seedWeft } from "../tools/visual/weft-client";
 import { fillPath, loadRoutes } from "../tools/visual/lib";
 import { reviewShots } from "../tools/visual/paths";
+import { saveShot } from "./shots";
 
 // The AI route is gated by the presence of a provider key. This flow only opens it.
 Bun.env.OPENAI_API_KEY ??= "sk-e2e-placeholder-no-call";
@@ -101,9 +102,9 @@ try {
         check(!(await target.getByRole("dialog", { name: translate("shell.sidebar") }).isVisible()), `${route.name} at ${viewport.width}px shows the drawer closed state wrongly`);
       }
       if (route.name === "work-items-list") {
-        await target.screenshot({ path: join(shots, `${route.name}-${viewport.suffix}-light.png`) });
+        await saveShot(target, { path: join(shots, `${route.name}-${viewport.suffix}-light.png`) });
         await target.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
-        await target.screenshot({ path: join(shots, `${route.name}-${viewport.suffix}-dark.png`) });
+        await saveShot(target, { path: join(shots, `${route.name}-${viewport.suffix}-dark.png`) });
         await target.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
       }
       if (context2) await context2.close();
@@ -123,9 +124,9 @@ try {
       check(!!drawerCloseBounds && drawerCloseBounds.width >= 44 && drawerCloseBounds.height >= 44, "phone drawer close control is below a 44px touch target");
       const ticketShots = ".local/shots/shadcn-04";
       mkdirSync(ticketShots, { recursive: true });
-      await page.screenshot({ path: join(ticketShots, "drawer-390-light.png") });
+      await saveShot(page, { path: join(ticketShots, "drawer-390-light.png") });
       await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
-      await page.screenshot({ path: join(ticketShots, "drawer-390-dark.png") });
+      await saveShot(page, { path: join(ticketShots, "drawer-390-dark.png") });
       await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
       await page.keyboard.press("Tab");
       check(await drawer.evaluate((element) => element.contains(document.activeElement)), "Tab moved focus outside the phone drawer");
@@ -147,9 +148,9 @@ try {
         const rect = element.getBoundingClientRect();
         return rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight;
       }), `phone landscape drawer does not fit the visible viewport: ${JSON.stringify(await drawer.boundingBox())} in ${JSON.stringify(await page.evaluate(() => ({ width: innerWidth, height: innerHeight })))}`);
-      await page.screenshot({ path: join(ticketShots, "drawer-667x375-light.png") });
+      await saveShot(page, { path: join(ticketShots, "drawer-667x375-light.png") });
       await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
-      await page.screenshot({ path: join(ticketShots, "drawer-667x375-dark.png") });
+      await saveShot(page, { path: join(ticketShots, "drawer-667x375-dark.png") });
       await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
       await page.keyboard.press("Escape");
       await drawer.waitFor({ state: "hidden" });

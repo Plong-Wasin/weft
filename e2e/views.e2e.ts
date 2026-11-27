@@ -5,6 +5,7 @@ import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3109);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5209);
@@ -106,7 +107,7 @@ try {
   await page.getByRole("status").filter({ hasText: translate("views.updated") }).waitFor();
   await page.getByRole("button", { name: translate("views.update") }).waitFor({ state: "detached" });
   check((await call<View>("get_view", { viewId: saved!.id })).groupBy === "state", "Update view did not store the grouping");
-  await page.screenshot({ path: `${shots}/view-detail-1440.png` });
+  await saveShot(page, { path: `${shots}/view-detail-1440.png` });
 
   // Views page: row details, edit to private, create and delete.
   await page.goto(`${web}/${slug}/projects/MOB/views`);
@@ -124,7 +125,7 @@ try {
   const scratch = page.getByTestId("view-row-Scratch");
   await scratch.waitFor();
   check((await call<View[]>("list_views", { projectId: project!.id })).length === 2, "create did not store");
-  await page.screenshot({ path: `${shots}/views-1440.png` });
+  await saveShot(page, { path: `${shots}/views-1440.png` });
   await scratch.getByRole("button", { name: translate("views.menu") }).click();
   await page.getByRole("menuitem", { name: translate("views.delete") }).click();
   await page.getByRole("dialog").getByRole("button", { name: translate("views.deleteAction") }).click();
@@ -139,11 +140,11 @@ try {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`${web}/${slug}/projects/MOB/views`);
   await page.getByTestId("view-row-Hot items").waitFor();
-  await page.screenshot({ path: `${shots}/views-1440.png` });
+  await saveShot(page, { path: `${shots}/views-1440.png` });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${web}/${slug}/projects/MOB/views`);
   await page.getByTestId("view-row-Hot items").waitFor();
-  await page.screenshot({ path: `${shots}/views-390.png` });
+  await saveShot(page, { path: `${shots}/views-390.png` });
   await page.getByRole("button", { name: translate("views.add") }).click();
   const mobileDialog = page.getByRole("dialog", { name: translate("views.form.createTitle") });
   const mobileBounds = await mobileDialog.boundingBox();
@@ -152,7 +153,7 @@ try {
   await mobileDialog.waitFor({ state: "detached" });
   await page.goto(`${web}${viewPath}`);
   await page.getByRole("link", { name: "Bravo high" }).waitFor();
-  await page.screenshot({ path: `${shots}/view-detail-390.png` });
+  await saveShot(page, { path: `${shots}/view-detail-390.png` });
   console.log("e2e views: ok");
   await browser.close();
 } catch (error) {

@@ -3,6 +3,7 @@ import { inArray, like } from "drizzle-orm";
 import { agents, createDatabase, jobs, users, workspaces } from "../packages/db/src";
 import { createAgentActions, createApiTokenActions, createProjectActions, createRuntimeActions } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31181);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52181);
@@ -90,10 +91,10 @@ try {
   await Bun.$`mkdir -p ${evidenceDir}`;
   await owner.page.setViewportSize({ width: 1440, height: 900 });
   await impact.evaluate((element) => element.scrollIntoView({ block: "center" }));
-  await Bun.write(`${evidenceDir}/runtime-enforcement-warning-1440.png`, await owner.page.screenshot());
+  await saveShot(owner.page, { path: `${evidenceDir}/runtime-enforcement-warning-1440.png` });
   await owner.page.setViewportSize({ width: 390, height: 844 });
   await impact.evaluate((element) => element.scrollIntoView({ block: "center" }));
-  await Bun.write(`${evidenceDir}/runtime-enforcement-warning-390.png`, await owner.page.screenshot());
+  await saveShot(owner.page, { path: `${evidenceDir}/runtime-enforcement-warning-390.png` });
   await owner.page.setViewportSize({ width: 1440, height: 900 });
   let cancelledConfirmation = "";
   owner.page.once("dialog", async (dialog) => { cancelledConfirmation = dialog.message(); await dialog.dismiss(); });
@@ -144,7 +145,7 @@ try {
     await unavailable.scrollIntoViewIfNeeded();
     for (const theme of ["light", "dark"] as const) {
       await pm.page.evaluate((value) => { localStorage.setItem("weft.theme", value); document.documentElement.setAttribute("data-theme", value); }, theme);
-      await Bun.write(`${evidenceDir}/pm-picker-${viewport.width}-${theme}.png`, await pm.page.screenshot());
+      await saveShot(pm.page, { path: `${evidenceDir}/pm-picker-${viewport.width}-${theme}.png` });
     }
   }
   await pm.page.keyboard.press("Escape");
@@ -171,10 +172,10 @@ try {
   if (await enforcementSetting.getAttribute("aria-checked") !== "true") throw new Error("Confirmed sandbox enforcement is not shown as enabled");
   await owner.page.setViewportSize({ width: 1440, height: 900 });
   await settingsRequirements.evaluate((element) => element.scrollIntoView({ block: "center" }));
-  await Bun.write(`${evidenceDir}/runtime-profiles-settings.png`, await owner.page.screenshot());
+  await saveShot(owner.page, { path: `${evidenceDir}/runtime-profiles-settings.png` });
   await owner.page.setViewportSize({ width: 390, height: 844 });
   await settingsRequirements.evaluate((element) => element.scrollIntoView({ block: "center" }));
-  await Bun.write(`${evidenceDir}/runtime-profiles-settings-mobile.png`, await owner.page.screenshot());
+  await saveShot(owner.page, { path: `${evidenceDir}/runtime-profiles-settings-mobile.png` });
   await owner.page.setViewportSize({ width: 1440, height: 900 });
 
   await owner.page.goto(`${web}/${slug}/settings/agents`);
@@ -263,7 +264,7 @@ try {
     await codeAgentRow.getByLabel(`${translate("agents.mayUse")} Developer`).scrollIntoViewIfNeeded();
     for (const theme of ["light", "dark"] as const) {
       await owner.page.evaluate((value) => { localStorage.setItem("weft.theme", value); document.documentElement.setAttribute("data-theme", value); }, theme);
-      await Bun.write(`${evidenceDir}/runtime-owner-access-${viewport.width}-${theme}.png`, await owner.page.screenshot({ fullPage: true }));
+      await saveShot(owner.page, { path: `${evidenceDir}/runtime-owner-access-${viewport.width}-${theme}.png`, fullPage: true });
     }
   }
 
@@ -286,9 +287,9 @@ try {
     if (attempt === 49) throw new Error("Admin could not bind their Agent to their Runtime profile");
     await Bun.sleep(100);
   }
-  await Bun.write(`${evidenceDir}/admin-runtime-profile-desktop.png`, await adminAgentRow.screenshot());
+  await saveShot(adminAgentRow, { path: `${evidenceDir}/admin-runtime-profile-desktop.png` });
   await admin.setViewportSize({ width: 390, height: 844 });
-  await Bun.write(`${evidenceDir}/admin-runtime-profile-mobile.png`, await adminAgentRow.screenshot());
+  await saveShot(adminAgentRow, { path: `${evidenceDir}/admin-runtime-profile-mobile.png` });
   await admin.setViewportSize({ width: 1440, height: 900 });
 
   // The workspace Admin also edits project access; a second editor's change must survive this stale UI draft.

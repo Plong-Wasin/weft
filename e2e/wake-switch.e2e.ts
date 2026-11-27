@@ -6,6 +6,7 @@ import { inArray, like } from "drizzle-orm";
 import { agents, createDatabase, jobs, runs, users, workspaces } from "../packages/db/src";
 import { createAgentActions, createJobHandlers, createWorkItemActions, runNextJob } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31181);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52181);
@@ -76,9 +77,9 @@ try {
   await page.locator(`[data-agent="${coder.name}"]`).getByRole("button", { name: translate("agents.edit"), exact: true }).click();
   await page.locator(`[data-agent="${coder.name}"]`).getByRole("checkbox", { name: translate("agents.canWakeAgents"), exact: true }).waitFor();
   if (await page.locator(`[data-agent="${coder.name}"]`).getByRole("checkbox", { name: translate("agents.canWakeAgents"), exact: true }).getAttribute("aria-checked") !== "true") throw new Error("Can wake Agents did not stay on after saving");
-  await Bun.write(`${shots}/wake-switch-settings-1440.png`, await page.screenshot({ fullPage: true }));
+  await saveShot(page, { path: `${shots}/wake-switch-settings-1440.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
-  await Bun.write(`${shots}/wake-switch-settings-390.png`, await page.screenshot({ fullPage: true }));
+  await saveShot(page, { path: `${shots}/wake-switch-settings-390.png`, fullPage: true });
   await page.setViewportSize({ width: 1440, height: 900 });
   console.log("wake: the Admin turns Can wake Agents on for the coder and it stays on after a reload");
 
@@ -95,11 +96,11 @@ try {
   await page.getByRole("combobox", { name: translate("timeline.filter", "en"), exact: true }).selectOption("all");
   const skipped = page.getByText(translate("workItems.activity.wake_skipped.no_agent_access"), { exact: false }).first();
   await skipped.waitFor({ timeout: 30_000 });
-  await Bun.write(`${shots}/wake-switch-timeline-1440.png`, await page.screenshot({ fullPage: true }));
+  await saveShot(page, { path: `${shots}/wake-switch-timeline-1440.png`, fullPage: true });
   // The app scrolls inside its own container, so a full-page capture would stop above the Activity: scroll it into view first.
   await page.setViewportSize({ width: 390, height: 844 });
   await skipped.scrollIntoViewIfNeeded();
-  await Bun.write(`${shots}/wake-switch-timeline-390.png`, await page.screenshot());
+  await saveShot(page, { path: `${shots}/wake-switch-timeline-390.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
   console.log("wake: the work item's timeline says why the wake did not happen");
 
@@ -107,9 +108,9 @@ try {
   const notice = translate("inbox.wakeSkipped.no_agent_access").replace("{actor}", coder.name);
   await page.goto(`${web}/${slug}/notifications`);
   await page.getByText(notice, { exact: false }).first().waitFor({ timeout: 30_000 });
-  await Bun.write(`${shots}/wake-switch-inbox-1440.png`, await page.screenshot({ fullPage: true }));
+  await saveShot(page, { path: `${shots}/wake-switch-inbox-1440.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
-  await Bun.write(`${shots}/wake-switch-inbox-390.png`, await page.screenshot({ fullPage: true }));
+  await saveShot(page, { path: `${shots}/wake-switch-inbox-390.png`, fullPage: true });
   console.log("wake: the Originator's inbox carries the notice");
 } catch (error) {
   failed = true;

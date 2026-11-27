@@ -7,6 +7,7 @@ import { createDatabase, users, workspaces } from "../packages/db/src";
 import { createChatStore } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { saveShot } from "./shots";
 // AI is on only with a provider key: a placeholder keeps the AI surfaces shown here, and no model is called.
 Bun.env.OPENAI_API_KEY ??= "sk-e2e-placeholder-no-call";
 
@@ -119,7 +120,7 @@ try {
   // The dropdown renders in a body portal, outside the sidecar.
   await page.getByRole("menuitem", { name: "Earlier AI page chat" }).click();
   await panel.getByText("Answer from the AI page").waitFor();
-  await page.screenshot({ path: `${shots}/sidecar-wiki-1440.png` });
+  await saveShot(page, { path: `${shots}/sidecar-wiki-1440.png` });
 
   // Width: drag the left edge, reload, still there; another user keeps the default.
   const box = (await panel.boundingBox())!;
@@ -130,7 +131,7 @@ try {
   await page.mouse.up();
   const widened = Math.round((await panel.boundingBox())!.width);
   check(widened > startWidth + 100, `drag did not widen the panel: ${startWidth} -> ${widened}`);
-  await page.screenshot({ path: `${shots}/sidecar-resized-1440.png` });
+  await saveShot(page, { path: `${shots}/sidecar-resized-1440.png` });
   await page.reload();
   await page.getByRole("button", { name: translate("sidecar.open"), exact: true }).first().click();
   await panel.waitFor();
@@ -149,7 +150,7 @@ try {
   const phone = (await panel.boundingBox())!;
   check(Math.round(phone.width) === 390 && Math.round(phone.height) === 844, `panel not full screen at 390px: ${phone.width}x${phone.height}`);
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "horizontal page scroll at 390px");
-  await page.screenshot({ path: `${shots}/sidecar-390.png` });
+  await saveShot(page, { path: `${shots}/sidecar-390.png` });
 
   console.log("e2e sidecar: ok");
   await browser.close();

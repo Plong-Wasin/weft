@@ -3,10 +3,12 @@
 // - work-items-list at 390px: the toolbar (view switcher, Select shown, Filters, Query, Display, Save as view) fits in two rows, not three.
 // - work-items-list at 1440px: the toolbar stays on one row.
 // - work-item-page at 390px: the quick property chips and the action buttons form two-column rows, so no row holds a lone chip.
-// - every route of this area at both widths: no page-level horizontal scroll, and no toolbar, chip or action control clips its own text.
+// - every route of this area at both widths: no toolbar, chip or action control clips its own text.
+//   Page-level horizontal scroll is swept by layout-stability and viewports.
 // Run with `bun e2e/run-all.ts design-entry` (needs DATABASE_URL, CHROMIUM_PATH, E2E_API_PORT, E2E_WEB_PORT).
 import { check, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
-import type { Page } from "playwright";
+import { settle } from "./settle";
+import type { Locator, Page } from "playwright";
 import { translate } from "../packages/shared/src";
 import { WeftClient, seedWeft } from "../tools/visual/weft-client";
 import { fillPath, loadRoutes } from "../tools/visual/lib";
@@ -58,6 +60,15 @@ try {
   const switchLabel = translate("layout.switch");
   const actionsLabel = translate("workItems.actions");
   const quickLabel = translate("workItems.quickProperties");
+  // Something each route draws from its data.
+  const ready: Record<string, (page: Page) => Locator> = {
+    "auth-sign-in": (page) => page.getByRole("textbox", { name: translate("auth.email") }),
+    "workspace-home": (page) => page.locator("[data-project-row]"),
+    "work-items-list": (page) => page.locator("[data-list-row]"),
+    "work-item-page": (page) => page.getByRole("heading", { level: 1 }),
+    archives: (page) => page.getByText(translate("archives.empty")),
+    "workspace-views": (page) => page.getByTestId(`row-${seed.workItem}`),
+  };
 
   await Promise.all(viewports.map(async (viewport) => {
     const context = await newContext(browser, { viewport: { width: viewport.width, height: viewport.height }, colorScheme: "light", reducedMotion: "reduce" });
@@ -70,11 +81,7 @@ try {
       const signedOut = route.auth === false ? await newContext(browser, { viewport: { width: viewport.width, height: viewport.height } }) : null;
       const target = signedOut ? await signedOut.newPage() : page;
       await target.goto(`${web}${path}`, { waitUntil: "load" });
-      await target.waitForLoadState("networkidle", { timeout: 4_000 }).catch(() => undefined);
-      await target.waitForTimeout(300);
-
-      const overflow = await target.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-      check(overflow <= 0, `${route.name} at ${viewport.width}px scrolls the page sideways by ${overflow}px`);
+      await settle(target, ready[route.name]!(target));
 
       // No toolbar, chip or action control clips its own text (its content is wider than its box).
       const clipped = await target.evaluate(() => Array.from(document.querySelectorAll("[role=tablist] ~ * button, [role=group] button, [data-quick-properties] > *"))

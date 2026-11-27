@@ -8,6 +8,7 @@ import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31440);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52440);
@@ -82,12 +83,12 @@ try {
     check(wide.insetRight >= 12 && wide.insetBottom >= 12, `the Comment button should sit inside the card, insets right ${wide.insetRight}px bottom ${wide.insetBottom}px`);
     await page.getByRole("complementary", { name: t("workItems.properties") }).waitFor();
     await submit.scrollIntoViewIfNeeded();
-    await submit.locator("xpath=ancestor::div[@data-comment-composer][1]").screenshot({ path: `${shots}/composer-1440-dark.png` });
+    await saveShot(submit.locator("xpath=ancestor::div[@data-comment-composer][1]"), { path: `${shots}/composer-1440-dark.png` });
     await page.setViewportSize({ width: 390, height: 844 });
     await submit.scrollIntoViewIfNeeded();
     const narrow = await measure();
     check(narrow.insetRight >= 12 && narrow.insetBottom >= 12, `at 390 px the Comment button should sit inside the card, insets right ${narrow.insetRight}px bottom ${narrow.insetBottom}px`);
-    await submit.locator("xpath=ancestor::div[@data-comment-composer][1]").screenshot({ path: `${shots}/composer-390-dark.png` });
+    await saveShot(submit.locator("xpath=ancestor::div[@data-comment-composer][1]"), { path: `${shots}/composer-390-dark.png` });
     await page.setViewportSize({ width: 1440, height: 900 });
   });
 
@@ -134,7 +135,7 @@ try {
     await skeleton.waitFor();
     check(await skeleton.getAttribute("aria-busy") === "true", "the loading skeleton should carry aria-busy=true");
     check(await skeleton.locator("div[class*='animate-pulse']").count() >= 3, "the skeleton should show title and description blocks");
-    await page.screenshot({ path: `${shots}/detail-loading-skeleton-1440.png` });
+    await saveShot(page, { path: `${shots}/detail-loading-skeleton-1440.png` });
     await page.unroute("**/actions/get_work_item");
     await page.getByRole("textbox", { name: t("workItems.titleField") }).waitFor();
     check(await page.locator('[data-testid="work-item-skeleton"]').count() === 0, "the skeleton should go once the item loads");
@@ -151,7 +152,7 @@ try {
       await dialog.waitFor();
       await page.keyboard.press("Escape");
       await dialog.waitFor({ state: "detached" }).catch(() => undefined);
-      if (layout === "list") await page.screenshot({ path: `${shots}/empty-project-1440.png` });
+      if (layout === "list") await saveShot(page, { path: `${shots}/empty-project-1440.png` });
     }
   });
 

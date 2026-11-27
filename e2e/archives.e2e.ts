@@ -7,6 +7,7 @@ import { mkdir } from "node:fs/promises";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31143);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52143);
@@ -72,7 +73,7 @@ try {
       check(titleLayout.fits && titleLayout.wraps, `Unbroken archived work item title does not wrap within its row at ${width}px`);
       check(titleLayout.right <= width, `Unbroken archived work item title extends past the ${width}px viewport`);
     }
-    await page.screenshot({ path: `${screenshotDir}/archives-${width}.png`, fullPage: true });
+    await saveShot(page, { path: `${screenshotDir}/archives-${width}.png`, fullPage: true });
     console.log(`archives render ${width}px: Restore ${Math.round(target!.width)}x${Math.round(target!.height)}px; page overflow ${overflow}px`);
   }
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -115,7 +116,7 @@ try {
   check(cycleDate !== null && cycleRestore !== null, "dated Cycle row is missing its date or Restore control");
   check(Math.abs((cycleDate!.y + cycleDate!.height / 2) - (cycleRestore!.y + cycleRestore!.height / 2)) < 2 && cycleRestore!.x > cycleDate!.x, "dated Cycle Restore is not aligned beside the date on the same mobile row");
   check(await page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth), "dated Cycle row scrolls the page horizontally at 390px");
-  await page.screenshot({ path: `${screenshotDir}/archives-cycle-dated-390.png`, fullPage: true });
+  await saveShot(page, { path: `${screenshotDir}/archives-cycle-dated-390.png`, fullPage: true });
 
   // Render the resolved Guest project role while retaining the fixture's Admin API session.
   await call("archive_work_item", { workItemId: longTitleItem.id });
@@ -137,7 +138,7 @@ try {
   const readOnlyModuleRow = readOnly.locator(`[data-testid="archived-row-${mod.id}"]`);
   await readOnlyModuleRow.waitFor();
   check(await readOnlyModuleRow.getByRole("button").count() === 0, "Guest sees a Restore control on an archived Module");
-  await readOnly.screenshot({ path: `${screenshotDir}/archives-read-only-390.png`, fullPage: true });
+  await saveShot(readOnly, { path: `${screenshotDir}/archives-read-only-390.png`, fullPage: true });
   await readOnly.close();
   await page.setViewportSize({ width: 1440, height: 900 });
 

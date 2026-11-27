@@ -1,7 +1,10 @@
+import { s3SettingsFromEnv } from "@weft/actions";
 import { createDatabase } from "@weft/db";
 import { createAuth } from "../../api/src/auth";
 import { createLiveServer, migrateExistingWikiDocuments } from "./server";
 
+// Throws in production while S3_SECRET_KEY is missing or a default; Actions build their storage only on first use.
+s3SettingsFromEnv();
 const { client, db } = createDatabase();
 const auth = createAuth(db, async () => false);
 const live = createLiveServer({

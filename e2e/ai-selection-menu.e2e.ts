@@ -179,19 +179,18 @@ try {
   await assistToolbar(page).waitFor();
   console.log("ai-selection-menu ok: menu back after reload when on");
 
-  // AI off (switch set to "false", no key): the preference page is not found, its profile menu item is gone, and the slash
+  // AI off (switch set to "false", no key): the preference page keeps its other settings but has no AI switch, and the slash
   // command is not listed. The API restarts with the switch off; the web app reads the config again on reload.
   servers[0].kill();
   await servers[0].exited;
   offApi = startApi(apiPort, web, { env: offEnv(), stdout: "ignore" });
   await waitFor(`${api}/api/me`);
   await page.goto(`${web}/account/preferences`);
-  await page.getByRole("alert").filter({ hasText: translate("app.notFound") }).waitFor();
+  await page.getByRole("combobox", { name: translate("accountPrefs.weekStart") }).waitFor();
   check(await page.getByRole("checkbox", { name: translate("accountPrefs.aiMenu"), exact: true }).count() === 0, "AI off: the preference is shown");
   await page.goto(`${web}/${slug}`);
   await page.getByRole("button", { name: translate("profile.menu"), exact: true }).click();
-  await page.getByRole("menuitem", { name: translate("email.menu"), exact: true }).waitFor();
-  check(await page.getByRole("menuitem", { name: translate("accountPrefs.menu"), exact: true }).count() === 0, "AI off: the preferences item is in the profile menu");
+  await page.getByRole("menuitem", { name: translate("accountPrefs.menu"), exact: true }).waitFor();
   await page.keyboard.press("Escape");
   await openWiki("Wiki back on text");
   await wiki.click();

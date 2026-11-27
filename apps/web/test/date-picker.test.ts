@@ -88,7 +88,7 @@ test("calendar keys move by day, week, month, year and to the week's ends", () =
   expect(gridKeyTarget("2026-01-31", "PageDown")).toBe("2026-02-28");
   expect(gridKeyTarget("2026-03-31", "PageUp")).toBe("2026-02-28");
   expect(gridKeyTarget("2028-02-29", "PageDown", true)).toBe("2029-02-28");
-  expect(gridKeyTarget("2026-11-26", "Home")).toBe("2026-11-23"); // Thursday -> Monday
-  expect(gridKeyTarget("2026-11-26", "End")).toBe("2026-11-29"); // -> Sunday
+  expect(gridKeyTarget("2026-11-26", "Home")).toBe("2026-11-22"); // Thursday -> Sunday
+  expect(gridKeyTarget("2026-11-26", "End")).toBe("2026-11-28"); // -> Saturday
   expect(gridKeyTarget("2026-11-26", "Enter")).toBeNull();
 });

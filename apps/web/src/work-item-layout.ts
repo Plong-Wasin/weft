@@ -1,3 +1,5 @@
+import { weekColumn } from "./date-picker-logic";
+import type { WeekStart } from "./week-start";
 export const priorityOrder = ["urgent", "high", "medium", "low", "none"] as const;
 export const layouts = ["list", "board", "spreadsheet", "calendar", "gantt"] as const;
 export const groupings = ["none", "state", "priority", "type", "assignee", "label", "cycle", "module", "creator", "dueDate"] as const;
@@ -63,13 +65,13 @@ export interface GanttBar<T> { item: T; left: number; width: number }
 export interface GanttPlacement<T> { start: string; days: string[]; today: number; bars: GanttBar<T>[]; undated: T[] }
 
 /** Maps dated work items onto an inclusive day axis; one-sided dates become a one-day bar. */
-export function ganttPlacement<T extends { startDate?: string | null; dueDate?: string | null }>(items: T[], anchor: Date, zoom: GanttZoom, today = new Date()): GanttPlacement<T> {
+export function ganttPlacement<T extends { startDate?: string | null; dueDate?: string | null }>(items: T[], anchor: Date, zoom: GanttZoom, today = new Date(), weekStart: WeekStart = "sunday"): GanttPlacement<T> {
   const dateAt = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
   const ordinal = (value: string) => { const [year, month, day] = value.slice(0, 10).split("-").map(Number); return Date.UTC(year!, month! - 1, day!) / 86400000; };
   const format = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   const pivot = dateAt(anchor);
   const quarterMonth = Math.floor(pivot.getMonth() / 3) * 3;
-  const start = zoom === "week" ? new Date(pivot.getFullYear(), pivot.getMonth(), pivot.getDate() - ((pivot.getDay() + 6) % 7) - 7)
+  const start = zoom === "week" ? new Date(pivot.getFullYear(), pivot.getMonth(), pivot.getDate() - weekColumn(pivot.getDay(), weekStart) - 7)
     : zoom === "month" ? new Date(pivot.getFullYear(), pivot.getMonth(), 1) : new Date(pivot.getFullYear(), quarterMonth, 1);
   const count = zoom === "week" ? 14 : zoom === "month"
     ? new Date(pivot.getFullYear(), pivot.getMonth() + 1, 0).getDate()
@@ -87,10 +89,10 @@ export function ganttPlacement<T extends { startDate?: string | null; dueDate?: 
   return { start: format(start), days, today: ordinal(format(dateAt(today))) - first, bars, undated: items.filter((item) => !item.startDate && !item.dueDate) };
 }
 
-/** Places work items by due date, or start date when no due date exists, in a six-week Monday-first grid. */
-export function calendarPlacement<T extends { startDate?: string | null; dueDate?: string | null }>(items: T[], month: Date): CalendarPlacement<T> {
+/** Places work items by due date, or start date when no due date exists, in a six-week grid. */
+export function calendarPlacement<T extends { startDate?: string | null; dueDate?: string | null }>(items: T[], month: Date, weekStart: WeekStart = "sunday"): CalendarPlacement<T> {
   const first = new Date(month.getFullYear(), month.getMonth(), 1);
-  const offset = (first.getDay() + 6) % 7;
+  const offset = weekColumn(first.getDay(), weekStart);
   const start = new Date(first.getFullYear(), first.getMonth(), 1 - offset);
   const days = Array.from({ length: 42 }, (_, index) => {
     const date = new Date(start.getFullYear(), start.getMonth(), start.getDate() + index);

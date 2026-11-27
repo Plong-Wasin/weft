@@ -7,6 +7,8 @@ import { ArrowLeft, ArrowRight, BarChart3, CalendarDays, ChevronDown, Check, Che
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
 import { calendarPlacement, completeGroups, displayProperties, effectiveSubGroup, ganttPlacement, groupItems, groupings, layouts, moveProperty, parseLayoutParams, serializeLayoutParams, priorityOrder, sortFields, type DisplayProperty, type GanttZoom, type LayoutParams } from "./work-item-layout";
 import { paths } from "./routes";
+import { weekdayOrder } from "./date-picker-logic";
+import { useWeekStart } from "./week-start";
 import { Popover } from "./shell/popover";
 import { WorkItemDetail } from "./work-item-detail";
 import { Board, type BoardColumn } from "./work-item-board";
@@ -61,6 +63,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const [calendarMonth, setCalendarMonth] = React.useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [ganttZoom, setGanttZoom] = React.useState<GanttZoom>("month");
   const [ganttAnchor, setGanttAnchor] = React.useState(() => new Date());
+  const [weekStart] = useWeekStart();
   const ganttPointerStart = React.useRef<{ x: number } | null>(null);
   /** `at` is a day delta for "move" and a day index for the "start" and "due" edges. */
   type GanttPreview = { id: string; kind: "move" | "start" | "due"; at: number };
@@ -288,7 +291,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     setNote(null);
     setItems((rows) => rows.map((row) => row.id === id ? { ...row, ...result.data } : row));
   };
-  const gantt = ganttPlacement(items, ganttAnchor, ganttZoom);
+  const gantt = ganttPlacement(items, ganttAnchor, ganttZoom, new Date(), weekStart);
   const shiftGanttAnchor = (direction: -1 | 1) => setGanttAnchor((date) => ganttZoom === "week"
     ? new Date(date.getFullYear(), date.getMonth(), date.getDate() + direction * 14)
     : ganttZoom === "month" ? new Date(date.getFullYear(), date.getMonth() + direction, 1)
@@ -666,8 +669,9 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     {canCreate && canWrite && (quick === "end" ? quickForm("all") : newButton("end"))}
   </div>;
 
-  const calendar = calendarPlacement(items, calendarMonth);
-  const weekdays = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+  const calendar = calendarPlacement(items, calendarMonth, weekStart);
+  const weekdayKeys = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+  const weekdays = weekdayOrder(weekStart).map((weekday) => weekdayKeys[weekday]!);
   const calendarWeeks = Array.from({ length: 6 }, (_, weekIndex) => {
     const days = calendar.days.slice(weekIndex * 7, weekIndex * 7 + 7);
     const first = days[0]!.date;

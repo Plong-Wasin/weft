@@ -92,7 +92,7 @@ test("moveProperty swaps neighbours and stops at the ends", () => {
   expect(moveProperty(["id", "state"], "state", 1)).toEqual(["id", "state"]);
 });
 
-test("calendar placement fills a Monday-first month grid and keeps undated work items aside", async () => {
+test("calendar placement fills a Sunday-first month grid and keeps undated work items aside", async () => {
   const { calendarPlacement } = await import("../src/work-item-layout");
   const items = [
     { id: "first", dueDate: "2026-11-01" },
@@ -102,7 +102,7 @@ test("calendar placement fills a Monday-first month grid and keeps undated work 
     { id: "undated", dueDate: null },
   ];
   const placement = calendarPlacement(items, new Date(2026, 10, 1));
-  expect(placement.days[0]?.date).toBe("2026-10-26");
+  expect(placement.days[0]?.date).toBe("2026-11-01");
   expect(placement.days).toHaveLength(42);
   expect(placement.days.find((day) => day.date === "2026-11-01")?.items.map((item) => item.id)).toEqual(["first"]);
   expect(placement.days.find((day) => day.date === "2026-11-18")?.items.map((item) => item.id)).toEqual(["inside"]);
@@ -119,12 +119,12 @@ test("Gantt placement maps inclusive dates to zoom columns and keeps undated wor
     { id: "undated", startDate: null, dueDate: null },
   ];
   const placement = ganttPlacement(items, new Date(2026, 10, 4), "week", new Date(2026, 10, 4));
-  expect(placement.start).toBe("2026-10-26");
+  expect(placement.start).toBe("2026-10-25");
   expect(placement.days).toHaveLength(14);
   expect(placement.bars.map(({ item, left, width }) => [item.id, left, width])).toEqual([
-    ["span", 7, 3], ["one-day", 10, 1], ["start-only", 11, 1],
+    ["span", 8, 3], ["one-day", 11, 1], ["start-only", 12, 1],
   ]);
-  expect(placement.today).toBe(9);
+  expect(placement.today).toBe(10);
   expect(placement.undated.map((item) => item.id)).toEqual(["undated"]);
   // The today marker follows the real today, not the date the timeline is anchored on.
   const december = ganttPlacement(items, new Date(2026, 11, 1), "month", new Date(2026, 10, 4));

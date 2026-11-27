@@ -3,6 +3,7 @@ import type { Page } from "playwright";
 import { createAgentActions, createCommentActions, createProjectActions } from "../packages/actions/src";
 import { createDatabase } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 // One Avatar for people and Agents. Checks the assignee picker, the @mention list, the work item detail (assignee, comments, timeline),
 // the peek panel, the profile menu, the members pages and the Agents page, at 1440 and 390 px in light and dark.
@@ -60,7 +61,7 @@ try {
       if (name === "detail") await activityDisclosure.evaluate((element) => element.scrollIntoView({ block: "center" }));
       await page.waitForTimeout(250);
       const path = `${evidence}/${name}-${viewport.width}-${theme}.png`;
-      await page.screenshot({ path, fullPage: true });
+      await saveShot(page, { path, fullPage: true });
       captured.push(path);
     }
   };
@@ -115,7 +116,7 @@ try {
     await setTheme(theme);
     await page.waitForTimeout(200);
     const path = `${evidence}/mention-popup-390-${theme}.png`;
-    await page.screenshot({ path });
+    await saveShot(page, { path });
     captured.push(path);
   }
   await page.keyboard.press("Escape");

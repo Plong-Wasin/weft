@@ -6,6 +6,7 @@ import { eq, inArray, like } from "drizzle-orm";
 import { agents, createDatabase, jobs, runs, triggers, users, workspaces } from "../packages/db/src";
 import { createAgentActions, createJobHandlers, createWorkItemActions, runNextJob } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31183);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52183);
@@ -64,9 +65,9 @@ try {
   const loading = card.getByRole("status").filter({ hasText: "Loading Projects" });
   await loading.waitFor();
   if (await card.getByRole("button", { name: translate("triggers.add") }).isEnabled()) throw new Error("Add Trigger was enabled while Projects were loading");
-  await Bun.write(`${shots}/trigger-loading-1440.png`, await page.screenshot({ fullPage: true }));
+  await saveShot(page, { path: `${shots}/trigger-loading-1440.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
-  await Bun.write(`${shots}/trigger-loading-390.png`, await page.screenshot());
+  await saveShot(page, { path: `${shots}/trigger-loading-390.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
   releaseProjects();
   await page.unroute(`${api}/actions/list_projects`);
@@ -88,15 +89,15 @@ try {
   await noAccessCard.getByText("This Agent has no access to any Projects.", { exact: false }).waitFor();
   if (await noAccessCard.getByRole("button", { name: translate("triggers.add") }).isEnabled()) throw new Error("Add Trigger was enabled without an accessible Project");
   await noAccessCard.scrollIntoViewIfNeeded();
-  await Bun.write(`${shots}/trigger-no-access-1440.png`, await page.screenshot({ fullPage: true }));
+  await saveShot(page, { path: `${shots}/trigger-no-access-1440.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await noAccessCard.getByLabel(translate("triggers.project"), { exact: true }).scrollIntoViewIfNeeded();
-  await Bun.write(`${shots}/trigger-no-access-390.png`, await page.screenshot());
+  await saveShot(page, { path: `${shots}/trigger-no-access-390.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
-  await Bun.write(`${shots}/sub-items-settings-1440.png`, await page.screenshot({ fullPage: true }));
+  await saveShot(page, { path: `${shots}/sub-items-settings-1440.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await triggerRow.scrollIntoViewIfNeeded();
-  await Bun.write(`${shots}/sub-items-settings-390.png`, await page.screenshot());
+  await saveShot(page, { path: `${shots}/sub-items-settings-390.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
   console.log("sub-items-closed: the Trigger is created on the settings page and shows its label");
 
@@ -120,9 +121,9 @@ try {
   // The first match can be the copy of the assignee that the narrow layout hides; wait for one that is shown.
   await page.getByText("Summary Bot", { exact: false }).locator("visible=true").first().waitFor({ timeout: 30_000 });
   await page.getByText(translate("workItems.subItems"), { exact: false }).first().waitFor({ timeout: 30_000 });
-  await Bun.write(`${shots}/sub-items-parent-1440.png`, await page.screenshot({ fullPage: true }));
+  await saveShot(page, { path: `${shots}/sub-items-parent-1440.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
-  await Bun.write(`${shots}/sub-items-parent-390.png`, await page.screenshot({ fullPage: true }));
+  await saveShot(page, { path: `${shots}/sub-items-parent-390.png`, fullPage: true });
   await page.setViewportSize({ width: 1440, height: 900 });
   console.log("sub-items-closed: the parent page shows the Agent and its sub-items");
 } catch (error) {

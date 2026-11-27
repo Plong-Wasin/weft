@@ -1,12 +1,16 @@
 // Viewport audit across the documented desktop, tablet and landscape phone sizes.
+// Screens that layout-stability opens at these sizes are checked there; the route sweep here takes the others.
 // Each named check below corresponds to the viewport issue's no-scroll, visible-control,
 // touch-target, overlay-fit and blank-tap acceptance checks.
 import { launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { screenDefects } from "./screen-checks";
+import { settle } from "./settle";
 import { translate } from "../packages/shared/src";
 import { WeftClient, seedWeft } from "../tools/visual/weft-client";
 import { fillPath, loadRoutes } from "../tools/visual/lib";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 33150);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 35150);
@@ -46,23 +50,13 @@ try {
   const root = Bun.env.VIEWPORT_SHOTS_DIR ?? join(import.meta.dir, "..", ".local", "shots", "shadcn-09", "after");
   await mkdir(root, { recursive: true });
   const { routes } = loadRoutes();
-  const layoutRoutes = ["list", "board", "spreadsheet", "calendar", "gantt"].map((layout) => ({ name: `work-items-${layout}`, auth: true, weft: `/${slug}/projects/${seed.key}/issues?layout=${layout}` }));
-  const extraRoutes = [
-    { name: "projects", auth: true, weft: `/${slug}/projects` },
-    { name: "inbox", auth: true, weft: `/${slug}/notifications` },
-    { name: "work-item-peek", auth: true, weft: `/${slug}/projects/${seed.key}/issues?layout=list&peek=${encodeURIComponent(seed.workItem)}` },
+  // layout-stability checks these screens at the same seven sizes.
+  const inLayoutStability = new Set(["auth-sign-in", "workspace-home", "work-items-list", "work-item-page", "cycles", "modules", "views", "intake", "workspace-settings", "wiki-page", "analytics-overview", "ai-chat"]);
+  const captures = [
+    ...routes.filter((route) => !inLayoutStability.has(route.name) && route.weft && fillPath(route.weft, seed)).map((route) => ({ name: route.name, auth: route.auth !== false, weft: fillPath(route.weft!, seed)! })),
     { name: "auth-sign-up", auth: false, weft: "/" },
   ];
-  const captures = [...routes.filter((route) => route.weft && fillPath(route.weft, seed)).map((route) => ({ name: route.name, auth: route.auth !== false, weft: fillPath(route.weft!, seed)! })), ...layoutRoutes, ...extraRoutes];
 
-  const routeReady: Record<string, string> = {
-    "work-items-list": '[data-testid="work-items-list-container"] [data-list-row]',
-    "work-items-board": '[data-card-id]',
-    "work-items-spreadsheet": '[data-testid="sheet-scroll"] tbody tr',
-    "work-items-calendar": '[data-testid="calendar-layout"]',
-    "work-items-gantt": '[data-testid="gantt-layout"]',
-    "work-item-peek": '[data-peek] h1, [data-peek] h2',
-  };
   for (const viewport of viewports) {
     const context = await newContext(browser, { viewport: { width: viewport.width, height: viewport.height }, colorScheme: "light", reducedMotion: "reduce" });
     await context.addCookies(client.cookies().map((cookie) => ({ ...cookie, domain: "localhost", path: "/" })));
@@ -74,69 +68,50 @@ try {
       await target.locator("body").waitFor();
       if (route.name === "auth-sign-up") await target.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
       // Measure the screen with its data, not the placeholder that holds its place while loading.
-      const ready = routeReady[route.name];
-      if (ready) await target.locator(ready).first().waitFor();
-      await target.waitForFunction(() => !document.querySelector('[data-testid="work-items-skeleton"], [data-testid="sidebar-skeleton"], [data-peek] [class*="animate-pulse"]'));
+      await target.waitForFunction(() => !document.querySelector('[data-testid="work-items-skeleton"], [data-testid="sidebar-skeleton"]'));
       await target.waitForTimeout(100);
-      const measurements = await target.evaluate(() => {
-        const main = document.querySelector("main");
-        const primary = main ? [...main.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([type="hidden"])')].find((el) => {
-          const style = getComputedStyle(el), rect = el.getBoundingClientRect();
-          return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) !== 0 && rect.width > 0 && rect.height > 0;
-        }) : undefined;
-        const box = primary?.getBoundingClientRect();
-        return {
-          pageWidth: document.documentElement.scrollWidth,
-          viewportWidth: document.documentElement.clientWidth,
-          primary: box ? { x: box.x, y: box.y, right: box.right, bottom: box.bottom } : null,
-          topControls: [...document.querySelectorAll<HTMLElement>("main button, main a[href], main input:not([type=hidden]), main select")].map((el) => {
-            const rect = el.getBoundingClientRect();
-            const style = getComputedStyle(el);
-            return { tag: el.tagName, id: el.id, label: el.getAttribute("aria-label"), text: el.textContent?.trim(), className: el.className, x: rect.x, y: rect.y, right: rect.right, bottom: rect.bottom, visible: style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) !== 0 };
-          }).filter((rect) => rect.visible && rect.y < 160 && rect.bottom > 0),
-          siblingControlOverlap: [...document.querySelectorAll<HTMLElement>("main [role=group]")].some((group) => {
-            const controls = [...group.querySelectorAll<HTMLElement>("button, a[href]")].filter((el) => el.parentElement === group && getComputedStyle(el).display !== "none" && getComputedStyle(el).visibility !== "hidden");
-            for (let i = 0; i < controls.length; i += 1) for (let j = i + 1; j < controls.length; j += 1) {
-              const a = controls[i]!.getBoundingClientRect(), b = controls[j]!.getBoundingClientRect();
-              if (a.width && a.height && b.width && b.height && a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1) return true;
-            }
-            return false;
-          }),
-          bodyText: (document.body.innerText ?? "").trim().length,
-        };
-      });
-      check("rendered-screen", measurements.bodyText > 0, `${route.name} at ${viewport.suffix} was empty`);
-      check("no-horizontal-page-scroll", measurements.pageWidth <= measurements.viewportWidth, `${route.name} at ${viewport.suffix}: ${measurements.pageWidth}px > ${measurements.viewportWidth}px`);
-      check("top-controls-not-clipped", measurements.topControls.every((control) => control.x >= 0 && control.right <= viewport.width && control.bottom <= viewport.height),
-        `${route.name} at ${viewport.suffix}: ${JSON.stringify(measurements.topControls.filter((control) => control.x < 0 || control.right > viewport.width || control.bottom > viewport.height))}`);
-      if (route.name === "work-items-list" && (viewport.suffix === "390x844" || viewport.suffix === "844x390")) {
-        const listMetrics = await target.evaluate(() => {
-          const list = document.querySelector<HTMLElement>('[data-testid="work-items-list-container"]');
-          const rows = [...(list?.querySelectorAll<HTMLElement>("[data-list-row]") ?? [])];
-          const metadata = rows.map((row) => row.querySelector<HTMLElement>('[data-testid="work-item-row-metadata"]'));
-          return {
-            documentWidth: document.documentElement.scrollWidth,
-            viewportWidth: window.innerWidth,
-            listRight: list?.getBoundingClientRect().right ?? null,
-            listClientWidth: list?.clientWidth ?? null,
-            listScrollWidth: list?.scrollWidth ?? null,
-            rowsOverflow: rows.map((row) => row.scrollWidth > row.clientWidth + 1),
-            metadataOverflow: metadata.map((item) => item ? item.scrollWidth > item.clientWidth + 1 : true),
-          };
-        });
-        check("work-items-list-page-width-fits", listMetrics.documentWidth <= listMetrics.viewportWidth, `Work items at ${viewport.suffix}: ${JSON.stringify(listMetrics)}`);
-        check("work-items-list-content-fits", listMetrics.listRight !== null && listMetrics.listRight <= listMetrics.viewportWidth && listMetrics.listScrollWidth !== null && listMetrics.listClientWidth !== null && listMetrics.listScrollWidth <= listMetrics.listClientWidth + 1 && listMetrics.rowsOverflow.every((overflow) => !overflow) && listMetrics.metadataOverflow.every((overflow) => !overflow), `Work item rows and property chips at ${viewport.suffix}: ${JSON.stringify(listMetrics)}`);
-      }
-      check("no-sibling-control-overlap", !measurements.siblingControlOverlap, `${route.name} at ${viewport.suffix} has overlapping sibling controls`);
-      if (route.auth && measurements.primary) {
-        check("primary-control-visible", measurements.primary.x >= 0 && measurements.primary.right <= viewport.width && measurements.primary.y < viewport.height && measurements.primary.bottom > 0,
-          `${route.name} at ${viewport.suffix}: ${JSON.stringify(measurements.primary)}`);
-      }
-      await target.screenshot({ path: join(root, `${route.name}-${viewport.suffix}.png`) });
+      const measurements = await target.evaluate(() => ({
+        pageWidth: document.documentElement.scrollWidth,
+        viewportWidth: document.documentElement.clientWidth,
+        bodyText: (document.body.innerText ?? "").trim().length,
+      }));
+      const label = `${route.name} at ${viewport.suffix}`;
+      const before = failures.length;
+      check("rendered-screen", measurements.bodyText > 0, `${label} was empty`);
+      check("no-horizontal-page-scroll", measurements.pageWidth <= measurements.viewportWidth, `${label}: ${measurements.pageWidth}px > ${measurements.viewportWidth}px`);
+      failures.push(...await screenDefects(target, label, { signedIn: route.auth }));
+      await saveShot(target, { path: join(root, `${route.name}-${viewport.suffix}.png`) }, { failed: failures.length > before });
       if (authContext) await authContext.close();
     }
     await page.close();
     await context.close();
+  }
+
+  for (const viewport of viewports.filter(({ suffix }) => suffix === "390x844" || suffix === "844x390")) {
+    const listContext = await newContext(browser, { viewport: { width: viewport.width, height: viewport.height }, colorScheme: "light", reducedMotion: "reduce" });
+    await listContext.addCookies(client.cookies().map((cookie) => ({ ...cookie, domain: "localhost", path: "/" })));
+    const listPage = await listContext.newPage();
+    await listPage.goto(`${web}/${slug}/projects/${seed.key}/issues?layout=list`, { waitUntil: "domcontentloaded" });
+    await settle(listPage, listPage.locator('[data-testid="work-items-list-container"] [data-list-row]'));
+    const before = failures.length;
+    const listMetrics = await listPage.evaluate(() => {
+      const list = document.querySelector<HTMLElement>('[data-testid="work-items-list-container"]');
+      const rows = [...(list?.querySelectorAll<HTMLElement>("[data-list-row]") ?? [])];
+      const metadata = rows.map((row) => row.querySelector<HTMLElement>('[data-testid="work-item-row-metadata"]'));
+      return {
+        documentWidth: document.documentElement.scrollWidth,
+        viewportWidth: window.innerWidth,
+        listRight: list?.getBoundingClientRect().right ?? null,
+        listClientWidth: list?.clientWidth ?? null,
+        listScrollWidth: list?.scrollWidth ?? null,
+        rowsOverflow: rows.map((row) => row.scrollWidth > row.clientWidth + 1),
+        metadataOverflow: metadata.map((item) => item ? item.scrollWidth > item.clientWidth + 1 : true),
+      };
+    });
+    check("work-items-list-page-width-fits", listMetrics.documentWidth <= listMetrics.viewportWidth, `Work items at ${viewport.suffix}: ${JSON.stringify(listMetrics)}`);
+    check("work-items-list-content-fits", listMetrics.listRight !== null && listMetrics.listRight <= listMetrics.viewportWidth && listMetrics.listScrollWidth !== null && listMetrics.listClientWidth !== null && listMetrics.listScrollWidth <= listMetrics.listClientWidth + 1 && listMetrics.rowsOverflow.every((overflow) => !overflow) && listMetrics.metadataOverflow.every((overflow) => !overflow), `Work item rows and property chips at ${viewport.suffix}: ${JSON.stringify(listMetrics)}`);
+    await saveShot(listPage, { path: join(root, `work-items-list-${viewport.suffix}.png`) }, { failed: failures.length > before });
+    await listContext.close();
   }
 
   // Touch regression: the formerly invisible empty Module slot at the right of the row must not open its picker.
@@ -175,7 +150,7 @@ try {
     // The last property slot can contain Assignee at wider widths, so the trailing edge is not reliably blank.
     if (rowBox) await touch.touchscreen.tap(Math.round(rowBox.x + rowBox.width - 2), Math.round(rowBox.y + rowBox.height / 2));
   check("touch-blank-row-does-not-open-menu", await touch.locator("[data-popover-panel]:visible").count() === 0 && touch.url().includes("/issues?layout=list"), `blank row tap opened a menu or peek panel at ${viewport.suffix}`);
-    await touch.screenshot({ path: join(root, `work-item-list-touch-${viewport.suffix}.png`) });
+    await saveShot(touch, { path: join(root, `work-item-list-touch-${viewport.suffix}.png`) });
     await touchContext.close();
   }
 
@@ -201,7 +176,7 @@ try {
     check("short-height-popover-fits", !!panelBox && panelBox.x >= 0 && panelBox.y >= 0 && panelBox.x + panelBox.width <= viewport.width && panelBox.y + panelBox.height <= viewport.height,
       `display panel bounds at ${viewport.suffix}: ${JSON.stringify(panelBox)}`);
     check("short-height-popover-scrolls-internally", await displayPanel.evaluate((el) => el.scrollHeight > el.clientHeight && getComputedStyle(el).overflowY === "auto"), `display panel does not scroll internally at ${viewport.suffix}`);
-    await displayPanel.screenshot({ path: join(root, `display-popover-touch-${viewport.suffix}.png`) });
+    await saveShot(displayPanel, { path: join(root, `display-popover-touch-${viewport.suffix}.png`) });
     await shortPage.keyboard.press("Escape");
     const stateTrigger = shortPage.getByTestId(`row-${seed.workItem}`).getByRole("button", { name: /^State:/ }).first();
     await stateTrigger.tap();
@@ -210,7 +185,7 @@ try {
     const menuBox = await propertyMenu.boundingBox();
     check("short-height-menu-fits", !!menuBox && menuBox.x >= 0 && menuBox.y >= 0 && menuBox.x + menuBox.width <= viewport.width && menuBox.y + menuBox.height <= viewport.height,
       `property menu bounds at ${viewport.suffix}: ${JSON.stringify(menuBox)}`);
-    await propertyMenu.screenshot({ path: join(root, `property-menu-touch-${viewport.suffix}.png`) });
+    await saveShot(propertyMenu, { path: join(root, `property-menu-touch-${viewport.suffix}.png`) });
     await shortPage.keyboard.press("Escape");
     await shortPage.getByRole("button", { name: translate("workItems.addNew"), exact: true }).tap();
     const createDialog = shortPage.getByRole("dialog", { name: translate("workItems.modal.title") });
@@ -218,7 +193,7 @@ try {
     check("short-height-dialog-fits", !!dialogBox && dialogBox.x >= 0 && dialogBox.y >= 0 && dialogBox.x + dialogBox.width <= viewport.width && dialogBox.y + dialogBox.height <= viewport.height,
       `create dialog bounds at ${viewport.suffix}: ${JSON.stringify(dialogBox)}`);
     check("short-height-dialog-scrolls-internally", await createDialog.evaluate((el) => el.scrollHeight > el.clientHeight && getComputedStyle(el).overflowY === "auto"), `create dialog does not scroll internally at ${viewport.suffix}`);
-    await createDialog.screenshot({ path: join(root, `create-item-dialog-touch-${viewport.suffix}.png`) });
+    await saveShot(createDialog, { path: join(root, `create-item-dialog-touch-${viewport.suffix}.png`) });
     await shortContext.close();
   }
 
@@ -232,7 +207,7 @@ try {
   const drawerBox = await drawer.boundingBox();
   check("short-height-drawer-fits", !!drawerBox && drawerBox.x >= 0 && drawerBox.y >= 0 && drawerBox.x + drawerBox.width <= 667 && drawerBox.y + drawerBox.height <= 375,
     `drawer bounds ${JSON.stringify(drawerBox)}`);
-  await drawerPage.screenshot({ path: join(root, "sidebar-drawer-touch-667x375.png") });
+  await saveShot(drawerPage, { path: join(root, "sidebar-drawer-touch-667x375.png") });
   await drawerContext.close();
   await browser.close();
   console.log(`viewport checks: ${[...checks].join(", ")}`);

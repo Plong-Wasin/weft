@@ -6,6 +6,7 @@ import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
 import { chooseDate } from "../tools/choose-date";
+import { saveShot } from "./shots";
 // AI is on only with a provider key: a placeholder keeps the AI surfaces shown here, and no model is called.
 Bun.env.OPENAI_API_KEY ??= "sk-e2e-placeholder-no-call";
 
@@ -61,13 +62,13 @@ try {
   const panel = dialog;
   const panelBox = await panel.boundingBox();
   check(panelBox !== null && panelBox.x >= 0 && panelBox.x + panelBox.width <= 390, "filter picker overflows the mobile viewport");
-  await page.screenshot({ path: `${shots}/filter-picker-390.png` });
+  await saveShot(page, { path: `${shots}/filter-picker-390.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
   await dialog.getByRole("button", { name: translate("layout.filter.priority") }).click();
   await dialog.getByRole("group", { name: translate("layout.filter.priority") }).getByRole("checkbox", { name: translate("workItems.priority.high") }).click();
   await waitTitles("Alpha");
   await page.getByTestId("chip-priority").waitFor();
-  await page.screenshot({ path: `${shots}/filter-picker-1440.png` });
+  await saveShot(page, { path: `${shots}/filter-picker-1440.png` });
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: translate("layout.filterQuery.toggle") }).click();
   const filter = page.getByRole("textbox", { name: translate("layout.filterQuery.label") });
@@ -87,7 +88,7 @@ try {
   check((await page.getByTestId("filter-query-error").textContent())?.startsWith("Invalid query at position") === true, "the parser error is not shown as is");
   check(await titles() === "Alpha,Bravo", "invalid filter query lost the last result");
   check(new URL(page.url()).searchParams.get("q") === "priority IN (high, low)", "invalid filter query replaced the applied query");
-  await page.screenshot({ path: `${shots}/filter-query-error-1440.png` });
+  await saveShot(page, { path: `${shots}/filter-query-error-1440.png` });
 
   // 4. A filter query the chips cannot show is kept as a custom query and still filters.
   await filter.fill("priority = high OR priority = urgent");
@@ -117,9 +118,9 @@ try {
   await page.getByRole("button", { name: new RegExp(translate("layout.filter.remove").replace("{filter}", `${translate("layout.filter.dueDate")}.*`)) }).click();
   await waitTitles("Alpha,Bravo,Charlie");
   await page.getByTestId("chip-createdBy").waitFor();
-  await page.screenshot({ path: `${shots}/chips-1440.png` });
+  await saveShot(page, { path: `${shots}/chips-1440.png` });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: `${shots}/chips-390.png` });
+  await saveShot(page, { path: `${shots}/chips-390.png` });
 
   console.log("e2e filter-query: ok");
   await browser.close();

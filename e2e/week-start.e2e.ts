@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { createDatabase, workspaces } from "../packages/db/src";
 import { translate, type MessageKey } from "../packages/shared/src";
 import { check, createSignedInContext, launchBrowser, startApi, startWeb, waitFor } from "./harness";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3199);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5299);
@@ -51,7 +52,7 @@ try {
     check(header.length === 7 && header[0] === t(monday ? "layout.weekday.mon" : "layout.weekday.sun") && header[6] === t(monday ? "layout.weekday.sun" : "layout.weekday.sat"), `${day}: calendar headers are ${header.join(",")}`);
     const first = await grid.locator("[data-calendar-date]").first().getAttribute("data-calendar-date");
     check(first === (monday ? "2026-10-26" : "2026-11-01"), `${day}: calendar grid starts on ${first}`);
-    await page.screenshot({ path: join(shots, `calendar-${day}.png`) });
+    await saveShot(page, { path: join(shots, `calendar-${day}.png`) });
 
     await page.goto(`${web}/${name}/projects/WKS/issues?layout=gantt`);
     const gantt = page.getByTestId("gantt-layout");
@@ -73,7 +74,7 @@ try {
       return [...element.querySelectorAll<HTMLElement>("[data-date]")].filter((cell) => cell.getBoundingClientRect().left - left < 8).map((cell) => cell.dataset.date!);
     });
     check(leftmost[0] === (monday ? "2026-11-02" : "2026-11-01"), `${day}: leftmost date picker column starts with ${leftmost[0]}`);
-    await page.screenshot({ path: join(shots, `date-picker-${day}.png`) });
+    await saveShot(page, { path: join(shots, `date-picker-${day}.png`) });
     await panel.locator('[data-date="2026-11-26"]').focus();
     const focused = () => page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.date ?? null);
     for (const [key, expected] of [["Home", monday ? "2026-11-23" : "2026-11-22"], ["End", monday ? "2026-11-29" : "2026-11-28"]] as const) {
@@ -86,7 +87,7 @@ try {
     await page.goto(`${web}/${name}/projects/WKS/issues?layout=list&group=dueDate`);
     const group = page.getByRole("region", { name: t(monday ? "layout.dueDate.thisWeek" : "layout.dueDate.nextWeek"), exact: true });
     await group.getByText("Sunday due", { exact: true }).waitFor();
-    await page.screenshot({ path: join(shots, `due-date-groups-${day}.png`) });
+    await saveShot(page, { path: join(shots, `due-date-groups-${day}.png`) });
     console.log(`week-start ok: ${day}`);
   }
 
@@ -104,7 +105,7 @@ try {
     await page.setViewportSize({ width, height });
     check(((await choice.boundingBox())?.height ?? 0) >= 44, `week start control is under 44 px at ${width}x${height}`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `preferences scroll sideways at ${width}x${height}`);
-    await page.screenshot({ path: join(shots, `preferences-${width}x${height}.png`) });
+    await saveShot(page, { path: join(shots, `preferences-${width}x${height}.png`) });
   }
   await page.setViewportSize({ width: 1440, height: 900 });
   await expectWeekStart("monday");
@@ -117,7 +118,7 @@ try {
   await days.locator('[data-calendar-date="2026-11-26"]').getByRole("link", { name: "Dated" }).waitFor();
   check(!await calendar.getByTestId("calendar-month-grid").isVisible(), "the month grid shows on a phone");
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "phone calendar list scrolls sideways");
-  await page.screenshot({ path: join(shots, "phone-calendar-list.png") });
+  await saveShot(page, { path: join(shots, "phone-calendar-list.png") });
   console.log("week-start e2e passed");
   await browser.close();
 } catch (error) { failed = true; console.error(error); }

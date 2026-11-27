@@ -6,6 +6,7 @@ import { translate } from "../packages/shared/src";
 import { comments, createDatabase } from "../packages/db/src";
 import { reviewShots } from "../tools/visual/paths";
 import { chooseDate, expectDate } from "../tools/choose-date";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3107);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5207);
@@ -65,13 +66,13 @@ try {
     await page.goto(`${base}/issues`);
     await page.getByTestId("row-MOB-1").getByRole("link").click();
     await peek.waitFor();
-    await page.screenshot({ path: `${uxShots}/peek-${width}-${theme}.png` });
+    await saveShot(page, { path: `${uxShots}/peek-${width}-${theme}.png` });
     await page.keyboard.press("Escape");
     await page.goto(`${web}/${slug}/browse/MOB-1`);
     await page.getByRole("heading", { name: "Alpha", level: 1 }).waitFor();
     check(await page.getByRole("heading", { name: "Alpha", level: 1 }).evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize) >= 24), `the detail title is below 24px at ${width}px (${theme})`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `work item page scrolls sideways at ${width}px (${theme})`);
-    await page.screenshot({ path: `${uxShots}/detail-${width}-${theme}.png`, fullPage: true });
+    await saveShot(page, { path: `${uxShots}/detail-${width}-${theme}.png`, fullPage: true });
   }
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(() => { localStorage.setItem("weft.theme", "light"); document.documentElement.dataset.theme = "light"; });
@@ -191,7 +192,7 @@ try {
     const expandBox = await peekHeader.getByRole("link", { name: translate("workItems.peek.expand") }).boundingBox();
     check(!!closeBox && !!expandBox && closeBox.x + closeBox.width >= panel!.x + panel!.width - 40 && expandBox.x + expandBox.width <= closeBox.x + 1, `Close and Expand are not at the top right at ${width}px`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth) && await peek.evaluate((node) => node.scrollWidth <= node.clientWidth), `the peek scrolls sideways at ${width}px`);
-    await page.screenshot({ path: `${uxShots}/peek-layout-${width}-dark.png` });
+    await saveShot(page, { path: `${uxShots}/peek-layout-${width}-dark.png` });
   }
 
   // Seed one Run and an Agent-authored comment after the layout assertions. Keeping the Agent assignment out of the matrix
@@ -231,10 +232,10 @@ try {
   await focusedRun.waitFor();
   check(await focusedRun.getAttribute("data-highlighted") === "true", "direct navigation did not focus the targeted Run");
   check(new URL(page.url()).searchParams.get("peek") === runItem.displayId, "direct navigation lost the Work item peek context");
-  await Bun.write(`${runPeekShots}/peek-run-1440.png`, await page.screenshot({ fullPage: true }));
+  await saveShot(page, { path: `${runPeekShots}/peek-run-1440.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await focusedRun.scrollIntoViewIfNeeded();
-  await Bun.write(`${runPeekShots}/peek-run-390.png`, await page.screenshot({ fullPage: true }));
+  await saveShot(page, { path: `${runPeekShots}/peek-run-390.png`, fullPage: true });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(() => { localStorage.setItem("weft.theme", "light"); document.documentElement.dataset.theme = "light"; });
   // Two columns: the Properties stay in view while the content scrolls (a 520 px high window makes the content taller than the panel).
@@ -293,12 +294,12 @@ try {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.keyboard.press("Control+i");
   await pageProperties.waitFor();
-  await page.screenshot({ path: `${shots}/page-1440-light.png` });
+  await saveShot(page, { path: `${shots}/page-1440-light.png` });
   for (const [theme, width, height] of [["light", 1440, 900], ["dark", 1440, 900], ["light", 768, 900], ["dark", 768, 900], ["light", 390, 844], ["dark", 390, 844]] as const) {
     await page.setViewportSize({ width, height });
     await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
     await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition).map((animation) => animation.finished))); // colour transitions must settle before the shot
-    await page.screenshot({ path: `${shots}/ticket13-work-item-page-${theme}-${width}.png`, fullPage: true });
+    await saveShot(page, { path: `${shots}/ticket13-work-item-page-${theme}-${width}.png`, fullPage: true });
   }
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
@@ -396,7 +397,7 @@ try {
   // The default timeline shows Comments only: All shows the Activity entries too.
   await page.getByRole("combobox", { name: translate("timeline.filter", "en"), exact: true }).selectOption("all");
   await page.getByText(translate("workItems.activity.created")).first().waitFor();
-  await page.screenshot({ path: `${shots}/page-activity-1440-light.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/page-activity-1440-light.png`, fullPage: true });
   console.log("page: sub-work items, relations, comments with replies and activity");
 
   // Create modal.
@@ -502,11 +503,11 @@ try {
   await chooseDate(startTrigger, "");
   await setDate(modal, translate("workItems.startDate"), day(2));
   await setDate(modal, translate("workItems.dueDate"), day(5));
-  await page.screenshot({ path: `${shots}/create-modal-1440-light.png` });
-  await page.screenshot({ path: `${shadcnShots}/dialog-1440-light.png` });
+  await saveShot(page, { path: `${shots}/create-modal-1440-light.png` });
+  await saveShot(page, { path: `${shadcnShots}/dialog-1440-light.png` });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
   await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition).map((animation) => animation.finished))); // colour transitions must settle before the shot
-  await page.screenshot({ path: `${shadcnShots}/dialog-1440-dark.png` });
+  await saveShot(page, { path: `${shadcnShots}/dialog-1440-dark.png` });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   await modal.getByRole("button", { name: translate("workItems.modal.submit") }).click();
   await modal.waitFor({ state: "detached" });
@@ -559,12 +560,12 @@ try {
   const boldBox = await phoneBold.boundingBox();
   check(!!boldBox && boldBox.width >= 40 && boldBox.height >= 40, `comment formatting control is below a 40px touch target on phone (${boldBox?.width}x${boldBox?.height})`);
   check(await peek.getByRole("button", { name: translate("wiki.insert.image"), exact: true }).last().getAttribute("title") === translate("wiki.insert.image"), "comment image control has no tooltip on phone");
-  await page.screenshot({ path: `${shots}/peek-390-light.png` });
+  await saveShot(page, { path: `${shots}/peek-390-light.png` });
   for (const [theme, width, height] of [["light", 1440, 900], ["dark", 1440, 900], ["light", 768, 900], ["dark", 768, 900], ["light", 390, 844], ["dark", 390, 844]] as const) {
     await page.setViewportSize({ width, height });
     await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
     await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition).map((animation) => animation.finished))); // colour transitions must settle before the shot
-    await page.screenshot({ path: `${shots}/ticket13-work-item-peek-${theme}-${width}.png` });
+    await saveShot(page, { path: `${shots}/ticket13-work-item-peek-${theme}-${width}.png` });
   }
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -572,17 +573,17 @@ try {
   await page.goto(`${web}/${slug}/browse/MOB-1`);
   await page.getByRole("heading", { name: translate("workItems.properties") }).first().waitFor();
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "page scrolls sideways at 390px");
-  await page.screenshot({ path: `${shots}/page-390-light.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/page-390-light.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${base}/issues`);
   await page.getByRole("button", { name: translate("workItems.addNew"), exact: true }).first().click();
   await modal.waitFor();
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "modal scrolls sideways at 390px");
-  await page.screenshot({ path: `${shots}/create-modal-390-light.png` });
-  await page.screenshot({ path: `${shadcnShots}/dialog-390-light.png` });
+  await saveShot(page, { path: `${shots}/create-modal-390-light.png` });
+  await saveShot(page, { path: `${shadcnShots}/dialog-390-light.png` });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
   await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition).map((animation) => animation.finished))); // colour transitions must settle before the shot
-  await page.screenshot({ path: `${shadcnShots}/dialog-390-dark.png` });
+  await saveShot(page, { path: `${shadcnShots}/dialog-390-dark.png` });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   for (const [width, height] of [[1440, 900], [1024, 768], [820, 1180], [768, 1024], [844, 390], [667, 375], [390, 844]] as const) {
     await page.setViewportSize({ width, height });
@@ -593,7 +594,7 @@ try {
       check(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), `create dialog causes horizontal page scroll at ${width}x${height}`);
       if (height <= 390) check(await modal.evaluate((element) => element.scrollHeight > element.clientHeight), `create dialog does not scroll internally at short viewport ${width}x${height}`);
       if (width <= 820) check((await modal.getByRole("button").evaluateAll((buttons) => buttons.every((button) => button.getBoundingClientRect().height >= 44))), `create dialog has a touch target below 44px at ${width}x${height}`);
-      await page.screenshot({ path: `${shadcnShots}/dialog-${width}x${height}-${theme}.png` });
+      await saveShot(page, { path: `${shadcnShots}/dialog-${width}x${height}-${theme}.png` });
     }
   }
   // Peek at 1440 for the review shots.
@@ -601,7 +602,7 @@ try {
   await page.keyboard.press("Escape");
   await page.getByRole("link", { name: "From the modal" }).click();
   await peek.waitFor();
-  await page.screenshot({ path: `${shots}/peek-1440-light.png` });
+  await saveShot(page, { path: `${shots}/peek-1440-light.png` });
   // Delete asks first: dismissing the confirmation keeps the work item, accepting deletes it and closes the peek.
   let asked = "";
   page.once("dialog", (dialog) => { asked = dialog.message(); void dialog.dismiss(); });

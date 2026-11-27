@@ -2,8 +2,11 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Browser, Locator, Page } from "playwright";
 import { launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
+import { screenDefects } from "./screen-checks";
+import { frame } from "./settle";
 import { translate } from "../packages/shared/src";
 import { seedWeft, WeftClient } from "../tools/visual/weft-client";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 33150);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 35150);
@@ -102,9 +105,6 @@ async function seedWorkspace(client: WeftClient, slug: string) {
   return { ...seed, thai, english, one };
 }
 
-const frame = (page: Page) => page.evaluate(() => new Promise<void>((resolve) =>
-  requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-));
 const heading = (page: Page | Locator, name: string) => page.getByRole("heading", { name, exact: true }).first();
 const testId = (id: string) => (page: Page) => page.getByTestId(id);
 
@@ -344,7 +344,8 @@ try {
   const browser = await launchBrowser();
   try {
     for (const { width, height, touch } of viewports) {
-      for (const colorScheme of ["light", "dark"] as const) {
+      // Dark mode changes colours, not geometry: the widest and the narrowest width are enough.
+      for (const colorScheme of width === 1440 || width === 390 ? ["light", "dark"] as const : ["light"] as const) {
         const viewport = { width, height };
         const context = await newContext(browser, { viewport, colorScheme, hasTouch: touch, isMobile: touch, locale: "en-US", timezoneId: "UTC", reducedMotion: "reduce" });
         await context.addInitScript(observeLayoutShifts);
@@ -381,6 +382,7 @@ try {
             const main = await page.evaluate(() => [...document.querySelectorAll("main")].map((el) => ({ scroll: el.scrollWidth, client: el.clientWidth })));
             if (main.some((box) => box.scroll > box.client)) failures.push(`${label} main scrolls sideways: ${JSON.stringify(main)}`);
             if (result.theme !== colorScheme || result.pageWidth > result.viewport) failures.push(`${label} theme or viewport: ${JSON.stringify(result)}`);
+            failures.push(...await screenDefects(page, label, { signedIn: !screen.guest }));
             if (screen.name === "list") {
               const rows = page.locator("[data-list-row]");
               const count = await rows.count();
@@ -408,8 +410,9 @@ try {
           } catch (error) {
             failures.push(`${label}: ${String(error)}`);
           }
-          if (failures.length !== previousFailures || screenshotScreens.has(screen.name)) {
-            await page.screenshot({ path: join(shots, `${label}.png`), timeout: 8000 });
+          const failed = failures.length !== previousFailures;
+          if (failed || screenshotScreens.has(screen.name)) {
+            await saveShot(page, { path: join(shots, `${label}.png`), timeout: 8000 }, { failed });
           }
         }
         console.log(`layout stability: checked ${screens.length} screens at ${width}x${height} ${colorScheme}`);

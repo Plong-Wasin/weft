@@ -7,6 +7,7 @@ import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3109);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5209);
@@ -53,7 +54,7 @@ try {
     check(await page.getByLabel(translate("auth.name")).count() === 0, "sign-in must not ask for a name");
     // The sign-in methods load after the heading: wait for the mode switch under the form.
     await page.getByText(translate("auth.needAccountShort")).waitFor();
-    await page.screenshot({ path: `${shots}/sign-in-${size}.png` });
+    await saveShot(page, { path: `${shots}/sign-in-${size}.png` });
     await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
     await page.getByText(translate("auth.createYourAccount")).waitFor();
     check(await page.locator("header img[src='/brand/weft-mark.png']").isVisible(), "logo mark missing");
@@ -81,7 +82,7 @@ try {
     check(await page.getByLabel(translate("auth.name")).isVisible(), "a mismatched sign-up must stay on the form");
     await confirm.fill("a-secure-password");
     check(await page.getByText(translate("auth.passwordMismatch")).count() === 0, "mismatch message must clear when passwords match");
-    await page.screenshot({ path: `${shots}/sign-up-${size}.png` });
+    await saveShot(page, { path: `${shots}/sign-up-${size}.png` });
     await context.close();
   }
 
@@ -94,7 +95,7 @@ try {
     await page.getByRole("button", { name: translate("auth.signUp", "th"), exact: true }).click();
     await page.getByText("สร้างบัญชี Weft ของคุณ").waitFor();
     check(await page.getByRole("button", { name: "สร้างบัญชี" }).isVisible(), "Thai submit button missing");
-    await page.screenshot({ path: `${shots}/sign-up-th-1440.png` });
+    await saveShot(page, { path: `${shots}/sign-up-th-1440.png` });
     await context.close();
   }
 
@@ -105,10 +106,10 @@ try {
   await admin.page.getByRole("heading", { name: translate("workspace.firstTitle") }).waitFor();
   check(await admin.page.getByText(translate("auth.signOut")).isVisible(), "sign out action missing on onboarding");
   check(await noHorizontalScroll(admin.page), "first-workspace screen scrolls sideways at 1440");
-  await admin.page.screenshot({ path: `${shots}/create-workspace-1440.png` });
+  await saveShot(admin.page, { path: `${shots}/create-workspace-1440.png` });
   await admin.page.setViewportSize(sizes["390"]);
   check(await noHorizontalScroll(admin.page), "first-workspace screen scrolls sideways at 390");
-  await admin.page.screenshot({ path: `${shots}/create-workspace-390.png` });
+  await saveShot(admin.page, { path: `${shots}/create-workspace-390.png` });
   await admin.page.setViewportSize(sizes["1440"]);
   await admin.page.getByLabel(translate("workspace.name")).fill("E2E team");
   await admin.page.getByLabel(translate("workspace.slug")).fill(slug);
@@ -132,7 +133,7 @@ try {
     await invitee.page.goto(link);
     await invitee.page.getByRole("status").getByText(translate("invite.signInToJoin")).waitFor();
     check(await noHorizontalScroll(invitee.page), `invite sign-up scrolls sideways at ${size}`);
-    await invitee.page.screenshot({ path: `${shots}/invite-sign-up-${size}.png` });
+    await saveShot(invitee.page, { path: `${shots}/invite-sign-up-${size}.png` });
     if (size === "1440") {
       await signUp(invitee.page, "Invited Person", `${slug}-invited@example.test`);
       await invitee.page.waitForURL(`${web}/${slug}`);
@@ -151,7 +152,7 @@ try {
     await page.getByRole("heading", { name: translate("projects.title") }).waitFor();
     await page.goto(`${web}/invite/not-a-real-token`);
     await page.getByRole("alert").getByText(translate("invite.failed")).waitFor();
-    await page.screenshot({ path: `${shots}/invite-invalid-1440.png` });
+    await saveShot(page, { path: `${shots}/invite-invalid-1440.png` });
     await context.close();
   }
 

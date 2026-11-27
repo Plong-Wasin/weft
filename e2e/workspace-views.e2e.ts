@@ -5,6 +5,7 @@ import { like } from "drizzle-orm";
 import { mkdirSync } from "node:fs";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3119);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5219);
@@ -54,7 +55,7 @@ try {
     await desktopHeader.getByRole("button", { name: translate(label) }).waitFor();
   }
   check(await desktopHeader.evaluate((element) => element.scrollWidth <= element.clientWidth), "desktop Workspace View header overflows horizontally");
-  await page.screenshot({ path: `${shots}/workspace-views-1440.png` });
+  await saveShot(page, { path: `${shots}/workspace-views-1440.png` });
 
   // Assigned shows only my item; Created shows all three (I made them); the switcher lists every built-in.
   await page.getByRole("button", { name: translate("workspaceViews.switch") }).click();
@@ -132,9 +133,9 @@ try {
   for (let press = 0; press < 3; press += 1) await page.keyboard.press("ArrowRight");
   check(await sheet.evaluate((element) => element.scrollLeft > 0), "keyboard focus could not horizontally scroll the Workspace View table");
   await sheet.evaluate((element) => { element.scrollLeft = 0; (element as HTMLElement).blur(); });
-  await page.screenshot({ path: `${shots}/workspace-views-390.png` });
+  await saveShot(page, { path: `${shots}/workspace-views-390.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.screenshot({ path: `${shots}/workspace-views-1440.png` });
+  await saveShot(page, { path: `${shots}/workspace-views-1440.png` });
   console.log("e2e workspace-views: ok");
   await browser.close();
 } catch (error) {

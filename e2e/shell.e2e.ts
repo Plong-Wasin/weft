@@ -6,6 +6,7 @@ import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { saveShot } from "./shots";
 // AI is on only with a provider key: a placeholder keeps the AI rail entry shown here, and no model is called.
 Bun.env.OPENAI_API_KEY ??= "sk-e2e-placeholder-no-call";
 
@@ -64,7 +65,7 @@ try {
     check(await page.getByRole("button", { name: translate("shell.expandSidebar") }).getAttribute("aria-expanded") === "false", `${width}px should start with the secondary sidebar collapsed`);
     check(await page.locator("#desktop-sidebar").evaluate((element) => element.parentElement?.getBoundingClientRect().width === 0), `${width}px should reserve no width for the collapsed sidebar`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${width}px collapsed shell overflows horizontally`);
-    await page.screenshot({ path: `${shots}/shell-${width}-auto-collapsed.png` });
+    await saveShot(page, { path: `${shots}/shell-${width}-auto-collapsed.png` });
   };
   const assertPageHeaderGeometry = async () => {
     check(await page.getByTestId("page-header").evaluate((header) => {
@@ -108,21 +109,21 @@ try {
     await assertFirstTextIsNotCovered(page.getByRole("link", { name: translate("projects.back"), exact: true }), `${prefix} breadcrumb`);
     check(await page.getByRole("navigation", { name: translate("shell.rail") }).isVisible(), `${prefix} expanded: app rail is missing`);
     await sidebarTransitionsDone(); // a screenshot taken mid-slide covers the rail labels
-    await page.screenshot({ path: `${shots}/${prefix}-expanded.png` });
+    await saveShot(page, { path: `${shots}/${prefix}-expanded.png` });
     await page.getByRole("button", { name: translate("shell.collapseSidebar") }).click();
     await sidebarTransitionsDone();
     await assertOneSidebarToggle(`${prefix} collapsed`);
     await assertFirstTextIsNotCovered(page.getByRole("link", { name: translate("projects.back"), exact: true }), `${prefix} collapsed breadcrumb`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${prefix}: collapsed layout overflows horizontally`);
     await assertRailHitTest(`${prefix} collapsed`);
-    await page.screenshot({ path: `${shots}/${prefix}-collapsed.png` });
+    await saveShot(page, { path: `${shots}/${prefix}-collapsed.png` });
     await page.mouse.move(65, 400);
     await waitForSidebarPeek(true, `${prefix} peek`);
     await assertOneSidebarToggle(`${prefix} peeking`);
     await assertFirstTextIsNotCovered(page.getByRole("link", { name: translate("nav.home"), exact: true }), `${prefix} peek menu item`);
     await assertRailHitTest(`${prefix} peek`);
     check((await page.getByRole("navigation", { name: translate("shell.sidebar") }).boundingBox())!.x >= 64, `${prefix}: edge peek did not open`);
-    await page.screenshot({ path: `${shots}/${prefix}-peek.png` });
+    await saveShot(page, { path: `${shots}/${prefix}-peek.png` });
     await page.mouse.move(600, 400);
     await waitForSidebarPeek(false, `${prefix} peek close`);
     check((await page.getByRole("navigation", { name: translate("shell.sidebar") }).boundingBox())!.x < 0, `${prefix}: edge peek did not close`);
@@ -184,7 +185,7 @@ try {
   check(await desktopSwitcher.evaluate((element) => element === document.activeElement), "workspace switcher is not in the desktop Tab order");
   await page.keyboard.press("Enter");
   await page.getByRole("menuitemradio", { name: "E2E team" }).waitFor();
-  await page.screenshot({ path: `${shots}/workspace-switcher-1440.png` });
+  await saveShot(page, { path: `${shots}/workspace-switcher-1440.png` });
   await page.keyboard.press("Escape");
   await page.getByRole("link", { name: translate("topbar.notifications") }).waitFor();
   const searchBox = await page.getByRole("searchbox", { name: translate("search.label") }).boundingBox();
@@ -192,7 +193,7 @@ try {
   await page.getByRole("button", { name: translate("profile.menu") }).click();
   await page.getByRole("menuitemradio", { name: translate("theme.light") }).click();
   await page.keyboard.press("Escape");
-  await page.screenshot({ path: `${shots}/shell-1440-light.png` });
+  await saveShot(page, { path: `${shots}/shell-1440-light.png` });
   console.log("shell ok: rail, sidebar, top bar");
 
   // Desktop sidebar collapses without moving the app rail and persists per browser.
@@ -212,18 +213,18 @@ try {
   check((await sidebar.boundingBox())!.x >= 64, "keyboard focus on the labelled top-bar toggle did not peek the sidebar");
   await assertOneSidebarToggle("1440 focus peek");
   await assertFirstTextIsNotCovered(sidebar.getByRole("link", { name: translate("nav.home"), exact: true }), "1440 focus peek menu item");
-  await page.screenshot({ path: `${shots}/shell-1440-focus-peek-light.png` });
+  await saveShot(page, { path: `${shots}/shell-1440-focus-peek-light.png` });
   await focusSearchInput.focus();
   await waitForSidebarPeek(false, "1440 focus peek closed");
   check((await sidebar.boundingBox())!.x < 0, "sidebar focus peek stayed open after focus left");
-  await page.screenshot({ path: `${shots}/shell-1440-collapsed-light.png` });
+  await saveShot(page, { path: `${shots}/shell-1440-collapsed-light.png` });
   await page.mouse.move(65, 400);
   await waitForSidebarPeek(true, "1440 pointer peek");
   await assertOneSidebarToggle("1440 pointer peek");
   await assertFirstTextIsNotCovered(sidebar.getByRole("link", { name: translate("nav.home"), exact: true }), "1440 pointer peek menu item");
   await assertRailHitTest("1440 pointer peek");
   check((await sidebar.boundingBox())!.x >= 64, "edge hover did not peek the sidebar");
-  await page.screenshot({ path: `${shots}/shell-1440-peek-light.png` });
+  await saveShot(page, { path: `${shots}/shell-1440-peek-light.png` });
   await page.mouse.move(600, 400);
   await waitForSidebarPeek(false, "1440 pointer peek closed");
   check((await sidebar.boundingBox())!.x < 0, "sidebar peek stayed open after the pointer left");
@@ -312,7 +313,7 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: translate("workspace.switch") }).click();
   await page.getByRole("menuitemradio", { name: "E2E team" }).waitFor();
-  await page.screenshot({ path: `${shots}/workspace-switcher-390.png` });
+  await saveShot(page, { path: `${shots}/workspace-switcher-390.png` });
   await page.getByRole("menuitem", { name: translate("workspace.new") }).click();
   const phoneCreateDialog = page.getByRole("dialog", { name: translate("workspace.new") });
   await phoneCreateDialog.waitFor();
@@ -354,7 +355,7 @@ try {
   await page.getByRole("link", { name: translate("topbar.notifications") }).click();
   await page.waitForURL(`${web}/${slug}/notifications`);
   await page.getByRole("heading", { name: new RegExp(translate("inbox.title")) }).waitFor();
-  await page.screenshot({ path: `${shots}/page-header-inbox-1440-light.png` });
+  await saveShot(page, { path: `${shots}/page-header-inbox-1440-light.png` });
   console.log("shell ok: notifications");
 
   // Theme persists across reload; dark theme screenshot.
@@ -365,7 +366,7 @@ try {
   check(await page.evaluate(() => document.documentElement.dataset.theme) === "dark", "dark theme not applied");
   await page.goto(`${web}/${slug}/notifications`);
   await page.getByRole("heading", { name: new RegExp(translate("inbox.title")) }).waitFor();
-  await page.screenshot({ path: `${shots}/page-header-inbox-1440-dark.png` });
+  await saveShot(page, { path: `${shots}/page-header-inbox-1440-dark.png` });
   await page.goto(`${web}/${slug}/projects/MOB/issues`);
   await page.getByRole("link", { name: /Alpha shell item/ }).waitFor();
   await captureDesktopSidebarStates("shell-1440-dark");
@@ -375,7 +376,7 @@ try {
   await page.getByRole("button", { name: translate("profile.menu") }).click();
   await page.getByRole("menuitemradio", { name: translate("theme.dark"), checked: true }).waitFor();
   await page.keyboard.press("Escape");
-  await page.screenshot({ path: `${shots}/shell-1440-dark.png` });
+  await saveShot(page, { path: `${shots}/shell-1440-dark.png` });
   await page.getByRole("button", { name: translate("profile.menu") }).click();
   await page.getByRole("menuitemradio", { name: translate("theme.system") }).click();
   await page.keyboard.press("Escape");
@@ -402,7 +403,7 @@ try {
     await page.reload();
     await page.getByRole("link", { name: /Alpha shell item/ }).waitFor();
     await assertCompactSidebar(viewport.width);
-    await page.screenshot({ path: `${shots}/shell-${viewport.name}-light.png` });
+    await saveShot(page, { path: `${shots}/shell-${viewport.name}-light.png` });
   }
 
   // Tablet width keeps the workspace switcher directly beside the drawer button.
@@ -415,22 +416,22 @@ try {
   check(await page.getByRole("link", { name: translate("app.title"), exact: true }).count() === 0, "brand link remains in the tablet shell");
   check(await page.getByRole("button", { name: translate("workspace.switch") }).isVisible(), "workspace switcher is missing at tablet width");
   check((await page.getByRole("button", { name: translate("workspace.switch") }).innerText()).includes("E2E team"), "tablet workspace switcher does not identify the current workspace");
-  await page.screenshot({ path: `${shots}/shell-768-light-expanded.png` });
+  await saveShot(page, { path: `${shots}/shell-768-light-expanded.png` });
   await page.getByRole("button", { name: translate("shell.collapseSidebar") }).click();
   await sidebarTransitionsDone();
   check(await page.locator("#desktop-sidebar").evaluate((element) => element.parentElement?.getBoundingClientRect().width === 0), "768px manual collapse did not release sidebar width");
-  await page.screenshot({ path: `${shots}/shell-768-light-collapsed.png` });
+  await saveShot(page, { path: `${shots}/shell-768-light-collapsed.png` });
   await page.getByRole("button", { name: translate("shell.expandSidebar") }).click();
   await sidebarTransitionsDone();
-  await page.screenshot({ path: `${shots}/shell-768-tablet.png` });
+  await saveShot(page, { path: `${shots}/shell-768-tablet.png` });
   check(await page.getByRole("button", { name: translate("shell.collapseSidebar") }).isVisible(), "desktop sidebar toggle missing at tablet breakpoint");
   await page.getByRole("button", { name: translate("profile.menu") }).click();
   await page.getByRole("menuitemradio", { name: translate("theme.dark") }).click();
   await page.keyboard.press("Escape");
-  await page.screenshot({ path: `${shots}/shell-768-dark-expanded.png` });
+  await saveShot(page, { path: `${shots}/shell-768-dark-expanded.png` });
   await page.getByRole("button", { name: translate("shell.collapseSidebar") }).click();
   await sidebarTransitionsDone();
-  await page.screenshot({ path: `${shots}/shell-768-dark-collapsed.png` });
+  await saveShot(page, { path: `${shots}/shell-768-dark-collapsed.png` });
   await page.getByRole("button", { name: translate("shell.expandSidebar") }).click();
   await sidebarTransitionsDone();
   await page.getByRole("button", { name: translate("profile.menu") }).click();
@@ -453,7 +454,7 @@ try {
   await page.keyboard.press("Enter");
   await page.getByRole("menuitemradio", { name: "E2E team" }).waitFor();
   await page.keyboard.press("Escape");
-  await page.screenshot({ path: `${shots}/shell-390-closed.png` });
+  await saveShot(page, { path: `${shots}/shell-390-closed.png` });
   await page.getByRole("button", { name: translate("shell.openMenu") }).click();
   await page.getByRole("dialog", { name: translate("shell.sidebar") }).waitFor();
   await page.getByRole("navigation", { name: `${translate("projectNav.label")} MOB` }).getByRole("link", { name: translate("projectNav.views") }).waitFor();
@@ -471,7 +472,7 @@ try {
   const collapsedPhoneSecondProjectToggle = page.getByRole("dialog", { name: translate("shell.sidebar") }).getByRole("button", { name: `${translate("sidebar.toggleProject")}: Second project` });
   await collapsedPhoneSecondProjectToggle.waitFor();
   check(await collapsedPhoneSecondProjectToggle.getAttribute("aria-expanded") === "false", "phone drawer did not preserve collapsed project menu state on reload");
-  await page.screenshot({ path: `${shots}/shell-390-drawer.png` });
+  await saveShot(page, { path: `${shots}/shell-390-drawer.png` });
   await page.getByRole("navigation", { name: `${translate("projectNav.label")} MOB` }).getByRole("link", { name: translate("projectNav.views") }).click();
   await page.waitForURL(`${web}/${slug}/projects/MOB/views`);
   await page.getByRole("dialog", { name: translate("shell.sidebar") }).waitFor({ state: "detached" });
@@ -479,10 +480,10 @@ try {
   await page.getByRole("button", { name: translate("profile.menu") }).click();
   await page.getByRole("menuitemradio", { name: translate("theme.dark") }).click();
   await page.keyboard.press("Escape");
-  await page.screenshot({ path: `${shots}/shell-390-dark-closed.png` });
+  await saveShot(page, { path: `${shots}/shell-390-dark-closed.png` });
   await page.getByRole("button", { name: translate("shell.openMenu") }).click();
   await page.getByRole("dialog", { name: translate("shell.sidebar") }).waitFor();
-  await page.screenshot({ path: `${shots}/shell-390-dark-drawer.png` });
+  await saveShot(page, { path: `${shots}/shell-390-dark-drawer.png` });
   await page.getByRole("button", { name: translate("shell.closeMenu") }).last().click();
   await page.getByRole("dialog", { name: translate("shell.sidebar") }).waitFor({ state: "detached" });
   console.log("shell ok: drawer at 390px");

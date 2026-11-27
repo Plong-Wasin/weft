@@ -8,6 +8,7 @@ import { like } from "drizzle-orm";
 import { createDatabase, projectMembers, users, workspaceMembers, workspaces } from "../packages/db/src";
 import { createAgentActions } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31430);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52430);
@@ -102,7 +103,7 @@ try {
       await searchField.waitFor();
       const pageWidth = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth }));
       check(pageWidth.scrollWidth <= pageWidth.innerWidth, `horizontal page scroll at ${width}x${height} ${theme}: ${JSON.stringify(pageWidth)}`);
-      await page.screenshot({ path: join(acceptanceShots, `property-popover-${width}x${height}-${theme}.png`) });
+      await saveShot(page, { path: join(acceptanceShots, `property-popover-${width}x${height}-${theme}.png`) });
       await page.keyboard.press("Escape");
       await panel.waitFor({ state: "detached" });
     }
@@ -215,7 +216,7 @@ try {
   await searchField.fill("Charlie");
   check(await panel.getByRole("menuitemcheckbox", { name: "Charlie", exact: true }).getAttribute("aria-checked") === "true", "filtering a selected label should keep it selected");
   mkdirSync("/home/plong/workspace/weft/.local/continuous-improvements/labels-keyboard", { recursive: true });
-  await page.screenshot({ path: "/home/plong/workspace/weft/.local/continuous-improvements/labels-keyboard/labels-1440.png", fullPage: true });
+  await saveShot(page, { path: "/home/plong/workspace/weft/.local/continuous-improvements/labels-keyboard/labels-1440.png", fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${web}/${slug}/projects/POP/intake`);
   await page.getByRole("button", { name: t("intake.add"), exact: true }).click();
@@ -223,7 +224,7 @@ try {
   await intakeDialog.getByRole("button", { name: new RegExp(`^${t("workItems.labels")}:`) }).click();
   await page.getByRole("searchbox", { name: t("picker.search"), exact: true }).fill("Long-tail 243");
   await panel.getByRole("menuitemcheckbox", { name: /Long-tail 243/ }).waitFor();
-  await page.screenshot({ path: "/home/plong/workspace/weft/.local/continuous-improvements/labels-keyboard/labels-390.png", fullPage: false });
+  await saveShot(page, { path: "/home/plong/workspace/weft/.local/continuous-improvements/labels-keyboard/labels-390.png", fullPage: false });
   await page.keyboard.press("Escape");
 
   const touchContext = await newContext(browser, { viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
@@ -254,7 +255,7 @@ try {
   const targetSizes = [touchTargets.trigger, touchTargets.search, touchTargets.option];
   check(targetSizes.every((target) => target !== null && target.width >= 44 && target.height >= 44), `a property picker touch target is under 44px: ${JSON.stringify(touchTargets)}`);
   check(touchTargets.scrollWidth <= touchTargets.innerWidth, `horizontal page scroll in touch property picker: ${JSON.stringify(touchTargets)}`);
-  await touchPage.screenshot({ path: join(acceptanceShots, "property-popover-844x390-touch-light.png") });
+  await saveShot(touchPage, { path: join(acceptanceShots, "property-popover-844x390-touch-light.png") });
   await touchPage.keyboard.press("Escape");
   await touchContext.close();
   console.log("e2e picker-search: search above six options, focus, filter, empty message, arrows, Enter, Escape, Assignee People/Agents, disabled Agent reason and no field on Priority ok");

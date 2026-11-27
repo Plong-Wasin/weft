@@ -4,6 +4,7 @@ import { like } from "drizzle-orm";
 import { mkdir } from "node:fs/promises";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31161);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52161);
@@ -47,8 +48,8 @@ try {
   await page.locator("body").click({ position: { x: 20, y: 110 } });
   await page.getByTestId("wiki-bubble-menu").waitFor({ state: "hidden" });
   const screenshotDir = "/home/plong/workspace/weft/.local/ai-ux-follow-up/09"; await mkdir(screenshotDir, { recursive: true });
-  await page.setViewportSize({ width: 1440, height: 900 }); await page.screenshot({ path: `${screenshotDir}/wiki-image-controls-desktop.png`, fullPage: true });
-  await page.setViewportSize({ width: 390, height: 844 }); await page.screenshot({ path: `${screenshotDir}/wiki-image-controls-mobile.png`, fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 900 }); await saveShot(page, { path: `${screenshotDir}/wiki-image-controls-desktop.png`, fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 }); await saveShot(page, { path: `${screenshotDir}/wiki-image-controls-mobile.png`, fullPage: true });
   await browser.close(); console.log("wiki image controls: touch, keyboard, alignment, resize, viewer dismissal, and responsive bounds passed");
 } catch (error) { failed = true; console.error(error); }
 finally { for (const server of servers) server.kill(); await db.delete(workspaces).where(like(workspaces.slug, "e2e-%")); await db.delete(users).where(like(users.email, "e2e-%@example.test")); await client.end(); }

@@ -4,6 +4,7 @@ import type { Browser } from "playwright";
 import { eq } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31163);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52163);
@@ -76,7 +77,7 @@ try {
   await editor.getByText("Quote block", { exact: true }).hover();
   await blockHandle.waitFor({ timeout: 3_000 }).catch(async () => {
     console.log("block handle diagnostic", await page.evaluate(() => ({ blocks: Array.from(document.querySelectorAll('[data-testid="wiki-editor"] .ProseMirror > *')).map((node) => ({ tag: node.tagName, text: node.textContent, rect: node.getBoundingClientRect().toJSON() })), handles: Array.from(document.querySelectorAll('[data-testid="wiki-block-handle"]')).map((node) => node.outerHTML) })));
-    await page.screenshot({ path: "/tmp/weft-block-handle-failure.png" });
+    await saveShot(page, { path: "/tmp/weft-block-handle-failure.png" }, { failed: true });
     throw new Error("hover reveals a handle beside Quote blocks");
   });
   check(await blockHandle.isVisible(), "hovered block handle is not visible");

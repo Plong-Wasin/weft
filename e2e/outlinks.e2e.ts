@@ -6,6 +6,7 @@ import { createDatabase } from "../packages/db/src";
 import { createMemberFactory } from "../packages/db/src/test-helpers";
 import { createProjectActions, createWikiActions, createWorkItemActions } from "../packages/actions/src";
 import { translate, type Locale } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31267);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52267);
@@ -104,7 +105,7 @@ try {
         await panel.scrollIntoViewIfNeeded();
         await page.waitForTimeout(250);
         const path = `${captureDir}/06-${targetPage.name}-${width}-${language}.png`;
-        await page.screenshot({ path, fullPage: true });
+        await saveShot(page, { path, fullPage: true });
         console.log(path);
       }
     }

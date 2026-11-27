@@ -7,6 +7,7 @@ import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { resources, translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31037);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52037);
@@ -100,7 +101,7 @@ try {
   await palette().waitFor({ state: "hidden" });
   check(!(await palette().isVisible()), "the palette stayed visible after Enter");
   console.log("palette ok: search by title and key, keyboard selection opens the work item");
-  await page.screenshot({ path: `${shots}/01-search-result-opened.png` });
+  await saveShot(page, { path: `${shots}/01-search-result-opened.png` });
 
   // A project Page found by the palette opens under its project.
   await openWithKeys();
@@ -152,7 +153,7 @@ try {
   const rows = await page.locator("tbody tr").allInnerTexts();
   check(rows.some((row) => row.includes("Ctrl K")), `the shortcuts page does not list Ctrl K; rows: ${JSON.stringify(rows)}`);
   check(rows.some((row) => row.includes("Esc")), "the shortcuts page does not list Esc");
-  await page.screenshot({ path: `${shots}/02-shortcuts-page-dark.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/02-shortcuts-page-dark.png`, fullPage: true });
   console.log("palette ok: settings and shortcuts page reachable from the palette");
 
   // Phone width: the palette fits without horizontal scroll and stays usable.
@@ -166,7 +167,7 @@ try {
   await page.getByRole("option", { name: /Alpha palette item/ }).waitFor();
   const overflow = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, iw: window.innerWidth, wide: [...document.querySelectorAll("body *")].filter((el) => el.getBoundingClientRect().right > window.innerWidth + 1).slice(0, 8).map((el) => `${el.tagName}.${String(el.className).slice(0, 60)} right=${Math.round(el.getBoundingClientRect().right)}`) }));
   check(overflow.sw <= overflow.iw, `horizontal page scroll at 390px with the palette open: ${JSON.stringify(overflow)}`);
-  await page.screenshot({ path: `${shots}/03-palette-phone-light.png` });
+  await saveShot(page, { path: `${shots}/03-palette-phone-light.png` });
   await page.keyboard.press("Escape");
   console.log("palette ok: phone width, opened from the drawer");
 
@@ -187,7 +188,7 @@ try {
       await page.getByRole("option", { name: /Alpha palette item/ }).waitFor();
       const pageWidth = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, innerWidth: window.innerWidth }));
       check(pageWidth.scrollWidth <= pageWidth.innerWidth, `horizontal page scroll at ${width}x${height} ${theme}: ${JSON.stringify(pageWidth)}`);
-      await page.screenshot({ path: join(acceptanceShots, `command-palette-${width}x${height}-${theme}.png`) });
+      await saveShot(page, { path: join(acceptanceShots, `command-palette-${width}x${height}-${theme}.png`) });
       await page.keyboard.press("Escape");
       await palette().waitFor({ state: "detached" });
     }
@@ -223,7 +224,7 @@ try {
   const targetSizes = [touchTargets.trigger, touchTargets.close, touchTargets.input, touchTargets.option];
   check(targetSizes.every((target) => target !== null && target.width >= 44 && target.height >= 44), `a command palette touch target is under 44px: ${JSON.stringify(touchTargets)}`);
   check(touchTargets.scrollWidth <= touchTargets.innerWidth, `horizontal page scroll with touch palette: ${JSON.stringify(touchTargets)}`);
-  await touchPage.screenshot({ path: join(acceptanceShots, "command-palette-844x390-touch-light.png") });
+  await saveShot(touchPage, { path: join(acceptanceShots, "command-palette-844x390-touch-light.png") });
   await touchPage.keyboard.press("Escape");
   await touchContext.close();
 
@@ -245,10 +246,10 @@ try {
         await page.getByRole("button", { name: th["palette.menuLabel"] }).click();
       }
       await page.getByRole("dialog", { name: th["palette.title"] }).waitFor();
-      await page.screenshot({ path: `${shots}/th-${width}-${theme}-empty.png` });
+      await saveShot(page, { path: `${shots}/th-${width}-${theme}-empty.png` });
       await thaiInput().fill("alpha");
       await page.getByRole("option", { name: /Alpha palette project page/ }).waitFor();
-      await page.screenshot({ path: `${shots}/th-${width}-${theme}-search.png` });
+      await saveShot(page, { path: `${shots}/th-${width}-${theme}-search.png` });
       check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `horizontal page scroll in Thai at ${width}px ${theme}`);
       await page.keyboard.press("Escape");
       await page.getByRole("dialog", { name: th["palette.title"] }).waitFor({ state: "detached" });
@@ -256,7 +257,7 @@ try {
   }
   await page.goto(`${web}/account/shortcuts`);
   await page.locator("tbody tr").first().waitFor();
-  await page.screenshot({ path: `${shots}/th-shortcuts-1440-dark.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/th-shortcuts-1440-dark.png`, fullPage: true });
   console.log("palette ok: Thai palette and shortcuts page at 1440 and 390, light and dark");
 
   console.log("e2e command-palette: ok");

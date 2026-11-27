@@ -8,6 +8,7 @@ import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
 import { seedWeft, WeftClient } from "../tools/visual/weft-client";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3117);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5217);
@@ -107,7 +108,7 @@ try {
       const gap = language.y - (card.y + card.height);
       check(gap >= 0 && gap <= 32, `language and theme sit under the card, gap ${gap}`);
       if (theme === "dark") check(await background(page, "[data-slot=card]") !== await background(page, "main >> xpath=.."), "dark auth card separates from the page");
-      await page.screenshot({ path: `${shots}/sign-in-${size}-${theme}.png` });
+      await saveShot(page, { path: `${shots}/sign-in-${size}-${theme}.png` });
       await context.close();
     }
   }
@@ -127,7 +128,7 @@ try {
       const fill = await background(page, selector);
       check(fill !== transparent && fill !== body, `${selector} paints the sidebar surface, got ${fill}`);
     }
-    await page.screenshot({ path: `${shots}/settings-1440-dark.png` });
+    await saveShot(page, { path: `${shots}/settings-1440-dark.png` });
     await context.close();
   }
 
@@ -156,7 +157,7 @@ try {
         await more.focus();
       }
     }
-    await board.page.screenshot({ path: `${shots}/board-overflow.png` });
+    await saveShot(board.page, { path: `${shots}/board-overflow.png` });
     await board.context.close();
     const touchBoard = await open(browser, "390", "light", "en", client);
     await touchBoard.page.goto(`${web}/${slug}/projects/${seed.key}/issues?layout=board`);
@@ -185,7 +186,7 @@ try {
       await title.waitFor();
       const lines = await title.evaluate((element) => Math.round(element.getBoundingClientRect().height / parseFloat(getComputedStyle(element).lineHeight)));
       check(lines === 2, `long title shows two lines at ${viewport.width}, got ${lines}`);
-      await list.page.screenshot({ path: `${shots}/long-title-${viewport.width}.png` });
+      await saveShot(list.page, { path: `${shots}/long-title-${viewport.width}.png` });
       await list.context.close();
     }
   }
@@ -206,7 +207,7 @@ try {
       await page.waitForTimeout(500);
       const clipped = await clippedThai(page);
       reviewCheck(clipped.length === 0, `Thai clipped on ${name} at ${size}:\n${clipped.join("\n")}`);
-      await page.screenshot({ path: `${shots}/th-${name}-${size}.png` });
+      await saveShot(page, { path: `${shots}/th-${name}-${size}.png` });
     }
     const untouched = await page.evaluate(() => {
       const probe = document.body.appendChild(document.createElement("span"));

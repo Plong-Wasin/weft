@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { type Browser, type Page } from "playwright";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5217);
 const api = `http://localhost:${Bun.env.E2E_API_PORT ?? 3217}`;
@@ -28,16 +29,16 @@ try {
   await unchanged.goto(web);
   await unchanged.getByLabel(translate("auth.email")).waitFor();
   if (await unchanged.getByRole("button", { name: translate("auth.microsoftButton"), exact: true }).count()) throw new Error("Microsoft button must be absent when unconfigured");
-  await unchanged.screenshot({ path: `${screenshotDir}/unconfigured-1440.png` });
+  await saveShot(unchanged, { path: `${screenshotDir}/unconfigured-1440.png` });
   await unchanged.close();
 
   const company = await makePage(browser, { microsoftSignInEnabled: true, passwordSignInEnabled: false });
   await company.goto(web);
   await company.getByRole("button", { name: translate("auth.microsoftButton"), exact: true }).waitFor();
   if (await company.getByLabel(translate("auth.email")).count()) throw new Error("Password form must be hidden when password sign-in is disabled");
-  await company.screenshot({ path: `${screenshotDir}/microsoft-en-1440.png` });
+  await saveShot(company, { path: `${screenshotDir}/microsoft-en-1440.png` });
   await company.setViewportSize({ width: 390, height: 844 });
-  await company.screenshot({ path: `${screenshotDir}/microsoft-en-390.png` });
+  await saveShot(company, { path: `${screenshotDir}/microsoft-en-390.png` });
   await company.goto(`${web}/?error=MICROSOFT_WRONG_TENANT`);
   await company.getByRole("alert").getByText(translate("auth.microsoftWrongTenant")).waitFor();
   await company.getByRole("combobox", { name: translate("language.label") }).click();
@@ -45,7 +46,7 @@ try {
   await company.getByRole("button", { name: translate("auth.microsoftButton", "th"), exact: true }).waitFor();
   await company.goto(`${web}/?error=MICROSOFT_DOMAIN_NOT_ALLOWED`);
   await company.getByRole("alert").getByText(translate("auth.microsoftDomainNotAllowed", "th")).waitFor();
-  await company.screenshot({ path: `${screenshotDir}/microsoft-th-390.png` });
+  await saveShot(company, { path: `${screenshotDir}/microsoft-th-390.png` });
   await company.close();
 
   const invitee = await makePage(browser, { microsoftSignInEnabled: true, passwordSignInEnabled: false });
@@ -61,7 +62,7 @@ try {
   await socialResponse;
   if (socialRequest?.body.callbackURL !== `${web}/invite/company-invite-token`) throw new Error("Microsoft sign-in must return invitees to their invite URL");
   if (socialRequest?.invite !== "company-invite-token") throw new Error("Microsoft sign-in must send the invite token for the server-side signup gate");
-  await invitee.screenshot({ path: `${screenshotDir}/microsoft-invite-1440.png` });
+  await saveShot(invitee, { path: `${screenshotDir}/microsoft-invite-1440.png` });
   await invitee.close();
 
   console.log("e2e microsoft-sign-in: ok");

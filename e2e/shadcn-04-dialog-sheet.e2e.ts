@@ -3,6 +3,7 @@ import { launchBrowser, newContext, startApi, startWeb, waitFor } from "./harnes
 import { mkdirSync } from "node:fs";
 import { translate } from "../packages/shared/src";
 import { WeftClient, seedWeft } from "../tools/visual/weft-client";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 33140);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 35140);
@@ -41,7 +42,7 @@ try {
     if (await drawer.evaluate((element) => getComputedStyle(element).overflowY) !== "auto") throw new Error("Sheet does not scroll its content internally");
     for (const theme of ["light", "dark"] as const) {
       await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
-      await page.screenshot({ path: `${shots}/drawer-${width}x${height}-${theme}.png` });
+      await saveShot(page, { path: `${shots}/drawer-${width}x${height}-${theme}.png` });
     }
     await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
     await page.keyboard.press("Escape");

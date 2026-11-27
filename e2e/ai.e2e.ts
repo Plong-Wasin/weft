@@ -7,6 +7,7 @@ import { createDatabase, confirmations, users, workspaces } from "../packages/db
 import { createChatStore, createConfirmationStore, proposalResult } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { saveShot } from "./shots";
 // AI is on only with a provider key: a placeholder keeps the AI surfaces shown here, and no model is called.
 Bun.env.OPENAI_API_KEY ??= "sk-e2e-placeholder-no-call";
 
@@ -105,7 +106,7 @@ try {
   check(normalEnter.defaultPrevented, "normal submit Enter was not prevented");
   check(await composer.inputValue() === "submit with Enter", "normal Enter changed the draft before submission");
   await composer.fill("");
-  await page.screenshot({ path: `${shots}/ai-new-1440.png` });
+  await saveShot(page, { path: `${shots}/ai-new-1440.png` });
   await sidebar.getByRole("button", { name: translate("ai.search") }).click();
   await sidebar.getByRole("searchbox", { name: translate("ai.search") }).fill("release");
   check(await recents.getByRole("link").count() === 1, "search did not filter recents");
@@ -163,7 +164,7 @@ try {
   await page.getByText(translate("ai.awaiting")).waitFor();
   check(await page.getByRole("button", { name: new RegExp(`^${translate("ai.confirmSelected")}`) }).count() === 1, "expected exactly one batch Confirm");
   for (const label of [translate("ai.copy"), translate("ai.thumbUp"), translate("ai.thumbDown"), translate("ai.regenerate"), translate("ai.convert")]) await page.getByRole("button", { name: label }).waitFor();
-  await page.screenshot({ path: `${shots}/ai-confirm-1440.png` });
+  await saveShot(page, { path: `${shots}/ai-confirm-1440.png` });
   await page.getByRole("button", { name: new RegExp(`^${translate("ai.confirmSelected")}`) }).click();
   await page.getByRole("status").filter({ hasText: translate("ai.confirm.confirmed") }).first().waitFor();
   const listed = await call<Array<{ title: string }>>("list_work_items", { projectId: project.id });
@@ -203,7 +204,7 @@ try {
   await modeSelect.waitFor();
   check(JSON.stringify(await modeSelect.locator("option").allTextContents()) === JSON.stringify([translate("ai.mode.ask"), translate("ai.mode.build")]), "mode dropdown options are not Ask and Build");
   check(await modeSelect.inputValue() === "build", "default mode is not Build");
-  await page.screenshot({ path: `${modeShots}/mode-build-1440.png` });
+  await saveShot(page, { path: `${modeShots}/mode-build-1440.png` });
   await modeSelect.selectOption("ask");
   await page.getByRole("textbox", { name: translate("ai.message") }).fill("Create a work item called Nope");
   await page.getByRole("button", { name: translate("ai.send") }).click();
@@ -217,7 +218,7 @@ try {
   await page.goto(`${web}/${slug}/ai/${askChatId}`);
   await page.getByRole("combobox", { name: translate("ai.mode") }).waitFor();
   check(await page.getByRole("combobox", { name: translate("ai.mode") }).inputValue() === "ask", "reopened chat does not show Ask");
-  await page.screenshot({ path: `${modeShots}/mode-ask-reopened-1440.png` });
+  await saveShot(page, { path: `${modeShots}/mode-ask-reopened-1440.png` });
   await page.goto(`${web}/${slug}/ai/${batch.chat.id}`);
   await page.getByRole("combobox", { name: translate("ai.mode") }).waitFor();
   check(await page.getByRole("combobox", { name: translate("ai.mode") }).inputValue() === "build", "Build chat does not show Build");
@@ -228,11 +229,11 @@ try {
   await page.goto(`${web}/${slug}/ai/${batch.chat.id}`);
   await page.getByRole("textbox", { name: translate("ai.message") }).waitFor();
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "horizontal page scroll at 390px");
-  await page.screenshot({ path: `${shots}/ai-390.png` });
+  await saveShot(page, { path: `${shots}/ai-390.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`${web}/${slug}/ai/${batch.chat.id}`);
   await page.getByRole("textbox", { name: translate("ai.message") }).waitFor();
-  await page.screenshot({ path: `${shots}/ai-chat-1440.png` });
+  await saveShot(page, { path: `${shots}/ai-chat-1440.png` });
 
   console.log("e2e ai: ok");
   await browser.close();

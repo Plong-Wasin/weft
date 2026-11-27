@@ -8,6 +8,7 @@ import { createDatabase, projectMembers, projects as dbProjects, users, workspac
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
 import { chooseDate, expectDate as expectTriggerDate } from "../tools/choose-date";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3108);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5208);
@@ -319,14 +320,14 @@ try {
   await page.getByTestId("intake-MOB-4").waitFor();
   await page.getByTestId("intake-open-count").getByText("4", { exact: true }).waitFor();
   await assertRowsStable();
-  await page.screenshot({ path: `${shots}/intake-1440-light.png` });
+  await saveShot(page, { path: `${shots}/intake-1440-light.png` });
   const auditShots = "/tmp/weft-ui-audit/after/intake";
   await mkdir(auditShots, { recursive: true });
   const captureIntake = async (name: string, width: number, height: number, colorScheme: "light" | "dark") => {
     await page.setViewportSize({ width, height });
     await page.emulateMedia({ colorScheme });
     await page.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, colorScheme);
-    await page.screenshot({ path: `${auditShots}/${name}.png` });
+    await saveShot(page, { path: `${auditShots}/${name}.png` });
   };
   await captureIntake("1440x900-light-en", 1440, 900, "light");
   await captureIntake("1440x900-dark-en", 1440, 900, "dark");
@@ -419,9 +420,9 @@ try {
   await page.unroute("**/actions/list_intake_items");
   await detail.getByText(translate("intake.duplicateOf").replace("{id}", "MOB-1")).waitFor();
   check(await detail.getByRole("button", { name: translate("intake.accept"), exact: true }).count() === 0, "decided item still offers Accept");
-  await page.screenshot({ path: `${shots}/intake-closed-1440-light.png` });
+  await saveShot(page, { path: `${shots}/intake-closed-1440-light.png` });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: `${shots}/intake-390-light.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/intake-390-light.png`, fullPage: true });
   await page.setViewportSize({ width: 1440, height: 900 });
 
   const { client: inviteClient, db: inviteDb } = createDatabase();

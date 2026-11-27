@@ -8,6 +8,7 @@ import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3107);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5207);
@@ -264,11 +265,11 @@ try {
   await page.mouse.move(0, 0);
   check(await emptyCycleTrigger.isVisible(), "empty Cycle remains visible without hover (TableEmptyCellAlwaysVisible)");
   const cycleBeforeReveal = await emptyCycleTrigger.boundingBox();
-  await row.screenshot({ path: `${shots}/popover-scroll-row-before.png` });
+  await saveShot(row, { path: `${shots}/popover-scroll-row-before.png` });
   await row.hover();
   const cycleAfterHover = await emptyCycleTrigger.boundingBox();
   check(Boolean(cycleBeforeReveal && cycleAfterHover) && Math.abs(cycleBeforeReveal!.x - cycleAfterHover!.x) < 1 && Math.abs(cycleBeforeReveal!.y - cycleAfterHover!.y) < 1, `hovering a row does not move its always-visible Cycle control (QuietRowHoverMovesNothing): ${JSON.stringify({ before: cycleBeforeReveal, after: cycleAfterHover })}`);
-  await row.screenshot({ path: `${shots}/popover-scroll-row-after-hover.png` });
+  await saveShot(row, { path: `${shots}/popover-scroll-row-after-hover.png` });
   await page.mouse.move(0, 0);
   await row.getByRole("link", { name: "Alpha" }).focus();
   await page.keyboard.press("Tab");
@@ -285,7 +286,7 @@ try {
   });
   await page.mouse.move(0, 0);
   check(await emptyCycleTrigger.getAttribute("aria-expanded") === "true", "keyboard should open the empty Cycle picker");
-  await page.screenshot({ path: `${shots}/popover-scroll-keyboard-open.png` });
+  await saveShot(page, { path: `${shots}/popover-scroll-keyboard-open.png` });
   await page.keyboard.press("Escape");
   await keyboardCycleMenu.waitFor({ state: "detached" });
   check(await emptyCycleTrigger.evaluate((element) => document.activeElement === element), "Escape should return focus to the keyboard-open Cycle trigger");
@@ -420,7 +421,7 @@ try {
     for (const theme of ["light", "dark"] as const) {
       await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
       await mkdir(evidenceShots, { recursive: true });
-      await page.screenshot({ path: `${evidenceShots}/work-items-list-${width}-${theme}.png`, fullPage: true });
+      await saveShot(page, { path: `${evidenceShots}/work-items-list-${width}-${theme}.png`, fullPage: true });
     }
   }
   for (const group of ["state", "priority", "assignee", "none"] as const) {
@@ -438,7 +439,7 @@ try {
         }));
         if (width >= 768) check(metrics.length > 0 && metrics.every((row) => row.height <= 44) && Math.max(...metrics.map((row) => row.height)) - Math.min(...metrics.map((row) => row.height)) <= 1, `${group} grouping keeps equal rows at ${width}px within the 44px shadcn control size: ${JSON.stringify(metrics)}`);
         if (width === 390) check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth) && (metrics[0]?.titleWidth ?? 0) >= 140, `${group} grouping keeps a readable 390px title without horizontal page scroll: ${JSON.stringify(metrics[0])}`);
-        await page.screenshot({ path: `${evidenceShots}/list-${group}-${theme}-${width}.png`, fullPage: true });
+        await saveShot(page, { path: `${evidenceShots}/list-${group}-${theme}-${width}.png`, fullPage: true });
       }
     }
   }
@@ -450,7 +451,7 @@ try {
   const defaultAuthChip = page.getByTestId("row-MOB-1").getByRole("button", { name: `${translate("workItems.modules")}: Auth` });
   const authDefaultRing = await defaultAuthChip.evaluate((element) => ({ outline: getComputedStyle(element).outlineStyle, width: getComputedStyle(element).outlineWidth, focusVisible: element.matches(":focus-visible") }));
   check(!authDefaultRing.focusVisible && (authDefaultRing.outline === "none" || authDefaultRing.width === "0px"), `Auth row chip has no blue box by default: ${JSON.stringify(authDefaultRing)}`);
-  await page.screenshot({ path: `${shots}/list-1440-light.png` });
+  await saveShot(page, { path: `${shots}/list-1440-light.png` });
   check(await page.evaluate(() => (window as unknown as { __noReload?: boolean }).__noReload === true), "the page reloaded");
 
   // Enough rows and Cycle options to exercise both the list's scroll container and the picker's own scroll area.
@@ -470,7 +471,7 @@ try {
   const cycleMenuMetrics = await cycleMenu.evaluate((element) => ({ clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, optionCount: element.querySelectorAll("[role=menuitemradio]").length, maxHeight: getComputedStyle(element).maxHeight }));
   await cycleMenu.evaluate((element) => { element.scrollTop = 160; });
   check(await cycleMenu.evaluate((element) => element.scrollTop > 0), `Cycle options should scroll inside the menu: ${JSON.stringify(cycleMenuMetrics)}`);
-  await page.screenshot({ path: `${shots}/popover-scroll-desktop-open.png` });
+  await saveShot(page, { path: `${shots}/popover-scroll-desktop-open.png` });
   const [triggerBounds, mainBounds] = await Promise.all([cycleTrigger.boundingBox(), main.boundingBox()]);
   check(Boolean(triggerBounds && mainBounds), "Cycle trigger and main scroll container remain visible before scrolling");
   const anchorInset = triggerBounds!.y - mainBounds!.y;
@@ -503,7 +504,7 @@ try {
   await cycleMenu.waitFor({ state: "detached" });
   check(await main.evaluate((element) => element.scrollTop > 0), "dismissing an offscreen picker should not scroll its trigger back into view");
   await main.evaluate((element) => { element.scrollTop = 0; });
-  await page.screenshot({ path: `${shots}/list-1440-edited.png` });
+  await saveShot(page, { path: `${shots}/list-1440-edited.png` });
 
   // The edits are real: the Actions stored them (reload and read back through the API).
   await page.reload();
@@ -691,7 +692,7 @@ try {
     await mobilePage.goto(mobileListUrl);
     await mobilePage.getByTestId("row-MOB-1").getByRole("button", { name: `${translate("workItems.cycle")}: Sprint 17` }).waitFor();
     await assertToolbarReadable(`390px ${theme} after reload`);
-    await mobilePage.screenshot({ path: `${evidenceShots}/work-items-list-touch-390-${theme}.png`, fullPage: true });
+    await saveShot(mobilePage, { path: `${evidenceShots}/work-items-list-touch-390-${theme}.png`, fullPage: true });
   }
   // The theme picker switches data-theme at runtime (theme.ts applyTheme); the same toolbar must stay readable after that switch too.
   for (const theme of ["light", "dark"] as const) {
@@ -882,7 +883,7 @@ try {
     await desktopSitePage.goto(mobileListUrl);
     await desktopSitePage.getByTestId("row-MOB-1").getByRole("link", { name: "Alpha" }).waitFor();
     await assertTouchList(desktopSitePage, `980px desktop-site touch ${theme}`);
-    await desktopSitePage.screenshot({ path: `${evidenceShots}/work-items-list-touch-desktop-site-980-${theme}.png` });
+    await saveShot(desktopSitePage, { path: `${evidenceShots}/work-items-list-touch-desktop-site-980-${theme}.png` });
   }
   await desktopSiteContext.close();
   for (const [width, height] of [[390, 844], [844, 390]] as const) {
@@ -911,13 +912,13 @@ try {
   await mobileCycleMenu.getByRole("menuitemradio", { name: "Sprint 17" }).waitFor();
   const mobileMenuBounds = await mobileCycleMenu.boundingBox();
   check(Boolean(mobileMenuBounds && mobileMenuBounds.x >= 0 && mobileMenuBounds.x + mobileMenuBounds.width <= 390), "Cycle picker should stay within the phone viewport");
-  await mobilePage.screenshot({ path: `${shots}/popover-scroll-mobile-open.png` });
+  await saveShot(mobilePage, { path: `${shots}/popover-scroll-mobile-open.png` });
   const mobileMain = mobilePage.locator("#main-content");
   await mobileMain.evaluate((element) => { element.scrollTop = element.scrollHeight; });
   await mobileCycleMenu.waitFor({ state: "detached" });
   check(await mobileMain.evaluate((element) => element.scrollTop > 0), "phone scrolling should dismiss the picker without restoring its offscreen trigger");
   await mobileContext.close();
-  await page.screenshot({ path: `${shots}/list-390-light.png` });
+  await saveShot(page, { path: `${shots}/list-390-light.png` });
   const phoneView = page.getByRole("combobox", { name: translate("layout.switch") });
   for (const layout of ["list", "board", "spreadsheet", "calendar", "gantt"] as const) {
     check(await phoneView.getByRole("option", { name: translate(`layout.${layout}`) }).count() === 1, `${layout} has a named option on a phone`);
@@ -933,7 +934,7 @@ try {
   await phoneCard.getByText(translate("workItems.noDates"), { exact: true }).waitFor();
   const boardPriority = phoneCard.getByRole("button", { name: new RegExp(`^${translate("workItems.priority")}:`) });
   check(await boardPriority.evaluate((element) => getComputedStyle(element).borderTopWidth === "1px"), "board card Priority chip retains its outlined border (BoardCardOutlinedChipStillBordered)");
-  await page.screenshot({ path: `${shots}/board-390-light.png` });
+  await saveShot(page, { path: `${shots}/board-390-light.png` });
   await page.getByRole("button", { name: translate("layout.addToGroup").replace("{group}", translate("workItems.priority.none")) }).getByText(translate("layout.addShort")).waitFor();
   await phoneView.selectOption("gantt");
   await page.getByTestId("gantt-layout").waitFor();
@@ -968,7 +969,7 @@ try {
       check(keyboardFocused, "Auth chip is reachable by keyboard (BoardAuthKeyboardReachable)");
       const keyboardOutline = await authChip.evaluate((element) => ({ width: getComputedStyle(element).outlineWidth, style: getComputedStyle(element).outlineStyle, visible: element.matches(":focus-visible") }));
       check(keyboardOutline.visible && keyboardOutline.width === "2px", `Auth blue box is the 2px keyboard focus ring: ${JSON.stringify(keyboardOutline)}`);
-      await page.screenshot({ path: `${evidenceShots}/board-auth-keyboard-focus-dark-1440.png`, fullPage: true });
+      await saveShot(page, { path: `${evidenceShots}/board-auth-keyboard-focus-dark-1440.png`, fullPage: true });
       await authChip.evaluate((element) => element.blur());
     }
     for (const [width, height] of [[1440, 900], [390, 844]] as const) {
@@ -976,7 +977,7 @@ try {
       for (const theme of ["light", "dark"] as const) {
         await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
         if (layout === "board") await checkBoardSurface();
-        await page.screenshot({ path: `${evidenceShots}/${layout}-${theme}-${width}.png`, fullPage: true });
+        await saveShot(page, { path: `${evidenceShots}/${layout}-${theme}-${width}.png`, fullPage: true });
       }
     }
     if (layout === "board") {
@@ -990,7 +991,7 @@ try {
           for (const theme of ["light", "dark"] as const) {
             await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
             await checkBoardSurface();
-            await page.screenshot({ path: `${evidenceShots}/board-${grouping}-${theme}-${width}.png`, fullPage: true });
+            await saveShot(page, { path: `${evidenceShots}/board-${grouping}-${theme}-${width}.png`, fullPage: true });
           }
         }
       }
@@ -1015,7 +1016,7 @@ try {
       await toggle();
       for (const theme of ["light", "dark"] as const) {
         await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
-        await page.screenshot({ path: `${evidenceShots}/${name}-${theme}-${width}.png`, fullPage: true });
+        await saveShot(page, { path: `${evidenceShots}/${name}-${theme}-${width}.png`, fullPage: true });
       }
       await toggle();
     }

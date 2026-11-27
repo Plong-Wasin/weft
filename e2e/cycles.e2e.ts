@@ -7,6 +7,7 @@ import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3108);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5208);
@@ -103,13 +104,13 @@ try {
 
   // Screenshots of the list at both widths.
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.screenshot({ path: `${shots}/cycles-1440.png` });
-  await page.screenshot({ path: `${auditAfter}/cycles-1440-light.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/cycles-1440.png` });
+  await saveShot(page, { path: `${auditAfter}/cycles-1440-light.png`, fullPage: true });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
-  await page.screenshot({ path: `${auditAfter}/cycles-1440-dark.png`, fullPage: true });
+  await saveShot(page, { path: `${auditAfter}/cycles-1440-dark.png`, fullPage: true });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: `${shots}/cycles-390.png` });
+  await saveShot(page, { path: `${shots}/cycles-390.png` });
   const ringFont = await page.getByRole("img", { name: /^Progress \d+%$/ }).first().evaluate((element) => parseFloat(getComputedStyle(element).fontSize));
   check(ringFont >= 11, `progress ring text is ${ringFont}px at 390px`);
   check(await page.getByRole("link", { name: "Sprint 1" }).getAttribute("title") === "Sprint 1", "truncated Cycle name has no full-text title");
@@ -141,19 +142,19 @@ try {
   await page.keyboard.press("Control+i");
   await cycleDetails.waitFor();
   await page.evaluate(() => { try { localStorage.setItem("weft.theme", "light"); document.documentElement.dataset.theme = "light"; } catch { /* screenshot still uses the active theme */ } });
-  await page.screenshot({ path: ".local/shots/09/cycle-details-1440-light-open.png" });
+  await saveShot(page, { path: ".local/shots/09/cycle-details-1440-light-open.png" });
   await page.getByRole("button", { name: translate("detailsPanel.hide") }).click();
-  await page.screenshot({ path: ".local/shots/09/cycle-details-1440-light-hidden.png" });
+  await saveShot(page, { path: ".local/shots/09/cycle-details-1440-light-hidden.png" });
   await page.evaluate(() => { try { localStorage.setItem("weft.theme", "dark"); document.documentElement.dataset.theme = "dark"; } catch { /* screenshot still uses the active theme */ } });
   await page.getByRole("button", { name: translate("detailsPanel.show") }).click();
-  await page.screenshot({ path: ".local/shots/09/cycle-details-1440-dark-open.png" });
+  await saveShot(page, { path: ".local/shots/09/cycle-details-1440-dark-open.png" });
   await page.getByRole("button", { name: translate("detailsPanel.hide") }).click();
-  await page.screenshot({ path: ".local/shots/09/cycle-details-1440-dark-hidden.png" });
+  await saveShot(page, { path: ".local/shots/09/cycle-details-1440-dark-hidden.png" });
   await page.setViewportSize({ width: 390, height: 844 });
   check(await cycleDetails.isVisible(), "Cycle details remain stacked and visible on mobile");
-  await page.screenshot({ path: ".local/shots/09/cycle-details-390-dark-stacked.png" });
+  await saveShot(page, { path: ".local/shots/09/cycle-details-390-dark-stacked.png" });
   await page.evaluate(() => { try { localStorage.setItem("weft.theme", "light"); document.documentElement.dataset.theme = "light"; } catch { /* screenshot still uses the active theme */ } });
-  await page.screenshot({ path: ".local/shots/09/cycle-details-390-light-stacked.png" });
+  await saveShot(page, { path: ".local/shots/09/cycle-details-390-light-stacked.png" });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.setViewportSize({ width: 390, height: 844 });
   check(await page.getByRole("button", { name: translate("detailsPanel.show") }).isVisible() === false, "the Details toggle is hidden below lg");
@@ -226,12 +227,12 @@ try {
   const progress = await page.getByTestId("cycle-progress").first().getAttribute("title");
   if (progress !== translate("cycles.progressOf").replace("{done}", "0").replace("{total}", "1")) throw new Error(`unexpected progress: ${progress}`);
   await page.getByTestId("cycle-breakdown").waitFor();
-  await page.screenshot({ path: `${auditAfter}/cycle-detail-1440-light.png`, fullPage: true });
+  await saveShot(page, { path: `${auditAfter}/cycle-detail-1440-light.png`, fullPage: true });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
-  await page.screenshot({ path: `${auditAfter}/cycle-detail-1440-dark.png`, fullPage: true });
+  await saveShot(page, { path: `${auditAfter}/cycle-detail-1440-dark.png`, fullPage: true });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   await page.setViewportSize({ width: 820, height: 1180 });
-  await page.screenshot({ path: `${auditAfter}/cycle-detail-820-light.png`, fullPage: true });
+  await saveShot(page, { path: `${auditAfter}/cycle-detail-820-light.png`, fullPage: true });
   await page.setViewportSize({ width: 1440, height: 900 });
   // Creation starts history coverage after yesterday's Cycle start, so this range has no EOD observation yet.
   await page.getByTestId("cycle-burndown").getByRole("status").filter({ hasText: translate("cycles.history.noCoverage") }).waitFor();
@@ -269,9 +270,9 @@ try {
     check(colors.labels.length > 0 && colors.labels.every((color) => color === colors.expectedLabel), `${theme} Cycle burndown labels do not use the readable secondary text token: ${JSON.stringify(colors)}`);
     check(colors.actualLine === colors.expectedLine, `${theme} Cycle burndown actual line does not use the accent token: ${JSON.stringify(colors)}`);
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.screenshot({ path: `${shots}/cycle-detail-1440-${theme}.png`, fullPage: true });
+    await saveShot(page, { path: `${shots}/cycle-detail-1440-${theme}.png`, fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByTestId("cycle-burndown").screenshot({ path: `${shots}/cycle-detail-390-${theme}.png` });
+    await saveShot(page.getByTestId("cycle-burndown"), { path: `${shots}/cycle-detail-390-${theme}.png` });
   }
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.context().unroute("**/actions/get_cycle_burndown");
@@ -331,7 +332,7 @@ try {
   await page.getByRole("link", { name: "Sprint 3" }).waitFor();
   await page.getByRole("link", { name: translate("cycles.activeTitle"), exact: true }).click();
   await page.getByRole("link", { name: "Sprint 3" }).waitFor();
-  await page.screenshot({ path: `${shots}/active-cycles-1440.png` });
+  await saveShot(page, { path: `${shots}/active-cycles-1440.png` });
   console.log("e2e cycles: ok");
   await browser.close();
 } catch (error) {

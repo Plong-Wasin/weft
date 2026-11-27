@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { createDatabase } from "../packages/db/src";
 import { createProjectActions, createWikiActions, createWorkItemActions } from "../packages/actions/src";
 import { translate, type Locale } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31279);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52279);
@@ -63,7 +64,7 @@ try {
       await page.getByText("Source note.", { exact: true }).waitFor();
       await page.getByRole("menuitem", { name: translate("wiki.exportMarkdown", language), exact: true }).waitFor();
       await page.getByRole("menuitem", { name: translate("wiki.importMarkdown", language), exact: true }).waitFor();
-      await page.screenshot({ path: `${captures}/09-export-import-${width}-${language}-controls.png`, fullPage: true });
+      await saveShot(page, { path: `${captures}/09-export-import-${width}-${language}-controls.png`, fullPage: true });
       const [download] = await Promise.all([
         page.waitForEvent("download"),
         page.getByRole("menuitem", { name: translate("wiki.exportMarkdown", language), exact: true }).click(),
@@ -88,7 +89,7 @@ try {
         const explanation = translate(`wiki.importWarning.${key}` as const, language).replace("{text}", "").replace(/^[\s—]+/, "");
         await result.getByText(explanation, { exact: false }).first().waitFor();
       }
-      await page.screenshot({ path: `${captures}/09-export-import-${width}-${language}-result-warnings.png`, fullPage: true });
+      await saveShot(page, { path: `${captures}/09-export-import-${width}-${language}-result-warnings.png`, fullPage: true });
       console.log(`${captures}/09-export-import-${width}-${language}-controls.png`);
       console.log(`${captures}/09-export-import-${width}-${language}-result-warnings.png`);
     }

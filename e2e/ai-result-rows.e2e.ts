@@ -7,6 +7,7 @@ import { eq, like } from "drizzle-orm";
 import { confirmations, createDatabase, users, workspaces } from "../packages/db/src";
 import { createChatStore } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31207);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52207);
@@ -131,7 +132,7 @@ try {
             const title = shot.locator("[data-results]").getByText(longTitle, { exact: true });
             check(await title.evaluate((element) => element.scrollWidth > element.clientWidth && element.getAttribute("title") === element.textContent), "the long Thai title is not truncated with its full text available");
           }
-          await shot.screenshot({ path: `${shots}/${name}-${width}-${colorScheme}-${locale}.png` });
+          await saveShot(shot, { path: `${shots}/${name}-${width}-${colorScheme}-${locale}.png` });
         }
         await view.close();
       }

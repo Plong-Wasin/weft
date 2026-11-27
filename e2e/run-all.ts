@@ -7,13 +7,14 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { closeSync, openSync, readdirSync, statSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rename, rm } from "node:fs/promises";
-import { availableParallelism, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { SQL } from "bun";
 import { waitFor } from "./harness";
 import { listenerOn, resolvePortBase, workerPorts } from "./ports";
 import { cleanUp, flowOwnerKey, runWithTimeout, stopProcess, withDeadline } from "./shutdown";
 import { buildWorkerWeb } from "./web-build";
+import { hostDefaultWorkers } from "./workers";
 
 const args = process.argv.slice(2);
 const keep = args.includes("--keep");
@@ -39,7 +40,7 @@ if (workersFlag && (!Number.isSafeInteger(requestedWorkers) || requestedWorkers 
   console.error("--workers must be a positive whole number");
   process.exit(1);
 }
-const workers = Math.max(1, Math.min(files.length, requestedWorkers || Math.min(6, Math.max(2, availableParallelism() - 6))));
+const workers = Math.max(1, Math.min(files.length, requestedWorkers || hostDefaultWorkers()));
 let portBase: number;
 try { portBase = resolvePortBase(Bun.env.E2E_PORT_BASE, basename(process.cwd()), workers); } catch (error) { console.error((error as Error).message); process.exit(1); }
 

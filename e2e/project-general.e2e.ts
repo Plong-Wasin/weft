@@ -7,6 +7,7 @@ import type { Page } from "playwright";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31169);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52169);
@@ -93,11 +94,11 @@ try {
 
   // Admin capture of the General page, 1440 and 390 px.
   await page.getByText("GEN", { exact: true }).waitFor();
-  await page.screenshot({ path: `${captures}/general-admin-1440.png`, fullPage: true });
+  await saveShot(page, { path: `${captures}/general-admin-1440.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 800 });
   await page.getByText("GEN", { exact: true }).waitFor();
   check(await noSideScroll(page), "admin General page scrolls sideways at 390 px");
-  await page.screenshot({ path: `${captures}/general-admin-390.png`, fullPage: true });
+  await saveShot(page, { path: `${captures}/general-admin-390.png`, fullPage: true });
   console.log("general ok: admin captures written");
 
   // Member without admin rights: values read-only, no Save, Rename key, Archive.
@@ -113,11 +114,11 @@ try {
   check(await member.getByRole("region", { name: translate("settings.dangerZone") }).count() === 0, "member sees the danger zone with Archive");
   check(await member.getByText("GEN", { exact: true }).isVisible(), "member does not see the project key");
   check(await memberName.inputValue() === "General Demo Renamed", "member does not see the saved name");
-  await member.screenshot({ path: `${captures}/general-member-1440.png`, fullPage: true });
+  await saveShot(member, { path: `${captures}/general-member-1440.png`, fullPage: true });
   await member.setViewportSize({ width: 390, height: 800 });
   await member.getByText("GEN", { exact: true }).waitFor();
   check(await noSideScroll(member), "member General page scrolls sideways at 390 px");
-  await member.screenshot({ path: `${captures}/general-member-390.png`, fullPage: true });
+  await saveShot(member, { path: `${captures}/general-member-390.png`, fullPage: true });
   console.log("general ok: member read-only, captures written");
 
   await memberContext.close();

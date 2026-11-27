@@ -7,6 +7,7 @@ import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31040);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52040);
@@ -106,7 +107,7 @@ try {
   await starGamma.click();
   await sidebar().getByRole("button", { name: `${translate("sidebar.unstar")}: Gamma` }).waitFor();
   await expectOrder(page, ["Gamma"], "starred project is not in the Starred group", true);
-  await page.screenshot({ path: `${shots}/desktop-starred-1440.png` });
+  await saveShot(page, { path: `${shots}/desktop-starred-1440.png` });
 
   // Move Beta up through the project's menu.
   await sidebar().getByRole("button", { name: `${translate("sidebar.projectOptions")}: Beta` }).click();
@@ -115,7 +116,7 @@ try {
   await optionsMenu.waitFor();
   // A long project name must truncate inside the row, not widen the sidebar.
   await sidebar().getByRole("button", { name: `${translate("sidebar.toggleProject")}: Beta` }).locator("span.truncate").evaluate((node) => { node.textContent = "thailandpostmart-development-platform"; });
-  await page.screenshot({ path: `${shots}/desktop-project-menu-1440.png` });
+  await saveShot(page, { path: `${shots}/desktop-project-menu-1440.png` });
   const sidebarBox = await sidebar().evaluate((node) => ({ scroll: node.scrollWidth, client: node.clientWidth }));
   check(sidebarBox.scroll <= sidebarBox.client, `the sidebar scrolls sideways: content ${sidebarBox.scroll}px in ${sidebarBox.client}px`);
   const optionsButton = await sidebar().getByRole("button", { name: `${translate("sidebar.projectOptions")}: Beta` }).boundingBox();
@@ -249,14 +250,14 @@ try {
   await page.getByRole("button", { name: `${translate("sidebar.unstar")}: Gamma` }).waitFor();
   check(await page.getByRole("button", { name: `${translate("sidebar.moveDown")}: Alpha` }).isDisabled(), "phone settings page did not keep the saved order after reload");
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "phone settings page overflows horizontally");
-  await page.screenshot({ path: `${shots}/phone-settings-390.png` });
+  await saveShot(page, { path: `${shots}/phone-settings-390.png` });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
-  await page.screenshot({ path: `${shots}/phone-settings-390-dark.png` });
+  await saveShot(page, { path: `${shots}/phone-settings-390-dark.png` });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   await page.setViewportSize({ width: 768, height: 1024 });
   await page.goto(`${web}/${slug}/settings/project-order`);
   await page.getByRole("button", { name: `${translate("sidebar.unstar")}: Gamma` }).waitFor();
-  await page.screenshot({ path: `${shots}/tablet-settings-768.png` });
+  await saveShot(page, { path: `${shots}/tablet-settings-768.png` });
   console.log("project order ok: phone settings page");
 
   // A pending reorder, then Reset and Star from a second hook instance, must persist in user-action order.

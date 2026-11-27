@@ -4,6 +4,7 @@ import { createDatabase } from "../packages/db/src";
 import { activities } from "../packages/db/src/schema";
 import { createProjectActions, createWikiActions, createWorkItemActions } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31310);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52310);
@@ -87,7 +88,7 @@ try {
     if (stage === "description-updating") await page.getByRole("region", { name: translate("outlinks.title", locale), exact: true }).evaluate((element) => element.scrollIntoView({ block: "center" }));
     if (selectedCaptureStages.size && !selectedCaptureStages.has(stage)) return;
     const path = `${captures}/10-${stage}-${width}-${locale}-${theme}.png`;
-    await page.screenshot({ path, fullPage: true });
+    await saveShot(page, { path, fullPage: true });
     console.log(path);
   };
   for (const locale of ["en", "th"] as const) {

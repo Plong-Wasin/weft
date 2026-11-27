@@ -8,6 +8,7 @@ import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
 import { chooseDate } from "../tools/choose-date";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31137);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52137);
@@ -142,16 +143,16 @@ try {
   const createdModule = (await call<Array<{ id: string; name: string; descriptionMarkdown: string }>>("list_modules", { projectId: project!.id })).find(({ name }) => name === "Auth")!;
   check(createdModule.descriptionMarkdown.includes("**Initial module purpose**"), "Module description formatting was not written as Markdown");
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: `${shots}/modules-390.png` });
-  await page.screenshot({ path: `${auditAfter}/modules-390-light.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/modules-390.png` });
+  await saveShot(page, { path: `${auditAfter}/modules-390-light.png`, fullPage: true });
   const mobileOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
   check(!mobileOverflow, "Modules list should not scroll horizontally at 390px");
   await page.setViewportSize({ width: 1440, height: 1080 });
-  await page.screenshot({ path: `${shots}/modules-list-1440.png` });
-  await page.screenshot({ path: `${auditAfter}/modules-1440-light.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/modules-list-1440.png` });
+  await saveShot(page, { path: `${auditAfter}/modules-1440-light.png`, fullPage: true });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
   await page.evaluate(() => Promise.all(document.getAnimations().filter((animation) => animation instanceof CSSTransition).map((animation) => animation.finished))); // colour transitions must settle before the shot
-  await page.screenshot({ path: `${auditAfter}/modules-1440-dark.png`, fullPage: true });
+  await saveShot(page, { path: `${auditAfter}/modules-1440-dark.png`, fullPage: true });
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   // Visible controls only: Base UI keeps 1px aria-hidden inputs behind its selects, which are not touch targets.
   const filterHeights = await page.getByTestId("module-filters").locator(`input, [role=combobox], button[aria-label^="${t("modules.dateFrom")}:"], button[aria-label^="${t("modules.dateTo")}:"]`).evaluateAll((controls) => controls.filter((control) => !control.closest('[aria-hidden="true"]')).map((control) => control.getBoundingClientRect().height));
@@ -162,7 +163,7 @@ try {
   // Grid display.
   await page.getByRole("button", { name: t("modules.display.grid"), exact: true }).click();
   await page.getByTestId("module-card-Auth").waitFor();
-  await page.screenshot({ path: `${shots}/modules-grid-1440.png` });
+  await saveShot(page, { path: `${shots}/modules-grid-1440.png` });
   await page.getByRole("button", { name: t("modules.display.list"), exact: true }).click();
   await row.waitFor();
 
@@ -262,7 +263,7 @@ try {
   await page.getByRole("menuitemcheckbox", { name: "Modules Tester" }).click();
   await page.getByRole("button", { name: `${t("modules.members")}: —` }).waitFor();
   await page.keyboard.press("Escape");
-  await page.screenshot({ path: `${shots}/module-detail-1440.png` });
+  await saveShot(page, { path: `${shots}/module-detail-1440.png` });
 
   // Remove a work item from the module page.
   check(await page.getByRole("button", { name: t("modules.remove"), exact: true }).count() === 0, "Module removal must stay inside the row action menu");

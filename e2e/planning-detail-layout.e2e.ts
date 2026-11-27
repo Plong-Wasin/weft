@@ -4,6 +4,7 @@
 // on touch, oversized checkboxes, row menus dropped to their own line, and names cut to one narrow line.
 // Run with `bun e2e/run-all.ts planning-detail-layout` (needs DATABASE_URL, CHROMIUM_PATH).
 import { launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
+import { settle } from "./settle";
 import { type Locator, type Page } from "playwright";
 import { translate } from "../packages/shared/src";
 import { WeftClient, seedWeft } from "../tools/visual/weft-client";
@@ -84,10 +85,9 @@ try {
     const context = await newContext(browser, { viewport: { width, height: phone ? 844 : 900 }, reducedMotion: "reduce", hasTouch: phone, isMobile: phone });
     await context.addCookies(client.cookies().map((c) => ({ ...c, domain: "localhost", path: "/" })));
     const page = await context.newPage();
-    const open = async (path: string) => {
+    const open = async (path: string, ...ready: Locator[]) => {
       await page.goto(`${web}${path}`, { waitUntil: "load" });
-      await page.waitForLoadState("networkidle", { timeout: 4_000 }).catch(() => undefined);
-      await page.waitForTimeout(300);
+      await settle(page, ...ready);
     };
     const touch = async (screen: string, locator: Locator) => {
       if (!phone) return;
@@ -100,8 +100,12 @@ try {
     };
 
     // Work item detail.
-    await open(`/${slug}/browse/${seed.workItem}`);
-    await page.getByRole("heading", { level: 1 }).waitFor();
+    await open(`/${slug}/browse/${seed.workItem}`,
+      page.getByRole("heading", { level: 1 }),
+      page.getByTestId("description-toolbar").locator("button"),
+      page.getByRole("button", { name: translate("webLinks.edit"), exact: true }),
+      // The timeline's filter and sort.
+      page.locator("main select"));
     await onScreen("detail");
     if (!phone) {
       const value = page.locator("aside [data-property-row] button").filter({ hasText: "Backend" }).first();
@@ -135,15 +139,14 @@ try {
     await touch("detail property sections", page.locator("main [data-props-section] h3 button"));
 
     // Peek.
-    await open(`${root}/issues?layout=list&peek=${seed.workItem}`);
-    await page.getByRole("link", { name: translate("workItems.peek.expand") }).waitFor();
+    await open(`${root}/issues?layout=list&peek=${seed.workItem}`, page.getByRole("link", { name: translate("workItems.peek.expand") }), page.locator("[data-peek-actions] button"));
     await touch("peek header", page.getByRole("link", { name: translate("workItems.peek.expand") }));
     await touch("peek header", page.getByRole("button", { name: translate("workItems.peek.close") }));
     if (phone) check((await box(page.getByRole("link", { name: translate("workItems.peek.expand") }))).height <= 48, "peek at 390px: the Open full page label wraps");
     await touch("peek footer", page.locator("[data-peek-actions] button"));
 
     // Create modal pickers: a long option takes the height it needs.
-    await open(`${root}/issues?layout=list`);
+    await open(`${root}/issues?layout=list`, page.getByTestId(`row-${seed.workItem}`));
     await page.getByRole("button", { name: translate("workItems.addNew"), exact: true }).first().click();
     const modal = page.locator("[data-create-modal]");
     for (const label of [translate("workItems.cycle"), translate("workItems.modules")]) {
@@ -156,9 +159,8 @@ try {
     }
 
     // Cycles list: the menu stays on the name's line and the archived checkbox is a checkbox, not a 44px square.
-    await open(`${root}/cycles`);
     const row = page.getByTestId("cycle-row").first();
-    await row.waitFor();
+    await open(`${root}/cycles`, row);
     await onScreen("cycles");
     const name = await box(row.getByRole("link"));
     const menu = await box(row.getByRole("button", { name: translate("cycles.menu") }));
@@ -167,13 +169,11 @@ try {
     check(checkbox.width <= 20, `cycles at ${width}px: the Show archived box is drawn ${checkbox.width}px wide`);
     await touch("cycles", page.getByRole("button", { name: translate("cycles.new") }));
 
-    await open(`${root}/cycles/${cycle.id}`);
-    await page.getByRole("heading", { name: longName }).waitFor();
+    await open(`${root}/cycles/${cycle.id}`, page.getByRole("heading", { name: longName }));
     await onScreen("cycle detail");
 
     // Modules list and detail.
-    await open(`${root}/modules`);
-    await page.getByTestId(`module-row-${longName}`).waitFor();
+    await open(`${root}/modules`, page.getByTestId(`module-row-${longName}`));
     await onScreen("modules");
     const filters = page.getByTestId("module-filters");
     const from = await box(filters.locator("label").filter({ hasText: translate("modules.dateFrom") }));
@@ -196,9 +196,8 @@ try {
     }, longMember);
     check(leadFits, `Module Lead filter at ${width}px: long selected name ellipsizes and leaves the chevron inside the trigger`);
 
-    await open(`${root}/modules/${module.id}`);
     const panel = page.locator("#module-details-panel");
-    await panel.getByTestId("module-items-count").waitFor();
+    await open(`${root}/modules/${module.id}`, panel.getByTestId("module-items-count"), page.getByTestId(`row-${seed.workItem}`));
     await onScreen("module detail");
     check(await panel.evaluate((element) => element.scrollWidth <= element.clientWidth + 1), `module detail at ${width}px: the properties panel content is wider than the panel`);
     const status = await box(panel.getByRole("button", { name: new RegExp(`^${translate("modules.status")}:`) }));
@@ -218,16 +217,14 @@ try {
     }
 
     // Views list and detail.
-    await open(`${root}/views`);
     const viewLink = page.getByTestId(`view-row-${longName}`).getByRole("link");
-    await viewLink.waitFor();
+    await open(`${root}/views`, viewLink);
     await onScreen("views");
     if (phone) check((await box(viewLink)).height >= 36, "views at 390px: a long View name is cut to one line");
     await touch("views", page.getByRole("button", { name: translate("views.add") }));
 
-    await open(`${root}/views/${view.id}`);
     const heading = page.getByRole("heading", { name: longName });
-    await heading.waitFor();
+    await open(`${root}/views/${view.id}`, heading);
     await onScreen("view detail");
     if (phone) check((await box(heading)).width >= 250, `view detail at 390px: the title is squeezed to ${(await box(heading)).width}px`);
     await context.close();

@@ -6,6 +6,7 @@ import { check, createSignedInContext, launchBrowser, startApi, startWeb, waitFo
 import { SQL } from "bun";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31080);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52080);
@@ -59,9 +60,9 @@ try {
   await page.waitForURL(`${web}/${slug}/settings/api-tokens`);
   console.log("api-tokens ok: way back via navigation");
 
-  await page.screenshot({ path: `${shots}/list-1440.png` });
+  await saveShot(page, { path: `${shots}/list-1440.png` });
   await page.setViewportSize({ width: 390, height: 900 });
-  await page.screenshot({ path: `${shots}/list-390.png` });
+  await saveShot(page, { path: `${shots}/list-390.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
 
   // Empty groups explain what is managed here.
@@ -108,9 +109,9 @@ try {
   check(await tokenHistory.getByRole("listitem").count() === 22, "loading more credentials did not append the remaining history records");
   check(await tokenHistory.getByTestId("credential-history-status").count() === 22, "credential history omitted status labels");
   check((await tokenHistory.getByRole("listitem").filter({ hasText: "Legacy Daemon" }).innerText()).includes(translate("tokens.revokedAt")), "revoked credential history does not identify its relevant date");
-  await page.screenshot({ path: `${shots}/history-paged-1440.png` });
+  await saveShot(page, { path: `${shots}/history-paged-1440.png` });
   await page.setViewportSize({ width: 390, height: 900 });
-  await page.screenshot({ path: `${shots}/history-paged-390.png` });
+  await saveShot(page, { path: `${shots}/history-paged-390.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
   console.log("api-tokens ok: legacy credentials remain revocable and inactive history loads in bounded pages");
 
@@ -137,17 +138,17 @@ try {
   await deviceRow.getByText("E2E Workstation").waitFor();
   check(await deviceRow.getByText("E2E Workstation").count() === 1, "device row is missing or duplicated");
   check((await deviceRow.innerText()).includes(translate("devices.lastActivity")), "an active CLI device does not show its last activity");
-  await page.screenshot({ path: `${shots}/device-list-1440.png` });
+  await saveShot(page, { path: `${shots}/device-list-1440.png` });
   await page.setViewportSize({ width: 390, height: 900 });
-  await page.screenshot({ path: `${shots}/device-list-390.png` });
+  await saveShot(page, { path: `${shots}/device-list-390.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
   page.once("dialog", (confirm) => void confirm.accept());
   await deviceRow.getByRole("button", { name: translate("devices.revoke"), exact: true }).click();
   await page.getByText(translate("devices.history").replace("{count}", "1")).click();
   await page.getByRole("listitem").filter({ hasText: "E2E Workstation" }).getByTestId("device-history-status").getByText(translate("devices.status.revoked"), { exact: true }).waitFor();
-  await page.screenshot({ path: `${shots}/device-revoked-1440.png` });
+  await saveShot(page, { path: `${shots}/device-revoked-1440.png` });
   await page.setViewportSize({ width: 390, height: 900 });
-  await page.screenshot({ path: `${shots}/device-revoked-390.png` });
+  await saveShot(page, { path: `${shots}/device-revoked-390.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
   console.log("api-tokens ok: device listed and revoked from account settings");
 
@@ -169,9 +170,9 @@ try {
   await expiry.fill("2031-06-15");
   await preset.selectOption("mcp");
   check(await name.inputValue() === "MCP" && await expiry.inputValue() === thirtyDaysOut(), "MCP preset did not refill name and expiry");
-  await page.screenshot({ path: `${shots}/create-1440.png` });
+  await saveShot(page, { path: `${shots}/create-1440.png` });
   await page.setViewportSize({ width: 390, height: 900 });
-  await page.screenshot({ path: `${shots}/create-390.png` });
+  await saveShot(page, { path: `${shots}/create-390.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
   console.log("api-tokens ok: presets fill name and 30-day expiry");
 
@@ -188,9 +189,9 @@ try {
   await copy.click();
   await page.getByRole("status").getByText(translate("tokens.copied")).last().waitFor();
   check(await page.evaluate(() => navigator.clipboard.readText()) === secret, "copy did not put the token on the clipboard");
-  await page.screenshot({ path: `${shots}/secret-1440.png` });
+  await saveShot(page, { path: `${shots}/secret-1440.png` });
   await page.setViewportSize({ width: 390, height: 900 });
-  await page.screenshot({ path: `${shots}/secret-390.png` });
+  await saveShot(page, { path: `${shots}/secret-390.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
   console.log("api-tokens ok: token shown once with copy button and warning");
 
@@ -212,9 +213,9 @@ try {
   await tokenRow.getByRole("button", { name: translate("tokens.revoke"), exact: true }).click();
   await page.getByText(translate("tokens.history").replace("{count}", "23")).click();
   await page.getByRole("listitem").filter({ hasText: "MCP" }).getByTestId("credential-history-status").getByText(translate("tokens.status.revoked"), { exact: true }).waitFor();
-  await page.screenshot({ path: `${shots}/revoked-1440.png` });
+  await saveShot(page, { path: `${shots}/revoked-1440.png` });
   await page.setViewportSize({ width: 390, height: 900 });
-  await page.screenshot({ path: `${shots}/revoked-390.png` });
+  await saveShot(page, { path: `${shots}/revoked-390.png` });
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "side scroll at 390px");
   await browser.close();
   console.log("api-tokens flow ok");

@@ -8,6 +8,7 @@ import { createWikiActions } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
 import { chooseDate, expectDate as expectTriggerDate } from "../tools/choose-date";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31157);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52157);
@@ -36,7 +37,7 @@ try {
   });
   const page = await context.newPage();
   // Suppress transitions for the duration of the capture, including any that a theme change would start after the next frame.
-  const themeShot = (path: string) => page.screenshot({ path, fullPage: true, style: "*, *::before, *::after { transition: none !important; }" });
+  const themeShot = (path: string) => saveShot(page, { path, fullPage: true, style: "*, *::before, *::after { transition: none !important; }" });
   const renderLoops: string[] = [];
   const detectRenderLoop = (message: string) => {
     if (/Maximum update depth exceeded|Minified React error #185\b/.test(message)) renderLoops.push(message);
@@ -306,7 +307,7 @@ try {
   await page.goto(`${web}/${slug}/projects/MOB/pages`);
   await page.getByText(translate("pages.empty")).waitFor();
   check(await page.getByRole("main").getByRole("link", { name: "Handbook", exact: true }).count() === 0, "Pages must start empty");
-  await page.screenshot({ path: `${shots}/pages-empty-1440.png` });
+  await saveShot(page, { path: `${shots}/pages-empty-1440.png` });
 
   // Pages and Wiki lists are separate scopes; seed shared and private Pages for list controls.
   const sharedPage = await call<{ id: string }>("create_wiki_page", { workspaceId, projectId: project.id, title: "A Project draft" });
@@ -387,7 +388,7 @@ try {
   await page.locator(".ProseMirror").waitFor();
   await page.locator(".ProseMirror").waitFor();
   check(await page.getByRole("toolbar", { name: translate("wiki.toolbar") }).count() === 0, "Page editor must not show the fixed formatting toolbar");
-  await page.screenshot({ path: `${shots}/page-editor-1440.png` });
+  await saveShot(page, { path: `${shots}/page-editor-1440.png` });
   const pageId = page.url().match(/([0-9a-f-]{36})$/)?.[1];
   check(Boolean(pageId), "page URL must include its id for capture review");
   const captureWiki = createWikiActions(db);
@@ -405,10 +406,10 @@ try {
       const toolbar = page.getByTestId("wiki-toolbar-container");
       if (state === "source") { await page.getByRole("button", { name: translate("wiki.exports", locale), exact: true }).click(); await page.getByRole("menuitemcheckbox", { name: translate("editor.sourceMode", locale), exact: true }).click(); }
       check(await toolbar.count() === 0, `${kind} must not render a fixed formatting toolbar in ${state} mode at desktop width`);
-      await page.screenshot({ path: `.scratch-captures/05-${kind}-${state}-1280-${locale}.png`, fullPage: true });
+      await saveShot(page, { path: `.scratch-captures/05-${kind}-${state}-1280-${locale}.png`, fullPage: true });
       await page.setViewportSize({ width: 390, height: 844 });
       check(await toolbar.count() === 0, `${kind} must not render a fixed formatting toolbar in ${state} mode at phone width`);
-      await page.screenshot({ path: `.scratch-captures/05-${kind}-${state}-390-${locale}.png`, fullPage: true });
+      await saveShot(page, { path: `.scratch-captures/05-${kind}-${state}-390-${locale}.png`, fullPage: true });
     };
     for (const locale of ["en", "th"] as const) {
       const baseline = locale === "th" ? "## คู่มือ\n\nข้อความตัวอย่าง" : "";
@@ -524,7 +525,7 @@ try {
     check(style.scrollbar === "thin", `slash menu scrollbar must be thin in ${theme} theme`);
     check(style.selectedBackground !== style.otherBackground && style.selectedBackground !== "rgba(0, 0, 0, 0)", `slash menu highlight must be visible in ${theme} theme`);
     check(style.icons === style.options && style.options === optionCount, `every slash menu option needs an icon in ${theme} theme`);
-    await slash.screenshot({ path: `${shots}/slash-menu-${theme}.png` });
+    await saveShot(slash, { path: `${shots}/slash-menu-${theme}.png` });
   }
   await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
   await page.keyboard.press("Escape");
@@ -676,7 +677,7 @@ try {
   check(targets.every((target) => target.width >= 44 && target.height >= 44), `mobile reorder targets must be at least 44px: ${JSON.stringify(targets)}`);
   check(targets.every((target) => target.toggleWidth === undefined || (target.toggleWidth >= 44 && target.toggleHeight! >= 44)), `mobile expand targets must be at least 44px: ${JSON.stringify(targets)}`);
   check(targets.every((target) => target.handleLeft - target.linkRight >= 4 && (target.toggleRight === undefined || target.linkLeft - target.toggleRight >= 4)), `mobile page labels, expand targets, and reorder targets must have at least 4px of separation: ${JSON.stringify(targets)}`);
-  await mobilePage.screenshot({ path: `${shots}/wiki-sidebar-mobile-390.png` });
+  await saveShot(mobilePage, { path: `${shots}/wiki-sidebar-mobile-390.png` });
   console.log(`wiki-pages ok: 390px touch sidebar targets and spacing (${targets.length} reorder handles)`);
   await mobile.close();
 

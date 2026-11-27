@@ -8,6 +8,7 @@ import { rm } from "node:fs/promises";
 import { eq, like } from "drizzle-orm";
 import { agents, createDatabase, daemons, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 // AI is on only with a provider key: a placeholder keeps the AI page shown here, and no model is called.
 Bun.env.OPENAI_API_KEY ??= "sk-e2e-placeholder-no-call";
@@ -43,7 +44,7 @@ async function screenshotMatrix(page: import("playwright").Page, name: string, f
     await page.waitForTimeout(50); // kept: a repaint after the viewport change; no DOM signal for it
     for (const theme of ["light", "dark"] as const) {
       await page.evaluate((value) => { localStorage.setItem("weft.theme", value); document.documentElement.setAttribute("data-theme", value); }, theme);
-      await page.screenshot({ path: `${evidence}/${name}-${width}-${theme}.png`, fullPage: true });
+      await saveShot(page, { path: `${evidence}/${name}-${width}-${theme}.png`, fullPage: true });
     }
   }
 }
@@ -256,7 +257,7 @@ try {
   try { await runPanel.getByText(translate("runs.status.completed"), { exact: true }).waitFor({ timeout: 30_000 }); }
   catch (error) {
     const panelText = await runPanel.innerText().catch(() => "Run panel missing");
-    await developer.screenshot({ path: `${evidence}/runtime-run-stalled.png`, fullPage: true }).catch(() => {});
+    await saveShot(developer, { path: `${evidence}/runtime-run-stalled.png`, fullPage: true }, { failed: true }).catch(() => {});
     const log = await Bun.file(daemonLog).text().catch(() => "Daemon log unavailable");
     throw new Error(`Runtime Run did not complete; panel: ${panelText}; Daemon log: ${log.slice(-3000)}; ${String(error)}`);
   }

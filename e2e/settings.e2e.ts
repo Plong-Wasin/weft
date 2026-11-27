@@ -8,6 +8,7 @@ import { and, eq, like } from "drizzle-orm";
 import { createDatabase, users, workspaceInvites, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31167);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52167);
@@ -75,7 +76,7 @@ try {
   await page.getByRole("heading", { name: translate("settings.workspaceTitle") }).waitFor();
   check(await page.getByLabel(translate("settings.workspaceName")).inputValue() === "E2E team", "workspace name not shown");
   check(await page.getByLabel(translate("settings.workspaceUrl")).inputValue() === slug, "workspace url not shown");
-  await page.screenshot({ path: `${shots}/workspace-general-1440.png` });
+  await saveShot(page, { path: `${shots}/workspace-general-1440.png` });
   // The last Admin cannot leave: the danger zone shows the refusal.
   page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("button", { name: translate("settings.leave"), exact: true }).click();
@@ -105,7 +106,7 @@ try {
   check(guestRevokeNames.length === 2 && new Set(guestRevokeNames).size === 2, "duplicate invite revoke actions are not distinguishable");
   check(guestRevokeNames.every((name) => /, Invite [12] of 2$/.test(name)), "duplicate invite accessible names do not identify each invite ordinal");
   check(guestRevokeNames[0]?.replace(/, Invite [12] of 2$/, "") === guestRevokeNames[1]?.replace(/, Invite [12] of 2$/, ""), "duplicate invite setup did not produce matching base names");
-  await page.screenshot({ path: `${shots}/workspace-invites-1440.png` });
+  await saveShot(page, { path: `${shots}/workspace-invites-1440.png` });
   await guestRevokeButtons.nth(1).click();
   await page.getByRole("status").getByText(translate("settings.revoked")).waitFor();
   check(await page.getByRole("button", { name: /^Revoke Guest invite created by Settings Admin on/ }).count() === 1, "revoking one duplicate did not leave exactly one invite");
@@ -130,7 +131,7 @@ try {
   for (let attempt = 0; attempt < 20 && (await members()).find((member) => member.name === "Invited Person")?.role !== "Guest"; attempt += 1) await Bun.sleep(150);
   check((await members()).find((member) => member.name === "Invited Person")?.role === "Guest", "role change did not apply");
   check(await page.getByRole("button", { name: "Remove Invited Person", exact: true }).count() === 1, "member remove action has no identifying accessible name");
-  await page.screenshot({ path: `${shots}/workspace-members-1440.png` });
+  await saveShot(page, { path: `${shots}/workspace-members-1440.png` });
   const invited = (await members()).find((member) => member.name === "Invited Person")!;
   console.log("settings ok: workspace members role change");
 
@@ -194,14 +195,14 @@ try {
     await openSidebar();
     await sidebar.getByRole("link", { name: translate("settings.projectOrder"), exact: true }).waitFor();
     check(await noSideScroll(page), `Workspace mode scrolls sideways at ${width} px`);
-    await page.screenshot({ path: join(captureDir, `workspace-mode-${width}.png`) });
+    await saveShot(page, { path: join(captureDir, `workspace-mode-${width}.png`) });
     await page.goto(`${web}/${slug}/settings/projects/MOB/labels`);
     await openSidebar();
     await projectNav.waitFor();
     // The switcher shows the project's name once the list is in; capture after that, not the key shown while it loads.
     await sidebar.getByRole("combobox", { name: translate("sidebar.projectSwitcher"), exact: true }).locator("option", { hasText: "Mobile" }).waitFor({ state: "attached" });
     check(await noSideScroll(page), `Project mode scrolls sideways at ${width} px`);
-    await page.screenshot({ path: join(captureDir, `project-mode-${width}.png`) });
+    await saveShot(page, { path: join(captureDir, `project-mode-${width}.png`) });
   }
   // Back to desktop on a fresh load: the phone drawer stays open otherwise.
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -235,7 +236,7 @@ try {
   await page.getByLabel(translate("projects.visibility")).selectOption("private");
   await page.getByRole("button", { name: translate("projects.save"), exact: true }).click();
   await page.getByRole("status").getByText(translate("settings.saved")).waitFor();
-  await page.screenshot({ path: `${shots}/project-general-1440.png` });
+  await saveShot(page, { path: `${shots}/project-general-1440.png` });
   await page.getByRole("button", { name: translate("projects.renameKey"), exact: true }).click();
   await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOBX");
   await page.getByRole("button", { name: translate("projects.renameConfirm"), exact: true }).click();
@@ -276,7 +277,7 @@ try {
   const adminSaved = page.waitForResponse((response) => response.url().endsWith("/actions/change_project_member_role"));
   await projectRole.selectOption("Admin");
   await adminSaved;
-  await page.screenshot({ path: `${shots}/project-members-1440.png` });
+  await saveShot(page, { path: `${shots}/project-members-1440.png` });
   await projectRole.waitFor();
   const row = page.getByRole("listitem").filter({ hasText: "Invited Person" });
   await row.getByRole("button", { name: translate("members.remove") }).click();
@@ -292,7 +293,7 @@ try {
   await page.getByRole("listitem").getByLabel(translate("labels.name")).fill("Defect");
   await page.getByRole("button", { name: translate("labels.save") }).click();
   await page.getByText("Defect", { exact: true }).waitFor();
-  await page.screenshot({ path: `${shots}/project-labels-1440.png` });
+  await saveShot(page, { path: `${shots}/project-labels-1440.png` });
   await page.getByRole("button", { name: translate("labels.delete") }).click();
   await page.getByText(translate("labels.empty")).waitFor();
   console.log("settings ok: labels create, edit, delete");
@@ -315,7 +316,7 @@ try {
   await startedBlock.getByRole("listitem").getByLabel(translate("states.name")).fill("In review");
   await startedBlock.getByRole("button", { name: translate("labels.save") }).click();
   await startedBlock.getByText("In review", { exact: true }).waitFor();
-  await page.screenshot({ path: `${shots}/project-states-1440.png` });
+  await saveShot(page, { path: `${shots}/project-states-1440.png` });
   await startedBlock.getByRole("listitem").filter({ hasText: "In review" }).getByRole("button", { name: new RegExp(`^${translate("sortable.actions")}`) }).click();
   await page.getByRole("menuitem", { name: translate("states.remove") }).click();
   await startedBlock.getByText("In review", { exact: true }).waitFor({ state: "detached" });
@@ -324,7 +325,7 @@ try {
   // Features: the toggles hide and show the project menus at once (client-side navigation, no reload).
   await page.getByRole("navigation", { name: `${translate("settings.label")} MOBX` }).getByRole("link", { name: translate("settings.features"), exact: true }).click();
   for (const feature of ["cycles", "modules", "intake"] as const) await setFeature(feature, false);
-  await page.screenshot({ path: `${shots}/project-features-1440.png` });
+  await saveShot(page, { path: `${shots}/project-features-1440.png` });
   await page.getByRole("link", { name: /MOBX · Mobile app/ }).click();
   const projectMenu = sidebar.getByRole("navigation", { name: new RegExp(translate("projectNav.label")) });
   await projectMenu.getByRole("link", { name: translate("projectNav.views") }).waitFor();
@@ -363,7 +364,7 @@ try {
   await page.route("**/actions/list_members", async (route) => { await Bun.sleep(500); await route.continue(); });
   await page.goto(`${web}/${slug}/settings/members`);
   await page.getByRole("status").getByText(translate("account.loading")).waitFor();
-  await page.screenshot({ path: `${shots}/workspace-members-loading-390.png` });
+  await saveShot(page, { path: `${shots}/workspace-members-loading-390.png` });
   await page.getByText("Settings Admin", { exact: true }).waitFor();
   await page.unroute("**/actions/list_members");
 
@@ -376,14 +377,14 @@ try {
     await page.goto(`${web}/${slug}/settings${path}`);
     await page.getByRole("heading", { level: 1 }).first().waitFor();
     check(await noSideScroll(page), `${name} scrolls sideways at 390px`);
-    await page.screenshot({ path: `${shots}/${name}-390.png` });
+    await saveShot(page, { path: `${shots}/${name}-390.png` });
   }
   await page.getByRole("button", { name: translate("shell.openMenu") }).click();
   // The last page is a project's: the drawer shows Project mode, so its way back is there and the Workspace links are not.
   const drawer = page.getByRole("dialog", { name: translate("shell.sidebar") });
   await drawer.getByRole("link", { name: translate("sidebar.backToWorkspace"), exact: true }).waitFor();
   check(await drawer.getByRole("link", { name: translate("settings.invites"), exact: true }).count() === 0, "the phone drawer shows the Workspace links in Project mode");
-  await page.screenshot({ path: `${shots}/settings-drawer-390.png` });
+  await saveShot(page, { path: `${shots}/settings-drawer-390.png` });
   console.log("settings ok: 390px");
 
   console.log("e2e settings: ok");

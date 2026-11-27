@@ -5,6 +5,7 @@
 // Run with `bun e2e/design-fixes-wiki-analytics.e2e.ts` (set DATABASE_URL to an isolated test database).
 import { check, launchBrowser, newContext, startApi, startLive, startWeb, waitFor } from "./harness";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31420);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52420);
@@ -134,7 +135,7 @@ try {
   await projectName.waitFor();
   const screenshotPath = (name: string) => `${Bun.env.TMPDIR ?? "/tmp"}/weft-analytics-overview-${name}.png`;
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.screenshot({ path: screenshotPath("desktop"), fullPage: true });
+  await saveShot(page, { path: screenshotPath("desktop"), fullPage: true });
   console.log(`analytics desktop render: ${screenshotPath("desktop")}`);
   const projectTable = page.getByRole("table", { name: translate("analytics.projectList") });
   check(await projectTable.getByRole("columnheader", { name: translate("analytics.total") }).count() === 1, "the Analytics project totals need an exposed column header");
@@ -144,7 +145,7 @@ try {
   const nameFits = await projectName.evaluate((node) => node.scrollWidth <= node.clientWidth + 1);
   check(nameFits, "the Analytics project name is cut off on phone width");
   check(await noSideScroll(), "Analytics overview scrolls the page sideways on phone width");
-  await page.screenshot({ path: screenshotPath("phone"), fullPage: true });
+  await saveShot(page, { path: screenshotPath("phone"), fullPage: true });
   console.log(`analytics phone render: ${screenshotPath("phone")}`);
   console.log("analytics ok: project name not cut off, no sideways scroll");
 
@@ -155,10 +156,10 @@ try {
   for (const theme of ["light", "dark"] as const) {
     await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.screenshot({ path: screenshotPath(`work-items-desktop-${theme}`), fullPage: true });
+    await saveShot(page, { path: screenshotPath(`work-items-desktop-${theme}`), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     check(await noSideScroll(), `Analytics work items scrolls sideways on phone width in ${theme} theme`);
-    await page.screenshot({ path: screenshotPath(`work-items-phone-${theme}`), fullPage: true });
+    await saveShot(page, { path: screenshotPath(`work-items-phone-${theme}`), fullPage: true });
   }
   console.log("analytics ok: work items no sideways scroll");
 

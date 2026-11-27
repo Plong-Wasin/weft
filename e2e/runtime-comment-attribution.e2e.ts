@@ -9,6 +9,7 @@ import {
 } from "../packages/actions/src";
 import { createDatabase, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31287);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 51287);
@@ -114,7 +115,7 @@ try {
     if (evidence.markers.length !== 2 || evidence.markers.some((marker) => marker.left < 0 || marker.right > width)) throw new Error(`Agent markers are clipped at ${width}px: ${JSON.stringify(evidence)}`);
     if (evidence.pageWidth > width || evidence.origins.length < 1) throw new Error(`timeline provenance/layout failed at ${width}px: ${JSON.stringify(evidence)}`);
     const path = `${screenshots}/runtime-agent-comments-${width}.png`;
-    await page.screenshot({ path, fullPage: true });
+    await saveShot(page, { path, fullPage: true });
     console.log(`screenshot ${path}`);
   }
   console.log("e2e runtime-comment-attribution: ok");

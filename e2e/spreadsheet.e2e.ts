@@ -3,6 +3,7 @@
 import { check, createSignedInContext, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3107);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5207);
@@ -122,7 +123,7 @@ try {
     await page.keyboard.press("Escape");
   }
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-  await page.screenshot({ path: `${shots}/sheet-1440-light.png` });
+  await saveShot(page, { path: `${shots}/sheet-1440-light.png` });
 
   // Inline edits go through the Actions: state and priority persist after reload.
   const row = page.getByTestId("row-MOB-1");
@@ -166,7 +167,7 @@ try {
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "page itself scrolls sideways at 390px");
   const phoneWorkItemColumn = await page.getByRole("rowheader").first().boundingBox();
   check(!!phoneWorkItemColumn && phoneWorkItemColumn.width >= 248 && phoneWorkItemColumn.width <= 264, `phone Work item column should stay within the intended 256px width (248–264px bounds): ${phoneWorkItemColumn?.width}`);
-  await page.screenshot({ path: `${shots}/sheet-390-left-light.png` });
+  await saveShot(page, { path: `${shots}/sheet-390-left-light.png` });
   await scroll.focus();
   const beforeKeyboardScroll = await scroll.evaluate((el) => el.scrollLeft);
   await page.keyboard.press("ArrowRight");
@@ -175,7 +176,7 @@ try {
   await scroll.evaluate((el) => { el.scrollLeft = 300; });
   const sticky = await page.getByRole("rowheader").first().boundingBox();
   check(Math.abs(before!.x - sticky!.x) < 1, `first column moved: ${before!.x} -> ${sticky!.x}`);
-  await page.screenshot({ path: `${shots}/sheet-390-light.png` });
+  await saveShot(page, { path: `${shots}/sheet-390-light.png` });
 
   // The list layout still renders at the plain project URL.
   await page.goto(projectUrl);

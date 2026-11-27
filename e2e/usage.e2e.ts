@@ -5,6 +5,7 @@ import type { Page } from "playwright";
 import { like } from "drizzle-orm";
 import { createDatabase, projects, runs, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31190);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52190);
@@ -47,7 +48,7 @@ try {
   await page.getByText(translate("usage.byDay")).waitFor();
   // Unknown tokens and cost read as "Unknown" in the report, and the unknown run is named in a note.
   check((await page.getByText(translate("usage.unknownUsageNote").replace("{count}", "1")).count()) === 1, "unknown-usage note missing");
-  await page.screenshot({ path: `${shots}/usage-1440-empty-prices.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/usage-1440-empty-prices.png`, fullPage: true });
 
   // Add a price, then change it, then remove it.
   await page.getByLabel(translate("usage.priceModel")).fill("claude-sonnet-5-5");
@@ -60,7 +61,7 @@ try {
   await page.getByLabel(translate("usage.priceInput")).fill("2");
   await page.getByRole("button", { name: translate("usage.priceSave"), exact: true }).click();
   await page.getByText("$2.00 / $15.00").waitFor();
-  await page.screenshot({ path: `${shots}/usage-1440-prices.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/usage-1440-prices.png`, fullPage: true });
   await fits(page, "1440px");
 
   const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: translate("usage.exportCsv") }).click()]);
@@ -74,7 +75,7 @@ try {
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("heading", { name: translate("usage.title"), exact: true }).waitFor();
-  await page.screenshot({ path: `${shots}/usage-390-prices.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/usage-390-prices.png`, fullPage: true });
   await fits(page, "390px");
   await context.close(); await browser.close();
   console.log("usage ok: unknown values, price add/edit/remove, CSV download, 1440px and 390px");

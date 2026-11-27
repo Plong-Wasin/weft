@@ -8,6 +8,7 @@ import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
 import { paths } from "../apps/web/src/routes";
 import { mkdirSync } from "node:fs";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31141);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52141);
@@ -63,7 +64,7 @@ try {
   await suggestions.getByText("Bug", { exact: true }).waitFor();
   await page.getByRole("button", { name: t("types.addSuggestion").replace("{name}", "Bug") }).click();
   await suggestions.getByText("Bug", { exact: true }).waitFor({ state: "detached" });
-  await page.screenshot({ path: `${shots}/settings-light-1440.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/settings-light-1440.png`, fullPage: true });
 
   // A required dropdown property that belongs to Bug.
   const properties = page.locator("[data-properties]");
@@ -79,7 +80,7 @@ try {
   if (await taskTypeCheckbox.getAttribute("aria-checked") !== "false") await taskTypeCheckbox.click();
   await properties.getByRole("button", { name: t("types.addProperty") }).click();
   await properties.getByText("Severity", { exact: true }).waitFor();
-  await page.screenshot({ path: `${shots}/settings-light-1440-properties.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/settings-light-1440-properties.png`, fullPage: true });
 
   // Editing a type: the form opens under the title line at the full width of the card, two columns at desktop width, with a
   // grid of real icons, colour swatches with a custom choice, a live preview chip and a description field wide enough to read.
@@ -165,7 +166,7 @@ try {
   await page.getByRole("menuitemradio", { name: "Bug" }).click();
   await modal.getByRole("button", { name: t("workItems.modal.submit") }).click();
   await modal.getByText(t("types.requiredNote").replace("{names}", "Severity").replace("{type}", "Bug")).waitFor();
-  await page.screenshot({ path: `${shots}/create-light-1440.png` });
+  await saveShot(page, { path: `${shots}/create-light-1440.png` });
   await modal.getByLabel("Severity").selectOption({ label: "high" });
   await modal.getByRole("button", { name: t("workItems.modal.submit") }).click();
   await modal.waitFor({ state: "detached" });
@@ -177,7 +178,7 @@ try {
   await page.getByRole("menuitemradio", { name: "Task" }).click();
   const drop = page.getByRole("group", { name: t("types.dropHeading") });
   await drop.waitFor();
-  await page.screenshot({ path: `${shots}/peek-light-1440.png` });
+  await saveShot(page, { path: `${shots}/peek-light-1440.png` });
   await drop.getByRole("button", { name: t("types.dropConfirm") }).click();
   await drop.waitFor({ state: "detached" });
   await peek.getByRole("button", { name: t("types.type") }).first().filter({ hasText: "Task" }).waitFor();
@@ -224,7 +225,7 @@ try {
   const addUsedByBox = await addOnBug.getByRole("group", { name: t("types.belongsTo") }).boundingBox();
   check(addNameBox !== null && addKindBox !== null && Math.abs(addNameBox.y - addKindBox.y) < 2, "the add form labels sit on one line at 1440");
   check(addRequiredBox !== null && addUsedByBox !== null && Math.abs(addRequiredBox.y + addRequiredBox.height / 2 - (addUsedByBox.y + addUsedByBox.height / 2)) < 4, `Required and Used by types share one row at 1440 (${JSON.stringify({ addRequiredBox, addUsedByBox })})`);
-  await page.screenshot({ path: `${shots}/type-properties-light-1440.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/type-properties-light-1440.png`, fullPage: true });
   await typeProps.getByRole("button", { name: t("types.addPropertyHere"), exact: true }).click();
   // Remove from this type, with no values: Links goes from Bug only, and the property stays on Task.
   const linksOnBug = typeProps.locator("[data-type-property]").filter({ hasText: "Links" });
@@ -258,14 +259,14 @@ try {
   await linksWithValue.getByRole("button", { name: say("types.removeNamed", { name: "Links" }), exact: true }).click();
   const confirmDrop = bugAgain.locator("[data-type-property-remove]");
   await confirmDrop.getByText(say("types.removeValuesOne", { name: "Links", type: "Bug" })).waitFor();
-  await page.screenshot({ path: `${shots}/type-properties-remove-light-1440.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/type-properties-remove-light-1440.png`, fullPage: true });
   await confirmDrop.getByRole("button", { name: t("types.removeConfirm"), exact: true }).click();
   await linksWithValue.waitFor({ state: "detached" });
   check((await badgesOf(page, "Links")).join(",") === "Task", "removing a value-holding Links from Bug drops the value and keeps the property on Task");
   // Phone width: the type's Properties section stacks in one column with no sideways scroll; dark theme on the same section.
   await page.emulateMedia({ colorScheme: "dark" });
   await bugAgain.getByRole("button", { name: t("types.addPropertyHere"), exact: true }).click();
-  await page.screenshot({ path: `${shots}/type-properties-dark-1440.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/type-properties-dark-1440.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${web}${paths.projectSettings(slug, "MOB", "features")}`);
   await page.getByRole("heading", { name: t("types.title") }).waitFor();
@@ -274,25 +275,25 @@ try {
   await phoneBug.getByRole("button", { name: t("types.addPropertyHere"), exact: true }).click();
   await phoneBug.locator("[data-add-property]").waitFor();
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "the type's Properties section does not scroll sideways at 390 px");
-  await page.screenshot({ path: `${shots}/type-properties-dark-390.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/type-properties-dark-390.png`, fullPage: true });
   await page.emulateMedia({ colorScheme: "light" });
   await page.setViewportSize({ width: 1440, height: 900 });
 
   // Responsive and dark: the peek panel at phone width, the settings page at tablet width and in dark mode.
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: `${shots}/peek-light-390.png` });
+  await saveShot(page, { path: `${shots}/peek-light-390.png` });
   await page.setViewportSize({ width: 768, height: 1024 });
   await page.goto(`${web}${paths.projectSettings(slug, "MOB", "features")}`);
   await page.getByRole("heading", { name: t("types.title") }).waitFor();
-  await page.screenshot({ path: `${shots}/settings-light-768.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/settings-light-768.png`, fullPage: true });
   await page.emulateMedia({ colorScheme: "dark" });
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.screenshot({ path: `${shots}/settings-dark-1440.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/settings-dark-1440.png`, fullPage: true });
   await bugRowOn(page).getByRole("button", { name: editBug, exact: true }).click();
   await bugRowOn(page).locator("[data-type-form]").waitFor();
-  await page.screenshot({ path: `${shots}/settings-dark-edit-1440.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/settings-dark-edit-1440.png`, fullPage: true });
   await bugRowOn(page).getByRole("button", { name: t("types.cancel"), exact: true }).click();
-  await page.locator("[data-add-type]").screenshot({ path: `${shots}/settings-dark-add-1440.png` });
+  await saveShot(page.locator("[data-add-type]"), { path: `${shots}/settings-dark-add-1440.png` });
   // Phone width: the edit form stacks in one column, inside the viewport, with no sideways scroll on the page.
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${web}${paths.projectSettings(slug, "MOB", "features")}`);
@@ -306,20 +307,20 @@ try {
   check(phoneName !== null && phoneColour !== null && Math.abs(phoneName.x - phoneColour.x) < 2 && phoneName.y < phoneColour.y, "the edit form stacks in one column at 390 px");
   check(phoneForm !== null && phoneForm.x >= 0 && phoneForm.x + phoneForm.width <= 390, "the edit form stays inside the 390 px viewport");
   check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "the settings page does not scroll sideways at 390 px");
-  await page.screenshot({ path: `${shots}/settings-dark-edit-390.png`, fullPage: true });
+  await saveShot(page, { path: `${shots}/settings-dark-edit-390.png`, fullPage: true });
   await bugRowOn(page).getByRole("button", { name: t("types.cancel"), exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${web}${paths.workItems(slug, "MOB")}`);
   await page.getByRole("button", { name: t("workItems.addNew"), exact: true }).first().click();
   await page.getByRole("dialog", { name: t("workItems.modal.title") }).waitFor();
-  await page.screenshot({ path: `${shots}/create-dark-390.png` });
+  await saveShot(page, { path: `${shots}/create-dark-390.png` });
   await page.keyboard.press("Escape");
   await page.getByRole("dialog", { name: t("workItems.modal.title") }).waitFor({ state: "detached" });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`${web}${paths.workItems(slug, "MOB")}`);
   await page.getByRole("button", { name: t("workItems.addNew"), exact: true }).first().click();
   await page.getByRole("dialog", { name: t("workItems.modal.title") }).waitFor();
-  await page.screenshot({ path: `${shots}/create-dark-1440.png` });
+  await saveShot(page, { path: `${shots}/create-dark-1440.png` });
   await page.keyboard.press("Escape");
   await page.getByRole("dialog", { name: t("workItems.modal.title") }).waitFor({ state: "detached" });
 
@@ -361,12 +362,12 @@ try {
     const groupOptions = await page.locator(`select option[value="type"]`).count();
     await page.keyboard.press("Escape");
     check((groupOptions > 0) === typesOn, `${key}: board group-by type option is ${typesOn ? "shown" : "absent"} with types ${name} (${groupOptions} found)`);
-    await page.screenshot({ path: `${shots}/board-types-${name}-1440.png` });
+    await saveShot(page, { path: `${shots}/board-types-${name}-1440.png` });
 
     await page.goto(`${web}${paths.workItems(slug, key)}?layout=spreadsheet`);
     await page.getByRole("button", { name: t("layout.spreadsheet"), pressed: true }).waitFor();
     check(await page.getByRole("columnheader", { name: t("types.type"), exact: true }).count() === 0, `${key}: spreadsheet has no type column with types ${name}`);
-    await page.screenshot({ path: `${shots}/spreadsheet-types-${name}-1440.png` });
+    await saveShot(page, { path: `${shots}/spreadsheet-types-${name}-1440.png` });
 
     await page.goto(`${web}${paths.workItems(slug, key)}?layout=list`);
     await page.getByRole("button", { name: t("workItems.addNew"), exact: true }).first().click();

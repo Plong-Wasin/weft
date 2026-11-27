@@ -6,6 +6,7 @@ import { check, createSignedInContext, launchBrowser, startApi as startApiServer
 import type { Page } from "playwright";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31167);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52167);
@@ -64,9 +65,9 @@ try {
   const cliOnly = await clipboard(page);
   check(cliOnly.includes(`weft login --api-url ${api}`) && cliOnly.includes("weft daemon start"), "CLI-only guide lacks the login address or the Daemon step");
   check(!cliOnly.includes("/mcp") && !/weft_[A-Za-z0-9_]/.test(cliOnly), "CLI-only guide holds an MCP endpoint or a token-shaped string");
-  await page.screenshot({ path: `${shots}/not-ready-1440.png` });
+  await saveShot(page, { path: `${shots}/not-ready-1440.png` });
   await page.setViewportSize({ width: 390, height: 900 });
-  await page.screenshot({ path: `${shots}/not-ready-390.png` });
+  await saveShot(page, { path: `${shots}/not-ready-390.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
   console.log("connect-ai ok: navigation and not-ready state");
 
@@ -117,7 +118,7 @@ try {
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 900 });
       await cli.getByRole("heading", { name: translate("connectAi.cliTitle"), exact: true }).scrollIntoViewIfNeeded();
-      await page.screenshot({ path: `${shots}/${name}-${width}.png` });
+      await saveShot(page, { path: `${shots}/${name}-${width}.png` });
       check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `side scroll at ${width}px in ${name}`);
     }
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -143,9 +144,9 @@ try {
   await cli.getByText(translate("connectAi.cliWaiting")).waitFor();
   await page.goto(`${web}/${slug}/settings/runtimes`);
   await page.getByRole("link", { name: translate("runtimes.connectLink") }).waitFor();
-  await page.screenshot({ path: `${shots}/runtimes-empty-1440.png` });
+  await saveShot(page, { path: `${shots}/runtimes-empty-1440.png` });
   await page.setViewportSize({ width: 390, height: 900 });
-  await page.screenshot({ path: `${shots}/runtimes-empty-390.png` });
+  await saveShot(page, { path: `${shots}/runtimes-empty-390.png` });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`${web}/${slug}/settings/connect-ai`);
   await cli.getByText(translate("connectAi.cliWaiting")).waitFor();
@@ -171,9 +172,9 @@ try {
   const shoot = async (width: number) => {
     await page.setViewportSize({ width, height: 900 });
     await page.getByRole("tablist").scrollIntoViewIfNeeded();
-    await page.screenshot({ path: `${shots}/mcp-${width}.png` });
+    await saveShot(page, { path: `${shots}/mcp-${width}.png` });
     await page.getByRole("button", { name: translate("connectAi.copyGuide") }).scrollIntoViewIfNeeded();
-    await page.screenshot({ path: `${shots}/guide-${width}.png` });
+    await saveShot(page, { path: `${shots}/guide-${width}.png` });
     check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `side scroll at ${width}px`);
   };
   await shoot(1440);

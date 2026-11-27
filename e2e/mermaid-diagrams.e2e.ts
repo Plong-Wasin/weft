@@ -5,6 +5,7 @@ import type { Locator } from "playwright";
 import { createDatabase } from "../packages/db/src";
 import { createProjectActions } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
+import { saveShot } from "./shots";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31238);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52238);
@@ -150,7 +151,7 @@ try {
           check(await page.evaluate(() => (window as unknown as { __diagramExecuted?: number }).__diagramExecuted) === undefined, "hostile Mermaid script or click handler executed");
         }
         await page.setViewportSize({ width: 1280, height: 900 });
-        await page.screenshot({ path: `${captureDir}/08-${kind}-1280-${locale}-${theme}.png`, fullPage: true });
+        await saveShot(page, { path: `${captureDir}/08-${kind}-1280-${locale}-${theme}.png`, fullPage: true });
         await page.setViewportSize({ width: 390, height: 844 });
         check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${kind} diagram caused horizontal page scrolling at phone width`);
         const diagramBounds = await page.evaluate(() => {
@@ -168,7 +169,7 @@ try {
         check(!diagramBounds.box || (diagramBounds.box.right <= diagramBounds.viewport + 1 && (!diagramBounds.image || diagramBounds.image.right <= diagramBounds.box.right + 1)), `${kind} diagram image is clipped at phone width: ${JSON.stringify(diagramBounds)}`);
         // The phone toolbar is one row that scrolls inside itself, so it stays within the viewport while its tools may not.
         check(await page.evaluate(() => { const toolbar = document.querySelector('[data-testid="description-toolbar"]'); return !toolbar || (toolbar.getBoundingClientRect().right <= window.innerWidth && getComputedStyle(toolbar).overflowX === "auto"); }), `${kind} diagram toolbar is clipped at phone width`);
-        await page.screenshot({ path: `${captureDir}/08-${kind}-390-${locale}-${theme}.png`, fullPage: true });
+        await saveShot(page, { path: `${captureDir}/08-${kind}-390-${locale}-${theme}.png`, fullPage: true });
       }
     }
   }
@@ -213,7 +214,7 @@ try {
     for (const width of [1280, 390] as const) {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
       if (width === 390) check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "comment diagram caused horizontal page scrolling at phone width");
-      await page.screenshot({ path: `${captureDir}/08-comment-valid-${width}-${locale}.png`, fullPage: true });
+      await saveShot(page, { path: `${captureDir}/08-comment-valid-${width}-${locale}.png`, fullPage: true });
     }
   }
   const pageResponse = await page.request.post(`${api}/actions/create_wiki_page`, { data: { workspaceId, projectId: project.id, title: "Page diagram", contentMarkdown: validDiagram } });
@@ -235,7 +236,7 @@ try {
       for (const width of [1280, 390] as const) {
         await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
         if (width === 390) check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${screen} diagram caused horizontal page scrolling at phone width`);
-        await page.screenshot({ path: `${captureDir}/08-${kind}-valid-${width}-${locale}.png`, fullPage: true });
+        await saveShot(page, { path: `${captureDir}/08-${kind}-valid-${width}-${locale}.png`, fullPage: true });
       }
     }
   }

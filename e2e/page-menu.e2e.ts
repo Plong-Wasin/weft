@@ -1,7 +1,8 @@
 // Page and Wiki page header (ticket 03, with the header Share and Publish buttons): one breadcrumb on a Page, no project Settings button in the editor,
 // a Locked badge by the title instead of the large Lock button, and one page menu holding Lock or Unlock, Add subpage,
 // Archive or Restore, Markdown source and Delete (last, after a line, with its confirmation).
-import { chromium, type Browser } from "playwright";
+import { check, launchBrowser, newPage, startApi, startLive, startWeb, waitFor } from "./harness";
+import type { Browser } from "playwright";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { createDatabase } from "../packages/db/src";
@@ -14,23 +15,18 @@ const livePort = Number(Bun.env.E2E_LIVE_PORT ?? 33268);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bun", "apps/live/src/index.ts"], { env: { ...Bun.env, LIVE_PORT: String(livePort), WEB_ORIGIN: web }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api, VITE_LIVE_URL: `ws://localhost:${livePort}` }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startLive(livePort, web),
+  startWeb(webPort, { api, live: `ws://localhost:${livePort}` }),
 ];
 const { client, db } = createDatabase();
 let browser: Browser | null = null;
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 150; attempt += 1) { try { if ((await fetch(url)).status < 500) return; } catch { /* starting */ } await Bun.sleep(200); }
-  throw new Error(`${url} did not start`);
-}
 
 try {
-  await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, locale: "en-US", hasTouch: true });
+  await Promise.all([waitFor(`${api}/api/me`), waitFor(web), waitFor(`http://localhost:${livePort}`)]);
+  browser = await launchBrowser();
+  const page = await newPage(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US", hasTouch: true });
   const slug = `pagemenu-${crypto.randomUUID().slice(0, 8)}`;
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const call = async <T>(name: string, body: unknown) => {
     const response = await page.request.post(`${api}/actions/${name}`, { data: body });
     if (!response.ok()) throw new Error(`${name} failed (${response.status()}): ${await response.text()}`);

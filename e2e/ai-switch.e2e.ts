@@ -4,7 +4,8 @@
 //   AI on   (a provider key set, switch unset): the same surfaces are shown, as before this change.
 // Run with `bun e2e/ai-switch.e2e.ts` (set DATABASE_URL to a --keep database, E2E_API_PORT, E2E_WEB_PORT, CHROMIUM_PATH as in docs/agents/testing.md).
 // No model is called: the placeholder key only makes the server count AI as on.
-import { chromium, type BrowserContext, type Page } from "playwright";
+import { check, launchBrowser, newContext, startApi as startApiServer, startWeb, waitFor } from "./harness";
+import { type BrowserContext, type Page } from "playwright";
 import { createDatabase, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 
@@ -12,29 +13,20 @@ const apiPort = Number(Bun.env.E2E_API_PORT ?? 31177);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52177);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
-const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
 
 let apiProc: ReturnType<typeof Bun.spawn> | undefined;
 /** Starts the API with `extra` set; an undefined value removes that variable from the inherited environment. */
 function startApi(extra: Record<string, string | undefined>) {
-  const env: Record<string, string | undefined> = { ...Bun.env, ...extra, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api };
+  const env: Record<string, string | undefined> = { ...Bun.env, ...extra };
   for (const [key, value] of Object.entries(extra)) if (value === undefined) delete env[key];
-  apiProc = Bun.spawn(["bun", "apps/api/src/index.ts"], { env: env as Record<string, string>, stdout: "inherit", stderr: "inherit" });
+  apiProc = startApiServer(apiPort, web, { env });
 }
 async function stopApi() {
   apiProc?.kill();
   await apiProc?.exited;
   apiProc = undefined;
 }
-const webProc = Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" });
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
+const webProc = startWeb(webPort, { api });
 
 const { client, db } = createDatabase();
 const slug = `ai-${crypto.randomUUID().slice(0, 8)}`;
@@ -42,6 +34,7 @@ const railAi = (page: Page) => page.getByRole("navigation", { name: translate("s
 const sidecarButtons = (page: Page) => page.getByRole("button", { name: translate("sidecar.open"), exact: true });
 const askAiLink = async (page: Page) => {
   await page.getByRole("button", { name: translate("topbar.help"), exact: true }).click();
+  await page.getByRole("menuitem", { name: translate("topbar.helpWiki"), exact: true }).waitFor();
   const count = await page.getByRole("menuitem", { name: translate("topbar.helpAskAi"), exact: true }).count();
   await page.keyboard.press("Escape");
   return count;
@@ -100,8 +93,8 @@ try {
   // Owner: sign up, create the workspace, and seed a project, a work item and a Wiki page through the API.
   startApi({ WEFT_AI_ENABLED: "false", OPENAI_API_KEY: undefined, ANTHROPIC_API_KEY: undefined });
   await waitFor(`${api}/api/me`);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context: BrowserContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US", colorScheme: "light" });
+  const browser = await launchBrowser();
+  const context: BrowserContext = await newContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US", colorScheme: "light" });
   const page = await context.newPage();
   page.on("pageerror", (error) => console.error("pageerror:", error.message));
   await page.goto(web);
@@ -139,7 +132,7 @@ try {
 
   // Guest (AI off): the Guest sees no AI surface either.
   const invite = await (await page.request.post(`${api}/actions/create_invite`, { data: { workspaceId: row.id, role: "Guest" } })).json() as { token: string };
-  const guestContext = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  const guestContext = await newContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" });
   const guest = await guestContext.newPage();
   guest.on("pageerror", (error) => console.error("guest pageerror:", error.message));
   await guest.goto(`${web}/invite/${invite.token}`);

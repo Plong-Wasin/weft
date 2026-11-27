@@ -16,11 +16,11 @@ export function defaultPortBase(directoryName: string): number {
 }
 
 /** `E2E_PORT_BASE` when set, otherwise the directory's default. A base that would push a web port to 65535 or more is refused with a message, before any flow starts. */
-export function resolvePortBase(value: string | undefined, directoryName: string): number {
-  if (value === undefined || value.trim() === "") return defaultPortBase(directoryName);
-  const base = Number(value);
-  if (!Number.isInteger(base) || base < minPortBase || base > maxPortBase) {
-    throw new Error(`E2E_PORT_BASE=${value} refused: it must be a whole number from ${minPortBase} to ${maxPortBase}, because the web port is base + ${webPortOffset} and must stay below 65535`);
+export function resolvePortBase(value: string | undefined, directoryName: string, workers = 1): number {
+  const base = value?.trim() ? Number(value) : defaultPortBase(directoryName);
+  const limit = maxPortBase - (workers - 1) * 2;
+  if (!Number.isInteger(base) || base < minPortBase || base > limit) {
+    throw new Error(`E2E_PORT_BASE=${value?.trim() || base} refused: use a whole number from ${minPortBase} to ${limit} with ${workers} worker(s) to keep every web port below 65535`);
   }
   return base;
 }
@@ -30,14 +30,22 @@ export function workerPorts(base: number, worker: number): { api: number; web: n
   return { api: base + worker * 2, web: base + webPortOffset + worker * 2, live: base + livePortOffset + worker * 2 };
 }
 
-/** The process listening on a TCP port, as `command (pid N)`, or undefined when the port is free. Read-only: it never signals anything. */
-export function listenerOn(port: number): string | undefined {
+/** The processes listening on a TCP port, with an empty list when the port is free. */
+export function listenersOn(port: number): { pid: number; command: string }[] {
   // lsof -F prints one field per line: p<pid>, then c<command>. It exits 1 when nothing listens.
-  const { stdout } = Bun.spawnSync(["lsof", "-nP", "-Fpc", `-iTCP:${port}`, "-sTCP:LISTEN"], { stdout: "pipe", stderr: "ignore" });
-  let pid = "";
+  const { stdout, exitCode } = Bun.spawnSync(["lsof", "-nP", "-Fpc", `-iTCP:${port}`, "-sTCP:LISTEN"], { stdout: "pipe", stderr: "ignore" });
+  if (exitCode !== 0 && exitCode !== 1) throw new Error(`could not inspect listeners on port ${port}`);
+  const listeners: { pid: number; command: string }[] = [];
+  let pid = 0;
   for (const line of stdout.toString().split("\n")) {
-    if (line.startsWith("p")) pid = line.slice(1);
-    else if (line.startsWith("c") && pid) return `${line.slice(1)} (pid ${pid})`;
+    if (line.startsWith("p")) pid = Number(line.slice(1));
+    else if (line.startsWith("c") && pid) listeners.push({ pid, command: line.slice(1) });
   }
-  return undefined;
+  return listeners;
+}
+
+/** The first listener formatted for diagnostics. */
+export function listenerOn(port: number): string | undefined {
+  const listener = listenersOn(port)[0];
+  return listener && `${listener.command} (pid ${listener.pid})`;
 }

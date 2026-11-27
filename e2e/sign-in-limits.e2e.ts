@@ -1,7 +1,8 @@
 // Browser end-to-end flow: the sign-in wait and lock messages read plainly at 1440px and 390px, in light and dark.
 // Needs an empty isolated database: create one with `bun run test:isolated --keep <any test file>` and set DATABASE_URL to the
 // database it prints. Screenshots land in .local/visual/review/32-sign-in-limits/.
-import { chromium, type Page } from "playwright";
+import { check, launchBrowser, newContext, productionWeb, serveWeb, startApi, waitFor } from "./harness";
+import type { Page } from "playwright";
 import { like } from "drizzle-orm";
 import { createDatabase, users } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -13,26 +14,14 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const shots = reviewShots("32-sign-in-limits");
 const password = "a-secure-password";
-const webDist = Bun.env.E2E_WEB_DIST ?? `${reviewShots("32-sign-in-limits")}/../web-dist-${crypto.randomUUID().slice(0, 8)}`;
+const webBuild = await productionWeb(api);
 const servers: Array<ReturnType<typeof Bun.spawn>> = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api, ALLOW_SIGNUP: "true", PASSWORD_BREACH_CHECK: "off", SMTP_HOST: "" }, stdout: "inherit", stderr: "inherit" }),
+  startApi(apiPort, web, { env: { ...Bun.env, ALLOW_SIGNUP: "true", PASSWORD_BREACH_CHECK: "off", SMTP_HOST: "" } }),
 ];
-// A production build served by vite preview: the dev server watches every source file, which the shared machine cannot afford (EMFILE).
-const webBuild = Bun.spawnSync(["bunx", "vite", "build", "--outDir", webDist, "--emptyOutDir"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" });
-if (webBuild.exitCode !== 0) throw new Error("web build failed");
-servers.push(Bun.spawn(["bunx", "vite", "preview", "--outDir", webDist, "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env }, stdout: "ignore", stderr: "inherit" }));
+servers.push(serveWeb(webPort, webBuild.directory));
 const sizes = { "1440": { width: 1440, height: 900 }, "390": { width: 390, height: 844 } } as const;
 const themes = ["light", "dark"] as const;
 
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
-
-const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
 const noHorizontalScroll = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
 
 /** Creates an account through the API, the same call the sign-up form makes. */
@@ -56,8 +45,8 @@ async function failSignIns(email: string, count: number, sleepAfterFailure: Reco
   }
 }
 
-async function openSignIn(browser: Awaited<ReturnType<typeof chromium.launch>>, size: keyof typeof sizes, theme: (typeof themes)[number]) {
-  const context = await browser.newContext({ viewport: sizes[size], locale: "en-US", colorScheme: theme });
+async function openSignIn(browser: Awaited<ReturnType<typeof launchBrowser>>, size: keyof typeof sizes, theme: (typeof themes)[number]) {
+  const context = await newContext(browser, { viewport: sizes[size], locale: "en-US", colorScheme: theme });
   const page = await context.newPage();
   await page.goto(web);
   await page.getByRole("heading", { name: new RegExp(translate("app.welcome")) }).waitFor();
@@ -77,7 +66,7 @@ async function submitSignIn(page: Page, email: string, typedPassword: string) {
 let failed = false;
 try {
   await Promise.all([waitFor(`${api}/api/health/live`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
+  const browser = await launchBrowser();
   const id = crypto.randomUUID().slice(0, 8);
 
   // One account is locked for every screenshot: the lock lasts 15 minutes, so it is set once, after the waits.
@@ -121,6 +110,7 @@ try {
   console.error(error);
 } finally {
   for (const server of servers) server.kill();
+  await webBuild.clean();
   const { client, db } = createDatabase();
   await db.delete(users).where(like(users.email, "e2e-%@example.test"));
   await client.end();

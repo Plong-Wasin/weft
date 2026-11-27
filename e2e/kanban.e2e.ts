@@ -1,6 +1,7 @@
 // Browser end-to-end flow: sign up, create work items, drag a card on the kanban board, check it persists.
 // Run with `bun run e2e` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
-import { chromium, type Page } from "playwright";
+import { check, createSignedInContext, launchBrowser, startApi, startWeb, waitFor } from "./harness";
+import type { Page } from "playwright";
 import { and, eq, like } from "drizzle-orm";
 import { createDatabase, projectMembers, projects, users, workItemAssignees, workItems, workspaceMembers, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -11,17 +12,9 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5207);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 async function titlesIn(page: Page, column: string) {
   return page.locator(`[data-testid="column-${column}"] article [data-testid="card-title"]`).allTextContents();
@@ -30,25 +23,16 @@ async function titlesIn(page: Page, column: string) {
 let failed = false;
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, hasTouch: true });
+  const browser = await launchBrowser();
+  const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
+  const context = await createSignedInContext(browser, { viewport: { width: 1440, height: 900 }, hasTouch: true }, api, web, {
+    account: { name: "Kanban Tester", email: `${slug}@example.test` },
+    workspace: { name: "E2E team", slug },
+    project: { name: "Mobile", key: "MOB", visibility: "public", shape: "simple" },
+  });
   const page = await context.newPage();
   const shots = reviewShots("06-board-layout");
-  const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
-  await page.goto(web);
-  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
-  await page.getByLabel(translate("auth.name")).fill("Kanban Tester");
-  await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
-  await page.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
-  await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
-  await page.getByRole("button", { name: translate("auth.signUp") }).click();
-  await page.getByLabel(translate("workspace.name")).fill("E2E team");
-  await page.getByLabel(translate("workspace.slug")).fill(slug);
-  await page.getByRole("button", { name: translate("workspace.create") }).click();
-  await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
-  await page.getByLabel(translate("projects.name")).fill("Mobile");
-  await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOB");
-  await page.getByRole("button", { name: translate("projects.create") }).click();
+  await page.goto(`${web}/${slug}`);
   await page.getByRole("link", { name: /MOB · Mobile/ }).click();
   // An empty project shows the empty state: its Add work item button creates Alpha in the modal; Backlog's + then adds the rest inline.
   await page.getByRole("status").filter({ hasText: translate("workItems.emptyHint") }).getByRole("button", { name: translate("workItems.addNew"), exact: true }).click();
@@ -67,7 +51,6 @@ try {
 
   await page.getByRole("button", { name: translate("layout.board") }).click();
   if (!page.url().includes("layout=board")) throw new Error("layout is not in the URL");
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const boardScroller = page.getByTestId("board");
   check(await boardScroller.evaluate((el) => el.scrollWidth > el.clientWidth), "board should preserve horizontal scrolling when columns overflow");
   check(await page.getByTestId("board-scroll-affordance").isVisible(), "board should show a horizontal scroll affordance");
@@ -204,8 +187,9 @@ try {
   await page.getByRole("button", { name: `${translate("sortable.reorder")}: MOB-1` }).focus();
   await page.keyboard.press("ArrowRight");
   await page.keyboard.press("ArrowRight");
-  await page.waitForTimeout(2200);
   await page.getByRole("alert").getByText("The move was saved, but the board could not refresh. Reload the page to see the latest order.").waitFor({ timeout: 5000 });
+  // Watch past the board's 2 s settle timer for a queued move that must never replay.
+  await page.waitForTimeout(2_200);
   check(refreshFailureMoves === 1, `stale board replayed a queued move ${refreshFailureMoves} times`);
   check((await page.locator('[data-testid="board"] [role="status"]').textContent()) === "", "unconfirmed keyboard move was announced as successful");
   check(await page.evaluate(() => document.activeElement?.getAttribute("data-reorder")) === await page.getByTestId("card-MOB-1").getAttribute("data-card-id"), "timed-out refresh lost focus from the reorder handle");

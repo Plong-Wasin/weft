@@ -13,7 +13,7 @@ Run the whole suite with `bun run test:isolated`. It migrates a template databas
 - **One file or name filter**: pass bun test arguments through, for example `bun run test:isolated packages/actions/test/modules.test.ts`; that runs one process on one database.
 - **Keep the database** for debugging with `--keep`; the script prints the `DATABASE_URL` to reuse, and you drop it yourself (no `psql` is needed): `bun -e 'import { SQL } from "bun"; const a = new SQL("postgres://weft:weft@localhost:54329/postgres"); await a.unsafe("drop database <name> with (force)"); await a.close()'`.
 - **Never run `bun test` against the default shared `weft` database**: it is the development database, often behind on migrations, and parallel runs there fail each other with false failures.
-- **Connection limit**: the server allows 100 connections for every run on the machine. Many parallel runs can hit `too many clients already`; rerun once the others finish, or run with `--workers=4`.
+- **Connection limit**: Compose starts Postgres with 300 shared connections. On hosts with an existing server, check its limit with `SHOW max_connections`.
 
 ## Typecheck
 
@@ -21,7 +21,47 @@ Run the whole suite with `bun run test:isolated`. It migrates a template databas
 
 ## Browser flows
 
-`bun e2e/run-all.ts <name-filter>` runs the `e2e/*.e2e.ts` flows whose file name contains the filter (a plain substring, not a regex). Set `E2E_API_PORT` and `E2E_WEB_PORT` to free ports, and `CHROMIUM_PATH` to an installed Chromium (for example `~/.cache/ms-playwright/chromium-*/chrome-linux64/chrome`) when Playwright's own download is missing. The flows start their own API and web servers and read `DATABASE_URL`, so point them at a database made with `--keep`. `bun e2e/run-all.ts` gives each worker a pair of ports from `E2E_PORT_BASE` (a whole number from 1024 to 45534; the API port is the base plus twice the worker number, the web port is the API port plus 20000). Unset, the base comes from a hash of the checkout's directory name (30000 to 39999), so two checkouts rarely share ports. A flow whose port is already taken fails at once, naming the process that holds it; the runner never kills a process. `ai.e2e.ts` needs `OPENAI_API_KEY`. `attachments.e2e.ts` uploads to S3 storage and needs a MinIO-compatible server on `localhost:9000` with the `weft-assets` bucket and the default `weft` / `weft-secret` keys: `docker compose up -d minio` (see `compose.yaml`).
+`bun e2e/run-all.ts [name-filter ...]` runs local browser flows. Filters match substrings of the file name. Use `--slow` for the full suite, including `editor-parity` and `responsive`. An exact filter also selects either slow flow.
+
+The runner migrates a database template once and copies it for each flow. The API and live servers start fresh for each flow. Most flows share one web build, copied with each worker's API and live ports. Their browser contexts block service workers so application requests reach the corresponding servers and Playwright routes. `mermaid-diagrams.e2e.ts` builds once with its actual ports and checks that the production service worker takes control. Use `--dev` to run flows against Vite while debugging. Flows that explicitly exercise production output still use a production build.
+
+- **Environment.** `DATABASE_URL` defaults to the local `weft-postgres` service. Set `CHROMIUM_PATH` to an installed Chromium when Playwright's browser download is missing. `attachments.e2e.ts` needs an S3-compatible server on `localhost:9000` with the `weft-assets` bucket and the default `weft` / `weft-secret` keys. See the MinIO service in `compose.yaml`.
+- **Ports.** `E2E_PORT_BASE` defaults to a hash of the checkout name. The API port for zero-based worker N is the base plus twice N, the live port is the API port plus 10000, and the web port is the API port plus 20000. The last worker's web port must stay below 65535. A busy port fails the flow and names the listener. Server readiness verifies that the process started by the flow owns the listening socket. For a direct invocation of a flow file, set `E2E_API_PORT`, `E2E_WEB_PORT`, `E2E_LIVE_PORT` and point `DATABASE_URL` at an isolated database made with `--keep`.
+- **Timeouts and retries.** Each attempt gets ten minutes (`editor-parity` alone takes over five). A timed-out attempt reports the flow name and stops the flow's process tree and every process with that attempt's inherited ownership marker, with their descendants. The tree covers Chromium, which overwrites its environment and so loses the marker; the marker covers a process whose parent already exited. `e2e/shutdown.test.ts` checks a frozen Chromium when one is installed. If processes remain after SIGTERM, the runner repeats discovery and sends SIGKILL until they exit or cleanup reaches its deadline. Failed attempts get one retry after the first queue completes. Busy ports are reported immediately.
+- **Durations.** The runner prints each attempt's duration and records successful production runs in `.local/e2e/durations.json` to schedule the longest flows first. Use `--workers=N` to override the default.
+
+The API fixture in `e2e/harness.ts` creates the account, workspace and optional project for flows that start after onboarding, then reuses the authenticated storage state in Playwright. `auth-onboarding.e2e.ts`, `auth-submit-guard.e2e.ts` and `signup-language.e2e.ts` cover UI sign-up and onboarding. `project-features.e2e.ts` covers project creation and shape. `agents.e2e.ts` creates a project through the UI, checks that public visibility is saved by default and verifies that a Guest can see it in the sidebar. `project-key.e2e.ts` and `project-general.e2e.ts` cover project keys and visibility permissions.
+
+### Coverage after the speed changes
+
+All 116 flow files remain and no test block was removed. These assertions or actions changed:
+
+| Removed or replaced | What still covers it |
+| --- | --- |
+| `responsive`: Tooltip fixture imported from the Vite dev server (a build has no `/node_modules/.vite`), with its `Help` / `Helpful detail` strings, the exact `2px` outline and `[data-popup-open]` | The same flow tabs to the real sidebar toggle and checks focus, a visible focus indicator, the tooltip text and Escape dismissal |
+| `routes`: string equality of color tokens and `.875rem` | The same checks compare the parsed colors and the normalized length |
+| `auth-submit-guard`, `sign-in-limits`: their own web build and its exit-code check | `e2e/web-build.ts` throws on a failed build and both flows use the shared build. `mermaid-diagrams` keeps its own unmodified build to exercise service worker activation. |
+| UI sign-up, workspace and project creation in flows that start after onboarding (`e2e/harness.ts` now creates them through the API) | `auth-onboarding`, `auth-submit-guard`, `signup-language` (sign-up and onboarding), `agents`, `project-features`, `project-key`, `project-general` (projects and visibility) |
+| `reference-picker`: a click into the Wiki editor, now `focus()` | The same flow still types into the editor and checks the picker; `block-menu` and `editor-parity` click into it |
+| Fixed sleeps | A condition wait on the same focus, geometry, dialog, URL or stored content. A check that something did not happen keeps its sleep (`kanban`'s replayed move) |
+
+### Local benchmark
+
+Measured on 2026-11-27 with `bun e2e/run-all.ts --slow --workers=2`, Bun 1.4.2, Chromium 1255 and the shared local Postgres and S3 services, on the same host. Each wall time includes setup, all 116 flows, retries, and cleanup.
+
+| Runner | Workers | Wall time | Passed after retry |
+| --- | ---: | ---: | ---: |
+| Before (`5ff3b923`) | 2 | 22m 59s | 114/116 (`views`, `ai-switch` failed) |
+| After | 2 | 15m 08s | 116/116 (`mention-popups` needed the retry) |
+
+The run is 7m 51s (34%) shorter. `editor-parity` takes about 310s of it on one page. A flow can still miss a wait on its first attempt, which the retry absorbs.
+
+### Waits that a flow needs
+
+- **Wiki editor.** It takes input before its first sync with the live server, and the sync then moves the cursor. After opening a Wiki page, wait for a line that the page already stores before you click or type.
+- **"@" mentions.** An "@" typed before the member list arrives opens a hidden popup that stays empty until the next keystroke. Open the page with `openWithAction` from `e2e/harness.ts`.
+
+Both are product behaviour that a fast person can also hit.
 
 ## Real Runtime acceptance
 

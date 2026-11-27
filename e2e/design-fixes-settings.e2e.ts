@@ -3,7 +3,7 @@
 // Members and access section sits clear of the member list. Desktop: project rows keep one height, settings navigation
 // puts the project finder first, one state form targets a workflow group, and the populated Inbox text stays inside its row (clamped text keeps a full-text title).
 // Run with `bun e2e/design-fixes-settings.e2e.ts` (set DATABASE_URL to an isolated test database).
-import { chromium } from "playwright";
+import { check, launchBrowser, newContext, startApi, startLive, startWeb, waitFor } from "./harness";
 import { createDatabase, notifications } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 import { stateGroupColors } from "../apps/web/src/types";
@@ -14,30 +14,21 @@ const livePort = Number(Bun.env.E2E_LIVE_PORT ?? 31442);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bun", "apps/live/src/index.ts"], { env: { ...Bun.env, LIVE_PORT: String(livePort), WEB_ORIGIN: web }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api, VITE_LIVE_URL: `ws://localhost:${livePort}` }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startLive(livePort, web),
+  startWeb(webPort, { api, live: `ws://localhost:${livePort}` }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 let failed = false;
 
 try {
-  await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  await Promise.all([waitFor(`${api}/api/me`), waitFor(web), waitFor(`http://localhost:${livePort}`)]);
+  const browser = await launchBrowser();
+  const context = await newContext(browser, { viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   page.on("pageerror", (error) => console.error("pageerror:", error.message));
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const longName = "Design Tester With A Long Display Name";
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const call = async <T>(name: string, body: unknown) => await (await page.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
   const noSideScroll = () => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
 
@@ -381,7 +372,7 @@ try {
   console.log("inbox ok: populated rows keep measured text inside their content boxes");
 
   // A real coarse-pointer context keeps the key controls reachable at touch target size.
-  const touchContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
+  const touchContext = await newContext(browser, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
   const touchPage = await touchContext.newPage();
   const assertTouchTargets = async (selector: string, label: string) => {
     const heights = await touchPage.locator(selector).evaluateAll((nodes) => nodes.filter((node) => node.getClientRects().length > 0).map((node) => node.getBoundingClientRect().height));

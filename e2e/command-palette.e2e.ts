@@ -1,6 +1,6 @@
 // Browser end-to-end flow: the command palette (Ctrl+K / Cmd+K), its search and commands, focus return, the shortcuts page, and the phone layout.
 // Run with `bun e2e/command-palette.e2e.ts` (needs the shared weft-postgres container; set DATABASE_URL to use your own database). Screenshots go to .local/visual/review/35-command-palette.
-import { chromium } from "playwright";
+import { check, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { like } from "drizzle-orm";
@@ -17,32 +17,29 @@ const acceptanceShotPhase = Bun.env.SHADCN_SCREENSHOT_PHASE ?? "after";
 const acceptanceShots = join(process.cwd(), ".local/shots/shadcn-05", acceptanceShotPhase);
 mkdirSync(acceptanceShots, { recursive: true });
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 let failed = false;
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const browser = await launchBrowser();
+  const context = await newContext(browser, { viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const call = async <T>(name: string, body: unknown) => await (await page.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
   const palette = () => page.getByRole("dialog", { name: translate("palette.title") });
   const input = () => page.getByRole("combobox", { name: translate("palette.title") });
-  // The key listener mounts with the signed-in shell, so wait for its top-bar button before pressing keys after a page load.
-  const openWithKeys = async () => { await page.getByRole("button", { name: /^Open the command palette/ }).waitFor(); await page.keyboard.press("Control+k"); await palette().waitFor(); };
+  const openWithKeys = async () => {
+    await page.getByRole("button", { name: /^Open the command palette/ }).waitFor();
+    // The shortcut is ignored while the previous palette's closing input still holds focus.
+    await palette().waitFor({ state: "detached" });
+    await page.keyboard.press("Control+k");
+    await palette().waitFor();
+    await input().and(page.locator(":focus")).waitFor();
+  };
 
   await page.goto(web);
   await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
@@ -197,7 +194,7 @@ try {
   }
 
   // The phone-landscape layout is wider than md but still uses coarse-pointer target sizes.
-  const touchContext = await browser.newContext({ viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
+  const touchContext = await newContext(browser, { viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true, storageState: await context.storageState() });
   const touchPage = await touchContext.newPage();
   await touchPage.goto(`${web}/${slug}/projects/MOB/issues`);
   const touchPaletteButton = touchPage.getByRole("button", { name: /^Open the command palette/ });

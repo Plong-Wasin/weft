@@ -1,7 +1,9 @@
 // Browser end-to-end flow: every in-scope screen in tools/visual/routes.json has a Weft route, renders at 1440px and 390px without
 // page-level horizontal scroll, and the 390px shell collapses to a drawer.
 // Run with `bun e2e/responsive.e2e.ts` (needs the shared weft-postgres container; set DATABASE_URL, CHROMIUM_PATH).
-import { chromium, expect, type Page } from "playwright/test";
+import { check, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
+import { expect, type Page } from "playwright/test";
+import { controlAppearance } from "./control-appearance";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { translate } from "../packages/shared/src";
@@ -17,23 +19,14 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5220);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 let failed = false;
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const client = new WeftClient(api, web);
   const seed = await seedWeft(client, slug);
@@ -78,18 +71,18 @@ try {
     return content[route]();
   };
 
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
+  const browser = await launchBrowser();
   const shots = reviewShots("20-responsive-and-final-sweep");
   // The viewports are independent (a context and page each), so they run side by side: this flow was the longest of the suite.
   await Promise.all(viewports.map(async (viewport) => {
-    const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height }, colorScheme: "light", reducedMotion: "reduce" });
+    const context = await newContext(browser, { viewport: { width: viewport.width, height: viewport.height }, colorScheme: "light", reducedMotion: "reduce" });
     await context.addCookies(client.cookies().map((c) => ({ ...c, domain: "localhost", path: "/" })));
     const page = await context.newPage();
     const errors: string[] = [];
     page.on("pageerror", (e) => errors.push(`${e.message} at ${page.url()}: ${e.stack ?? "no stack"}`));
     for (const route of routes) {
       const path = fillPath(route.weft!, seed)!;
-      const context2 = route.auth === false ? await browser.newContext({ viewport: { width: viewport.width, height: viewport.height } }) : null;
+      const context2 = route.auth === false ? await newContext(browser, { viewport: { width: viewport.width, height: viewport.height } }) : null;
       const target = context2 ? await context2.newPage() : page;
       await target.goto(`${web}${path}`, { waitUntil: "load" });
       await readyOn(target, route.name).waitFor({ timeout: 15_000 }).catch((cause) => {
@@ -164,38 +157,26 @@ try {
     await context.close();
   }));
 
-  // The new Tooltip is not mounted in the product yet; exercise its keyboard path in an isolated browser root.
-  const tooltipContext = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  // Exercise the real sidebar toggle so the keyboard test works on both builds.
+  const tooltipContext = await newContext(browser, { viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
+  await tooltipContext.addCookies(client.cookies().map((cookie) => ({ ...cookie, domain: "localhost", path: "/" })));
   const tooltipPage = await tooltipContext.newPage();
-  await tooltipPage.goto(web, { waitUntil: "load" });
-  await tooltipPage.evaluate(async () => {
-    const [React, ReactDOM, components] = await Promise.all([
-      import("/node_modules/.vite/deps/react.js"),
-      import("/node_modules/.vite/deps/react-dom_client.js"),
-      import("/src/ui/tooltip.tsx"),
-    ]);
-    document.body.innerHTML = '<div id="tooltip-keyboard-test"></div>';
-    const createElement = React.default.createElement;
-    const content = createElement(components.TooltipContent, null, "Helpful detail");
-    const trigger = createElement(components.TooltipTrigger, {
-      delay: 0,
-      render: createElement("button", { type: "button", "aria-label": "Keyboard help" }, "Help"),
-    });
-    const tooltip = createElement(components.Tooltip, null, trigger, content);
-    ReactDOM.default.createRoot(document.getElementById("tooltip-keyboard-test")!).render(
-      createElement(components.TooltipProvider, null, tooltip),
-    );
-  });
-  const tooltipTrigger = tooltipPage.getByRole("button", { name: "Keyboard help" });
-  await tooltipPage.evaluate(() => { document.body.tabIndex = 0; document.body.focus(); });
-  await tooltipPage.keyboard.press("Tab");
-  check(await tooltipTrigger.evaluate((element) => element === document.activeElement), "Tab does not focus the Tooltip trigger");
-  check((await tooltipTrigger.evaluate((element) => getComputedStyle(element).outlineWidth)) === "2px", "the Tooltip trigger focus ring is missing");
-  const tooltipPopup = tooltipPage.locator('[data-slot="tooltip-trigger"][data-popup-open]');
-  await tooltipPopup.waitFor();
-  check((await tooltipPage.locator('[data-slot="tooltip-content"]').innerText()) === "Helpful detail", "keyboard focus does not open the Tooltip content");
+  await tooltipPage.goto(`${web}/${slug}`);
+  const collapseSidebar = translate("shell.collapseSidebar");
+  const trigger = tooltipPage.getByRole("button", { name: collapseSidebar, exact: true });
+  await trigger.waitFor();
+  const resting = await controlAppearance(trigger);
+  for (let tab = 0; tab < 20; tab += 1) {
+    await tooltipPage.keyboard.press("Tab");
+    if (await trigger.evaluate((element) => element === document.activeElement)) break;
+  }
+  check(await trigger.evaluate((element) => element === document.activeElement), "Tab does not focus the sidebar Tooltip trigger");
+  const focused = await controlAppearance(trigger);
+  check(focused.focusVisible && ((focused.outline !== null && focused.outline !== resting.outline) || focused.rings.some((ring) => !resting.rings.includes(ring))), "the sidebar Tooltip trigger focus ring is missing");
+  const tooltip = tooltipPage.locator('[data-slot="tooltip-content"]').filter({ hasText: collapseSidebar });
+  await tooltip.waitFor();
   await tooltipPage.keyboard.press("Escape");
-  await tooltipPopup.waitFor({ state: "hidden" });
+  await tooltip.waitFor({ state: "hidden" });
   await tooltipContext.close();
 
   await browser.close();

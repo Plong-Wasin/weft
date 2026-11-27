@@ -1,6 +1,6 @@
 // Ticket 04: Sheet focus/dismissal and viewport fit at the two widths where the phone drawer is available.
+import { launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
 import { mkdirSync } from "node:fs";
-import { chromium } from "playwright";
 import { translate } from "../packages/shared/src";
 import { WeftClient, seedWeft } from "../tools/visual/weft-client";
 
@@ -9,25 +9,17 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 35140);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "ignore", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web, { stdout: "ignore" }),
+  startWeb(webPort, { api }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const client = new WeftClient(api, web);
   await seedWeft(client, slug);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, reducedMotion: "reduce" });
+  const browser = await launchBrowser();
+  const context = await newContext(browser, { viewport: { width: 390, height: 844 }, hasTouch: true, reducedMotion: "reduce" });
   await context.addCookies(client.cookies().map((cookie) => ({ ...cookie, domain: "localhost", path: "/" })));
   const page = await context.newPage();
   const shots = ".local/shots/shadcn-04";

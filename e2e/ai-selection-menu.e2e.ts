@@ -4,7 +4,8 @@
 // "AI assist" and the keyboard shortcut Ctrl/⌘+Shift+J still open the assist task picker. The choice survives a reload.
 // The model is mocked (no provider is called); a placeholder key only makes the server count AI as on.
 // Run with `bun e2e/ai-selection-menu.e2e.ts` (set DATABASE_URL to a --keep database, E2E_API_PORT, E2E_WEB_PORT, CHROMIUM_PATH as in docs/agents/testing.md).
-import { chromium, type Locator, type Page } from "playwright";
+import { check, launchBrowser, newContext, startApi, startLive, startWeb, waitFor } from "./harness";
+import { type Locator, type Page } from "playwright";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -16,18 +17,10 @@ const livePort = Number(Bun.env.E2E_LIVE_PORT ?? 31192);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bun", "apps/live/src/index.ts"], { env: { ...Bun.env, LIVE_PORT: String(livePort), WEB_ORIGIN: web }, stdout: "ignore", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api, VITE_LIVE_URL: `ws://localhost:${livePort}` }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startLive(livePort, web, { stdout: "ignore" }),
+  startWeb(webPort, { api, live: `ws://localhost:${livePort}` }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 let failed = false;
 let offApi: ReturnType<typeof Bun.spawn> | undefined;
@@ -40,12 +33,11 @@ function offEnv() {
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web), waitFor(`http://localhost:${livePort}`)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  const browser = await launchBrowser();
+  const context = await newContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" });
   const page = await context.newPage();
   page.on("pageerror", (error) => console.error("pageerror:", error.message));
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const call = async <T>(name: string, body: unknown) => await (await page.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
 
   // A configured key: the status is mocked so the menu has a task picker to show, and assist calls answer locally.
@@ -71,7 +63,7 @@ try {
   const workspaceId = me.workspaces.find((workspace) => workspace.slug === slug)!.id;
   const project = await call<{ id: string }>("get_project", { workspaceId, key: "MOB" });
   await call("create_work_item", { projectId: project.id, title: "Selection target" });
-  const wikiPage = await call<{ id: string }>("create_wiki_page", { workspaceId, title: "Selection notes" });
+  const wikiPage = await call<{ id: string }>("create_wiki_page", { workspaceId, title: "Selection notes", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Seed line" }] }] } });
 
   const assistToolbar = (host: Page | Locator) => host.getByRole("toolbar", { name: translate("assist.menu"), exact: true });
   const preferenceCheckbox = () => page.getByRole("checkbox", { name: translate("accountPrefs.aiMenu"), exact: true });
@@ -82,6 +74,11 @@ try {
     await page.keyboard.press("Enter");
     await page.keyboard.type(text);
     await page.keyboard.press("Shift+Home");
+  }
+  /** Opens the Wiki page and waits for a stored line: the editor takes input before its first sync, and the sync then moves the cursor. */
+  async function openWiki(stored: string) {
+    await page.goto(`${web}/${slug}/wiki/${wikiPage.id}`);
+    await page.getByTestId("wiki-editor").locator(".ProseMirror").getByText(stored).waitFor();
   }
   /** Sets the account switch on the preferences page and waits until the server has saved it. */
   async function setPreference(on: boolean) {
@@ -126,17 +123,15 @@ try {
   await page.setViewportSize({ width: 1440, height: 900 });
   console.log("ai-selection-menu ok: on by default");
 
-  await page.goto(`${web}/${slug}/wiki/${wikiPage.id}`);
   const wiki = page.getByTestId("wiki-editor").locator(".ProseMirror");
-  await wiki.waitFor();
+  await openWiki("Seed line");
   await typeAndSelect(wiki, "Wiki selected text");
   await assistToolbar(page).waitFor();
   console.log("ai-selection-menu ok: menu shows on selection when on");
 
   // Off, then reload: the Wiki menu is gone, the slash command and the shortcut still open assist.
   await setPreference(false);
-  await page.goto(`${web}/${slug}/wiki/${wikiPage.id}`);
-  await wiki.waitFor();
+  await openWiki("Wiki selected text");
   await typeAndSelect(wiki, "Wiki off text");
   await page.getByTestId("wiki-bubble-menu").waitFor();
   check(await assistToolbar(page).count() === 0, "AI selection menu is shown in the Wiki while the switch is off");
@@ -179,8 +174,7 @@ try {
 
   // On again, then reload: the Wiki menu comes back on selection.
   await setPreference(true);
-  await page.goto(`${web}/${slug}/wiki/${wikiPage.id}`);
-  await wiki.waitFor();
+  await openWiki("Shortcut text");
   await typeAndSelect(wiki, "Wiki back on text");
   await assistToolbar(page).waitFor();
   console.log("ai-selection-menu ok: menu back after reload when on");
@@ -189,7 +183,7 @@ try {
   // command is not listed. The API restarts with the switch off; the web app reads the config again on reload.
   servers[0].kill();
   await servers[0].exited;
-  offApi = Bun.spawn(["bun", "apps/api/src/index.ts"], { env: offEnv(), stdout: "ignore", stderr: "inherit" });
+  offApi = startApi(apiPort, web, { env: offEnv(), stdout: "ignore" });
   await waitFor(`${api}/api/me`);
   await page.goto(`${web}/account/preferences`);
   await page.getByRole("alert").filter({ hasText: translate("app.notFound") }).waitFor();
@@ -199,8 +193,7 @@ try {
   await page.getByRole("menuitem", { name: translate("email.menu"), exact: true }).waitFor();
   check(await page.getByRole("menuitem", { name: translate("accountPrefs.menu"), exact: true }).count() === 0, "AI off: the preferences item is in the profile menu");
   await page.keyboard.press("Escape");
-  await page.goto(`${web}/${slug}/wiki/${wikiPage.id}`);
-  await wiki.waitFor();
+  await openWiki("Wiki back on text");
   await wiki.click();
   await page.keyboard.press("Control+End");
   await page.keyboard.press("Enter");

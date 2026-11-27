@@ -2,7 +2,8 @@
 // receiver, and sees the delivery in the log. Runs with WEFT_OUTBOUND_WEBHOOKS_ENABLED=true and private networks allowed
 // (only this local receiver needs it). Run with `bun e2e/outbound-webhooks.e2e.ts` under the suite lock; set DATABASE_URL to a --keep database.
 // Screenshots go to .local/visual/review/34-outbound-webhooks (or VISUAL_DIR).
-import { chromium, type Page } from "playwright";
+import { check, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
+import type { Page } from "playwright";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
 
@@ -19,25 +20,16 @@ const receiver = Bun.serve({
   fetch: async (request) => { received.push({ headers: request.headers, body: await request.text() }); return new Response("ok", { status: 200 }); },
 });
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
 
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
-
-const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
 let failed = false;
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US", colorScheme: "light" });
+  const browser = await launchBrowser();
+  const context = await newContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US", colorScheme: "light" });
   const page: Page = await context.newPage();
   page.on("pageerror", (error) => console.error("pageerror:", error.message));
   page.on("console", (message) => { if (message.type() === "error") console.error("console:", message.text().slice(0, 400)); });

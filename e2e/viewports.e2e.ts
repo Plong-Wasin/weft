@@ -1,9 +1,9 @@
 // Viewport audit across the documented desktop, tablet and landscape phone sizes.
 // Each named check below corresponds to the viewport issue's no-scroll, visible-control,
 // touch-target, overlay-fit and blank-tap acceptance checks.
+import { launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { chromium } from "playwright";
 import { translate } from "../packages/shared/src";
 import { WeftClient, seedWeft } from "../tools/visual/weft-client";
 import { fillPath, loadRoutes } from "../tools/visual/lib";
@@ -13,8 +13,8 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 35150);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, CHOKIDAR_USEPOLLING: "true", VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api, env: { ...Bun.env, CHOKIDAR_USEPOLLING: "true" } }),
 ];
 const viewports = [
   { suffix: "1440x900", width: 1440, height: 900 },
@@ -32,10 +32,6 @@ const check = (name: string, ok: unknown, detail = "") => {
   checks.add(name);
   if (!ok) failures.push(`${name}${detail ? `: ${detail}` : ""}`);
 };
-async function waitFor(url: string) {
-  for (let i = 0; i < 100; i += 1) { try { if ((await fetch(url)).status < 500) return; } catch { /* starting */ } await Bun.sleep(200); }
-  throw new Error(`${url} did not start`);
-}
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
@@ -46,7 +42,7 @@ try {
   const me = await (await fetch(`${api}/api/me`, { headers: { cookie } })).json() as { workspaces: Array<{ id: string }> };
   const projects = await client.action<Array<{ id: string }>>("list_projects", { workspaceId: me.workspaces[0]!.id });
   const emptyWorkItem = await client.action<{ displayId: string }>("create_work_item", { projectId: projects[0]!.id, title: "Touch empty properties" });
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
+  const browser = await launchBrowser();
   const root = Bun.env.VIEWPORT_SHOTS_DIR ?? join(import.meta.dir, "..", ".local", "shots", "shadcn-09", "after");
   await mkdir(root, { recursive: true });
   const { routes } = loadRoutes();
@@ -60,11 +56,11 @@ try {
   const captures = [...routes.filter((route) => route.weft && fillPath(route.weft, seed)).map((route) => ({ name: route.name, auth: route.auth !== false, weft: fillPath(route.weft!, seed)! })), ...layoutRoutes, ...extraRoutes];
 
   for (const viewport of viewports) {
-    const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height }, colorScheme: "light", reducedMotion: "reduce" });
+    const context = await newContext(browser, { viewport: { width: viewport.width, height: viewport.height }, colorScheme: "light", reducedMotion: "reduce" });
     await context.addCookies(client.cookies().map((cookie) => ({ ...cookie, domain: "localhost", path: "/" })));
     const page = await context.newPage();
     for (const route of captures) {
-      const authContext = route.auth ? null : await browser.newContext({ viewport: { width: viewport.width, height: viewport.height }, colorScheme: "light", reducedMotion: "reduce" });
+      const authContext = route.auth ? null : await newContext(browser, { viewport: { width: viewport.width, height: viewport.height }, colorScheme: "light", reducedMotion: "reduce" });
       const target = authContext ? await authContext.newPage() : page;
       await target.goto(`${web}${route.weft}`, { waitUntil: "domcontentloaded" });
       await target.locator("body").waitFor();
@@ -137,7 +133,7 @@ try {
     { suffix: "820x1180", width: 820, height: 1180 },
     { suffix: "844x390", width: 844, height: 390 },
   ]) {
-    const touchContext = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height }, hasTouch: true, isMobile: true, colorScheme: "light" });
+    const touchContext = await newContext(browser, { viewport: { width: viewport.width, height: viewport.height }, hasTouch: true, isMobile: true, colorScheme: "light" });
     await touchContext.addCookies(client.cookies().map((cookie) => ({ ...cookie, domain: "localhost", path: "/" })));
     const touch = await touchContext.newPage();
     await touch.goto(`${web}/${slug}/projects/${seed.key}/issues?layout=list`, { waitUntil: "domcontentloaded" });
@@ -173,7 +169,7 @@ try {
 
   // Display popovers must stay inside the short visible area and scroll their contents internally.
   for (const viewport of [{ suffix: "844x390", width: 844, height: 390 }, { suffix: "667x375", width: 667, height: 375 }]) {
-    const shortContext = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height }, hasTouch: true, isMobile: true });
+    const shortContext = await newContext(browser, { viewport: { width: viewport.width, height: viewport.height }, hasTouch: true, isMobile: true });
     await shortContext.addCookies(client.cookies().map((cookie) => ({ ...cookie, domain: "localhost", path: "/" })));
     const shortPage = await shortContext.newPage();
     await shortPage.goto(`${web}/${slug}/projects/${seed.key}/issues?layout=list`, { waitUntil: "domcontentloaded" });
@@ -214,7 +210,7 @@ try {
     await shortContext.close();
   }
 
-  const drawerContext = await browser.newContext({ viewport: { width: 667, height: 375 }, hasTouch: true, isMobile: true });
+  const drawerContext = await newContext(browser, { viewport: { width: 667, height: 375 }, hasTouch: true, isMobile: true });
   await drawerContext.addCookies(client.cookies().map((cookie) => ({ ...cookie, domain: "localhost", path: "/" })));
   const drawerPage = await drawerContext.newPage();
   await drawerPage.goto(`${web}/${slug}`, { waitUntil: "domcontentloaded" });

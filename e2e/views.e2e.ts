@@ -1,6 +1,6 @@
 // Browser end-to-end flow for saved Views: save from the filter and display bars, reopen exactly, update, create and delete.
 // Run with `bun e2e/views.e2e.ts` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
-import { chromium } from "playwright";
+import { check, createSignedInContext, launchBrowser, startApi, startWeb, waitFor } from "./harness";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -12,42 +12,24 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const shots = reviewShots("10-saved-views-project");
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 type View = { id: string; name: string; query: string; layout: string; groupBy: string; orderBy: string; orderDirection: string; properties: string[]; access: string };
 let failed = false;
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  const page = await context.newPage();
+  const browser = await launchBrowser();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
+  const context = await createSignedInContext(browser, { viewport: { width: 1440, height: 900 } }, api, web, {
+    account: { name: "Views Tester", email: `${slug}@example.test` },
+    workspace: { name: "E2E team", slug },
+    project: { name: "Mobile", key: "MOB", visibility: "public", shape: "simple" },
+  });
+  const page = await context.newPage();
   const call = async <T>(name: string, body: unknown) => { const response = await context.request.post(`${api}/actions/${name}`, { data: body }); check(response.ok(), `${name} failed: ${response.status()}`); return await response.json() as T; };
-  await page.goto(web);
-  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
-  await page.getByLabel(translate("auth.name")).fill("Views Tester");
-  await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
-  await page.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
-  await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
-  await page.getByRole("button", { name: translate("auth.signUp") }).click();
-  await page.getByLabel(translate("workspace.name")).fill("E2E team");
-  await page.getByLabel(translate("workspace.slug")).fill(slug);
-  await page.getByRole("button", { name: translate("workspace.create") }).click();
-  await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
-  await page.getByLabel(translate("projects.name")).fill("Mobile");
-  await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOB");
-  await page.getByRole("button", { name: translate("projects.create") }).click();
+  await page.goto(`${web}/${slug}`);
   await page.getByRole("link", { name: /MOB · Mobile/ }).waitFor();
   const me = await (await context.request.get(`${api}/api/me`)).json() as { workspaces: Array<{ id: string }> };
   const [project] = await call<Array<{ id: string }>>("list_projects", { workspaceId: me.workspaces[0]!.id, archived: false });
@@ -99,10 +81,12 @@ try {
   // It reopens exactly: same URL settings, same rows, same grouping, via link, bare URL and reload.
   const settingsOf = () => new URL(page.url()).search;
   await page.getByRole("region", { name: translate("workItems.priority.urgent") }).getByRole("link", { name: "Alpha urgent" }).waitFor();
+  await page.waitForURL((url) => url.search === shaped);
   check(settingsOf() === shaped, `opened with ${settingsOf()}, saved from ${shaped}`);
   check(await page.getByRole("link", { name: "Charlie low" }).count() === 0, "filter not applied");
   const reopen = async (how: string) => {
     await page.getByRole("region", { name: translate("workItems.priority.high") }).getByRole("link", { name: "Bravo high" }).waitFor();
+    await page.waitForURL((url) => url.search === shaped);
     check(settingsOf() === shaped, `${how}: settings ${settingsOf()} != ${shaped}`);
     check(await page.getByTestId("row-MOB-1").getByRole("button", { name: new RegExp(`^${translate("workItems.labels")}:`) }).count() === 0, `${how}: labels property shown`);
     check(await page.getByRole("button", { name: translate("views.update") }).count() === 0, `${how}: Update view shown for an unchanged view`);

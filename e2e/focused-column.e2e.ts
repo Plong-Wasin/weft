@@ -1,6 +1,6 @@
 // Page and Wiki page body: a centred ~760px column with no box around the body or title, a Full width
 // option in the page menu that is remembered per browser, and side margins that work at 390px.
-import { chromium } from "playwright";
+import { check, launchBrowser, newPage, startApi, startWeb, waitFor } from "./harness";
 import { createDatabase } from "../packages/db/src";
 import { createProjectActions, createWikiActions } from "../packages/actions/src";
 import { translate } from "../packages/shared/src";
@@ -10,22 +10,17 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52268);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, CHOKIDAR_USEPOLLING: "true", VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api, env: { ...Bun.env, CHOKIDAR_USEPOLLING: "true" } }),
 ];
 const { client, db } = createDatabase();
 let failed = false;
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) { try { if ((await fetch(url)).status < 500) return; } catch { /* starting */ } await Bun.sleep(200); }
-  throw new Error(`${url} did not start`);
-}
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  const browser = await launchBrowser();
+  const page = await newPage(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" });
   const slug = `column-${crypto.randomUUID().slice(0, 8)}`;
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
 
   await page.goto(web);
   await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();

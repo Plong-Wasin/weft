@@ -1,7 +1,8 @@
 // Browser end-to-end flow: AI chat shows the work items an Autopilot answer or an approved proposal made, as linked rows that survive a reload.
 // The model is a scripted fake (apps/api/test/fixtures/fake-ai-server.ts): no provider key, no network.
 // Run with `bun e2e/run-all.ts ai-result-rows`. Screenshots go to .local/shots/shadcn-finish-11/.
-import { chromium, type Browser, type Page } from "playwright";
+import { check, launchBrowser, newContext, startWeb, waitFor } from "./harness";
+import { type Browser, type Page } from "playwright";
 import { eq, like } from "drizzle-orm";
 import { confirmations, createDatabase, users, workspaces } from "../packages/db/src";
 import { createChatStore } from "../packages/actions/src";
@@ -17,30 +18,22 @@ delete env.OPENAI_API_KEY;
 delete env.ANTHROPIC_API_KEY;
 const servers = [
   Bun.spawn(["bun", "apps/api/test/fixtures/fake-ai-server.ts"], { env, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startWeb(webPort, { api }),
 ];
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 let failed = false;
 let browser: Browser | undefined;
 const { client, db } = createDatabase();
 
 try {
-  await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  await Promise.all([waitFor(`${api}/api/me`, servers[0]), waitFor(web)]);
+  browser = await launchBrowser();
+  const context = await newContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" });
   context.setDefaultTimeout(60_000);
   const page = await context.newPage();
   page.on("pageerror", (error) => console.error(error));
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const email = `${slug}@example.test`;
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const call = async <T>(name: string, body: unknown) => {
     const response = await page.request.post(`${api}/actions/${name}`, { data: body });
     check(response.ok(), `${name} failed with HTTP ${response.status()}`);
@@ -123,7 +116,7 @@ try {
     await call("set_my_locale", { locale });
     for (const colorScheme of ["light", "dark"] as const) {
       for (const [width, height] of [[1440, 900], [390, 844]] as const) {
-        const view = await browser.newContext({ viewport: { width, height }, colorScheme, storageState: state, hasTouch: width < 500, isMobile: width < 500 });
+        const view = await newContext(browser, { viewport: { width, height }, colorScheme, storageState: state, hasTouch: width < 500, isMobile: width < 500 });
         view.setDefaultTimeout(60_000);
         const shot = await view.newPage();
         for (const [name, url] of [["autopilot", autopilot.url], ["approved", approved.url]] as const) {

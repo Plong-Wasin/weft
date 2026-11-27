@@ -1,6 +1,7 @@
 // Browser end-to-end flow: every route at its Plane-style URL, design tokens in light and dark, Inter and icons, legacy URLs.
 // Run with `bun run e2e` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
-import { chromium, expect, type Page } from "playwright/test";
+import { check, launchBrowser, newPage, startApi, startWeb, waitFor } from "./harness";
+import { expect, type Page } from "playwright/test";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -12,26 +13,17 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5209);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 let failed = false;
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const page = await browser.newPage();
+  const browser = await launchBrowser();
+  const page = await newPage(browser);
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   await page.goto(web);
   await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
   await page.getByLabel(translate("auth.name")).fill("Routes Tester");
@@ -105,22 +97,37 @@ try {
   const tokens = () => page.evaluate(() => {
     const style = getComputedStyle(document.documentElement);
     const read = (name: string) => style.getPropertyValue(name).trim();
-    return { theme: document.documentElement.getAttribute("data-theme"), background: read("--background"), card: read("--card"), foreground: read("--foreground"), primary: read("--primary"), border: read("--border"), bodyBg: getComputedStyle(document.body).backgroundColor, bodyColor: getComputedStyle(document.body).color, radius: read("--radius-md"), header: read("--height-header"), size: read("--text-14") };
+    const length = (name: string) => read(name).replace(/^\./, "0.");
+    return { theme: document.documentElement.getAttribute("data-theme"), background: read("--background"), card: read("--card"), foreground: read("--foreground"), primary: read("--primary"), border: read("--border"), bodyBg: getComputedStyle(document.body).backgroundColor, bodyColor: getComputedStyle(document.body).color, radius: length("--radius-md"), header: length("--height-header"), size: length("--text-14") };
   });
+  // The CSS minifier can serialize equivalent colors with percentages.
+  const sameColor = (actual: string, expected: string) => page.evaluate(({ actual, expected }) => {
+    const swatch = document.createElement("span");
+    document.body.append(swatch);
+    try {
+      swatch.style.color = actual;
+      if (!swatch.style.color) return false;
+      const actualColor = getComputedStyle(swatch).color;
+      swatch.style.color = expected;
+      return actualColor === getComputedStyle(swatch).color;
+    } finally {
+      swatch.remove();
+    }
+  }, { actual, expected });
   const light = { background: "oklch(1 0 0)", card: "oklch(1 0 0)", foreground: "oklch(0.145 0 0)", primary: "oklch(0.205 0 0)", border: "oklch(0.922 0 0)" };
   const dark = { background: "oklch(0.145 0 0)", card: "oklch(0.205 0 0)", foreground: "oklch(0.985 0 0)", primary: "oklch(0.922 0 0)", border: "oklch(1 0 0 / 10%)" };
   await page.emulateMedia({ colorScheme: "light" });
   await page.goto(`${web}/${slug}`);
   await page.getByRole("heading", { name: translate("projects.title") }).waitFor();
   const lightTokens = await tokens();
-  for (const key of Object.keys(light) as Array<keyof typeof light>) check(lightTokens[key] === light[key], `light ${key}: ${lightTokens[key]}`);
-  check(lightTokens.theme === "light" && lightTokens.radius === "0.375rem" && lightTokens.header === "3.25rem" && lightTokens.size === ".875rem", `light scale tokens: ${JSON.stringify(lightTokens)}`);
+  for (const key of Object.keys(light) as Array<keyof typeof light>) check(await sameColor(lightTokens[key], light[key]), `light ${key}: ${lightTokens[key]}`);
+  check(lightTokens.theme === "light" && lightTokens.radius === "0.375rem" && lightTokens.header === "3.25rem" && lightTokens.size === "0.875rem", `light scale tokens: ${JSON.stringify(lightTokens)}`);
   // System theme follows the OS preference.
   await page.emulateMedia({ colorScheme: "dark" });
   await page.reload();
   await page.getByRole("heading", { name: translate("projects.title") }).waitFor();
   const darkTokens = await tokens();
-  for (const key of Object.keys(dark) as Array<keyof typeof dark>) check(darkTokens[key] === dark[key], `dark ${key}: ${darkTokens[key]}`);
+  for (const key of Object.keys(dark) as Array<keyof typeof dark>) check(await sameColor(darkTokens[key], dark[key]), `dark ${key}: ${darkTokens[key]}`);
   check(darkTokens.theme === "dark" && darkTokens.bodyBg !== lightTokens.bodyBg && darkTokens.bodyColor !== lightTokens.bodyColor, "dark theme did not restyle the page");
   // The theme switch overrides the system, and sticks across a reload.
   await page.getByRole("button", { name: translate("profile.menu") }).click();

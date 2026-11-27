@@ -1,29 +1,15 @@
 // Browser regression coverage for auth submits: same-turn duplicates, failure recovery and mode stability.
-import { chromium, type Page, type Route } from "playwright";
-import { rm } from "node:fs/promises";
+import { check, launchBrowser, newPage, productionWeb, serveWeb, startApi, waitFor } from "./harness";
+import { type Page, type Route } from "playwright";
 import { translate } from "../packages/shared/src";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3119);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5219);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
-const webDist = `/tmp/weft-auth-submit-guard-${crypto.randomUUID()}`;
-const webBuild = Bun.spawnSync(["bunx", "vite", "build", "--outDir", webDist, "--emptyOutDir"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" });
-if (webBuild.exitCode !== 0) throw new Error("web build failed");
-const apiProc = Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" });
-const webProc = Bun.spawn(["bunx", "vite", "preview", "--outDir", webDist, "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env }, stdout: "ignore", stderr: "inherit" });
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* server is starting */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
-
-function check(condition: boolean, message: string) {
-  if (!condition) throw new Error(message);
-}
+const webBuild = await productionWeb(api);
+const apiProc = startApi(apiPort, web);
+const webProc = serveWeb(webPort, webBuild.directory);
 
 /** Holds auth requests until the browser has had a chance to submit twice in one JS turn. */
 function holdRequests(page: Page, path: string) {
@@ -74,11 +60,11 @@ async function waitForBusy(page: Page, expected: string) {
   await page.waitForFunction((value) => document.querySelector("form")?.getAttribute("aria-busy") === value, expected);
 }
 
-let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+let browser: Awaited<ReturnType<typeof launchBrowser>> | undefined;
 try {
   await Promise.all([waitFor(`${api}/api/health/live`), waitFor(web)]);
-  browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  browser = await launchBrowser();
+  const page = await newPage(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" });
   await page.route(`${api}/api/config`, async (route) => {
     const response = await route.fetch();
     const config = await response.json() as Record<string, unknown>;
@@ -160,5 +146,5 @@ try {
   await browser?.close();
   apiProc.kill();
   webProc.kill();
-  await rm(webDist, { recursive: true, force: true });
+  await webBuild.clean();
 }

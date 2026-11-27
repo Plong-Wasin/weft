@@ -1,6 +1,7 @@
 // Browser flow for Settings > Usage and cost: an admin sees totals with unknown values as "Unknown", adds, edits and removes a model price,
 // and downloads the CSV. Run with `bun e2e/usage.e2e.ts`. The Runs are seeded straight into the database (no provider or CLI is called).
-import { chromium, type Page } from "playwright";
+import { check, createSignedInContext, launchBrowser, startApi, startWeb, waitFor } from "./harness";
+import type { Page } from "playwright";
 import { like } from "drizzle-orm";
 import { createDatabase, projects, runs, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -11,29 +12,21 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const shots = Bun.env.E2E_SCREENSHOTS ?? "/tmp";
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["node", "node_modules/vite/bin/vite.js", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-async function waitFor(url: string) { for (let i = 0; i < 100; i++) { try { if ((await fetch(url)).status < 500) return; } catch { /* startup */ } await Bun.sleep(200); } throw new Error(`${url} did not start`); }
-const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
 const fits = async (page: Page, label: string) => check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${label}: page scrolls sideways`);
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ locale: "en-US", viewport: { width: 1440, height: 900 }, acceptDownloads: true });
-  const page = await context.newPage();
+  const browser = await launchBrowser();
   const slug = `usage-${crypto.randomUUID().slice(0, 8)}`;
-  await page.goto(web);
-  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
-  await page.getByLabel(translate("auth.name")).fill("Usage Admin");
-  await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
-  await page.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
-  await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
-  await page.getByRole("button", { name: translate("auth.signUp") }).click();
-  await page.getByLabel(translate("workspace.name")).fill("Usage E2E");
-  await page.getByLabel(translate("workspace.slug")).fill(slug);
-  await page.getByRole("button", { name: translate("workspace.create") }).click();
+  const context = await createSignedInContext(browser, { locale: "en-US", viewport: { width: 1440, height: 900 }, acceptDownloads: true }, api, web, {
+    account: { name: "Usage Admin", email: `${slug}@example.test` },
+    workspace: { name: "Usage E2E", slug },
+  });
+  const page = await context.newPage();
+  await page.goto(`${web}/${slug}`);
   await page.waitForURL(`${web}/${slug}`);
 
   // Seed one Run that reported usage and one that did not, in a project of the workspace.

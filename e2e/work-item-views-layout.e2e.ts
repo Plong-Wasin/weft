@@ -1,6 +1,7 @@
 // Browser check for the work item views layout (list, board, spreadsheet, calendar, gantt, filters, display, bulk bar)
 // with long Thai and English names. Each named step guards one class of defect. Run with `bun e2e/run-all.ts work-item-views-layout.e2e.ts`.
-import { chromium, type Locator, type Page } from "playwright";
+import { check, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
+import { type Locator, type Page } from "playwright";
 import { translate } from "../packages/shared/src";
 import { WeftClient } from "../tools/visual/weft-client";
 
@@ -9,24 +10,15 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52460);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 150; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 const t = (key: string) => translate(key as never);
 const failures: string[] = [];
 const step = async (name: string, run: () => Promise<void>) => {
   try { await run(); console.log(`ok - ${name}`); } catch (error) { failures.push(name); console.log(`not ok - ${name}: ${(error as Error).message}`); }
 };
-const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
 
 /** True for each checkbox whose box is drawn small and whose 44px square around the centre still answers as that checkbox. */
 async function checkboxFaults(surface: string, checkboxes: Locator) {
@@ -64,9 +56,9 @@ try {
   await client.action("add_cycle_items", { cycleId: cycle.id, workItemIds: ids });
   await client.action("add_module_items", { moduleId: module.id, workItemIds: ids });
 
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
+  const browser = await launchBrowser();
   const open = async (width: number, height: number, touch: boolean) => {
-    const context = await browser.newContext({ viewport: { width, height }, hasTouch: touch, isMobile: touch, reducedMotion: "reduce" });
+    const context = await newContext(browser, { viewport: { width, height }, hasTouch: touch, isMobile: touch, reducedMotion: "reduce" });
     await context.addCookies(client.cookies().map((cookie) => ({ ...cookie, domain: "localhost", path: "/" })));
     return context.newPage();
   };

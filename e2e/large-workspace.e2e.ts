@@ -1,6 +1,6 @@
 // Measures Workspace View discovery and completeness against a large fixture.
 // Run with `bun e2e/run-all.ts large-workspace` against a dedicated migrated test database.
-import { chromium } from "playwright";
+import { check, createSignedInContext, launchBrowser, startApi, startWeb, waitFor } from "./harness";
 import { asc, eq, like } from "drizzle-orm";
 import { createDatabase, labels, projects, workItemLabels, workItemStates, workItems, users, workspaces, workspaceMembers } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -13,24 +13,21 @@ const web = `http://localhost:${webPort}`;
 const shots = "/home/plong/workspace/weft/.local/continuous-improvements/workspace-performance";
 const { client, db } = createDatabase();
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 let failed = false;
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
   await mkdir(shots, { recursive: true });
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const browser = await launchBrowser();
+  const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
+  const context = await createSignedInContext(browser, { viewport: { width: 1440, height: 900 } }, api, web, {
+    account: { name: "Scale Tester", email: `${slug}@example.test` },
+    workspace: { name: "Scale team", slug },
+    project: { name: "Scale Project 000", key: "SCL000", visibility: "public", shape: "simple" },
+  });
   const page = await context.newPage();
   await page.addInitScript(() => {
     (window as Window & { __workspaceLongTasks?: number[] }).__workspaceLongTasks = [];
@@ -38,27 +35,12 @@ try {
       (window as Window & { __workspaceLongTasks: number[] }).__workspaceLongTasks.push(...entries.getEntries().map((entry) => entry.duration));
     }).observe({ type: "longtask", buffered: true });
   });
-  const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const call = async <T>(name: string, body: unknown) => {
     const response = await context.request.post(`${api}/actions/${name}`, { data: body });
     if (!response.ok()) throw new Error(`${name} failed: ${response.status()} ${await response.text()}`);
     return await response.json() as T;
   };
-  await page.goto(web);
-  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
-  await page.getByLabel(translate("auth.name")).fill("Scale Tester");
-  await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
-  await page.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
-  await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
-  await page.getByRole("button", { name: translate("auth.signUp") }).click();
-  await page.getByLabel(translate("workspace.name")).fill("Scale team");
-  await page.getByLabel(translate("workspace.slug")).fill(slug);
-  await page.getByRole("button", { name: translate("workspace.create") }).click();
-  await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
-  await page.getByLabel(translate("projects.name")).fill("Scale Project 000");
-  await page.getByLabel(translate("projects.key"), { exact: true }).fill("SCL000");
-  await page.getByRole("button", { name: translate("projects.create") }).click();
+  await page.goto(`${web}/${slug}`);
   await page.getByRole("link", { name: /SCL000 · Scale Project 000/ }).waitFor();
 
   const me = await (await context.request.get(`${api}/api/me`)).json() as { workspaces: Array<{ id: string }>; user: { id: string } };

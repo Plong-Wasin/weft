@@ -1,7 +1,7 @@
 // A browser flow for the two Runtime comment paths on one Work item: a Run-token comment and a completion comment.
 // It verifies the visible Agent marker, Run links and Originator provenance, then captures desktop and phone screenshots.
+import { launchBrowser, newPage, startApi, startWeb, waitFor } from "./harness";
 import { mkdirSync } from "node:fs";
-import { chromium } from "playwright";
 import { eq } from "drizzle-orm";
 import {
   createAgentActions, createApiTokenActions, createProjectActions, createRuntimeActions,
@@ -16,26 +16,18 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const screenshots = Bun.env.RUNTIME_COMMENT_SCREENSHOTS ?? "/home/plong/workspace/weft/.local/ai-ux-reliability/08-agent-comment-attribution";
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
 const { client, db } = createDatabase();
-let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+let browser: Awaited<ReturnType<typeof launchBrowser>> | undefined;
 let failed = false;
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* starting */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
   mkdirSync(screenshots, { recursive: true });
-  browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  browser = await launchBrowser();
+  const page = await newPage(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" });
   const slug = `agent-comments-${crypto.randomUUID().slice(0, 8)}`;
   await page.goto(web);
   await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();

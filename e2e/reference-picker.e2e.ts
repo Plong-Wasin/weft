@@ -1,7 +1,8 @@
 // Browser check for the "[[" reference picker in the Wiki, Work item description and comment editors: the popup opens, narrows by
 // key and title, groups rows by kind, keeps the highlight in view, picks by keyboard and mouse, shows empty, loading and failed states,
 // inserts an internal link that saves as `[[label|kind:id]]`, and feeds the Links and Backlinks panels. "@" keeps its mention list.
-import { chromium, type Locator, type Page } from "playwright";
+import { check, createSignedInContext, launchBrowser, startApi, startLive, startWeb, waitFor } from "./harness";
+import { type Locator, type Page } from "playwright";
 import { translate } from "../packages/shared/src";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31480);
@@ -10,20 +11,11 @@ const livePort = Number(Bun.env.E2E_LIVE_PORT ?? 31481);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bun", "apps/live/src/index.ts"], { env: { ...Bun.env, LIVE_PORT: String(livePort), WEB_ORIGIN: web }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, CHOKIDAR_USEPOLLING: "true", VITE_API_URL: api, VITE_LIVE_URL: `ws://localhost:${livePort}` }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startLive(livePort, web),
+  startWeb(webPort, { api, live: `ws://localhost:${livePort}`, env: { ...Bun.env, CHOKIDAR_USEPOLLING: "true" } }),
 ];
 
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
-
-const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
 const picker = (page: Page) => page.getByRole("listbox", { name: translate("reference.picker"), exact: true });
 
 /** Whether the selected option sits fully inside the popup's visible area. */
@@ -47,24 +39,15 @@ async function waitForSaved(read: () => Promise<string>, text: string) {
 let failed = false;
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web), waitFor(`http://localhost:${livePort}`)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  const page = await context.newPage();
+  const browser = await launchBrowser();
   const slug = `ref-${crypto.randomUUID().slice(0, 8)}`;
-  await page.goto(web);
-  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
-  await page.getByLabel(translate("auth.name")).fill("Reference Tester");
-  await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
-  await page.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
-  await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
-  await page.getByRole("button", { name: translate("auth.signUp") }).click();
-  await page.getByLabel(translate("workspace.name")).fill("Reference team");
-  await page.getByLabel(translate("workspace.slug")).fill(slug);
-  await page.getByRole("button", { name: translate("workspace.create") }).click();
-  await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
-  await page.getByLabel(translate("projects.name")).fill("Mobile");
-  await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOB");
-  await page.getByRole("button", { name: translate("projects.create") }).click();
+  const context = await createSignedInContext(browser, { viewport: { width: 1440, height: 900 } }, api, web, {
+    account: { name: "Reference Tester", email: `${slug}@example.test` },
+    workspace: { name: "Reference team", slug },
+    project: { name: "Mobile", key: "MOB", visibility: "public", shape: "simple" },
+  });
+  const page = await context.newPage();
+  await page.goto(`${web}/${slug}`);
   await page.getByRole("link", { name: /MOB · Mobile/ }).waitFor();
 
   const call = async <T>(name: string, body: unknown) => {
@@ -148,7 +131,7 @@ try {
   const linksBeforeEmptyTab = await wikiEditor.locator("a").count();
   await page.keyboard.press("Tab");
   check(await wikiEditor.locator("a").count() === linksBeforeEmptyTab && await wikiEditor.evaluate((element) => document.activeElement !== element), "native Tab from a no-result menu must leave the editor without inserting a reference");
-  await wikiEditor.click();
+  await wikiEditor.focus();
   await page.keyboard.press("Escape");
   await list.waitFor({ state: "detached" });
   check((await wikiEditor.innerText()).includes("[[zzz-no-such-thing"), "Escape must keep the typed [[ and text");

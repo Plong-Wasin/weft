@@ -1,7 +1,8 @@
 // Browser check for the "@" mention and ":" emoji popups in the Wiki and comment editors: one look and one selection rule,
 // keyboard wrap-around with the selected row kept in view, Escape, Enter and mouse picks, and the selected option exposed to assistive tech.
 // Set MENTION_SCREENSHOT to a .png path to save the dark-theme mention popup there (not committed).
-import { chromium, type Locator, type Page } from "playwright";
+import { check, createSignedInContext, launchBrowser, openWithAction, startApi, startLive, startWeb, waitFor } from "./harness";
+import { type Locator, type Page } from "playwright";
 import { translate } from "../packages/shared/src";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31480);
@@ -10,20 +11,11 @@ const livePort = Number(Bun.env.E2E_LIVE_PORT ?? 31481);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bun", "apps/live/src/index.ts"], { env: { ...Bun.env, LIVE_PORT: String(livePort), WEB_ORIGIN: web }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, CHOKIDAR_USEPOLLING: "true", VITE_API_URL: api, VITE_LIVE_URL: `ws://localhost:${livePort}` }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startLive(livePort, web),
+  startWeb(webPort, { api, live: `ws://localhost:${livePort}`, env: { ...Bun.env, CHOKIDAR_USEPOLLING: "true" } }),
 ];
 
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
-
-const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
 const agentNames = ["Atlas", "Basil", "Cedar", "Dune", "Ember", "Flint", "Grove"];
 const groupHeadings = () => [translate("members.group"), translate("agents.group")];
 
@@ -159,24 +151,15 @@ async function checkEmojiPopup(page: Page, editor: Locator) {
 let failed = false;
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web), waitFor(`http://localhost:${livePort}`)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  const page = await context.newPage();
+  const browser = await launchBrowser();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
-  await page.goto(web);
-  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
-  await page.getByLabel(translate("auth.name")).fill("Mention Tester");
-  await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
-  await page.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
-  await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
-  await page.getByRole("button", { name: translate("auth.signUp") }).click();
-  await page.getByLabel(translate("workspace.name")).fill("Mention team");
-  await page.getByLabel(translate("workspace.slug")).fill(slug);
-  await page.getByRole("button", { name: translate("workspace.create") }).click();
-  await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
-  await page.getByLabel(translate("projects.name")).fill("Mobile");
-  await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOB");
-  await page.getByRole("button", { name: translate("projects.create") }).click();
+  const context = await createSignedInContext(browser, { viewport: { width: 1440, height: 900 } }, api, web, {
+    account: { name: "Mention Tester", email: `${slug}@example.test` },
+    workspace: { name: "Mention team", slug },
+    project: { name: "Mobile", key: "MOB", visibility: "public", shape: "simple" },
+  });
+  const page = await context.newPage();
+  await page.goto(`${web}/${slug}`);
   await page.getByRole("link", { name: /MOB · Mobile/ }).waitFor();
 
   const call = async <T>(name: string, body: unknown) => await (await page.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
@@ -193,13 +176,16 @@ try {
   const projects = await call<Array<{ id: string; key: string }>>("list_projects", { workspaceId });
   const project = projects.find((row) => row.key === "MOB")!;
   await call("create_work_item", { projectId: project.id, title: "Mention target" });
-  await call("create_wiki_page", { workspaceId, title: "Mention popups", content: { type: "doc", content: [{ type: "paragraph" }] } });
+  await call("create_wiki_page", { workspaceId, title: "Mention popups", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Seed line" }] }, { type: "paragraph" }] } });
   const wikiPage = (await call<Array<{ id: string; title: string }>>("list_wiki_pages", { workspaceId })).find((row) => row.title === "Mention popups")!;
 
   // Wiki editor, light theme.
-  await page.goto(`${web}/${slug}/wiki/${wikiPage.id}`);
   const wikiEditor = page.getByTestId("wiki-editor").locator(".ProseMirror");
-  await wikiEditor.click();
+  await openWithAction(page, "list_wiki_page_mentionable_members", () => page.goto(`${web}/${slug}/wiki/${wikiPage.id}`));
+  // The editor takes input before its first sync; the stored line shows that the sync is done.
+  await wikiEditor.getByText("Seed line").waitFor();
+  // Click the stored empty line: a Control+End sent while the page was still loading was sometimes lost.
+  await wikiEditor.locator("p").last().click();
   await checkMentionPopup(page, wikiEditor, "wiki");
 
   // Dark theme: the selected row and the popup shadow keep their tokens; the screenshot is for a visual check only.
@@ -224,7 +210,7 @@ try {
   // Comment editor on the work item.
   check(inaccessibleAgentId !== undefined, "Grove Agent id was not captured");
   await call("set_agent_access", { agentId: inaccessibleAgentId, userIds: [] });
-  await page.goto(`${web}/${slug}/browse/MOB-1`);
+  await openWithAction(page, "list_mentionable_members", () => page.goto(`${web}/${slug}/browse/MOB-1`));
   const comment = page.getByTestId("comment-editor").locator(".ProseMirror");
   await comment.click();
   await checkMentionPopup(page, comment, "comment", "Grove");

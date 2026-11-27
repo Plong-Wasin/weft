@@ -2,7 +2,8 @@
 // Each design finding from the baseline review has one check: the Views search no longer covers the heading, module names are not clipped,
 // Remove from Cycle sits on the row's property line, Accept and Reject share a line, and the Intake title fits its field. Every screen also
 // has no page-level horizontal scroll. Run with `bun e2e/run-all.ts planning-phone-layout` (needs DATABASE_URL, CHROMIUM_PATH).
-import { chromium, type Page } from "playwright";
+import { check, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
+import type { Page } from "playwright";
 import { translate } from "../packages/shared/src";
 import { WeftClient, seedWeft } from "../tools/visual/weft-client";
 
@@ -11,17 +12,9 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 5230);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 type Box = { x: number; y: number; width: number; height: number };
 const overlaps = (a: Box, b: Box) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
@@ -35,13 +28,12 @@ let failed = false;
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const client = new WeftClient(api, web);
   const seed = await seedWeft(client, slug);
   check(Boolean(seed.cycleId && seed.moduleId && seed.viewId), "seed lacks a cycle, module or view");
 
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
+  const browser = await launchBrowser();
   const screens = [
     { name: "cycles", path: `/${slug}/projects/REF/cycles` },
     { name: "cycle-detail", path: `/${slug}/projects/REF/cycles/${seed.cycleId}` },
@@ -56,7 +48,7 @@ try {
   const widths = [1440, 390];
 
   await Promise.all(widths.map(async (width) => {
-    const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 900 }, colorScheme: "light", reducedMotion: "reduce" });
+    const context = await newContext(browser, { viewport: { width, height: width === 390 ? 844 : 900 }, colorScheme: "light", reducedMotion: "reduce" });
     await context.addCookies(client.cookies().map((c) => ({ ...c, domain: "localhost", path: "/" })));
     const page = await context.newPage();
     const errors: string[] = [];

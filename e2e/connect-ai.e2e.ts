@@ -2,7 +2,8 @@
 // and the guide prompt holds the address, no token, and points to the API tokens page. With no public address the MCP card says MCP is not ready.
 // Run with `bun e2e/connect-ai.e2e.ts` (set DATABASE_URL, E2E_API_PORT, E2E_WEB_PORT, CHROMIUM_PATH as in docs/agents/testing.md).
 // Screenshots go to the review folder for this ticket (reviewShots("connect-ai")).
-import { chromium, type Page } from "playwright";
+import { check, createSignedInContext, launchBrowser, startApi as startApiServer, startWeb, waitFor } from "./harness";
+import type { Page } from "playwright";
 import { translate } from "../packages/shared/src";
 import { reviewShots } from "../tools/visual/paths";
 
@@ -16,7 +17,7 @@ const shots = reviewShots("connect-ai");
 // The public address comes from WEFT_PUBLIC_URL at API start, so the not-ready and configured states run against two API processes.
 let apiProc: ReturnType<typeof Bun.spawn> | undefined;
 function startApi(env: Record<string, string | undefined>) {
-  apiProc = Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, ...env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" });
+  apiProc = startApiServer(apiPort, web, { env: { ...Bun.env, ...env } });
 }
 async function stopApi() {
   apiProc?.kill();
@@ -24,40 +25,26 @@ async function stopApi() {
   apiProc = undefined;
 }
 
-const web_ = Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" });
+const web_ = startWeb(webPort, { api });
 
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
-const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
 const clipboard = (page: Page) => page.evaluate(() => navigator.clipboard.readText());
 
 let failed = false;
 try {
   startApi({ WEFT_PUBLIC_URL: undefined });
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US", colorScheme: "light" });
+  const browser = await launchBrowser();
+  const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
+  const context = await createSignedInContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US", colorScheme: "light" }, api, web, {
+    account: { name: "Connect Admin", email: `${slug}@example.test` },
+    workspace: { name: "Connect team", slug },
+  });
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: web });
   const page = await context.newPage();
   page.on("pageerror", (error) => console.error("pageerror:", error.message));
-  const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const sidebar = page.getByRole("navigation", { name: translate("shell.sidebar") });
 
-  await page.goto(web);
-  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
-  await page.getByLabel(translate("auth.name")).fill("Connect Admin");
-  await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
-  await page.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
-  await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
-  await page.getByRole("button", { name: translate("auth.signUp") }).click();
-  await page.getByLabel(translate("workspace.name")).fill("Connect team");
-  await page.getByLabel(translate("workspace.slug")).fill(slug);
-  await page.getByRole("button", { name: translate("workspace.create") }).click();
+  await page.goto(`${web}/${slug}`);
   await page.waitForURL(`${web}/${slug}**`);
 
   // Settings navigation lists Connect AI and the screen opens.

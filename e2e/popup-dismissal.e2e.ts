@@ -1,7 +1,7 @@
 // Browser check for popup dismissal: every popup closes on an outside pointer-down and on Escape, a chosen result closes its list,
 // the AI preview survives an outside click until Escape, and an open table menu closes on a click in the page content and on Escape.
 // Run with `bun e2e/popup-dismissal.e2e.ts`; needs CHROMIUM_PATH as for the other flows.
-import { chromium } from "playwright";
+import { check, launchBrowser, newContext, startApi, startLive, startWeb, waitFor } from "./harness";
 import { like } from "drizzle-orm";
 import { createDatabase, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -13,28 +13,19 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
   // A placeholder provider key makes the AI menu configured; the provider call fails offline, which leaves the preview in its error state.
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api, OPENAI_API_KEY: "sk-popup-dismissal-e2e" }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bun", "apps/live/src/index.ts"], { env: { ...Bun.env, LIVE_PORT: String(livePort), WEB_ORIGIN: web }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, CHOKIDAR_USEPOLLING: "true", VITE_API_URL: api, VITE_LIVE_URL: `ws://localhost:${livePort}` }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web, { env: { ...Bun.env, OPENAI_API_KEY: "sk-popup-dismissal-e2e" } }),
+  startLive(livePort, web),
+  startWeb(webPort, { api, live: `ws://localhost:${livePort}`, env: { ...Bun.env, CHOKIDAR_USEPOLLING: "true" } }),
 ];
 
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
-
-const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
 const t = (key: string) => translate(key as never);
 
 let failed = false;
 let step = "setup";
 try {
-  await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  await Promise.all([waitFor(`${api}/api/me`), waitFor(web), waitFor(`http://localhost:${livePort}`)]);
+  const browser = await launchBrowser();
+  const context = await newContext(browser, { viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   page.on("pageerror", (error) => console.log(`page error: ${error.message}`));
   page.on("console", (message) => { if (message.type() === "error") console.log(`page console: ${message.text()}`); });

@@ -1,5 +1,6 @@
 // Browser end-to-end flow: attach a file to a work item, paste an inline image into the description, a comment and a wiki page.
 // Run with `bun run e2e` (needs the shared weft-postgres and weft-minio containers; `docker compose up -d minio`).
+import { check, launchBrowser, newPage, startApi, startLive, startWeb, waitFor } from "./harness";
 import { chromium, firefox, webkit, type Page } from "playwright";
 import { mkdir } from "node:fs/promises";
 import { like } from "drizzle-orm";
@@ -13,20 +14,11 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const live = `http://localhost:${livePort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bun", "apps/live/src/index.ts"], { env: { ...Bun.env, LIVE_PORT: String(livePort), WEB_ORIGIN: web }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api, VITE_LIVE_URL: `ws://localhost:${livePort}` }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startLive(livePort, web),
+  startWeb(webPort, { api, live: `ws://localhost:${livePort}` }),
 ];
 
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
-
-const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
 // A real 1x1 PNG, so the browser can decode what storage serves back.
 const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 function makePdf() {
@@ -115,10 +107,10 @@ try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web), waitFor(live)]);
   const browserName = Bun.env.E2E_BROWSER ?? "chromium";
   const browserType = browserName === "firefox" ? firefox : browserName === "webkit" ? webkit : chromium;
-  const browser = await browserType.launch({ executablePath: browserName === "chromium" ? Bun.env.CHROMIUM_PATH : undefined });
+  const browser = await launchBrowser({}, browserType);
   // Other engines stop after attachment previews; the existing editor acceptance below is Chromium-only.
   pdfPreviewFlow: {
-  const page = await browser.newPage();
+  const page = await newPage(browser);
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   await page.goto(web);
   await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();

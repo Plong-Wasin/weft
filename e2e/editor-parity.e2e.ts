@@ -1,5 +1,6 @@
 // Browser end-to-end check for shared ProseMirror styling and slash commands.
-import { chromium, type Browser } from "playwright";
+import { check, createSignedInContext, launchBrowser, startApi, startLive, startWeb, waitFor, waitUntil } from "./harness";
+import type { Browser } from "playwright";
 import { mkdirSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import { comments, createDatabase, users, workspaces, workItemDescriptionVersions } from "../packages/db/src";
@@ -16,30 +17,25 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const liveHttp = `http://localhost:${livePort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bun", "apps/live/src/index.ts"], { env: { ...Bun.env, LIVE_PORT: String(livePort), WEB_ORIGIN: web }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api, VITE_LIVE_URL: `ws://localhost:${livePort}`, CHOKIDAR_USEPOLLING: "true" }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startLive(livePort, web),
+  startWeb(webPort, { api, live: `ws://localhost:${livePort}`, env: { ...Bun.env, CHOKIDAR_USEPOLLING: "true" } }),
 ];
 let slug = "";
 let browser: Browser | null = null;
 let failed = false;
 
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
-
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web), waitFor(liveHttp)]);
-  browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  browser = await launchBrowser();
+  slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
+  const context = await createSignedInContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" }, api, web, {
+    account: { name: "Editor Tester", email: `${slug}@example.test` },
+    workspace: { name: "E2E team", slug },
+    project: { name: "Mobile", key: "MOB", visibility: "public", shape: "simple" },
+  });
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: web });
   const page = await context.newPage();
-  slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const captureTicketScreen = async (name: string, scrollTo?: string) => {
     const directory = Bun.env.E2E_RTM_CAPTURE_DIR;
     if (!directory) return;
@@ -170,20 +166,7 @@ try {
     return await response.json() as T;
   };
 
-  await page.goto(web);
-  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
-  await page.getByLabel(translate("auth.name")).fill("Editor Tester");
-  await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
-  await page.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
-  await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
-  await page.getByRole("button", { name: translate("auth.signUp") }).click();
-  await page.getByLabel(translate("workspace.name")).fill("E2E team");
-  await page.getByLabel(translate("workspace.slug")).fill(slug);
-  await page.getByRole("button", { name: translate("workspace.create") }).click();
-  await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
-  await page.getByLabel(translate("projects.name")).fill("Mobile");
-  await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOB");
-  await page.getByRole("button", { name: translate("projects.create") }).click();
+  await page.goto(`${web}/${slug}`);
   await page.getByRole("link", { name: /MOB · Mobile/ }).waitFor();
 
   const me = await (await context.request.get(`${api}/api/me`)).json() as { user: { id: string }; workspaces: Array<{ id: string }> };
@@ -594,7 +577,6 @@ try {
   await page.getByRole("menuitem", { name: translate("table.insertRowBelow"), exact: true }).click();
   check(await descriptionTable.locator("tr").count() === 4, "description table controls did not insert a row");
 
-
   await page.goto(`${web}/${slug}/wiki/${wiki.id}`);
   const wikiEditor = page.getByTestId("wiki-editor").locator(".ProseMirror");
   const wikiDiff = wikiEditor.locator("pre code").filter({ hasText: "removed from Wiki" });
@@ -858,7 +840,6 @@ try {
   check(await activeCellIndex() === cellBeforeShiftTab - 1, "Shift-Tab did not move to the previous cell");
   // Escape from a cell moves focus to the table grip; Tab then reaches the `+` buttons and Escape returns to the cell.
   await page.keyboard.press("Escape");
-  await page.waitForTimeout(500);
   await page.waitForFunction(() => document.activeElement?.getAttribute("data-table-grip") === "table", undefined, { timeout: 5_000 }).catch(() => { throw new Error("Escape from a cell did not focus the table grip"); });
   await page.keyboard.press("Escape");
   await pick("table", 0, "table.deleteTable"); check(await wikiEditor.locator("table").count() === 0, "delete table left the table in the document");
@@ -911,7 +892,11 @@ try {
 
   await savedTable.locator("tr").nth(1).locator("td, th").first().click();
 
-  await page.waitForTimeout(2_000); // kept: the body reaches the server over the live socket (Y.js, debounced), with no response to wait on
+  await waitUntil(async () => {
+    const stored = await call<{ content: unknown }>("get_wiki_page", { pageId: wiki.id });
+    const content = JSON.stringify(stored.content);
+    return content.includes("Palette proof") && content.includes("palette.example") && content.includes("Callout proof");
+  }, "Wiki editor changes did not reach storage", 10_000);
   await page.getByText(translate("wiki.saved")).waitFor({ timeout: 10_000 });
   await page.reload();
   await page.getByTestId("wiki-editor").locator('h2:has-text("Palette proof")').waitFor();

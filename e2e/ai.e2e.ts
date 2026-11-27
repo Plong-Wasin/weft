@@ -1,7 +1,7 @@
 // Browser end-to-end flow: the AI page (recents, search, rename, delete, one Confirm for the proposed set, expiry, re-validation, convert to page).
 // No model is needed: chats and Confirmation cards are seeded through the chat and confirmation stores.
 // Run with `bun e2e/ai.e2e.ts` (needs the shared weft-postgres container; set DATABASE_URL to use your own database). Screenshots go to .local/visual/review/17-ai-page.
-import { chromium } from "playwright";
+import { check, createSignedInContext, launchBrowser, startApi, startWeb, waitFor } from "./harness";
 import { eq, like } from "drizzle-orm";
 import { createDatabase, confirmations, users, workspaces } from "../packages/db/src";
 import { createChatStore, createConfirmationStore, proposalResult } from "../packages/actions/src";
@@ -17,45 +17,27 @@ const web = `http://localhost:${webPort}`;
 const shots = reviewShots("17-ai-page");
 const modeShots = reviewShots("18-ai-chat-modes");
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 let failed = false;
 const { client, db } = createDatabase();
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  const page = await context.newPage();
+  const browser = await launchBrowser();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const email = `${slug}@example.test`;
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
+  const context = await createSignedInContext(browser, { viewport: { width: 1440, height: 900 } }, api, web, {
+    account: { name: "AI Tester", email },
+    workspace: { name: "E2E team", slug },
+    project: { name: "Mobile", key: "MOB", visibility: "public", shape: "simple" },
+  });
+  const page = await context.newPage();
   const call = async <T>(name: string, body: unknown) => await (await page.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
 
-  await page.goto(web);
-  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
-  await page.getByLabel(translate("auth.name")).fill("AI Tester");
-  await page.getByLabel(translate("auth.email")).fill(email);
-  await page.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
-  await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
-  await page.getByRole("button", { name: translate("auth.signUp") }).click();
-  await page.getByLabel(translate("workspace.name")).fill("E2E team");
-  await page.getByLabel(translate("workspace.slug")).fill(slug);
-  await page.getByRole("button", { name: translate("workspace.create") }).click();
-  await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
-  await page.getByLabel(translate("projects.name")).fill("Mobile");
-  await page.getByLabel(translate("projects.key"), { exact: true }).fill("MOB");
-  await page.getByRole("button", { name: translate("projects.create") }).click();
+  await page.goto(`${web}/${slug}`);
   await page.getByRole("link", { name: /MOB · Mobile/ }).waitFor();
   const me = await (await page.request.get(`${api}/api/me`)).json() as { workspaces: Array<{ id: string; slug: string }> };
   const workspaceId = me.workspaces.find((item) => item.slug === slug)!.id;
@@ -137,9 +119,13 @@ try {
   const renameInput = recents.getByRole("textbox", { name: translate("ai.rename") });
   const saveRename = recents.getByRole("button", { name: translate("ai.renameSave") });
   const cancelRename = recents.getByRole("button", { name: translate("ai.cancel") });
+  await page.mouse.move(0, 0);
   for (const theme of ["light", "dark"]) {
     await page.locator("html").evaluate((root, value) => root.setAttribute("data-theme", value), theme);
     for (const button of [saveRename, cancelRename]) {
+      await button.evaluate(async (element) => {
+        await Promise.allSettled(element.getAnimations().map((animation) => animation.finished));
+      });
       const styles = await button.evaluate((element) => ({ color: getComputedStyle(element).color, background: getComputedStyle(element).backgroundColor }));
       check(styles.background === "rgba(0, 0, 0, 0)", `${theme} rename action has a filled background`);
       check(styles.color !== "rgb(255, 255, 255)", `${theme} rename action label is not readable`);

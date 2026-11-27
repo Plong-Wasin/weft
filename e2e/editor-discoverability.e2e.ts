@@ -1,5 +1,6 @@
 // Browser cases for ticket 13: a first-time user finds Add image, Table and Link in the comment, description and Wiki editors without being told.
-import { chromium, type Browser } from "playwright";
+import { check, createSignedInContext, launchBrowser, startApi, startLive, startWeb, waitFor } from "./harness";
+import type { Browser } from "playwright";
 import { translate } from "../packages/shared/src";
 import { withShortcut } from "../apps/web/src/shortcuts";
 
@@ -10,49 +11,31 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const liveHttp = `http://localhost:${livePort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bun", "apps/live/src/index.ts"], { env: { ...Bun.env, LIVE_PORT: String(livePort), WEB_ORIGIN: web }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api, VITE_LIVE_URL: `ws://localhost:${livePort}` }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startLive(livePort, web),
+  startWeb(webPort, { api, live: `ws://localhost:${livePort}` }),
 ];
 let browser: Browser | null = null;
 
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
-
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web), waitFor(liveHttp)]);
-  browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  browser = await launchBrowser();
+  const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
+  const context = await createSignedInContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" }, api, web, {
+    account: { name: "Discovery Tester", email: `${slug}@example.test` },
+    workspace: { name: "Discovery team", slug },
+    project: { name: "Discovery", key: "DIS", visibility: "public", shape: "simple" },
+  });
   const page = await context.newPage();
   page.setDefaultTimeout(10_000);
   page.setDefaultNavigationTimeout(15_000);
-  const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   const call = async <T>(name: string, body: unknown) => {
     const response = await context.request.post(`${api}/actions/${name}`, { data: body });
     check(response.ok(), `${name} failed: ${response.status()}`);
     return await response.json() as T;
   };
 
-  await page.goto(web);
-  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
-  await page.getByLabel(translate("auth.name")).fill("Discovery Tester");
-  await page.getByLabel(translate("auth.email")).fill(`${slug}@example.test`);
-  await page.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
-  await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
-  await page.getByRole("button", { name: translate("auth.signUp") }).click();
-  await page.getByLabel(translate("workspace.name")).fill("Discovery team");
-  await page.getByLabel(translate("workspace.slug")).fill(slug);
-  await page.getByRole("button", { name: translate("workspace.create") }).click();
-  await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
-  await page.getByLabel(translate("projects.name")).fill("Discovery");
-  await page.getByLabel(translate("projects.key"), { exact: true }).fill("DIS");
-  await page.getByRole("button", { name: translate("projects.create") }).click();
+  await page.goto(`${web}/${slug}`);
   await page.getByRole("link", { name: /DIS · Discovery/ }).waitFor();
 
   const me = await (await context.request.get(`${api}/api/me`)).json() as { workspaces: Array<{ id: string }> };
@@ -234,6 +217,8 @@ try {
 
   // Ctrl/Cmd+K opens the Link field on the selection bubble; pasting a URL over selected text makes it a link.
   await wikiEditor.getByText("Wiki anchor", { exact: true }).click({ clickCount: 3 });
+  // The shortcut belongs to the bubble, which shows after the selection.
+  await wikiBubble.waitFor();
   await page.keyboard.press("Control+k");
   await wikiBubble.getByLabel(translate("wiki.linkUrl"), { exact: true }).waitFor();
   // The field takes focus in an effect after it renders, so poll briefly instead of reading once.
@@ -271,7 +256,6 @@ try {
   console.log("PASS markdown shortcuts '- ', '1. ' and '[] ' start lists and task items");
 
   // Shortcut hints: the toolbar tooltips name the keyboard shortcut.
-
 
   // Bulleted and numbered list buttons sit in the description toolbar and make the paragraph a list.
   await page.goto(`${web}/${slug}/browse/${item.displayId}`);

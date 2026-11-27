@@ -1,7 +1,8 @@
 // Browser end-to-end flow: an admin tries to delete an Agent that has written a comment, the settings dialog shows the refusal counts
 // and offers Disable, disabling keeps the comment, and an Agent that never wrote anything is deleted after one confirmation. Runs at 1440 and 390 px.
 // Run with `bun e2e/agent-retirement.e2e.ts`.
-import { chromium, type Page } from "playwright";
+import { createSignedInContext, launchBrowser, startApi, startWeb, waitFor } from "./harness";
+import type { Page } from "playwright";
 import { eq, inArray, like } from "drizzle-orm";
 import { agents, comments, createDatabase, jobs, users, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
@@ -11,17 +12,9 @@ const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52191);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 let failed = false;
 const { client, db } = createDatabase();
@@ -39,27 +32,18 @@ async function assertNoHorizontalScroll(page: Page, label: string) {
 
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
-  const page = await context.newPage();
+  const browser = await launchBrowser();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const email = `${slug}@example.test`;
+  const context = await createSignedInContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" }, api, web, {
+    account: { name: "Retirement Tester", email },
+    workspace: { name: "E2E team", slug },
+    project: { name: "Retire", key: "RET", visibility: "public", shape: "simple" },
+  });
+  const page = await context.newPage();
   const call = async <T>(name: string, body: unknown) => await (await page.request.post(`${api}/actions/${name}`, { data: body })).json() as T;
 
-  await page.goto(web);
-  await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
-  await page.getByLabel(translate("auth.name")).fill("Retirement Tester");
-  await page.getByLabel(translate("auth.email")).fill(email);
-  await page.getByLabel(translate("auth.password"), { exact: true }).fill("a-secure-password");
-  await page.getByLabel(translate("auth.confirmPassword"), { exact: true }).fill("a-secure-password");
-  await page.getByRole("button", { name: translate("auth.signUp") }).click();
-  await page.getByLabel(translate("workspace.name")).fill("E2E team");
-  await page.getByLabel(translate("workspace.slug")).fill(slug);
-  await page.getByRole("button", { name: translate("workspace.create") }).click();
-  await page.getByRole("button", { name: translate("projects.new"), exact: true }).click();
-  await page.getByLabel(translate("projects.name")).fill("Retire");
-  await page.getByLabel(translate("projects.key"), { exact: true }).fill("RET");
-  await page.getByRole("button", { name: translate("projects.create") }).click();
+  await page.goto(`${web}/${slug}`);
   await page.getByRole("link", { name: /RET · Retire/ }).waitFor();
   const me = await (await page.request.get(`${api}/api/me`)).json() as { user: { id: string }; workspaces: Array<{ id: string; slug: string }> };
   const workspaceId = me.workspaces.find((item) => item.slug === slug)!.id;

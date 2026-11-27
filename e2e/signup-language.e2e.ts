@@ -1,6 +1,6 @@
 // A person who signs up in Thai (browser language) must land inside the app in Thai, and the choice must be saved to the account.
 // Runs with no DEFAULT_LANGUAGE, so an unsaved account language arrives from the server as English.
-import { chromium } from "playwright";
+import { check, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
 import { translate } from "../packages/shared/src";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 3131);
@@ -9,24 +9,15 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const { DEFAULT_LANGUAGE: _unused, ...baseEnv } = Bun.env;
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...baseEnv, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api, ALLOW_SIGNUP: "true", ALLOW_WORKSPACE_CREATION: "true" }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...baseEnv, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web, { env: { ...baseEnv, ALLOW_SIGNUP: "true", ALLOW_WORKSPACE_CREATION: "true" } }),
+  startWeb(webPort, { api, env: { ...baseEnv } }),
 ];
 
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
-const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
-
-let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+let browser: Awaited<ReturnType<typeof launchBrowser>> | undefined;
 try {
   await Promise.all([waitFor(`${api}/api/config`), waitFor(web)]);
-  browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ locale: "th-TH", viewport: { width: 1440, height: 900 } });
+  browser = await launchBrowser();
+  const context = await newContext(browser, { locale: "th-TH", viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   await page.goto(web);
   await page.getByLabel(translate("auth.email", "th")).waitFor();

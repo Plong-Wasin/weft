@@ -1,6 +1,7 @@
 // Browser end-to-end flow: submit a work item to Intake, accept it, check it leaves Triage and shows in the project list.
 // Run with `bun run e2e` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
-import { chromium, type Locator, type Page } from "playwright";
+import { check, launchBrowser, newContext, newPage, startApi, startWeb, waitFor } from "./harness";
+import { type Locator, type Page } from "playwright";
 import { mkdir } from "node:fs/promises";
 import { eq, like } from "drizzle-orm";
 import { createDatabase, projectMembers, projects as dbProjects, users, workspaces } from "../packages/db/src";
@@ -20,29 +21,20 @@ async function expectValue(locator: Locator, expected: string, label: string) {
   throw new Error(`Expected ${label} value ${expected}; got ${await locator.inputValue()}`);
 }
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 let failed = false;
 let e2eDatabase: ReturnType<typeof createDatabase> | null = null;
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const page = await browser.newPage();
+  const browser = await launchBrowser();
+  const page = await newPage(browser);
   const dateTrigger = (scope: Locator) => scope.getByRole("button", { name: new RegExp(`^${translate("workItems.dueDate")}:`) });
   const setDate = async (scope: Locator, value: string) => await chooseDate(dateTrigger(scope), value);
   const expectDate = async (scope: Locator, expected: string, label: string) => await expectTriggerDate(dateTrigger(scope), expected, label);
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
-  const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
   await page.goto(web);
   await page.getByRole("button", { name: translate("auth.signUp"), exact: true }).click();
   await page.getByLabel(translate("auth.name")).fill("Intake Tester");
@@ -358,7 +350,7 @@ try {
   await detail.getByRole("button", { name: translate("intake.accept"), exact: true }).click();
   const acceptDialog = page.getByRole("dialog", { name: translate("intake.acceptIntoState") });
   const targetState = acceptDialog.getByRole("combobox", { name: translate("workItems.state") });
-  await targetState.click();
+  await targetState.and(page.locator('[data-value]:not([data-value=""])')).click();
   const backlogOption = page.getByRole("option", { name: "Backlog", exact: true });
   await backlogOption.waitFor();
   await page.getByRole("option", { name: "Done", exact: true }).waitFor();
@@ -438,7 +430,7 @@ try {
   const guestSignup = async (name: string, suffix: string) => {
     const response = await page.request.post(`${api}/actions/create_invite`, { data: { workspaceId: guestWorkspaceRow.id, role: "Guest" } });
     const invite = await response.json() as { token: string };
-    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+    const context = await newContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" });
     const guestPage = await context.newPage();
     await guestPage.goto(`${web}/invite/${invite.token}`);
     await guestPage.getByLabel(translate("auth.name")).fill(name);

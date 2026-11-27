@@ -1,5 +1,6 @@
 // Admin console: an Admin suspends a member in the browser; a person whose password reset is forced lands on the change-password screen and can save a new password.
-import { chromium, type BrowserContext } from "playwright";
+import { launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
+import type { BrowserContext } from "playwright";
 import { translate } from "../packages/shared/src";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31191);
@@ -10,14 +11,10 @@ const password = "a-secure-password";
 const slug = `admin-e2e-${crypto.randomUUID().slice(0, 8)}`;
 
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
 
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 150; attempt += 1) { try { if ((await fetch(url)).status < 500) return; } catch { /* starting */ } await Bun.sleep(200); }
-  throw new Error(`${url} did not start`);
-}
 const call = (path: string, body: unknown, cookie?: string) => fetch(`${api}${path}`, {
   method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body),
 });
@@ -30,14 +27,14 @@ async function signUp(name: string) {
 async function signIn(email: string) {
   return (await call("/api/auth/sign-in/email", { email, password })).headers.get("set-cookie")!.split(";")[0]!;
 }
-async function sessionContext(browser: Awaited<ReturnType<typeof chromium.launch>>, cookie: string): Promise<BrowserContext> {
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US", serviceWorkers: "block" });
+async function sessionContext(browser: Awaited<ReturnType<typeof launchBrowser>>, cookie: string): Promise<BrowserContext> {
+  const context = await newContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US", serviceWorkers: "block" });
   const [name, ...rest] = cookie.split("=");
   await context.addCookies([{ name: name!, value: rest.join("="), domain: "localhost", path: "/" }]);
   return context;
 }
 
-let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+let browser: Awaited<ReturnType<typeof launchBrowser>> | undefined;
 try {
   await Promise.all([waitFor(`${api}/api/config`), waitFor(web)]);
   const admin = await signUp("Ada Admin");
@@ -51,7 +48,7 @@ try {
   await call("/actions/force_password_reset", { workspaceId: workspace.id, userId: dao.id, reason: "Shared password in a chat" }, admin.cookie);
   const daoCookie = await signIn(dao.email);
 
-  browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
+  browser = await launchBrowser();
 
   // Admin suspends a member from the members page.
   const adminContext = await sessionContext(browser, await signIn(admin.email));

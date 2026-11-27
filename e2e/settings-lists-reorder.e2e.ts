@@ -2,7 +2,8 @@
 // A project Admin reorders each list with the keyboard (Arrow keys on the grip) or the row's Actions menu (Move up / Move down),
 // reloads, and sees the order kept. The stored order then shows in the create modal's pickers and in the work item panel.
 // Run with `bun e2e/run-all.ts settings-lists-reorder` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
-import { chromium, type Page } from "playwright";
+import { check, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
+import type { Page } from "playwright";
 import { mkdirSync } from "node:fs";
 import { translate } from "../packages/shared/src";
 import { paths } from "../apps/web/src/routes";
@@ -14,29 +15,20 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const shots = reviewShots("41-settings-lists-reorder");
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
 
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
-
-const check = (condition: boolean, message: string) => { if (!condition) throw new Error(message); };
 const t = (key: string) => translate(key as never);
 const say = (key: string, values: Record<string, string>) => Object.entries(values).reduce((text, [name, value]) => text.split(`{${name}}`).join(value), t(key));
 let failed = false;
 
-let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+let browser: Awaited<ReturnType<typeof launchBrowser>> | undefined;
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
   mkdirSync(shots, { recursive: true });
-  browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  browser = await launchBrowser();
+  const context = await newContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" });
   const page = await context.newPage();
   page.on("pageerror", (error) => console.error("pageerror:", error.message));
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;

@@ -3,7 +3,7 @@
 // waiting entry, a person's comment that mentions the busy reviewer is a steered entry, and a hand-off the Originator may not make is a skipped entry with its reason.
 // No Run calls a model: the Runs the flow needs are recorded through the actions, as the server records them. Screenshots go to WAKE_CHAIN_SCREENSHOT_DIR
 // (default /tmp/weft-wake-chain-visibility-e2e) at 1440 and 390 px. Run with `bun e2e/wake-chain-visibility.e2e.ts`.
-import { chromium } from "playwright";
+import { launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
 import { inArray, like } from "drizzle-orm";
 import { agents, createDatabase, jobs, runs, users, workspaces } from "../packages/db/src";
 import { createAgentActions, createCommentActions, createJobHandlers, createWorkItemActions, runNextJob } from "../packages/actions/src";
@@ -15,17 +15,9 @@ const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 const shots = Bun.env.WAKE_CHAIN_SCREENSHOT_DIR ?? "/tmp/weft-wake-chain-visibility-e2e";
 const servers = [
-  Bun.spawn(["bun", "apps/api/src/index.ts"], { env: { ...Bun.env, PORT: String(apiPort), WEB_ORIGIN: web, BETTER_AUTH_URL: api }, stdout: "inherit", stderr: "inherit" }),
-  Bun.spawn(["bunx", "vite", "--port", String(webPort), "--strictPort"], { cwd: "apps/web", env: { ...Bun.env, VITE_API_URL: api }, stdout: "ignore", stderr: "inherit" }),
+  startApi(apiPort, web),
+  startWeb(webPort, { api }),
 ];
-
-async function waitFor(url: string) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    try { if ((await fetch(url)).status < 500) return; } catch { /* not up yet */ }
-    await Bun.sleep(200);
-  }
-  throw new Error(`${url} did not start`);
-}
 
 let failed = false;
 let stopWorker = false;
@@ -57,8 +49,8 @@ async function capture(page: import("playwright").Page, name: string, entry: imp
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
   await Bun.$`mkdir -p ${shots}`;
-  const browser = await chromium.launch({ executablePath: Bun.env.CHROMIUM_PATH });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "en-US" });
+  const browser = await launchBrowser();
+  const context = await newContext(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US" });
   const page = await context.newPage();
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;
   const email = `${slug}@example.test`;

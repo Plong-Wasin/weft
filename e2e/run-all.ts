@@ -1,35 +1,47 @@
 // Runs the e2e/*.e2e.ts flows on several workers at once; add a flow by adding a file, no package.json edit needed.
-// Usage: bun e2e/run-all.ts [--workers=N] [--keep] [--slow] [name-filter ...]   (set CHROMIUM_PATH as for a single flow)
+// Usage: bun e2e/run-all.ts [--workers=N] [--keep] [--slow] [--dev] [name-filter ...]   (set CHROMIUM_PATH as for a single flow)
 // The schema is migrated once into a template database; every flow gets a copy of it and a pair of ports of its worker's own, so flows never share rows or ports.
-// Ports: E2E_PORT_BASE (whole number, at most 45534) sets them; unset, the base comes from the checkout's directory name. A flow whose port is busy fails at once, naming the listener; nothing is killed.
-// A flow that fails while the others run is run once more on its own: a browser flow under load can miss a wait that it passes on a quiet machine, and the report says which flows needed it.
-import { randomBytes } from "node:crypto";
+// E2E_PORT_BASE sets the first API port, or a default comes from the checkout's directory name. A busy port fails the flow and names the listener.
+// Failed flows get a second attempt after the first queue and the report names those that passed only on retry.
+import { randomBytes, randomUUID } from "node:crypto";
 import { closeSync, openSync, readdirSync, statSync } from "node:fs";
-import { availableParallelism } from "node:os";
-import { basename } from "node:path";
+import { spawn } from "node:child_process";
+import { mkdir, mkdtemp, rename, rm } from "node:fs/promises";
+import { availableParallelism, tmpdir } from "node:os";
+import { basename, dirname, join } from "node:path";
 import { SQL } from "bun";
+import { waitFor } from "./harness";
 import { listenerOn, resolvePortBase, workerPorts } from "./ports";
-import { cleanUp, stopProcess, withDeadline } from "./shutdown";
+import { cleanUp, flowOwnerKey, runWithTimeout, stopProcess, withDeadline } from "./shutdown";
+import { buildWorkerWeb } from "./web-build";
 
 const args = process.argv.slice(2);
 const keep = args.includes("--keep");
+const dev = args.includes("--dev");
+const sharedProductionFlows = new Set(["auth-submit-guard.e2e.ts", "sign-in-limits.e2e.ts"]);
+const serviceWorkerSmoke = "mermaid-diagrams.e2e.ts";
+const flowTimeoutMs = 10 * 60_000;
 const workersFlag = args.find((arg) => arg.startsWith("--workers="));
 const filters = args.filter((arg) => !arg.startsWith("--"));
-let portBase: number;
-try { portBase = resolvePortBase(Bun.env.E2E_PORT_BASE, basename(process.cwd())); } catch (error) { console.error((error as Error).message); process.exit(1); }
 
-/**
- * The two longest flows (measured 2026-11-16: editor-parity 240 s, responsive 130 s with its viewports side by side). Each is one long sequence on one page, so they cannot be split over workers, and either one alone sets the length of the whole run.
- * The default run leaves them out; `--slow` (`bun run e2e:slow`) adds them, first in the queue. Run it after changing the editor, or the layout of many screens.
- */
+// These flows run long sequences on a single page. --slow adds them to the queue.
 const slowFlows = ["editor-parity.e2e.ts", "responsive.e2e.ts"];
 const withSlow = args.includes("--slow");
 const matching = readdirSync(import.meta.dir).filter((name) => name.endsWith(".e2e.ts") && (!filters.length || filters.some((filter) => name.includes(filter))) && (
   withSlow || !slowFlows.includes(name) || filters.some((filter) => filter === name || filter === name.replace(/\.e2e\.ts$/, ""))
 ));
+const durationPath = join(import.meta.dir, "../.local/e2e/durations.json");
+const durations: Record<string, number> = (await Bun.file(durationPath).json().catch(() => null)) ?? {};
 const files = [...matching]
-  .sort((a, b) => Number(slowFlows.includes(b)) - Number(slowFlows.includes(a)) || statSync(`${import.meta.dir}/${b}`).size - statSync(`${import.meta.dir}/${a}`).size || a.localeCompare(b));
-const workers = Math.max(1, Math.min(files.length, Number(workersFlag?.slice("--workers=".length)) || Math.min(6, Math.max(2, availableParallelism() - 6))));
+  .sort((a, b) => (durations[b] ?? 0) - (durations[a] ?? 0) || Number(slowFlows.includes(b)) - Number(slowFlows.includes(a)) || statSync(`${import.meta.dir}/${b}`).size - statSync(`${import.meta.dir}/${a}`).size || a.localeCompare(b));
+const requestedWorkers = Number(workersFlag?.slice("--workers=".length));
+if (workersFlag && (!Number.isSafeInteger(requestedWorkers) || requestedWorkers < 1)) {
+  console.error("--workers must be a positive whole number");
+  process.exit(1);
+}
+const workers = Math.max(1, Math.min(files.length, requestedWorkers || Math.min(6, Math.max(2, availableParallelism() - 6))));
+let portBase: number;
+try { portBase = resolvePortBase(Bun.env.E2E_PORT_BASE, basename(process.cwd()), workers); } catch (error) { console.error((error as Error).message); process.exit(1); }
 
 const base = new URL(Bun.env.DATABASE_URL ?? "postgres://weft:weft@localhost:54329/weft");
 const prefix = `weft_e2e_${basename(process.cwd()).toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 20) || "repo"}_${randomBytes(3).toString("hex")}`;
@@ -37,6 +49,8 @@ const urlFor = (name: string) => { const url = new URL(base); url.pathname = `/$
 const logDir = process.env.TMPDIR ?? "/tmp";
 const admin = new SQL({ url: base.toString(), connectionTimeout: 5 });
 const created: string[] = [];
+let webRoot: string | undefined;
+let webDirectories: string[] = [];
 let counter = 0;
 let copying: Promise<void> = Promise.resolve();
 
@@ -84,20 +98,28 @@ async function runFlow(file: string, worker: number): Promise<FlowResult> {
   let ok = false;
   let failure = "";
   try {
-    const env = { ...Bun.env, DATABASE_URL: urlFor(database), ALLOW_SIGNUP: "true", ALLOW_WORKSPACE_CREATION: "true", E2E_API_PORT: String(ports.api), E2E_WEB_PORT: String(ports.web), E2E_LIVE_PORT: String(ports.live) };
+    const owner = randomUUID();
+    const env = {
+      ...Bun.env,
+      [flowOwnerKey]: owner,
+      E2E_WEB_DIR: !dev ? webDirectories[worker] : undefined,
+      E2E_PRODUCTION_WEB_DIR: webDirectories[worker],
+      DATABASE_URL: urlFor(database),
+      ALLOW_SIGNUP: "true",
+      ALLOW_WORKSPACE_CREATION: "true",
+      E2E_API_PORT: String(ports.api),
+      E2E_WEB_PORT: String(ports.web),
+      E2E_LIVE_PORT: String(ports.live),
+    };
     // Servers inherit these descriptors. Write to a file so a leaked server cannot keep the runner waiting for pipe EOF.
     const fd = openSync(runningLog, "w");
     const run = (() => {
-      try { return Bun.spawn(["bun", `${import.meta.dir}/${file}`], { env, stdout: fd, stderr: fd }); }
+      try { return spawn(process.execPath, [join(import.meta.dir, file)], { env, detached: true, stdio: ["ignore", fd, fd] }); }
       finally { closeSync(fd); }
     })();
-    try {
-      ok = (await withDeadline(run.exited, 10 * 60_000, file)) === 0;
-    } catch (error) {
-      failure = `\n${error}\n`;
-      await cleanUp([() => stopProcess(run)], (secondary) => { failure += `warning: ${secondary}\n`; });
-    }
+    ok = (await runWithTimeout(run, file, flowTimeoutMs, owner)) === 0;
   } catch (error) {
+    console.error(String(error));
     failure = `\n${error}\n`;
   } finally {
     await cleanUp([
@@ -113,10 +135,15 @@ async function runFlow(file: string, worker: number): Promise<FlowResult> {
       ok = false;
     });
   }
+  const seconds = Math.round((Date.now() - started) / 1000);
+  if (ok) {
+    await rename(runningLog, `${logPath}.log`);
+    return { ok, seconds, output: "" };
+  }
   const output = (await Bun.file(runningLog).exists() ? await Bun.file(runningLog).text() : "") + failure;
-  await Bun.write(`${logPath}${ok ? "" : "_failed"}.log`, output);
+  await Bun.write(`${logPath}_failed.log`, output);
   await Bun.file(runningLog).delete().catch(() => undefined);
-  return { ok, seconds: Math.round((Date.now() - started) / 1000), output };
+  return { ok, seconds, output };
 }
 
 async function runQueue(queue: string[], report: (file: string, result: FlowResult) => void) {
@@ -138,26 +165,32 @@ try {
   const migrate = Bun.spawnSync(["bun", "run", "db:migrate"], { env: { ...Bun.env, DATABASE_URL: urlFor(`${prefix}_tpl`) }, stdout: "pipe", stderr: "pipe" });
   if (migrate.exitCode !== 0) { console.error(migrate.stdout.toString() + migrate.stderr.toString()); throw new Error("migration failed"); }
 
-  // The web dev server optimises its dependencies on first start and reloads the page when it does; one start before the workers keeps that out of the flows.
-  // The warm-up server uses worker 0's web port: it is stopped before any flow starts.
-  const warmPort = workerPorts(portBase, 0).web;
-  const busyWarm = listenerOn(warmPort);
-  if (busyWarm) throw new Error(`port ${warmPort} is in use by ${busyWarm}; no flow started`);
-  const warm = Bun.spawn(["bunx", "vite", "--port", String(warmPort), "--strictPort"], { cwd: `${import.meta.dir}/../apps/web`, env: { ...Bun.env, VITE_API_URL: "http://localhost:1" }, stdout: "ignore", stderr: "ignore" });
-  try {
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      try { if ((await fetch(`http://localhost:${warmPort}/`, { signal: AbortSignal.timeout(1_000) })).status < 500) break; } catch { /* not up yet */ }
-      await Bun.sleep(200);
-    }
-  } finally {
-    await stopProcess(warm);
+  if (files.some((file) => file !== serviceWorkerSmoke && (!dev || sharedProductionFlows.has(file)))) {
+    console.log(`building the web app for ${workers} e2e workers`);
+    webRoot = await mkdtemp(join(tmpdir(), "weft-e2e-run-"));
+    webDirectories = await buildWorkerWeb(webRoot, Array.from({ length: workers }, (_, worker) => workerPorts(portBase, worker)));
   }
-  await waitFree([warmPort], (port, listener) => { throw new Error(`warm-up server still holds port ${port}: ${listener}; no flow started`); });
+
+  if (dev) {
+    // The web dev server optimises its dependencies on first start and reloads the page when it does; one start before the workers keeps that out of the flows.
+    // The warm-up server uses worker 0's web port: it is stopped before any flow starts.
+    const warmPort = workerPorts(portBase, 0).web;
+    const busyWarm = listenerOn(warmPort);
+    if (busyWarm) throw new Error(`port ${warmPort} is in use by ${busyWarm}; no flow started`);
+    const warm = Bun.spawn(["node", "node_modules/vite/bin/vite.js", "--port", String(warmPort), "--strictPort"], { cwd: `${import.meta.dir}/../apps/web`, env: { ...Bun.env, VITE_API_URL: "http://localhost:1" }, stdout: "ignore", stderr: "ignore" });
+    try {
+      await waitFor(`http://localhost:${warmPort}/`, warm);
+    } finally {
+      await stopProcess(warm);
+    }
+    await waitFree([warmPort], (port, listener) => { throw new Error(`warm-up server still holds port ${port}: ${listener}; no flow started`); });
+  }
 
   console.log(`${files.length} flows on ${workers} workers, a database and a pair of ports for each (API ${portBase}+, web ${portBase + 20_000}+, E2E_PORT_BASE ${Bun.env.E2E_PORT_BASE ? "set" : "derived from the directory name"})`);
   const failed: { file: string; output: string; blocked?: boolean }[] = [];
   await runQueue([...files], (file, result) => {
     console.log(`${result.ok ? "ok  " : "FAIL"} ${file} (${result.seconds}s)`);
+    if (result.ok && !dev) durations[file] = result.seconds;
     if (!result.ok) failed.push({ file, output: result.output, blocked: result.blocked });
   });
 
@@ -168,8 +201,19 @@ try {
   const again = failed.filter((flow) => !flow.blocked).map((flow) => flow.file);
   await runQueue(again, (file, result) => {
     console.log(`${result.ok ? "ok  " : "FAIL"} ${file} again (${result.seconds}s)`);
-    if (result.ok) retried.push(file); else stillFailing.push({ file, output: result.output });
+    if (result.ok) {
+      retried.push(file);
+      if (!dev) durations[file] = result.seconds;
+    } else stillFailing.push({ file, output: result.output });
   });
+  if (!dev) {
+    try {
+      const temporary = `${durationPath}.${prefix}`;
+      await mkdir(dirname(durationPath), { recursive: true });
+      await Bun.write(temporary, JSON.stringify(durations, null, 2) + "\n");
+      await rename(temporary, durationPath);
+    } catch (error) { console.warn(`could not save flow durations: ${error}`); }
+  }
   // The last non-log lines of each failure; the whole output of every flow is in the log directory.
   for (const { file, output } of stillFailing) {
     const lines = output.split("\n").filter((line) => !line.startsWith('{"time"'));
@@ -189,7 +233,10 @@ try {
       code = 1;
     });
   } finally {
-    await cleanUp([() => withDeadline(admin.close({ timeout: 1 }), 5_000, "runner database close")], (error) => {
+    await cleanUp([
+      () => withDeadline(admin.close({ timeout: 1 }), 5_000, "runner database close"),
+      async () => { if (webRoot) await rm(webRoot, { recursive: true, force: true }); },
+    ], (error) => {
       console.error(error);
       code = 1;
     });

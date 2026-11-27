@@ -22,7 +22,7 @@ const servers = [
 let failed = false;
 
 try {
-  await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
+  await Promise.all([waitFor(`${api}/api/me`), waitFor(web), waitFor(`http://localhost:${livePort}`)]);
   const browser = await launchBrowser();
   const context = await newContext(browser, { viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();

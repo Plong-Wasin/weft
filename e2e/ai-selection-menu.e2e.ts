@@ -63,7 +63,7 @@ try {
   const workspaceId = me.workspaces.find((workspace) => workspace.slug === slug)!.id;
   const project = await call<{ id: string }>("get_project", { workspaceId, key: "MOB" });
   await call("create_work_item", { projectId: project.id, title: "Selection target" });
-  const wikiPage = await call<{ id: string }>("create_wiki_page", { workspaceId, title: "Selection notes" });
+  const wikiPage = await call<{ id: string }>("create_wiki_page", { workspaceId, title: "Selection notes", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Seed line" }] }] } });
 
   const assistToolbar = (host: Page | Locator) => host.getByRole("toolbar", { name: translate("assist.menu"), exact: true });
   const preferenceCheckbox = () => page.getByRole("checkbox", { name: translate("accountPrefs.aiMenu"), exact: true });
@@ -74,6 +74,11 @@ try {
     await page.keyboard.press("Enter");
     await page.keyboard.type(text);
     await page.keyboard.press("Shift+Home");
+  }
+  /** Opens the Wiki page and waits for a stored line: the editor takes input before its first sync, and the sync then moves the cursor. */
+  async function openWiki(stored: string) {
+    await page.goto(`${web}/${slug}/wiki/${wikiPage.id}`);
+    await page.getByTestId("wiki-editor").locator(".ProseMirror").getByText(stored).waitFor();
   }
   /** Sets the account switch on the preferences page and waits until the server has saved it. */
   async function setPreference(on: boolean) {
@@ -118,17 +123,15 @@ try {
   await page.setViewportSize({ width: 1440, height: 900 });
   console.log("ai-selection-menu ok: on by default");
 
-  await page.goto(`${web}/${slug}/wiki/${wikiPage.id}`);
   const wiki = page.getByTestId("wiki-editor").locator(".ProseMirror");
-  await wiki.waitFor();
+  await openWiki("Seed line");
   await typeAndSelect(wiki, "Wiki selected text");
   await assistToolbar(page).waitFor();
   console.log("ai-selection-menu ok: menu shows on selection when on");
 
   // Off, then reload: the Wiki menu is gone, the slash command and the shortcut still open assist.
   await setPreference(false);
-  await page.goto(`${web}/${slug}/wiki/${wikiPage.id}`);
-  await wiki.waitFor();
+  await openWiki("Wiki selected text");
   await typeAndSelect(wiki, "Wiki off text");
   await page.getByTestId("wiki-bubble-menu").waitFor();
   check(await assistToolbar(page).count() === 0, "AI selection menu is shown in the Wiki while the switch is off");
@@ -171,8 +174,7 @@ try {
 
   // On again, then reload: the Wiki menu comes back on selection.
   await setPreference(true);
-  await page.goto(`${web}/${slug}/wiki/${wikiPage.id}`);
-  await wiki.waitFor();
+  await openWiki("Shortcut text");
   await typeAndSelect(wiki, "Wiki back on text");
   await assistToolbar(page).waitFor();
   console.log("ai-selection-menu ok: menu back after reload when on");
@@ -191,8 +193,7 @@ try {
   await page.getByRole("menuitem", { name: translate("email.menu"), exact: true }).waitFor();
   check(await page.getByRole("menuitem", { name: translate("accountPrefs.menu"), exact: true }).count() === 0, "AI off: the preferences item is in the profile menu");
   await page.keyboard.press("Escape");
-  await page.goto(`${web}/${slug}/wiki/${wikiPage.id}`);
-  await wiki.waitFor();
+  await openWiki("Wiki back on text");
   await wiki.click();
   await page.keyboard.press("Control+End");
   await page.keyboard.press("Enter");

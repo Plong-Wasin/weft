@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { chromium, request, type Browser, type BrowserType, type LaunchOptions, type BrowserContextOptions } from "playwright";
+import { chromium, request, type Browser, type BrowserType, type LaunchOptions, type BrowserContextOptions, type Page } from "playwright";
 import { buildWeb } from "./web-build";
 import { listenersOn } from "./ports";
 
@@ -114,6 +114,18 @@ export async function newPage(browser: Browser, options?: BrowserContextOptions)
   const page = await browser.newPage({ serviceWorkers: "block", ...options });
   page.setDefaultTimeout(30_000);
   return page;
+}
+
+/**
+ * Runs `open` and returns once the page has the action's answer and has rendered it.
+ * An "@" typed before the member list is in the editor opens an empty, hidden popup that never refreshes.
+ */
+export async function openWithAction(page: Page, action: string, open: () => Promise<unknown>) {
+  const answered = page.waitForResponse((response) => response.url().endsWith(`/actions/${action}`) && response.request().method() === "POST");
+  await open();
+  await (await answered).finished();
+  // React commits the answer before the second frame.
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 }
 
 /** Sets up a browser session for flows whose assertions start after onboarding. */

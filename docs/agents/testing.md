@@ -27,7 +27,7 @@ The runner migrates a database template once and copies it for each flow. The AP
 
 - **Environment.** `DATABASE_URL` defaults to the local `weft-postgres` service. Set `CHROMIUM_PATH` to an installed Chromium when Playwright's browser download is missing. `attachments.e2e.ts` needs an S3-compatible server on `localhost:9000` with the `weft-assets` bucket and the default `weft` / `weft-secret` keys. See the MinIO service in `compose.yaml`.
 - **Ports.** `E2E_PORT_BASE` defaults to a hash of the checkout name. The API port for zero-based worker N is the base plus twice N, the live port is the API port plus 10000, and the web port is the API port plus 20000. The last worker's web port must stay below 65535. A busy port fails the flow and names the listener. Server readiness verifies that the process started by the flow owns the listening socket. For a direct invocation of a flow file, set `E2E_API_PORT`, `E2E_WEB_PORT`, `E2E_LIVE_PORT` and point `DATABASE_URL` at an isolated database made with `--keep`.
-- **Timeouts and retries.** Each attempt gets ten minutes (`editor-parity` alone takes over five). A timed-out attempt reports the flow name and stops processes with that attempt's inherited ownership marker, including detached Chromium children. If processes remain after SIGTERM, the runner repeats discovery and sends SIGKILL until they exit or cleanup reaches its deadline. Failed attempts get one retry after the first queue completes. Busy ports are reported immediately.
+- **Timeouts and retries.** Each attempt gets ten minutes (`editor-parity` alone takes over five). A timed-out attempt reports the flow name and stops the flow's process tree and every process with that attempt's inherited ownership marker, with their descendants. The tree covers Chromium, which overwrites its environment and so loses the marker; the marker covers a process whose parent already exited. `e2e/shutdown.test.ts` checks a frozen Chromium when one is installed. If processes remain after SIGTERM, the runner repeats discovery and sends SIGKILL until they exit or cleanup reaches its deadline. Failed attempts get one retry after the first queue completes. Busy ports are reported immediately.
 - **Durations.** The runner prints each attempt's duration and records successful production runs in `.local/e2e/durations.json` to schedule the longest flows first. Use `--workers=N` to override the default.
 
 The API fixture in `e2e/harness.ts` creates the account, workspace and optional project for flows that start after onboarding, then reuses the authenticated storage state in Playwright. `auth-onboarding.e2e.ts`, `auth-submit-guard.e2e.ts` and `signup-language.e2e.ts` cover UI sign-up and onboarding. `project-features.e2e.ts` covers project creation and shape. `agents.e2e.ts` creates a project through the UI, checks that public visibility is saved by default and verifies that a Guest can see it in the sidebar. `project-key.e2e.ts` and `project-general.e2e.ts` cover project keys and visibility permissions.
@@ -55,6 +55,13 @@ Measured on 2026-11-27 with `bun e2e/run-all.ts --slow --workers=2`, Bun 1.4.2, 
 | After | 2 | 15m 08s | 116/116 (`mention-popups` needed the retry) |
 
 The run is 7m 51s (34%) shorter. `editor-parity` takes about 310s of it on one page. A flow can still miss a wait on its first attempt, which the retry absorbs.
+
+### Waits that a flow needs
+
+- **Wiki editor.** It takes input before its first sync with the live server, and the sync then moves the cursor. After opening a Wiki page, wait for a line that the page already stores before you click or type.
+- **"@" mentions.** An "@" typed before the member list arrives opens a hidden popup that stays empty until the next keystroke. Open the page with `openWithAction` from `e2e/harness.ts`.
+
+Both are product behaviour that a fast person can also hit.
 
 ## Real Runtime acceptance
 

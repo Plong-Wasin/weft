@@ -1,7 +1,7 @@
 // Browser check for the "@" mention and ":" emoji popups in the Wiki and comment editors: one look and one selection rule,
 // keyboard wrap-around with the selected row kept in view, Escape, Enter and mouse picks, and the selected option exposed to assistive tech.
 // Set MENTION_SCREENSHOT to a .png path to save the dark-theme mention popup there (not committed).
-import { check, createSignedInContext, launchBrowser, startApi, startLive, startWeb, waitFor } from "./harness";
+import { check, createSignedInContext, launchBrowser, openWithAction, startApi, startLive, startWeb, waitFor } from "./harness";
 import { type Locator, type Page } from "playwright";
 import { translate } from "../packages/shared/src";
 
@@ -176,13 +176,16 @@ try {
   const projects = await call<Array<{ id: string; key: string }>>("list_projects", { workspaceId });
   const project = projects.find((row) => row.key === "MOB")!;
   await call("create_work_item", { projectId: project.id, title: "Mention target" });
-  await call("create_wiki_page", { workspaceId, title: "Mention popups", content: { type: "doc", content: [{ type: "paragraph" }] } });
+  await call("create_wiki_page", { workspaceId, title: "Mention popups", content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Seed line" }] }, { type: "paragraph" }] } });
   const wikiPage = (await call<Array<{ id: string; title: string }>>("list_wiki_pages", { workspaceId })).find((row) => row.title === "Mention popups")!;
 
   // Wiki editor, light theme.
-  await page.goto(`${web}/${slug}/wiki/${wikiPage.id}`);
   const wikiEditor = page.getByTestId("wiki-editor").locator(".ProseMirror");
-  await wikiEditor.click();
+  await openWithAction(page, "list_wiki_page_mentionable_members", () => page.goto(`${web}/${slug}/wiki/${wikiPage.id}`));
+  // The editor takes input before its first sync; the stored line shows that the sync is done.
+  await wikiEditor.getByText("Seed line").waitFor();
+  // Click the stored empty line: a Control+End sent while the page was still loading was sometimes lost.
+  await wikiEditor.locator("p").last().click();
   await checkMentionPopup(page, wikiEditor, "wiki");
 
   // Dark theme: the selected row and the popup shadow keep their tokens; the screenshot is for a visual check only.
@@ -207,7 +210,7 @@ try {
   // Comment editor on the work item.
   check(inaccessibleAgentId !== undefined, "Grove Agent id was not captured");
   await call("set_agent_access", { agentId: inaccessibleAgentId, userIds: [] });
-  await page.goto(`${web}/${slug}/browse/MOB-1`);
+  await openWithAction(page, "list_mentionable_members", () => page.goto(`${web}/${slug}/browse/MOB-1`));
   const comment = page.getByTestId("comment-editor").locator(".ProseMirror");
   await comment.click();
   await checkMentionPopup(page, comment, "comment", "Grove");

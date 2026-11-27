@@ -31,20 +31,45 @@ export async function stopProcess(child: Child, graceMs = 5_000) {
   }
 }
 
-/** The inherited marker stays with Chromium when it starts a session or is reparented. */
-function ownedProcesses(owner: string): number[] {
+type ProcessEntry = { parent: number; started: string };
+
+/** Every live process with its parent. Zombies are already stopped, so they are left out. */
+function processTable(): Map<number, ProcessEntry> {
+  const table = new Map<number, ProcessEntry>();
+  if (process.platform === "linux") {
+    for (const entry of readdirSync("/proc").filter((name) => /^\d+$/.test(name))) {
+      const stat = readProc(entry, "stat");
+      // The command name in parentheses can hold spaces, so fields are counted after it.
+      const fields = stat?.slice(stat.lastIndexOf(")") + 2).split(" ");
+      if (fields && fields[0] !== "Z") table.set(Number(entry), { parent: Number(fields[1]), started: fields[19]! });
+    }
+    return table;
+  }
+  const { stdout, exitCode } = Bun.spawnSync(["ps", "-A", "-o", "pid=,ppid=,stat="]);
+  if (exitCode !== 0) throw new Error("could not list flow processes");
+  for (const line of stdout.toString().trim().split("\n")) {
+    const [pid, parent, state] = line.trim().split(/\s+/);
+    if (state && !state.startsWith("Z")) table.set(Number(pid), { parent: Number(parent), started: "" });
+  }
+  return table;
+}
+
+function readProc(pid: string | number, file: "stat" | "environ"): string | undefined {
+  try {
+    return readFileSync(`/proc/${pid}/${file}`, "utf8");
+  } catch (error) {
+    const { code } = error as NodeJS.ErrnoException;
+    // A process can exit during the walk, and other users' processes are private.
+    if (!["ENOENT", "ESRCH", "EACCES", "EPERM"].includes(code ?? "")) throw error;
+    return undefined;
+  }
+}
+
+/** The inherited marker stays with a process that starts a session or is reparented. */
+function markedProcesses(owner: string): number[] {
   const marker = `${flowOwnerKey}=${owner}`;
   if (process.platform === "linux") {
-    return readdirSync("/proc").filter((entry) => /^\d+$/.test(entry)).map(Number).filter((pid) => {
-      try {
-        return readFileSync(`/proc/${pid}/environ`, "utf8").split("\0").includes(marker);
-      } catch (error) {
-        const { code } = error as NodeJS.ErrnoException;
-        // A process can exit during the walk, and other users' processes are private.
-        if (!["ENOENT", "ESRCH", "EACCES", "EPERM"].includes(code ?? "")) throw error;
-        return false;
-      }
-    });
+    return readdirSync("/proc").filter((entry) => /^\d+$/.test(entry) && readProc(entry, "environ")?.split("\0").includes(marker)).map(Number);
   }
   const { stdout, exitCode } = Bun.spawnSync(["ps", "-A", "-Eww", "-o", "pid=,stat=,command="]);
   if (exitCode !== 0) throw new Error("could not list flow processes");
@@ -52,6 +77,30 @@ function ownedProcesses(owner: string): number[] {
     const [pid, state, ...command] = line.trim().split(/\s+/);
     return state && !state.startsWith("Z") && command.includes(marker) ? [Number(pid)] : [];
   });
+}
+
+/**
+ * Adds to `known` the marked processes and all their descendants, and drops the ones that exited.
+ * Chromium overwrites its environment, so only its parent links show that it belongs to the flow.
+ * A process stays known after its parent exits; the start time guards against a reused pid.
+ */
+function ownedProcesses(owner: string, known = new Map<number, string>()): number[] {
+  const table = processTable();
+  for (const [pid, started] of known) {
+    if (table.get(pid)?.started !== started) known.delete(pid);
+  }
+  const add = (pid: number) => {
+    const entry = table.get(pid);
+    if (entry) known.set(pid, entry.started);
+  };
+  markedProcesses(owner).forEach(add);
+  for (let size = -1; size !== known.size;) {
+    size = known.size;
+    for (const [pid, { parent }] of table) {
+      if (known.has(parent)) add(pid);
+    }
+  }
+  return [...known.keys()];
 }
 
 function signalProcess(pid: number, signal: NodeJS.Signals) {
@@ -87,13 +136,18 @@ export async function runWithTimeout(child: ChildProcess, file: string, timeoutM
 }
 
 async function stopFlow(child: ChildProcess, owner: string, exited: Promise<number>) {
+  const running = () => child.exitCode === null && child.signalCode === null;
+  const known = new Map<number, string>();
+  // Parent links go away when a parent exits, so the first walk starts at the flow before anything is signalled.
+  const root = running() ? processTable().get(child.pid!) : undefined;
+  if (root) known.set(child.pid!, root.started);
+  const others = () => ownedProcesses(owner, known).filter((pid) => pid !== child.pid);
   const signal = (value: NodeJS.Signals) => {
-    if (child.exitCode === null && child.signalCode === null) child.kill(value);
-    for (const pid of ownedProcesses(owner)) {
-      if (pid !== child.pid) signalProcess(pid, value);
-    }
+    const pids = others();
+    if (running()) child.kill(value);
+    for (const pid of pids) signalProcess(pid, value);
   };
-  const stopped = () => (child.exitCode !== null || child.signalCode !== null) && !ownedProcesses(owner).length;
+  const stopped = () => !running() && !others().length;
   let empty = false;
   signal("SIGTERM");
   const grace = Date.now() + 500;

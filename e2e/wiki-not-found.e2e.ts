@@ -14,7 +14,7 @@ const servers = [
 
 let failed = false;
 try {
-  await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
+  await Promise.all([waitFor(`${api}/api/me`), waitFor(web), waitFor(`http://localhost:${livePort}`)]);
   const browser = await launchBrowser();
   const page = await newPage(browser, { viewport: { width: 1440, height: 900 } });
   const slug = `e2e-${crypto.randomUUID().slice(0, 8)}`;

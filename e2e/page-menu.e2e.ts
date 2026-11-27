@@ -23,7 +23,7 @@ const { client, db } = createDatabase();
 let browser: Browser | null = null;
 
 try {
-  await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
+  await Promise.all([waitFor(`${api}/api/me`), waitFor(web), waitFor(`http://localhost:${livePort}`)]);
   browser = await launchBrowser();
   const page = await newPage(browser, { viewport: { width: 1440, height: 900 }, locale: "en-US", hasTouch: true });
   const slug = `pagemenu-${crypto.randomUUID().slice(0, 8)}`;

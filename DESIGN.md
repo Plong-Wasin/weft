@@ -108,7 +108,7 @@ Shared primitives live in `apps/web/src/ui/` and use Base UI 1.9.0 for accessibl
 - Work item detail groups the sub-work item, relation, web link, and attachment actions under the labelled Add menu. The description and comment editors reserve one toolbar row throughout editing and reading. Focusing the editor or one of its tools reveals the row. Tools have visible labels, 44px touch targets, and horizontal scrolling. The description save status remains visible below the editor.
 - Calendar: month cells show only the day number; add controls stay visually quiet until hover or keyboard focus and remain visible on touch. Date ranges render as shared pills across each week, with equal-width day columns and stronger muted treatment outside the month; phones use an agenda of dated items.
 - Gantt: work item labels use the standard 13px table scale, date ticks use 12px tabular figures, and bars use restrained state tints. The dashed one-pixel today marker sits behind row content, weekend columns use a muted surface, and issue keys stay outside the bars.
-- Week start: calendar weeks, the Gantt week zoom and the date picker start on Sunday by default. A person can choose Monday in Preferences; the choice is kept per browser.
+- Week start: calendar weeks, the Gantt week zoom, the date picker and the "This week" and "Next week" due date groups start on Sunday by default. A person can choose Monday in Preferences; the choice is kept per browser. The filter functions `startOfWeek()` and `endOfWeek()`, recurrence schedules and the "Next week" date shortcut stay on Monday.
 - Motion: short transitions on popups and drawers. The visual capture emulates reduced motion and turns off animation and transitions before each shot.
 
 ## Known gaps against this system

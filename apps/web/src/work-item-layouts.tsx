@@ -585,7 +585,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     <Plus aria-hidden size={14} />{t("workItems.new")}</Button>;
 
   const groupedItems = items.map((item) => ({ ...item, cycleId: cycleOf[item.id] ?? null, moduleIds: modulesOf[item.id] ?? [], creatorId: item.createdBy }));
-  const grouped = groupItems(groupedItems, grouping, stateIds).filter((group) => grouping === "none" || group.items.length > 0 || grouping === "state");
+  const grouped = groupItems(groupedItems, grouping, stateIds, new Date(), weekStart).filter((group) => grouping === "none" || group.items.length > 0 || grouping === "state");
   const groups = grouped.map((group) => ({ ...group, items: group.items.map((item) => items.find((row) => row.id === item.id)!) }));
   // The project's Work items page (the only caller with onAddItem) shows one empty state in the list, board and spreadsheet layouts, not five empty status groups. Cycles, Modules and Views keep their groups.
   const emptyProject = onAddItem !== undefined && loaded && !filtered && items.length === 0 && (params.layout === "list" || board || sheet);
@@ -594,15 +594,15 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
 
   const boardStateIds = stateIds.filter((id) => !chips || chips.state.length === 0 || chips.state.includes(id));
   const boardPeople = people.length > 0 ? people.map((person) => person.userId) : [];
-  const boardColumns: Array<BoardColumn<Item>> = !board ? [] : completeGroups(groupItems(groupedItems, boardGroup, boardStateIds), boardGroup === "assignee" ? boardPeople : []).map(({ key, items: groupItemsForColumn }) => ({ key, name: boardGroup === "state" ? states.find((state) => state.id === key)?.name ?? key : boardGroup === "priority" ? t(`workItems.priority.${key}`) : boardGroup === "label" ? labels.find((label) => label.id === key)?.name ?? key : boardGroup === "cycle" ? cycleOptions.find((cycle) => cycle.id === key)?.name ?? t("workItems.noCycle") : boardGroup === "module" ? moduleOptions.find((module) => module.id === key)?.name ?? t("workItems.noModules") : boardGroup === "dueDate" ? t(`layout.dueDate.${key}`) : key === "none" ? t("layout.unassigned") : personName(key), icon: groupIconFor(boardGroup, key), items: groupItemsForColumn.map((item) => items.find((row) => row.id === item.id)!) }));
-  const boardLanes = subGroup === "none" ? [] : groupItems(groupedItems, subGroup, stateIds).filter((lane) => lane.items.length > 0);
+  const boardColumns: Array<BoardColumn<Item>> = !board ? [] : completeGroups(groupItems(groupedItems, boardGroup, boardStateIds, new Date(), weekStart), boardGroup === "assignee" ? boardPeople : []).map(({ key, items: groupItemsForColumn }) => ({ key, name: boardGroup === "state" ? states.find((state) => state.id === key)?.name ?? key : boardGroup === "priority" ? t(`workItems.priority.${key}`) : boardGroup === "label" ? labels.find((label) => label.id === key)?.name ?? key : boardGroup === "cycle" ? cycleOptions.find((cycle) => cycle.id === key)?.name ?? t("workItems.noCycle") : boardGroup === "module" ? moduleOptions.find((module) => module.id === key)?.name ?? t("workItems.noModules") : boardGroup === "dueDate" ? t(`layout.dueDate.${key}`) : key === "none" ? t("layout.unassigned") : personName(key), icon: groupIconFor(boardGroup, key), items: groupItemsForColumn.map((item) => items.find((row) => row.id === item.id)!) }));
+  const boardLanes = subGroup === "none" ? [] : groupItems(groupedItems, subGroup, stateIds, new Date(), weekStart).filter((lane) => lane.items.length > 0);
 
   /** Work items in the order they appear on screen, so a shift-click picks the stretch between two rows. */
   const selectable = canWrite && ["list", "board", "spreadsheet"].includes(params.layout);
   // Only what is on screen: a collapsed group or column hides its work items, so a range or "select all" must not reach them. A work item shown under several groups counts once.
   const visibleGroupItems = (group: { key: string; items: Item[] }) => {
     if (group.items.length === 0 || (grouping !== "none" && collapsed.includes(group.key))) return [];
-    return subGroup === "none" ? group.items : groupItems(group.items.map((item) => ({ ...item, cycleId: cycleOf[item.id] ?? null, moduleIds: modulesOf[item.id] ?? [], creatorId: item.createdBy })), subGroup, stateIds)
+    return subGroup === "none" ? group.items : groupItems(group.items.map((item) => ({ ...item, cycleId: cycleOf[item.id] ?? null, moduleIds: modulesOf[item.id] ?? [], creatorId: item.createdBy })), subGroup, stateIds, new Date(), weekStart)
       .filter((sub) => !collapsed.includes(`${group.key}:${sub.key}`)).flatMap((sub) => sub.items.map((item) => items.find((row) => row.id === item.id)!));
   };
   const orderedIds = [...new Set(sheet ? items.map((item) => item.id) : board ? boardColumns.filter((column) => !collapsedColumns.includes(column.key)).flatMap((column) => column.items.map((item) => item.id)) : groups.flatMap((group) => visibleGroupItems(group).map((item) => item.id)))];
@@ -921,7 +921,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
               onClick={() => { setCollapsed(collapsed.filter((key) => key !== group.key)); setExpandedEmpty(expandedEmpty.includes(group.key) ? expandedEmpty : [...expandedEmpty, group.key]); setQuick(group.key); setQuickTitle(""); }}><Plus aria-hidden size={14} /><span className="hidden text-11 max-sm:inline">{t("layout.addShort")}</span></Button>}
           </div>}
           {open && <>
-            {subGroup === "none" ? <ul className="m-0 list-none p-0">{group.items.map((item) => rowOf(item))}</ul>  : groupItems(group.items.map((item) => ({ ...item, cycleId: cycleOf[item.id] ?? null, moduleIds: modulesOf[item.id] ?? [], creatorId: item.createdBy })), subGroup, stateIds).filter((sub) => sub.items.length > 0).map((sub) => {
+            {subGroup === "none" ? <ul className="m-0 list-none p-0">{group.items.map((item) => rowOf(item))}</ul>  : groupItems(group.items.map((item) => ({ ...item, cycleId: cycleOf[item.id] ?? null, moduleIds: modulesOf[item.id] ?? [], creatorId: item.createdBy })), subGroup, stateIds, new Date(), weekStart).filter((sub) => sub.items.length > 0).map((sub) => {
               const key = `${group.key}:${sub.key}`;
               const subOpen = !collapsed.includes(key);
               const subName = labelFor(subGroup, sub.key);

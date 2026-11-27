@@ -1,4 +1,4 @@
-// Browser end-to-end flow for the week start: calendar, Gantt week zoom and date picker start on Sunday by default,
+// Browser end-to-end flow for the week start: calendar, Gantt week zoom, date picker and due date groups start on Sunday by default,
 // Preferences switches them to Monday, the choice survives a reload, and the phone calendar list still works.
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -36,6 +36,8 @@ try {
   await call("create_work_item", { projectId: project!.id, title: "Dated", dueDate: "2026-11-26" });
 
   const calendar = page.getByTestId("calendar-layout");
+  await call("create_work_item", { projectId: project!.id, title: "Sunday due", dueDate: "2026-11-29" });
+
   const openCalendar = async () => {
     await page.goto(`${web}/${name}/projects/WKS/issues?layout=calendar`);
     await calendar.waitFor();
@@ -79,6 +81,12 @@ try {
       for (let attempt = 0; attempt < 30 && await focused() !== expected; attempt++) await Bun.sleep(50);
       check(await focused() === expected, `${day}: ${key} focused ${await focused()}, not ${expected}`);
     }
+
+    // Sunday 29 November opens the next week by default, and closes this one when weeks start on Monday.
+    await page.goto(`${web}/${name}/projects/WKS/issues?layout=list&group=dueDate`);
+    const group = page.getByRole("region", { name: t(monday ? "layout.dueDate.thisWeek" : "layout.dueDate.nextWeek"), exact: true });
+    await group.getByText("Sunday due", { exact: true }).waitFor();
+    await page.screenshot({ path: join(shots, `due-date-groups-${day}.png`) });
     console.log(`week-start ok: ${day}`);
   }
 

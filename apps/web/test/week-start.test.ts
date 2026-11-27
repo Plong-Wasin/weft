@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { gridKeyTarget, monthCells, weekdayOrder } from "../src/date-picker-logic";
 import { readWeekStart, storeWeekStart } from "../src/week-start";
-import { calendarPlacement, ganttPlacement } from "../src/work-item-layout";
+import { calendarPlacement, ganttPlacement, groupItems } from "../src/work-item-layout";
 
 const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
 function useStorage(entries: Record<string, string> = {}) {
@@ -76,3 +76,22 @@ test("Home and End go to the ends of the chosen week", () => {
   expect(gridKeyTarget("2026-11-29", "Home", false, "sunday")).toBe("2026-11-29"); // a Sunday is the first day
   expect(gridKeyTarget("2026-11-29", "Home", false, "monday")).toBe("2026-11-23"); // ...and the last one
 });
+
+// 28 November 2026 is a Saturday, 29 November a Sunday: the two days where the settings disagree about the week.
+const dueDates = ["2026-11-29", "2026-11-30", "2026-12-05", "2026-12-06", "2026-12-07", "2026-12-13", "2026-12-14"];
+const dueWeeks = [
+  { today: "2026-11-28", weekStart: "sunday", thisWeek: [], nextWeek: ["2026-11-29", "2026-11-30", "2026-12-05"] },
+  { today: "2026-11-28", weekStart: "monday", thisWeek: ["2026-11-29"], nextWeek: ["2026-11-30", "2026-12-05", "2026-12-06"] },
+  { today: "2026-11-29", weekStart: "sunday", thisWeek: ["2026-11-30", "2026-12-05"], nextWeek: ["2026-12-06", "2026-12-07"] },
+  { today: "2026-11-29", weekStart: "monday", thisWeek: [], nextWeek: ["2026-11-30", "2026-12-05", "2026-12-06"] },
+] as const;
+for (const { today, weekStart, thisWeek, nextWeek } of dueWeeks) {
+  test(`due date groups on ${today} with weeks from ${weekStart}`, () => {
+    const items = dueDates.map((dueDate) => ({ id: dueDate, stateId: "a", priority: "low", assigneeIds: [], dueDate }));
+    const [year, month, day] = today.split("-").map(Number);
+    const groups = groupItems(items, "dueDate", [], new Date(year!, month! - 1, day!), weekStart);
+    const idsIn = (key: string) => groups.find((group) => group.key === key)!.items.map((item) => item.id);
+    expect(idsIn("thisWeek")).toEqual([...thisWeek]);
+    expect(idsIn("nextWeek")).toEqual([...nextWeek]);
+  });
+}

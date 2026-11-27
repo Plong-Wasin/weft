@@ -59,7 +59,7 @@ test("grouping by cycle, creator, and due date uses named groups and fixed local
   ];
   expect(groupItems(items, "cycle", ["a"]).map((group) => group.key)).toEqual(["c1", "none"]);
   expect(groupItems(items, "creator", ["a"]).map((group) => group.key)).toEqual(["u1", "u2", "none"]);
-  expect(groupItems(items, "dueDate", ["a"], new Date(2026, 10, 2)).map((group) => [group.key, group.items.map((item) => item.id)])).toEqual([
+  expect(groupItems(items, "dueDate", ["a"], new Date(2026, 10, 2), "monday").map((group) => [group.key, group.items.map((item) => item.id)])).toEqual([
     ["overdue", ["overdue"]], ["today", ["today"]], ["thisWeek", ["week"]], ["nextWeek", ["next"]], ["later", ["later"]], ["noDueDate", ["none"]],
   ]);
 });

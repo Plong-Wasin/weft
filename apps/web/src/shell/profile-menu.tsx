@@ -12,13 +12,11 @@ import { Popover, menuItemClass } from "./popover";
 import { Avatar } from "../avatar";
 import { paths } from "../routes";
 import { authClient } from "../auth-client";
-import { useAiEnabled } from "../ai-flag";
 
 import { Input } from "@/ui/input";
 /** Profile menu: who is signed in, language, theme (light, dark, system), sign out. */
 export function ProfileMenu({ user, signOut }: { user: Current["user"]; signOut: () => Promise<void> }) {
   const locale = useLocale();
-  const aiOn = useAiEnabled();
   // Tokens belong to the account, but the screen sits in a workspace shell: open it in the workspace the person is in.
   const { current } = useRoot();
   const here = useLocation().pathname.split("/")[1] ?? "";
@@ -86,7 +84,7 @@ export function ProfileMenu({ user, signOut }: { user: Current["user"]; signOut:
       {themes.map((value) => <Button type="button" role="menuitemradio" aria-checked={theme === value} key={value} className={menuItemClass} onClick={() => setTheme(value)}>
         <span className="flex-1">{translate(`theme.${value}`)}</span>{theme === value && <Check aria-hidden size={14} />}</Button>)}
       <Link role="menuitem" className={`${menuItemClass} mt-1 border-t border-border`} to={paths.accountNotifications()}><Mail aria-hidden size={14} />{translate("email.menu")}</Link>
-      {aiOn && <Link role="menuitem" className={menuItemClass} to={paths.accountPreferences()}><SlidersHorizontal aria-hidden size={14} />{translate("accountPrefs.menu")}</Link>}
+      <Link role="menuitem" className={menuItemClass} to={paths.accountPreferences()}><SlidersHorizontal aria-hidden size={14} />{translate("accountPrefs.menu")}</Link>
       <Link role="menuitem" className={menuItemClass} to={tokensPath}><KeyRound aria-hidden size={14} />{translate("tokens.title")}</Link>
       <Link role="menuitem" className={menuItemClass} to={paths.sessions()}><MonitorSmartphone aria-hidden size={14} />{translate("account.sessionsTitle")}</Link>
       <Link role="menuitem" className={menuItemClass} to={paths.shortcuts()}><Keyboard aria-hidden size={14} />{translate("shortcuts.title")}</Link>

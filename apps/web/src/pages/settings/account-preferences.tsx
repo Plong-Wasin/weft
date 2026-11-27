@@ -5,15 +5,33 @@ import { translate } from "@weft/shared";
 import { action } from "../../api";
 import { aiPreferencesKey, useAiPreferences, type AiPreferences } from "../../ai-preferences";
 import { useAiState } from "../../ai-flag";
-import { NotFound } from "../../not-found";
+import { useWeekStart, weekStarts, type WeekStart } from "../../week-start";
 import { Note, SettingsBlock, SettingsHeader } from "./settings-ui";
 
 import { Checkbox } from "@/ui/checkbox";
-/** The signed-in person's own preferences that follow the account. Only AI preferences for now, shown only while AI is on. */
+/** The signed-in person's own preferences: the week start, kept in this browser, and the AI preferences, which follow the account and show only while AI is on. */
 export function AccountPreferencesPage() {
   const state = useAiState();
-  if (state !== "on") return state === "unknown" ? null : <NotFound />;
-  return <AiPreferencesForm />;
+  return <main className="mx-auto w-full max-w-[900px] px-[var(--padding-page-x)] py-[var(--padding-page-y)]">
+    <SettingsHeader title={translate("accountPrefs.title")} description={translate("accountPrefs.description")} />
+    <WeekStartSetting />
+    {state === "on" && <AiPreferencesForm />}
+  </main>;
+}
+
+function WeekStartSetting() {
+  const [weekStart, setWeekStart] = useWeekStart();
+  return <SettingsBlock>
+    <div className="grid gap-1">
+      <label className="flex min-h-11 flex-wrap items-center gap-2 text-sm text-foreground">
+        <span>{translate("accountPrefs.weekStart")}</span>
+        <select className="min-h-11" value={weekStart} aria-describedby="week-start-hint" onChange={(event) => setWeekStart(event.target.value as WeekStart)}>
+          {weekStarts.map((day) => <option key={day} value={day}>{translate(`accountPrefs.weekStart.${day}`)}</option>)}
+        </select>
+      </label>
+      <p id="week-start-hint" className="m-0 text-sm text-muted-foreground">{translate("accountPrefs.weekStartHint")}</p>
+    </div>
+  </SettingsBlock>;
 }
 
 function AiPreferencesForm() {
@@ -30,8 +48,7 @@ function AiPreferencesForm() {
     if (saved) queryClient.setQueryData(aiPreferencesKey, saved);
   }
 
-  return <main className="mx-auto w-full max-w-[900px] px-[var(--padding-page-x)] py-[var(--padding-page-y)]">
-    <SettingsHeader title={translate("accountPrefs.title")} description={translate("accountPrefs.description")} />
+  return <>
     {data === null && <div className="flex flex-wrap items-center gap-2">
       <Note note={translate("accountPrefs.loadFailed")} error />
       <Button type="button" disabled={isFetching} onClick={() => void refetch()}>{translate("account.retry")}</Button>
@@ -47,5 +64,5 @@ function AiPreferencesForm() {
       </div>
     </SettingsBlock>}
     {note && <Note note={note} error={noteError} />}
-  </main>;
+  </>;
 }

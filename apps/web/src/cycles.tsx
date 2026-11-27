@@ -85,7 +85,7 @@ function CycleModal({ action, projectId, workspaceId, cycle, onClose, onSaved }:
   const [startDate, setStartDate] = React.useState(cycle?.startDate ?? "");
   const [endDate, setEndDate] = React.useState(cycle?.endDate ?? "");
   const [description, setDescription] = React.useState<unknown>(cycle?.description ?? null);
-  const [mentionPeople, setMentionPeople] = React.useState<Person[]>([]);
+  const [mentionPeople, setMentionPeople] = React.useState<Person[] | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
   const overlap = useOverlap(action, projectId, startDate, endDate, cycle?.id);
   React.useEffect(() => { void action<Person[]>("list_project_members", { projectId }).then((rows) => setMentionPeople(rows ?? [])); }, [action, projectId]);
@@ -292,7 +292,7 @@ export function CycleDetailPage({ workspaceId, workspaceSlug, projectKey, projec
   const [cycle, setCycle] = React.useState<CycleDetail | null | undefined>(undefined);
   const [everyone, setEveryone] = React.useState<Item[]>([]);
   const [states, setStates] = React.useState<State[]>([]);
-  const [mentionPeople, setMentionPeople] = React.useState<Person[]>([]);
+  const [mentionPeople, setMentionPeople] = React.useState<Person[] | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
   const [refreshKey, setRefreshKey] = React.useState(0);
   const [others, setOthers] = React.useState<Cycle[]>([]);

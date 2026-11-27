@@ -91,10 +91,7 @@ Load changes these numbers a lot: an earlier run of the changed suite under a me
 ### Waits that a flow needs
 
 - **A screen to measure.** `settle(page, ...ready)` from `e2e/settle.ts` waits for something the screen draws from its data, no loading placeholder, `document.fonts.ready` and two animation frames. Do not wait for `networkidle`: the live connection and polling make it run to its timeout.
-- **Wiki editor.** It takes input before its first sync with the live server, and the sync then moves the cursor. After opening a Wiki page, wait for a line that the page already stores before you click or type.
-- **"@" mentions.** An "@" typed before the member list arrives opens a hidden popup that stays empty until the next keystroke. Open the page with `openWithAction` from `e2e/harness.ts`.
-
-Both are product behaviour that a fast person can also hit.
+- **Wiki editor.** It is read-only until its first sync with the live server, and keys sent to it before then are dropped. Playwright's `click` and `focus` do not wait for that, so locate the editor as `.ProseMirror[contenteditable="true"]` before you click or type.
 
 ## Where layout is checked
 

@@ -895,6 +895,8 @@ export const en = {
     "wiki.exports": "Page menu",
     "wiki.saving": "Saving…",
     "wiki.saved": "Saved",
+    "wiki.connecting": "Connecting. Editing is off until the page loads.",
+    "wiki.cannotConnect": "Cannot connect to the live server. Editing is off; reload to try again.",
     "wiki.notSaved": "Not saved yet: fix the highlighted problem.",
     "wiki.lock": "Lock page",
     "wiki.location": "Location",

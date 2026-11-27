@@ -4,13 +4,14 @@
 //   AI on   (a provider key set, switch unset): the same surfaces are shown, as before this change.
 // Run with `bun e2e/ai-switch.e2e.ts` (set DATABASE_URL to a --keep database, E2E_API_PORT, E2E_WEB_PORT, CHROMIUM_PATH as in docs/agents/testing.md).
 // No model is called: the placeholder key only makes the server count AI as on.
-import { check, launchBrowser, newContext, startApi as startApiServer, startWeb, waitFor } from "./harness";
+import { check, launchBrowser, newContext, startApi as startApiServer, startLive, startWeb, waitFor } from "./harness";
 import { type BrowserContext, type Page } from "playwright";
 import { createDatabase, workspaces } from "../packages/db/src";
 import { translate } from "../packages/shared/src";
 
 const apiPort = Number(Bun.env.E2E_API_PORT ?? 31177);
 const webPort = Number(Bun.env.E2E_WEB_PORT ?? 52177);
+const livePort = Number(Bun.env.E2E_LIVE_PORT ?? 31178);
 const api = `http://localhost:${apiPort}`;
 const web = `http://localhost:${webPort}`;
 
@@ -26,7 +27,9 @@ async function stopApi() {
   await apiProc?.exited;
   apiProc = undefined;
 }
-const webProc = startWeb(webPort, { api });
+// The Wiki editor takes input only once the live server has synced it.
+const liveProc = startLive(livePort, web);
+const webProc = startWeb(webPort, { api, live: `ws://localhost:${livePort}` });
 
 const { client, db } = createDatabase();
 const slug = `ai-${crypto.randomUUID().slice(0, 8)}`;
@@ -169,6 +172,7 @@ try {
 } finally {
   await stopApi();
   webProc.kill();
+  liveProc.kill();
   await webProc.exited;
   await client.end();
 }

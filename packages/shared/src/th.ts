@@ -897,6 +897,8 @@ export const th: Record<keyof typeof en, string> = {
   "wiki.exports": "เมนูหน้า",
   "wiki.saving": "กำลังบันทึก…",
   "wiki.saved": "บันทึกแล้ว",
+  "wiki.connecting": "กำลังเชื่อมต่อ ยังแก้ไขไม่ได้จนกว่าหน้าจะโหลดเสร็จ",
+  "wiki.cannotConnect": "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ปิดการแก้ไขไว้ โหลดหน้าใหม่เพื่อลองอีกครั้ง",
   "wiki.notSaved": "ยังไม่ได้บันทึก: แก้ปัญหาที่แจ้งไว้ก่อน",
   "wiki.lock": "ล็อกหน้า",
   "wiki.location": "ตำแหน่ง",

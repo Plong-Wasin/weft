@@ -29,6 +29,8 @@ The runner migrates a database template once and copies it for each flow. The AP
 - **Ports.** `E2E_PORT_BASE` defaults to a hash of the checkout name. The API port for zero-based worker N is the base plus twice N, the live port is the API port plus 10000, and the web port is the API port plus 20000. The last worker's web port must stay below 65535. A busy port fails the flow and names the listener. Server readiness verifies that the process started by the flow owns the listening socket. For a direct invocation of a flow file, set `E2E_API_PORT`, `E2E_WEB_PORT`, `E2E_LIVE_PORT` and point `DATABASE_URL` at an isolated database made with `--keep`.
 - **Timeouts and retries.** Each attempt gets ten minutes (`editor-parity` alone takes over five). A timed-out attempt reports the flow name and stops the flow's process tree and every process with that attempt's inherited ownership marker, with their descendants. The tree covers Chromium, which overwrites its environment and so loses the marker; the marker covers a process whose parent already exited. `e2e/shutdown.test.ts` checks a frozen Chromium when one is installed. If processes remain after SIGTERM, the runner repeats discovery and sends SIGKILL until they exit or cleanup reaches its deadline. Failed attempts get one retry after the first queue completes. Busy ports are reported immediately.
 - **Durations.** The runner prints each attempt's duration and records successful production runs in `.local/e2e/durations.json` to schedule the longest flows first. Use `--workers=N` to override the default.
+- **Default workers.** Three when `/proc/meminfo` shows at least 10 GiB of `MemAvailable` at the start of the run, otherwise (or without `/proc/meminfo`) two. `e2e/workers.ts` holds the rule.
+- **Screenshots.** Review screenshots are off by default: set `E2E_SHOTS=1` to write them. Screenshots that record a defect are written either way. Take them through `saveShot` in `e2e/shots.ts`, and pass `{ failed: true }` for a defect. The older per-flow variables (`PHONE_LAYOUT_SHOTS`, `AGENT_LABEL_SCREENSHOT`, `E2E_SHOT_DIR` and the like) still turn on their own flow's screenshots without `E2E_SHOTS`. A folder that a flow prints holds its files only when screenshots were written.
 
 The API fixture in `e2e/harness.ts` creates the account, workspace and optional project for flows that start after onboarding, then reuses the authenticated storage state in Playwright. `auth-onboarding.e2e.ts`, `auth-submit-guard.e2e.ts` and `signup-language.e2e.ts` cover UI sign-up and onboarding. `project-features.e2e.ts` covers project creation and shape. `agents.e2e.ts` creates a project through the UI, checks that public visibility is saved by default and verifies that a Guest can see it in the sidebar. `project-key.e2e.ts` and `project-general.e2e.ts` cover project keys and visibility permissions.
 
@@ -58,10 +60,15 @@ The run is 7m 51s (34%) shorter. `editor-parity` takes about 310s of it on one p
 
 ### Waits that a flow needs
 
+- **A screen to measure.** `settle(page, ...ready)` from `e2e/settle.ts` waits for something the screen draws from its data, no loading placeholder, `document.fonts.ready` and two animation frames. Do not wait for `networkidle`: the live connection and polling make it run to its timeout.
 - **Wiki editor.** It takes input before its first sync with the live server, and the sync then moves the cursor. After opening a Wiki page, wait for a line that the page already stores before you click or type.
 - **"@" mentions.** An "@" typed before the member list arrives opens a hidden popup that stays empty until the next keystroke. Open the page with `openWithAction` from `e2e/harness.ts`.
 
 Both are product behaviour that a fast person can also hit.
+
+## Where layout is checked
+
+`layout-stability` opens its screens at seven sizes (light everywhere, dark at 1440 and 390 only) and checks layout shift, row heights, still geometry, sideways scroll and the checks in `e2e/screen-checks.ts` (top controls inside the viewport, no overlapping sibling controls, first control of `main` visible). `viewports` runs the same screen checks on the routes of `tools/visual/routes.json` that `layout-stability` does not open, and keeps the touch-target, blank-tap, short-height overlay and phone list-fit checks. A route added to the manifest is swept by `viewports` unless its name is added to `inLayoutStability` there.
 
 ## Real Runtime acceptance
 

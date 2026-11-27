@@ -154,8 +154,8 @@ try {
   const peek = page.getByRole("complementary", { name: t("workItems.properties") });
   await peek.locator('[data-type-icon="rocket"]').first().waitFor();
   check(await peek.locator('[data-type-icon="rocket"]').count() >= 1, "the work item detail shows the saved icon on its type");
+  // The URL keeps the peek open across the reload: a click on the row behind it would be intercepted.
   await page.reload();
-  await page.getByText("Rocket launch").first().click();
   const reloaded = page.getByRole("complementary", { name: t("workItems.properties") });
   await reloaded.locator('[data-type-icon="rocket"]').first().waitFor();
   check(await reloaded.locator('[data-type-icon="rocket"]').count() >= 1, "the work item detail keeps the icon after a reload");

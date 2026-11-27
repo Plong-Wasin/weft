@@ -370,7 +370,7 @@ try {
   await page.goto(`${web}/${slug}/wiki`);
   await page.getByRole("main").getByRole("button", { name: translate("wiki.new") }).click();
   await page.waitForURL(new RegExp(`/${slug}/wiki/[0-9a-f-]+$`));
-  await page.locator(".ProseMirror").waitFor();
+  await page.locator('.ProseMirror[contenteditable="true"]').waitFor();
   await page.route("**/actions/get_asset_download_url", async (route) => {
     const response = await route.fetch();
     const result = await response.json() as { inline: boolean; [key: string]: unknown };

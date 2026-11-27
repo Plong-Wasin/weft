@@ -111,7 +111,7 @@ try {
   // Wiki editor: Replace is an ordinary edit, so it autosaves and a second open editor loads it.
   await page.goto(`${web}/${slug}/wiki/${wikiPage.id}`);
   const wiki = page.getByTestId("wiki-editor");
-  await wiki.locator(".ProseMirror").waitFor();
+  await wiki.locator('.ProseMirror[contenteditable="true"]').waitFor();
   await exercise(wiki.locator(".ProseMirror"), wiki, "Wiki");
   await page.getByText(translate("wiki.saved")).waitFor({ timeout: 10_000 });
   const other = await context.newPage();

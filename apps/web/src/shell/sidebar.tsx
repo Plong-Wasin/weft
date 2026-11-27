@@ -146,6 +146,12 @@ function ProjectGroups({ workspace, projects, prefs, projectKey, reorder, drag, 
   </>;
 }
 
+function SidebarSkeleton() {
+  return <div aria-hidden data-testid="sidebar-skeleton" className="grid gap-2 px-3 py-2">
+    {["w-24", "w-36", "w-28", "w-32", "w-20"].map((width) => <span key={width} className={`h-5 rounded bg-muted motion-safe:animate-pulse ${width}`} />)}
+  </div>;
+}
+
 /** Contextual sidebar: its content follows the rail section. Work lists the projects with their menus (a turned-off feature has no entry). */
 export function Sidebar({ workspace }: { workspace: Workspace }) {
   const integrationsOn = useIntegrationsEnabled();
@@ -163,7 +169,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
   const aiChatId = section === "ai" ? pathname.split("/")[3] ?? "" : "";
   const { data } = useQuery({ queryKey: projectsKey(workspace.id), queryFn: async () => await action<Project[]>("list_projects", { workspaceId: workspace.id, archived: false }) ?? [], enabled: section === "work" || section === "settings" || section === "wiki" });
   const projectList = data ?? [];
-  const { prefs, setPreference, setOrder, resetOrder } = useProjectPreferences(workspace.id, section === "work" || section === "settings");
+  const { prefs, loaded: preferencesLoaded, setPreference, setOrder, resetOrder } = useProjectPreferences(workspace.id, section === "work" || section === "settings");
   const projectSort = sortProjects(projectList, prefs);
   const projectsPage = pathname === paths.projects(workspace.slug);
   const drag = React.useRef<{ id: string; starred: boolean } | null>(null);
@@ -210,19 +216,23 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
   };
   // Project mode: one project's settings. While the list loads the sections show at once; once it is loaded, a key that is not in it gets the Workspace mode list.
   const inProjectSettings = section === "settings" && Boolean(projectKey) && (data === undefined || projectList.some((project) => project.key === projectKey));
-  const { data: favorites = [] } = useQuery({ queryKey: favoritesKey(workspace.id), queryFn: async () => await action<Array<{ id: string; title: string; projectId: string | null }>>("list_favorite_wiki_pages", { workspaceId: workspace.id }) ?? [], enabled: section === "work" || section === "wiki" });
+  const { data: favorites } = useQuery({ queryKey: favoritesKey(workspace.id), queryFn: async () => await action<Array<{ id: string; title: string; projectId: string | null }>>("list_favorite_wiki_pages", { workspaceId: workspace.id }) ?? [], enabled: section === "work" || section === "wiki" });
   // Favorites sit at the top of Work (under the primary links) and of Wiki (above the page tree); an empty list shows no heading.
-  const favoritesBlock = favorites.length > 0 ? <>
+  const favoritesBlock = favorites && favorites.length > 0 ? <>
     <p className={heading}>{translate("sidebar.favorites")}</p>
     <ul className="grid gap-0.5">{favorites.map((page) => <li key={page.id}><NavLink to={page.projectId ? paths.page(workspace.slug, (data ?? []).find((project) => project.id === page.projectId)?.key ?? "", page.id) : paths.wikiPage(workspace.slug, page.id)} className={itemClass}><FileText aria-hidden size={14} /><span className="thai-room truncate">{page.title}</span></NavLink></li>)}</ul>
   </> : null;
+  const settingsReady = members !== undefined && data !== undefined && preferencesLoaded;
+  const workReady = settingsReady && favorites !== undefined;
   return <nav aria-label={translate("shell.sidebar")} className="flex w-64 shrink-0 max-md:w-auto max-md:flex-1 max-md:border-r-0 flex-col gap-1 overflow-y-auto border-r border-border bg-sidebar p-3">
+    {section === "work" && <InboxNavLink workspace={workspace} />}
     {section === "work" && <>
-      <InboxNavLink workspace={workspace} />
       <span role="status" aria-live="polite" aria-atomic="true" className="sr-only">{reorderAnnouncement}</span>
       <NavLink end to={paths.home(workspace.slug)} className={itemClass}>{translate("nav.home")}</NavLink>
       <NavLink to={paths.workspaceViews(workspace.slug)} className={itemClass}>{translate("views.title")}</NavLink>
       <NavLink to={paths.activeCycles(workspace.slug)} className={itemClass}>{translate("cycles.activeTitle")}</NavLink>
+      {/* Everything below depends on data; it arrives together, so nothing above it moves. */}
+      {!workReady ? <SidebarSkeleton /> : <>
       {canSeeAnalytics && <NavLink to={paths.analytics(workspace.slug)} className={itemClass}>{translate("analytics.title")}</NavLink>}
       {favoritesBlock}
       {!projectsPage && <label className="grid gap-1 px-3 pt-2 text-[12px] font-medium text-muted-foreground">
@@ -230,6 +240,7 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
         <Input type="search" value={projectQuery} onChange={(event) => setProjectQuery(event.target.value)} placeholder={translate("projects.searchPlaceholder")} className="min-h-9 min-w-0 rounded-lg px-3 py-2 text-[13px]" />
       </label>}
       <ProjectGroups workspace={workspace} projects={projectList} prefs={prefs} projectKey={projectKey} reorder={reorder} drag={drag} query={projectsPage ? "" : projectQuery} />
+      </>}
     </>}
     {section === "wiki" && <>
       {favoritesBlock}
@@ -240,7 +251,8 @@ export function Sidebar({ workspace }: { workspace: Workspace }) {
       <NavLink end to={paths.workspaceSettings(workspace.slug)} aria-label={translate("sidebar.backToWorkspace")} title={translate("sidebar.backToWorkspace")} className={(state) => `${itemClass(state)} mb-2`}><ArrowLeft aria-hidden size={14} className="shrink-0" /><span className="min-w-0 thai-room truncate">{translate("settings.workspaceTitle")}</span></NavLink>
       <SettingsProjectNav workspace={workspace} projects={[...projectSort.starred, ...projectSort.others]} projectKey={projectKey} />
     </>}
-    {section === "settings" && !inProjectSettings && <>
+    {section === "settings" && !inProjectSettings && !settingsReady && <SidebarSkeleton />}
+    {section === "settings" && !inProjectSettings && settingsReady && <>
       <p className={`${heading} pt-1`}>{translate("projects.title")}</p>
       <label className="grid gap-1 px-3 text-[12px] font-medium text-muted-foreground">
         {translate("projects.find")}

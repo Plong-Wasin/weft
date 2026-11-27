@@ -159,8 +159,8 @@ export function ViewsPage({ workspaceSlug, project, selfId }: Scope) {
     <ul aria-label={t("views.title")} className="m-0 grid list-none gap-1 rounded-xl border border-border bg-card p-1 empty:hidden">{shown.map((view) => <li key={view.id} data-testid={`view-row-${view.name}`} className="flex items-center gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-accent">
       <Layers aria-hidden size={16} className="shrink-0 text-muted-foreground" />
       <div className="grid min-w-0 flex-1">
-        <Link to={paths.view(workspaceSlug, project.key, view.id)} title={view.name} className="flex min-w-0 items-center text-14 font-medium text-foreground pointer-coarse:min-h-11"><span className="min-w-0 [overflow-wrap:anywhere] thai-room max-sm:line-clamp-2 sm:truncate">{view.name}</span></Link>
-        {view.description && <span className="thai-room truncate text-12 text-muted-foreground">{view.description}</span>}
+        <Link to={paths.view(workspaceSlug, project.key, view.id)} title={view.name} className="flex min-w-0 items-center text-14 font-medium text-foreground max-sm:min-h-11 pointer-coarse:min-h-11"><span className="min-w-0 [overflow-wrap:anywhere] thai-room max-sm:line-clamp-2 sm:truncate">{view.name}</span></Link>
+        <span aria-hidden={view.description ? undefined : true} className="thai-room truncate text-12 text-muted-foreground">{view.description || "\u00a0"}</span>
       </div>
       <span className="hidden text-12 text-muted-foreground sm:inline">{t("views.updatedAt").replace("{date}", formatDate(view.updatedAt))}</span>
       <AccessBadge access={view.access} />

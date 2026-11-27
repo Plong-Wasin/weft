@@ -193,14 +193,15 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged, onLoaded, 
     return () => observer.disconnect();
   }, [title, titleMounted, fitTitle]);
 
+  const latestLoad = React.useRef(0);
   const load = React.useCallback(async () => {
+    // A newer load wins: an older one that answers late is dropped.
+    const request = ++latestLoad.current;
     const found = await action<WorkItem>("get_work_item", { workspaceId: workspace.id, displayId });
-    setItem(found);
-    if (!found) { inboxOpen.markUnavailable(); return; }
-    inboxOpen.markLoaded();
-    // The server returns the current key: rewrite an old-alias URL to the canonical one (full page only).
-    if (mode === "page" && found.displayId !== displayId.toUpperCase()) navigate(`${paths.workItem(workspace.slug, found.displayId)}${window.location.hash}`, { replace: true });
-    if (loadedId.current !== found.id) { loadedId.current = found.id; setTitle(found.title); }
+    if (request !== latestLoad.current) return;
+    if (!found) { setItem(null); inboxOpen.markUnavailable(); return; }
+    // A reload of the item on screen shows its change at once; its options are already here.
+    if (loadedId.current === found.id) setItem(found);
     const [projects, stateRows, labelRows, memberRows, subRows, itemRows, activities, estimateRow] = await Promise.all([
       action<Project[]>("list_projects", { workspaceId: workspace.id }), action<WorkState[]>("list_states", { projectId: found.projectId }),
       action<Label[]>("list_labels", { projectId: found.projectId }), action<Member[]>("list_project_members", { projectId: found.projectId }),
@@ -208,6 +209,13 @@ export function WorkItemDetail({ displayId, mode, onClose, onChanged, onLoaded, 
       action<Array<{ field: string; actorName: string; createdAt: string }>>("list_work_item_activities", { workItemId: found.id }),
       action<Estimate | null>("get_estimate", { projectId: found.projectId }),
     ]);
+    if (request !== latestLoad.current) return;
+    // Show the item with its initial property values and permissions in the same render.
+    if (loadedId.current !== found.id) { loadedId.current = found.id; setTitle(found.title); }
+    setItem(found);
+    inboxOpen.markLoaded();
+    // The server returns the current key: rewrite an old-alias URL to the canonical one (full page only).
+    if (mode === "page" && found.displayId !== displayId.toUpperCase()) navigate(`${paths.workItem(workspace.slug, found.displayId)}${window.location.hash}`, { replace: true });
     setEstimate(estimateRow ?? null);
     const mine = (projects ?? []).find((candidate) => candidate.id === found.projectId) ?? null;
     setProject(mine); setStates(stateRows ?? []); setLabels(labelRows ?? []); setPeople(memberRows ?? []); setSubItems(subRows ?? []); setProjectItems(itemRows ?? []);

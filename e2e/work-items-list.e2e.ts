@@ -1,7 +1,7 @@
 // Browser end-to-end flow for the work items list layout: groups, inline property dropdowns, display options, quick create.
 // Run with `bun e2e/work-items-list.e2e.ts` (needs the shared weft-postgres container; set DATABASE_URL to use your own database).
 import { check, createSignedInContext, launchBrowser, newContext, startApi, startWeb, waitFor } from "./harness";
-import type { Locator } from "playwright";
+import type { Locator, Page } from "playwright";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { like } from "drizzle-orm";
@@ -26,6 +26,32 @@ const servers = [
 ];
 
 let failed = false;
+// The strip clips its chips, so containment is checked one chip at a time: each scrolls fully into view, takes a hit and overlaps no other.
+const unreachableChips = (target: Page) => target.getByTestId("phone-property-strip").evaluateAll((strips) => strips.flatMap((strip) => {
+  if (!strip.getClientRects().length) return [];
+  const row = strip.closest<HTMLElement>("[data-list-row]")?.dataset.testid;
+  const chips = [...strip.querySelectorAll<HTMLElement>("[data-phone-property]")].filter((chip) => chip.getClientRects().length > 0);
+  const problems = chips.flatMap((chip, index) => {
+    const control = chip.querySelector<HTMLElement>("button, a[href]") ?? chip;
+    chip.scrollIntoView({ block: "center", inline: "center" });
+    const outer = strip.getBoundingClientRect();
+      // One pixel of slack: scroll offsets are whole pixels, chip widths are not.
+      const inside = (box: DOMRect) => box.left >= outer.left - 1 && box.right <= outer.right + 1;
+    const box = control.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    const next = chips[index + 1]?.getBoundingClientRect();
+    const why = [
+      !inside(chip.getBoundingClientRect()) || !inside(box) ? "outside the strip" : "",
+      !hit || !control.contains(hit) ? "not hit-testable" : "",
+      next && next.left < chip.getBoundingClientRect().right - 0.5 ? "overlaps the next chip" : "",
+    ].filter(Boolean);
+    return why.length ? [{ row, chip: control.getAttribute("aria-label") ?? chip.textContent, why }] : [];
+  });
+  strip.scrollLeft = 0;
+  window.scrollTo(0, 0);
+  return problems;
+}));
+
 try {
   await Promise.all([waitFor(`${api}/api/me`), waitFor(web)]);
   const browser = await launchBrowser();
@@ -74,8 +100,13 @@ try {
       const valueOf = (control: HTMLElement) => (control.getAttribute("aria-label") ?? "").split(": ").slice(1).join(": ").trim();
       const emptyPainted = controls.filter((control) => empties.includes(valueOf(control))).map((control) => control.getAttribute("aria-label"));
       const setProperties = controls.filter((control) => !empties.includes(valueOf(control))).map((control) => (control.getAttribute("aria-label") ?? "").split(":")[0]).sort();
-      const outside = [...row.querySelectorAll<HTMLElement>("[data-phone-property], [data-list-property], button, a[href]")].filter(shown)
-        .filter((element) => !inside(element.getBoundingClientRect(), rowBox)).map((element) => element.getAttribute("aria-label") ?? element.tagName);
+      const outside = [...row.querySelectorAll<HTMLElement>("[data-testid=phone-property-strip], [data-phone-property], [data-list-property], button, a[href]")].filter(shown)
+        .filter((element) => {
+          const box = element.getBoundingClientRect();
+          const strip = element.closest('[data-testid="phone-property-strip"]');
+          if (strip && strip !== element) return box.top < rowBox.top - 0.5 || box.bottom > rowBox.bottom + 0.5;
+          return !inside(box, rowBox);
+        }).map((element) => element.getAttribute("aria-label") ?? element.tagName);
       const glyphOverflow: string[] = [];
       const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
       while (walker.nextNode()) {
@@ -354,34 +385,27 @@ try {
       await seededRow.getByRole("button", { name: `${translate("workItems.modules")}: Auth`, exact: true }).waitFor();
       await seededRow.getByRole("button", { name: `${translate("workItems.cycle")}: Sprint 1`, exact: true }).waitFor();
       check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "390px list has no horizontal page scroll (ListNoHorizontalScroll390)");
-      const phoneHeights = await page.locator('[data-testid^="row-"]').evaluateAll((rows) => rows.map((item) => item.getBoundingClientRect().height));
-      // These seeded rows need two metadata lines at 390px. They measure 121px, with 1px allowed for rounding.
-      // Every other row keeps the single-line budget, even if its metadata wraps by mistake.
-      const twoLineRows = new Set([
-        "row-MOB-1", "row-MOB-4", "row-MOB-5", "row-MOB-6", "row-MOB-8", "row-MOB-9",
-        "row-MOB-10", "row-MOB-11", "row-MOB-12", "row-MOB-13", "row-MOB-14", "row-MOB-16",
-        "row-MOB-17", "row-MOB-20", "row-MOB-24", "row-MOB-25", "row-MOB-28",
-      ]);
       const assertPhoneRows = async () => {
         const geometry = await page.locator('[data-testid^="row-"]').evaluateAll(measureRows, emptyValues);
-        const overBudget = geometry.rows.filter((row) => twoLineRows.has(row.id ?? "")
-          ? row.chipLines > 2 || row.height > 122
-          : row.chipLines > 1 || row.height >= 100);
+        const heights = geometry.rows.map((row) => row.height);
         const escaped = geometry.rows.filter((row) => row.outside.length || row.glyphOverflow.length);
-        // A row with no chips holds a title line and an ID line only: no chip line is reserved.
-        const chipless = geometry.rows.filter((row) => row.phoneChips === 0);
-        const reserved = chipless.filter((row) => row.height > 90);
-        return { geometry, overBudget, escaped, chipless, reserved, ok: phoneHeights.length > 0 && overBudget.length === 0 && escaped.length === 0 && geometry.siblingOverlaps.length === 0 && geometry.unequalHeights.length === 0 };
+        const equalAndCompact = heights.length > 0 && Math.max(...heights) <= 80 && Math.max(...heights) - Math.min(...heights) <= 1;
+        return { geometry, escaped, ok: equalAndCompact && escaped.length === 0 && geometry.siblingOverlaps.length === 0 };
       };
       const phoneRows = await assertPhoneRows();
-      check(phoneRows.geometry.rows.filter((row) => twoLineRows.has(row.id ?? "")).length === twoLineRows.size, "390px list renders every seeded dense row for the height check");
-      check(phoneRows.ok, `390px list rows are contained, compact and equal for equal data (ListPhoneRowsContained): ${JSON.stringify({ heights: phoneHeights, overBudget: phoneRows.overBudget, escaped: phoneRows.escaped, siblingOverlaps: phoneRows.geometry.siblingOverlaps, unequalHeights: phoneRows.geometry.unequalHeights })}`);
-      check(phoneRows.chipless.length > 0 && phoneRows.reserved.length === 0, `390px rows without chips reserve no chip line (ListPhoneChiplessRowCompact): ${JSON.stringify(phoneRows.chipless.map((row) => ({ id: row.id, height: row.height })))}`);
-      // Self-test: a chip forced wider than its row must make the same measure fail, so the assertion cannot pass vacuously.
-      await page.addStyleTag({ content: '[data-testid="row-MOB-1"] [data-phone-property], [data-testid="row-MOB-1"] [data-phone-property] button { max-width: none !important; width: 640px !important; flex: none !important; }' }).then((tag) => tag.evaluate((element) => element.setAttribute("data-e2e-overflow-probe", "")));
+      check(phoneRows.geometry.rows.some((row) => row.phoneChips === 0) && phoneRows.geometry.rows.some((row) => row.phoneChips >= 3), "390px list compares chipless and dense rows");
+      const unreachable = await unreachableChips(page);
+      check(unreachable.length === 0, `390px list every phone chip can be scrolled to and hit (ListPhoneChipsReachable): ${JSON.stringify(unreachable)}`);
+      const wideChip = await page.addStyleTag({ content: '[data-testid="row-MOB-1"] [data-phone-property] { min-width: 640px !important; max-width: none !important; }' });
+      const forcedChips = await unreachableChips(page);
+      await wideChip.evaluate((element) => (element as Element).remove());
+      check(forcedChips.some((problem) => problem.row === "row-MOB-1"), "ListPhoneChipsReachable detects a chip wider than its strip");
+      check(phoneRows.ok, `390px list rows all have equal compact heights and contained content (ListPhoneRowsContained): ${JSON.stringify(phoneRows)}`);
+      // The strip itself must stay inside the row, even though its clipped contents can scroll.
+      await page.addStyleTag({ content: '[data-testid="row-MOB-1"] [data-testid="phone-property-strip"] { min-width: 640px !important; }' }).then((tag) => tag.evaluate((element) => element.setAttribute("data-e2e-overflow-probe", "")));
       const forcedOverflow = await assertPhoneRows();
       await page.evaluate(() => document.querySelector("[data-e2e-overflow-probe]")?.remove());
-      check(!forcedOverflow.ok && forcedOverflow.escaped.some((row) => row.id === "row-MOB-1"), `ListPhoneRowsContained detects a chip that overflows its row: ${JSON.stringify(forcedOverflow.escaped.map((row) => ({ id: row.id, outside: row.outside })))}`);
+      check(!forcedOverflow.ok && forcedOverflow.escaped.some((row) => row.id === "row-MOB-1"), `ListPhoneRowsContained detects a strip that overflows its row: ${JSON.stringify(forcedOverflow.escaped.map((row) => ({ id: row.id, outside: row.outside })))}`);
       const titleWidth = await firstRow.getByRole("link", { name: "Alpha" }).evaluate((element) => element.getBoundingClientRect().width);
       check(titleWidth >= 140, `390px list title gets at least 140px (ListPhoneTitleWidth140): ${titleWidth}`);
       check(await firstRow.locator("[data-testid=list-property-wrap]").count() === 0, "390px list omits the empty property row (ListNoEmptySecondLine)");
@@ -685,14 +709,18 @@ try {
         const inside = (inner: DOMRect, outer: DOMRect) => inner.left >= outer.left - 0.5 && inner.right <= outer.right + 0.5 && inner.top >= outer.top - 0.5 && inner.bottom <= outer.bottom + 0.5;
         const measured = rows.map((row) => {
           const rowBox = row.getBoundingClientRect();
-          const elements = [...row.querySelectorAll<HTMLElement>("[data-phone-property], [data-list-property], button, a[href]")]
+          const elements = [...row.querySelectorAll<HTMLElement>("[data-testid=phone-property-strip], [data-phone-property], [data-list-property], button, a[href]")]
             .filter((element) => {
               const style = getComputedStyle(element);
               return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
             });
           const elementOverflows = elements.flatMap((element) => {
             const box = element.getBoundingClientRect();
-            return inside(box, rowBox) ? [] : [{ tag: element.tagName, className: element.className, box: { x: box.x, y: box.y, right: box.right, bottom: box.bottom } }];
+            const strip = element.closest('[data-testid="phone-property-strip"]');
+            const contained = strip && strip !== element
+              ? box.top >= rowBox.top - 0.5 && box.bottom <= rowBox.bottom + 0.5
+              : inside(box, rowBox);
+            return contained ? [] : [{ tag: element.tagName, className: element.className, box: { x: box.x, y: box.y, right: box.right, bottom: box.bottom } }];
           });
           const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
           const glyphOverflows: Array<{ text: string; box: { x: number; y: number; right: number; bottom: number } }> = [];
@@ -782,9 +810,11 @@ try {
         const title = row.querySelector<HTMLElement>("a[href]");
         const shownEmpty = [...row.querySelectorAll<HTMLElement>('[data-empty-property="true"]')].filter(shown).map((cell) => cell.dataset.listProperty);
         const dashes = [...row.querySelectorAll<HTMLElement>("button, span")].filter((element) => element.children.length === 0 && element.textContent?.trim() === "—" && shown(element)).length;
-        const outside = [...row.querySelectorAll<HTMLElement>("button, a[href], [data-list-property], [data-phone-property]")].filter(shown).filter((element) => {
+        const outside = [...row.querySelectorAll<HTMLElement>("[data-testid=phone-property-strip], button, a[href], [data-list-property], [data-phone-property]")].filter(shown).filter((element) => {
           const r = element.getBoundingClientRect();
-          return r.left < rowBox.left - 0.5 || r.right > rowBox.right + 0.5 || r.top < rowBox.top - 0.5 || r.bottom > rowBox.bottom + 0.5;
+          const strip = element.closest('[data-testid="phone-property-strip"]');
+          const escapedX = (!strip || strip === element) && (r.left < rowBox.left - 0.5 || r.right > rowBox.right + 0.5);
+          return escapedX || r.top < rowBox.top - 0.5 || r.bottom > rowBox.bottom + 0.5;
         }).map((element) => element.getAttribute("aria-label") ?? element.tagName);
         return {
           id: row.dataset.testid, height: rowBox.height, shownEmpty, dashes, outside,
@@ -825,6 +855,8 @@ try {
       const oneLineHeights = painted.rows.filter((row) => row.signature.endsWith("title:1")).map((row) => row.height);
       check(oneLineHeights.length > 0 && Math.max(...oneLineHeights) - Math.min(...oneLineHeights) <= 1, `${label} one-line grid rows all share one height whatever data they carry (TouchGridEqualHeights): ${JSON.stringify(oneLineHeights)}`);
     }
+    const unreachable = await unreachableChips(target);
+    check(unreachable.length === 0, `${label} every phone chip can be scrolled to and hit (TouchChipsReachable): ${JSON.stringify(unreachable)}`);
     // Touch hides empty properties in the list (PR #184); they are set in the peek, which one tap on the row title opens (TouchPeekOneTap).
     const peekRow = target.locator("[data-list-row]").nth(1);
     await peekRow.locator("a[href]").first().tap();

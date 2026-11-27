@@ -347,7 +347,7 @@ dialog::backdrop { overflow: hidden; overscroll-behavior: contain; }
 @layer utilities {
   @media (max-width: 639px) {
     /* The chip button stays unclipped so its 44px ::before tap area is hit-testable; its label truncates instead. */
-    .work-item-row-metadata [data-phone-property] button { box-sizing: border-box; max-width: 8rem !important; min-width: 0 !important; min-height: 1.5rem !important; padding: 0 !important; }
+    .work-item-row-metadata [data-phone-property] button { box-sizing: border-box; max-width: 8rem !important; min-width: 2.75rem !important; min-height: 1.5rem !important; padding: 0 .25rem !important; }
     .work-item-row-metadata [data-phone-property] button > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   }
   @media (pointer: coarse) {

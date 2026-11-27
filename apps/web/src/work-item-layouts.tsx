@@ -1,6 +1,7 @@
 import { Button, buttonVariants } from "@/ui/button";
 import { accessReasonText } from "./access-reason";
 import React from "react";
+import { PhonePropertyStrip } from "./phone-property-strip";
 import { Link } from "react-router";
 import { ArrowLeft, ArrowRight, BarChart3, CalendarDays, ChevronDown, Check, ChevronLeft, ChevronRight, Columns3, Ellipsis, List, Package, Plus, RefreshCw, SlidersHorizontal, Table2, Tag, Users, ChevronsLeft } from "lucide-react";
 import { formatNumber, translate, type MessageKey } from "@weft/shared";
@@ -73,6 +74,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const [expandedCards, setExpandedCards] = React.useState<string[]>([]);
   // Set once the first list has arrived, so an empty project is not announced while the list is still loading or after it failed to load.
   const [loaded, setLoaded] = React.useState(false);
+  const [loadFailed, setLoadFailed] = React.useState(false);
   const [states, setStates] = React.useState<State[]>([]);
   const [labels, setLabels] = React.useState<Label[]>([]);
   const [people, setPeople] = React.useState<Person[]>([]);
@@ -145,10 +147,16 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   }, []);
   React.useEffect(() => {
     void (async () => {
-      setStates(await action<State[]>("list_states", { projectId }) ?? []);
-      setLabels(await action<Label[]>("list_labels", { projectId }) ?? []);
-      setPeople(await action<Person[]>("list_project_members", { projectId }) ?? []);
-      setEstimate(await action<Estimate | null>("get_estimate", { projectId }) ?? null);
+      const [stateRows, labelRows, members, projectEstimate] = await Promise.all([
+        action<State[]>("list_states", { projectId }),
+        action<Label[]>("list_labels", { projectId }),
+        action<Person[]>("list_project_members", { projectId }),
+        action<Estimate | null>("get_estimate", { projectId }),
+      ]);
+      setStates(stateRows ?? []);
+      setLabels(labelRows ?? []);
+      setPeople(members ?? []);
+      setEstimate(projectEstimate);
       setLookupsLoaded((loaded) => ({ ...loaded, base: true }));
     })();
   }, [projectId]);
@@ -205,14 +213,19 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   }), [projectId, cycleId, moduleId, board, params.sort, params.dir, run]);
   const load = React.useCallback(async () => {
     const result = await fetchItems(params.q);
-    if ("error" in result) { setQueryError(params.q.trim() ? result.error : null); return false; }
+    if ("error" in result) {
+      setLoadFailed(true);
+      setQueryError(params.q.trim() ? result.error : null);
+      return false;
+    }
+    setLoadFailed(false);
     setQueryError(null);
     setItems(result.data);
     setLoaded(true);
     return true;
   }, [fetchItems, params.q]);
   // A different project, cycle or module starts again as not loaded; this effect is declared before the load so its reset never lands after the new list.
-  React.useEffect(() => { setLoaded(false); }, [projectId, cycleId, moduleId]);
+  React.useEffect(() => { setLoaded(false); setLoadFailed(false); }, [projectId, cycleId, moduleId]);
   React.useEffect(() => { void load(); }, [load, refreshKey]);
   // A selection never outlives its context: another project, layout or filter clears it, and items that left the list (archived, deleted, filtered out) drop out of it.
   React.useEffect(() => { setSelected([]); anchor.current = null; }, [projectId, params.layout, params.q, cycleId, moduleId]);
@@ -539,20 +552,21 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       )}>
         <div className="flex min-h-10 min-w-0 items-center gap-2 max-sm:min-h-6 sm:contents [@media(pointer:coarse)]:max-sm:gap-3.5">
           <span className="flex size-4 shrink-0 items-center justify-center sm:order-1 sm:justify-self-center">{checkbox ? React.cloneElement(checkbox, { className: cn(checkbox.props.className, "rounded-sm") }) : <span aria-hidden />}</span>
-          <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} title={item.title} className="min-w-0 flex-1 thai-room truncate text-14 font-medium text-foreground sm:order-5 sm:[@media(hover:none)]:line-clamp-2 sm:[@media(hover:none)]:whitespace-normal sm:[@media(hover:none)]:[overflow-wrap:anywhere]">{item.title}</Link>
+          <span className="flex min-w-0 flex-1 items-center sm:order-5 sm:[@media(hover:none)]:h-[2.625rem]">
+            <Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} title={item.title} className="w-full min-w-0 thai-room truncate text-14 font-medium text-foreground sm:[@media(hover:none)]:line-clamp-2 sm:[@media(hover:none)]:leading-5 sm:[@media(hover:none)]:whitespace-normal sm:[@media(hover:none)]:[overflow-wrap:anywhere]">{item.title}</Link>
+          </span>
         </div>
-        <div data-testid="work-item-row-metadata" className={cn(
-          "work-item-row-metadata flex min-h-10 min-w-0 flex-wrap items-center justify-end gap-1 [@media(pointer:coarse)]:gap-2 sm:contents max-sm:flex-wrap max-sm:gap-1 max-sm:justify-start max-sm:overflow-visible [@media(pointer:coarse)]:max-sm:pr-2 [@media(hover:none)]:max-sm:gap-y-4",
-          "max-sm:min-h-11", phoneProperties.length > 0 && "[@media(hover:none)]:max-sm:py-2.5",
-        )}>
+        <div data-testid="work-item-row-metadata" className="work-item-row-metadata flex min-h-11 min-w-0 items-center gap-1 sm:contents">
           {leadingProperties.includes("priority") && <span data-list-property="priority" data-empty-property={priorityEmpty ? "true" : undefined} className={cn("flex min-w-7 shrink-0 items-center justify-center [@media(pointer:coarse)]:max-sm:min-w-11 sm:order-2 sm:[&>*]:max-w-full sm:[&_button]:max-w-full sm:[&_button]:px-1 [&_svg]:shrink-0", priorityEmpty && emptyPropertyClass)}>{cellOf(item, "priority", false, true, true)}</span>}
           {shows("id") ? <span title={item.displayId} className="min-w-0 shrink-0 truncate whitespace-nowrap text-11 tabular-nums text-muted-foreground max-sm:order-first max-sm:min-w-12 sm:order-3 sm:text-12">{item.displayId}</span> : <span aria-hidden className="max-sm:order-first max-sm:min-w-12 sm:order-3" />}
-          {leadingProperties.includes("state") && <span className="flex min-w-7 shrink-0 items-center justify-center sm:order-4 sm:[&>*]:max-w-full sm:[&_button]:max-w-full sm:[&_button]:px-1 [&_svg]:shrink-0">{cellOf(item, "state", false, true, true)}</span>}
+          {leadingProperties.includes("state") && <span className="flex min-w-7 shrink-0 items-center justify-center pointer-coarse:max-sm:min-w-11 sm:order-4 sm:[&>*]:max-w-full sm:[&_button]:max-w-full sm:[&_button]:px-1 [&_svg]:shrink-0">{cellOf(item, "state", false, true, true)}</span>}
           <div className="hidden sm:contents">
             {oneLine ? shownProperties.map((property) => propertyCell(item, property))
               : <div data-testid="list-property-wrap" className="flex min-w-0 flex-wrap items-center justify-end gap-x-1 gap-y-1 sm:col-span-full">{shownProperties.map((property) => propertyCell(item, property))}</div>}
           </div>
-          {phoneProperties.map((property) => <span key={`phone-${property}`} data-phone-property className="min-w-0 max-w-[8rem] sm:hidden">{propertyCell(item, property, true)}</span>)}
+          {phoneProperties.length > 0 && <PhonePropertyStrip>
+            {phoneProperties.map((property) => <span key={property} data-phone-property className="flex min-w-11 max-w-32 shrink-0 justify-center">{propertyCell(item, property, true)}</span>)}
+          </PhonePropertyStrip>}
           {rowActionCell && <span className="sm:order-7">{rowActionCell}</span>}
         </div>
       </div>
@@ -614,6 +628,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
   const sheetColumnMinWidth: Partial<Record<DisplayProperty, string>> = {
     state: "min-w-28", priority: "min-w-28", assignee: "min-w-28", labels: "min-w-40", dates: "min-w-32", cycle: "min-w-28", modules: "min-w-32", estimate: "min-w-24",
   };
+  const contentReady = loaded && lookupsReady;
   const sheetView = <div className="min-w-0 max-w-full rounded-xl border border-border bg-card">
     {filtered && items.length === 0 && <p className="border-b border-border bg-card px-5 py-3 text-14 text-muted-foreground">{t("layout.noMatch")}</p>}
     <div role="region" aria-label={t("layout.spreadsheet")} tabIndex={0} className="min-w-0 max-w-full overflow-x-auto rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" data-testid="sheet-scroll"
@@ -707,7 +722,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
       </section>)}
     </div>
     <aside aria-label={t("layout.calendar.undated")} className="mt-2 rounded-lg bg-muted p-3"><h3 className="mb-2 text-13 font-medium">{t("layout.calendar.undated")}</h3>
-      {calendar.undated.length ? <ul className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">{calendar.undated.map((item) => <li key={item.id}><Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="block rounded border border-border px-2 py-1.5 text-13 text-foreground hover:bg-accent">{item.title}</Link></li>)}</ul> : <p className="text-13 text-muted-foreground">{t("layout.calendar.noUndated")}</p>}
+      {calendar.undated.length ? <ul className="grid grid-cols-1 gap-1 sm:grid-cols-2 lg:grid-cols-3">{calendar.undated.map((item) => <li key={item.id} className="min-w-0"><Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="block rounded border border-border px-2 py-1.5 text-13 text-foreground [overflow-wrap:anywhere] hover:bg-accent">{item.title}</Link></li>)}</ul> : <p className="text-13 text-muted-foreground">{t("layout.calendar.noUndated")}</p>}
     </aside>
   </section>;
 
@@ -753,7 +768,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
         </div>; })}
       </div>
     </div></div>
-    <aside aria-label={t("layout.gantt.undated")} className="mt-2 rounded-lg bg-muted p-3"><h3 className="mb-2 text-13 font-medium">{t("layout.gantt.undated")}</h3>{gantt.undated.length ? <ul className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">{gantt.undated.map((item) => <li key={item.id}><Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="block rounded-md px-2 py-1.5 text-13 text-foreground hover:bg-accent">{item.title}</Link></li>)}</ul> : <p className="text-13 text-muted-foreground">{t("layout.gantt.noUndated")}</p>}</aside>
+    <aside aria-label={t("layout.gantt.undated")} className="mt-2 rounded-lg bg-muted p-3"><h3 className="mb-2 text-13 font-medium">{t("layout.gantt.undated")}</h3>{gantt.undated.length ? <ul className="grid grid-cols-1 gap-1 sm:grid-cols-2 lg:grid-cols-3">{gantt.undated.map((item) => <li key={item.id} className="min-w-0"><Link to={paths.workItem(workspaceSlug, item.displayId)} onClick={openPeek(item.displayId)} className="block rounded-md px-2 py-1.5 text-13 text-foreground [overflow-wrap:anywhere] hover:bg-accent">{item.title}</Link></li>)}</ul> : <p className="text-13 text-muted-foreground">{t("layout.gantt.noUndated")}</p>}</aside>
   </section>;
 
   const toggleSelectShown = () => setSelected(allPicked ? [] : orderedIds.slice(0, 500));
@@ -873,11 +888,18 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
     {note && <p role="alert" className="text-destructive">{note}</p>}
     {selectable && selected.length > 0 && <BulkBar projectId={projectId} selected={items.filter((item) => selected.includes(item.id))} states={states} people={people} labels={labels} estimate={estimate} run={run}
       cycleOptions={cyclesEnabled && !cycleId ? cycleOptions : null} moduleOptions={modulesEnabled && !moduleId ? moduleOptions : null} onClear={() => { setSelected([]); anchor.current = null; }} onApplied={() => void load()} />}
-    {emptyProject && emptyBlock}
-    {sheet && !emptyProject && sheetView}
-    {params.layout === "calendar" && calendarView}
-    {params.layout === "gantt" && ganttView}
-    {!board && !sheet && !emptyProject && params.layout !== "calendar" && params.layout !== "gantt" && <div ref={setListBox} data-testid="work-items-list-container" className="min-w-0 rounded-xl border border-border bg-card">
+    {/* A query error already shows in the filter editor above. */}
+    {!contentReady && queryError === null && (loadFailed
+      ? <p role="alert" className="text-sm text-destructive">{t("account.loadFailed")} <Button type="button" size="sm" onClick={() => void load()}>{t("offline.retry")}</Button></p>
+      : <div role="status" data-testid="work-items-skeleton" className="grid min-h-[60dvh] content-start gap-1 rounded-xl border border-border bg-card p-2">
+        <span className="sr-only">{t("account.loading")}</span>
+        {Array.from({ length: 8 }, (_, index) => <span key={index} aria-hidden className="h-11 rounded-md bg-muted motion-safe:animate-pulse" />)}
+      </div>)}
+    {contentReady && emptyProject && emptyBlock}
+    {contentReady && sheet && !emptyProject && sheetView}
+    {contentReady && params.layout === "calendar" && calendarView}
+    {contentReady && params.layout === "gantt" && ganttView}
+    {contentReady && !board && !sheet && !emptyProject && params.layout !== "calendar" && params.layout !== "gantt" && <div ref={setListBox} data-testid="work-items-list-container" className="min-w-0 rounded-xl border border-border bg-card">
       {filtered && items.length === 0 && <p className="border-b border-border bg-card px-5 py-3 text-14 text-muted-foreground">{t("layout.noMatch")}</p>}
       {groups.map((group) => {
         const empty = group.items.length === 0;
@@ -914,7 +936,7 @@ export function WorkItemLayouts({ projectId, workspaceSlug, action, run: runProp
         </section>;
       })}
     </div>}
-    {board && !emptyProject && (subGroup === "none" || boardLanes.length === 0 ? renderBoard(boardColumns) : <div className="grid gap-5" data-testid="board-swimlanes">{boardLanes.map((lane) => {
+    {contentReady && board && !emptyProject && (subGroup === "none" || boardLanes.length === 0 ? renderBoard(boardColumns) : <div className="grid gap-5" data-testid="board-swimlanes">{boardLanes.map((lane) => {
       const laneItems = new Set(lane.items.map((item) => item.id));
       const laneName = labelFor(subGroup, lane.key);
       return <section key={lane.key} aria-label={`${t(`layout.group.${subGroup}`)}: ${laneName}`} className="grid gap-1">

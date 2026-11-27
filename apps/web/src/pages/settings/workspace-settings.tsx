@@ -34,7 +34,7 @@ export function useWorkspaceMembers() {
 }
 
 export function WorkspaceGeneral() {
-  const { workspace, selfId, isAdmin } = useWorkspaceMembers();
+  const { workspace, selfId, isAdmin, adminLoading } = useWorkspaceMembers();
   const { refresh } = useWorkspace();
   const navigate = useNavigate();
   const [note, setNote] = React.useState<string | null>(null);
@@ -70,9 +70,9 @@ export function WorkspaceGeneral() {
         if (updated === null) setNote(translate("members.failed")); else { setNote(null); setRunLimitDraft(null); await reloadRunLimits(); }
       }}>{translate("settings.saveRunLimits")}</Button>}
     </SettingsBlock>
-    <DangerZone heading="settings.leaveWorkspace" description={translate(isAdmin ? "settings.leaveWorkspaceAdminDesc" : "settings.leaveWorkspaceDesc")}>
+    {!adminLoading && <DangerZone heading="settings.leaveWorkspace" description={translate(isAdmin ? "settings.leaveWorkspaceAdminDesc" : "settings.leaveWorkspaceDesc")}>
       <Button type="button" className={dangerOutline} onClick={leave}>{translate("settings.leave")}</Button>
-    </DangerZone>
+    </DangerZone>}
     <Note note={note} error />
   </section>;
 }
